@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"E:\\\\web\\\\tavern_helper_template-main\\\\src\" -type f \\\\\\( -name \"*.html\" -o -name \"*.css\" -o -name \"*.scss\" -o -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.vue\" \\\\\\) 2>/dev/null | head -30)",
+      "Bash(cd \"E:/web/tavern_helper_template-main\" && npx tsc --noEmit --project tsconfig.json 2>&1 | head -30)"
+    ]
+  }
+}
