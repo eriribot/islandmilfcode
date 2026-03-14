@@ -270,7 +270,7 @@ button {
 .paper-reader {
   position: relative;
   min-height: 200px;
-  padding: 0 0 16px;
+  padding: 0 0 12px;
   cursor: grab;
   perspective: 1000px;
   user-select: none;
@@ -284,21 +284,25 @@ button {
   position: relative;
   display: flex;
   align-items: flex-start;
-  min-height: 56px;
+  min-height: 40px;
 }
 
 .paper-reader__lane--top {
-  padding-top: 4px;
+  padding-top: 0;
 }
 
 .paper-reader__lane--bottom {
-  margin-top: -4px;
+  margin-top: -2px;
+}
+
+.paper-reader__lane:has(.reader-preview--ghost) {
+  min-height: 12px;
 }
 
 /* 预览卡 */
 .reader-preview {
-  width: min(100%, 880px);
-  margin-left: 24px;
+  width: min(100%, 1040px);
+  margin-left: 12px;
   padding: 10px 18px;
   border: 1.5px solid rgba(180, 160, 130, 0.2);
   border-radius: var(--radius-soft);
@@ -321,12 +325,12 @@ button {
 }
 
 .reader-preview--before {
-  transform: translateY(6px) scale(0.97);
+  transform: translateY(4px) scale(0.98);
   opacity: 0.55;
 }
 
 .reader-preview--after {
-  transform: translateY(-6px) scale(0.97);
+  transform: translateY(-4px) scale(0.98);
   opacity: 0.6;
 }
 
@@ -357,9 +361,9 @@ button {
 /* 主消息区 - 直接显示在纸面上，无边框 */
 .reader-card {
   position: relative;
-  width: min(100%, 920px);
-  margin: 8px auto;
-  padding: 0 8px 0 22px;
+  width: min(100%, 1080px);
+  margin: 4px auto;
+  padding: 0 4px 0 18px;
   background: transparent;
   transform-style: preserve-3d;
   perspective: 1200px;
@@ -462,14 +466,14 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 32px;
-  padding-bottom: 6px;
+  min-height: 28px;
+  padding-bottom: 4px;
 }
 
 .reader-card__hint-group {
   display: flex;
   align-items: center;
-  min-width: 78px;
+  min-width: 110px;
 }
 
 .reader-card__hint-group--right {
@@ -480,10 +484,10 @@ button {
 .reader-card__hint {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
+  gap: 6px;
+  padding: 4px 14px;
   border-radius: 999px;
-  font-size: 0.74rem;
+  font-size: 0.84rem;
   line-height: 1;
   border: 1px dashed rgba(180, 160, 130, 0.24);
   background: rgba(255, 252, 245, 0.72);
@@ -504,7 +508,7 @@ button {
 }
 
 .reader-card__hint-label {
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
 }
 
 .reader-card__index {
@@ -540,7 +544,7 @@ button {
   position: relative;
   height: var(--reader-body-height);
   min-height: 120px;
-  padding: 10px 12px 12px 8px;
+  padding: 8px 8px 12px 4px;
   border-top: 1px dashed rgba(180, 160, 130, 0.2);
   overflow-y: auto;
   overscroll-behavior: contain;
