@@ -1,21 +1,36 @@
 export type TabKey = 'summary' | 'status' | 'inventory';
 
+export type TargetStatus = {
+  id: string;
+  name: string;
+  alias?: string;
+  affinity: number;
+  stage: string;
+  titles: Record<string, { effect: string; selfComment: string }>;
+  outfits: Record<string, string>;
+  meta?: Record<string, unknown>;
+};
+
 export type StatusData = {
   world: {
     currentTime: string;
     currentLocation: string;
     recentEvents: Record<string, string>;
   };
-  baiya: {
-    dependency: number;
-    stage: string;
-    titles: Record<string, { effect: string; selfComment: string }>;
-    outfits: Record<string, string>;
-  };
+  targets: TargetStatus[];
+  activeTargetId: string | null;
   player: {
     inventory: Record<string, { description: string; count: number }>;
   };
 };
+
+export function getActiveTarget(data: StatusData): TargetStatus | null {
+  if (data.activeTargetId) {
+    const found = data.targets.find(t => t.id === data.activeTargetId);
+    if (found) return found;
+  }
+  return data.targets[0] ?? null;
+}
 
 export type UiMessage = {
   id: string;
@@ -38,6 +53,13 @@ export type FloatingPhonePosition = {
   y: number;
 };
 
+export type ReaderContextMenuState = {
+  x: number;
+  y: number;
+  readerIndex: number;
+  sourceUserText: string;
+};
+
 export type AppState = {
   activeTab: TabKey;
   phoneOpen: boolean;
@@ -51,6 +73,7 @@ export type AppState = {
   uiMessages: UiMessage[];
   statusData: StatusData;
   notification: NotificationState | null;
+  readerContextMenu: ReaderContextMenuState | null;
 };
 
 export type TavernWindow = Window &
@@ -58,7 +81,7 @@ export type TavernWindow = Window &
     generate?: (config: Record<string, unknown>) => Promise<string>;
     generateRaw?: (config: Record<string, unknown>) => Promise<string>;
     createChatMessages?: (
-      messages: Array<{ role: 'system' | 'assistant' | 'user'; message: string; is_hidden?: boolean }>,
+      messages: Array<{ role: 'system' | 'assistant' | 'user'; message: string; is_hidden?: boolean; data?: Record<string, unknown> }>,
       option?: { refresh?: 'none' | 'affected' | 'all'; insert_before?: number | 'end' },
     ) => Promise<void>;
     updateVariablesWith?: (updater: (variables: Record<string, unknown>) => void, option?: Record<string, unknown>) => void;

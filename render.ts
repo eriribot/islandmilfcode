@@ -1,6 +1,16 @@
 import { getReaderMessages, getVisibleMessageText } from './message-format';
-import { formatDate, formatTime, getInventoryIcon } from './status-data';
-import type { AppState, FloatingPhonePosition, NotificationState, StatusData, TabKey, UiMessage } from './types';
+import { formatDate, formatTime, getInventoryIcon } from './variables/normalize';
+import type {
+  AppState,
+  FloatingPhonePosition,
+  NotificationState,
+  ReaderContextMenuState,
+  StatusData,
+  TabKey,
+  TargetStatus,
+  UiMessage,
+} from './types';
+import { getActiveTarget } from './types';
 
 export function escapeHtml(value: string) {
   return value
@@ -148,6 +158,36 @@ function renderReaderHint(direction: 'prev' | 'next', enabled: boolean) {
   `;
 }
 
+function renderReaderContextMenu(menu: ReaderContextMenuState | null, generating: boolean) {
+  if (!menu) return '';
+
+  const floorLabel = String(menu.readerIndex + 1).padStart(2, '0');
+  const promptPreview = menu.sourceUserText
+    ? escapeHtml(menu.sourceUserText.slice(0, 54).trim() + (menu.sourceUserText.length > 54 ? '…' : ''))
+    : '该楼层暂时没有可回溯的输入。';
+
+  return `
+    <div class="reader-context-menu" style="left:${menu.x}px;top:${menu.y}px;" data-reader-context-menu="true">
+      <div class="reader-context-menu__meta">楼层 ${floorLabel}</div>
+      <div class="reader-context-menu__preview">${promptPreview}</div>
+      <button
+        class="reader-context-menu__action"
+        data-action="reader-rollback"
+        ${menu.sourceUserText ? '' : 'disabled'}
+      >
+        回溯楼层输入
+      </button>
+      <button
+        class="reader-context-menu__action reader-context-menu__action--primary"
+        data-action="reader-regenerate"
+        ${menu.sourceUserText && !generating ? '' : 'disabled'}
+      >
+        ${generating ? '生成中…' : '重新生成该楼层'}
+      </button>
+    </div>
+  `;
+}
+
 function renderReaderDeck(state: AppState, flipDir: string = '') {
   const model = getReaderModel(state);
   if (!model.currentMessage) {
@@ -198,7 +238,11 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
     <section class="paper-reader">
       ${topLane}
 
-      <article class="reader-card reader-card--${message.role}"${flipDir ? ` data-flip="${flipDir}"` : ''}>
+      <article
+        class="reader-card reader-card--${message.role}"
+        data-reader-index="${model.currentIndex}"
+        ${flipDir ? ` data-flip="${flipDir}"` : ''}
+      >
         <div class="reader-card__chrome">
           <div class="reader-card__hint-group reader-card__hint-group--left">
             ${renderReaderHint('prev', Boolean(model.previousMessage))}
@@ -233,6 +277,7 @@ function getWeekday(dateStr: string) {
 function renderJournalHeader(state: AppState) {
   const dateStr = formatDate(state.statusData.world.currentTime);
   const weekday = getWeekday(state.statusData.world.currentTime);
+  const target = getActiveTarget(state.statusData);
 
   return `
     <header class="journal-header">
@@ -244,7 +289,7 @@ function renderJournalHeader(state: AppState) {
         <div class="journal-location">📍 ${escapeHtml(state.statusData.world.currentLocation)}</div>
       </div>
       <div class="journal-sticker">
-        ✿ ${escapeHtml(state.statusData.baiya.stage)}
+        ✿ ${escapeHtml(target?.stage ?? '')}
       </div>
     </header>
   `;
@@ -291,6 +336,8 @@ function renderPaperWorkspace(state: AppState, flipDir: string = '') {
 function renderSummaryPanel(state: AppState) {
   const recentEvents = Object.entries(state.statusData.world.recentEvents).slice(0, 3);
   const lastMessage = state.uiMessages[state.uiMessages.length - 1];
+  const target = getActiveTarget(state.statusData);
+  const alias = target?.alias ?? target?.name ?? '角色';
 
   return `
     <section class="panel-card panel-card--generic">
@@ -298,17 +345,17 @@ function renderSummaryPanel(state: AppState) {
       <div class="panel-scroll" data-scroll-region="summary">
         <div class="hero-card">
           <div class="hero-row">
-            <div class="avatar-badge">白鸦</div>
+            <div class="avatar-badge">${escapeHtml(alias)}</div>
             <div>
-              <div class="hero-name">${escapeHtml(state.statusData.baiya.stage)}</div>
+              <div class="hero-name">${escapeHtml(target?.stage ?? '')}</div>
               <div class="hero-sub">${escapeHtml(state.statusData.world.currentLocation)}</div>
             </div>
           </div>
           <div class="meter-head">
             <span>依赖度</span>
-            <strong>${state.statusData.baiya.dependency}%</strong>
+            <strong>${target?.affinity ?? 0}%</strong>
           </div>
-          <div class="meter-track"><div class="meter-fill" style="width:${state.statusData.baiya.dependency}%"></div></div>
+          <div class="meter-track"><div class="meter-fill" style="width:${target?.affinity ?? 0}%"></div></div>
         </div>
 
         <div class="subsection">
@@ -344,8 +391,10 @@ function renderSummaryPanel(state: AppState) {
 }
 
 function renderStatusPanel(statusData: StatusData) {
-  const titles = Object.entries(statusData.baiya.titles);
+  const target = getActiveTarget(statusData);
+  const titles = target ? Object.entries(target.titles) : [];
   const recentEvents = Object.entries(statusData.world.recentEvents);
+  const alias = target?.alias ?? target?.name ?? '角色';
 
   return `
     <section class="panel-card panel-card--generic">
@@ -353,17 +402,17 @@ function renderStatusPanel(statusData: StatusData) {
       <div class="panel-scroll" data-scroll-region="status">
         <div class="hero-card">
           <div class="hero-row">
-            <div class="avatar-badge">白鸦</div>
+            <div class="avatar-badge">${escapeHtml(target?.name ?? '角色')}</div>
             <div>
               <div class="hero-name">角色状态</div>
-              <div class="hero-sub">当前阶段：${escapeHtml(statusData.baiya.stage)}</div>
+              <div class="hero-sub">当前阶段：${escapeHtml(target?.stage ?? '')}</div>
             </div>
           </div>
           <div class="meter-head">
             <span>依赖度</span>
-            <strong>${statusData.baiya.dependency}%</strong>
+            <strong>${target?.affinity ?? 0}%</strong>
           </div>
-          <div class="meter-track"><div class="meter-fill" style="width:${statusData.baiya.dependency}%"></div></div>
+          <div class="meter-track"><div class="meter-fill" style="width:${target?.affinity ?? 0}%"></div></div>
           <div class="meter-actions">
             <button class="mini-btn" data-action="dep-down">-</button>
             <button class="mini-btn" data-action="dep-up">+</button>
@@ -375,9 +424,9 @@ function renderStatusPanel(statusData: StatusData) {
           <div class="variable-list">
             <div class="variable-row"><span>world.currentTime</span><strong>${escapeHtml(statusData.world.currentTime)}</strong></div>
             <div class="variable-row"><span>world.currentLocation</span><strong>${escapeHtml(statusData.world.currentLocation)}</strong></div>
-            <div class="variable-row"><span>baiya.stage</span><strong>${escapeHtml(statusData.baiya.stage)}</strong></div>
-            <div class="variable-row"><span>baiya.dependency</span><strong>${statusData.baiya.dependency}</strong></div>
-            <div class="variable-row"><span>baiya.titleCount</span><strong>${titles.length}</strong></div>
+            <div class="variable-row"><span>activeTarget.stage</span><strong>${escapeHtml(target?.stage ?? '')}</strong></div>
+            <div class="variable-row"><span>activeTarget.affinity</span><strong>${target?.affinity ?? 0}</strong></div>
+            <div class="variable-row"><span>activeTarget.titleCount</span><strong>${titles.length}</strong></div>
             <div class="variable-row"><span>world.eventCount</span><strong>${recentEvents.length}</strong></div>
           </div>
         </section>
@@ -388,7 +437,9 @@ function renderStatusPanel(statusData: StatusData) {
 
 function renderInventoryPanel(statusData: StatusData) {
   const inventory = Object.entries(statusData.player.inventory);
-  const outfits = Object.entries(statusData.baiya.outfits);
+  const target = getActiveTarget(statusData);
+  const outfits = target ? Object.entries(target.outfits) : [];
+  const alias = target?.alias ?? target?.name ?? '角色';
 
   return `
     <section class="panel-card panel-card--generic">
@@ -419,7 +470,7 @@ function renderInventoryPanel(statusData: StatusData) {
         </div>
 
         <div class="subsection">
-          <div class="subsection-title">白鸦装扮</div>
+          <div class="subsection-title">${escapeHtml(alias)}装扮</div>
           <div class="outfit-list">
             ${
               outfits.length
@@ -453,6 +504,9 @@ function renderFloatingPhoneStyle(position: FloatingPhonePosition) {
 }
 
 function renderPhone(state: AppState) {
+  const target = getActiveTarget(state.statusData);
+  const alias = target?.alias ?? target?.name ?? '角色';
+
   return `
     <div class="phone-modal ${state.phoneOpen ? 'is-open' : ''}" aria-hidden="${state.phoneOpen ? 'false' : 'true'}">
       <button class="phone-backdrop" data-action="close-phone" aria-label="关闭手帐"></button>
@@ -472,14 +526,14 @@ function renderPhone(state: AppState) {
           <section class="same-layer-card">
             <header class="top-card">
               <div class="contact-block">
-                <div class="contact-avatar">白鸦</div>
+                <div class="contact-avatar">${escapeHtml(alias)}</div>
                 <div>
                   <div class="contact-title">口袋手帐</div>
                   <div class="contact-meta">${escapeHtml(state.statusData.world.currentLocation)}</div>
                 </div>
               </div>
               <div class="top-card__actions">
-                <div class="contact-stage">${escapeHtml(state.statusData.baiya.stage)}</div>
+                <div class="contact-stage">${escapeHtml(target?.stage ?? '')}</div>
                 <button class="close-phone-btn" data-action="close-phone" aria-label="关闭手帐">×</button>
               </div>
             </header>
@@ -502,6 +556,7 @@ export function renderApp(state: AppState, flipDir: string = '') {
   return `
     <main class="antiml-scene">
       ${renderPaperWorkspace(state, flipDir)}
+      ${renderReaderContextMenu(state.readerContextMenu, state.generating)}
 
       <button
         class="floating-phone"

@@ -581,6 +581,74 @@ button {
    ║         续写区                         ║
    ╚═══════════════════════════════════════╝ */
 
+.reader-context-menu {
+  position: fixed;
+  z-index: 35;
+  width: min(240px, calc(100vw - 24px));
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(255, 251, 244, 0.96);
+  border: 1px solid rgba(182, 156, 122, 0.36);
+  box-shadow:
+    0 14px 36px rgba(60, 42, 16, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(14px);
+}
+
+.reader-context-menu__meta {
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.reader-context-menu__preview {
+  margin: 6px 0 10px;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  word-break: break-word;
+}
+
+.reader-context-menu__action {
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--ink-dark);
+  background: rgba(166, 127, 89, 0.08);
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.reader-context-menu__action + .reader-context-menu__action {
+  margin-top: 8px;
+}
+
+.reader-context-menu__action:hover:not(:disabled) {
+  background: rgba(166, 127, 89, 0.14);
+  transform: translateY(-1px);
+}
+
+.reader-context-menu__action--primary {
+  color: #fff;
+  background: var(--ink-assistant);
+}
+
+.reader-context-menu__action--primary:hover:not(:disabled) {
+  background: #5a3d8a;
+}
+
+.reader-context-menu__action:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+}
+
 .paper-composer-card {
   position: relative;
   padding: 14px 18px;

@@ -1,10 +1,11 @@
 import type { StatusData, UiMessage } from './types';
+import { getActiveTarget } from './types';
 
 export const PRIMARY_VISIBLE_TAG = 'content';
 export const FALLBACK_VISIBLE_TAGS = ['context'];
 
 export function sanitizeVisibleReply(text: string) {
-  return text.replace(/^\s*(?:白娅|你|assistant|ai|reply|response)\s*[:：]\s*/i, '').trim();
+  return text.replace(/^\s*(?:assistant|ai|reply|response)\s*[:：]\s*/i, '').trim();
 }
 
 function dedupeAdjacentReply(text: string) {
@@ -82,14 +83,19 @@ export function getVisibleMessageText(message: UiMessage) {
 
 export function getReaderMessages(messages: UiMessage[]) {
   return messages.filter(
-    message => message.role === 'assistant' && (message.streaming || Boolean(getVisibleMessageText(message))),
+    message =>
+      message.role !== 'system' &&
+      (message.role !== 'assistant' || message.streaming || Boolean(getVisibleMessageText(message))) &&
+      Boolean(getVisibleMessageText(message) || message.streaming),
   );
 }
 
 export function buildPrompt(statusData: StatusData, userInput: string) {
+  const target = getActiveTarget(statusData);
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
+  const targetName = target?.name ?? '角色';
   return [
-    '你正在扮演白娅，请结合当前酒馆预设生成回复。',
+    `你正在扮演${targetName}，请结合当前酒馆预设生成回复。`,
     '要求：',
     `1. 可见正文必须且只能放在 <${PRIMARY_VISIBLE_TAG}>...</${PRIMARY_VISIBLE_TAG}> 里。`,
     '2. 不要输出 <context>，也不要同时输出多份可见正文。',
@@ -97,7 +103,7 @@ export function buildPrompt(statusData: StatusData, userInput: string) {
     '4. 2~4 句，语气带有轻度依赖与夜间私聊感。',
     '5. 结合当前地点、依存度阶段、近期事务。',
     `当前地点：${statusData.world.currentLocation}`,
-    `当前阶段：${statusData.baiya.stage}`,
+    `当前阶段：${target?.stage ?? ''}`,
     topEvent ? `当前最重要事务：${topEvent[0]}：${topEvent[1]}` : '',
     `玩家输入：${userInput}`,
   ]
