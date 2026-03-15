@@ -48,7 +48,8 @@ function createMvuAdapter(win: TavernWindow, Mvu: any): VariableAdapter {
 
         // Try MVU replaceMvuData first
         if (typeof Mvu.replaceMvuData === 'function') {
-          Mvu.replaceMvuData({ stat_data: serialized }, { type: 'message', message_id: messageId });
+          const currentData = Mvu.getMvuData?.({ type: 'message', message_id: messageId }) ?? {};
+          Mvu.replaceMvuData({ ...currentData, stat_data: serialized }, { type: 'message', message_id: messageId });
           return;
         }
 

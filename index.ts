@@ -10,7 +10,10 @@ import {
   syncFocusedMessage,
   getReaderMessageByIndex,
   getSourceUserTextForReaderIndex,
+  loadConversationHistory,
+  replaceConversationMessages,
   rollbackConversation,
+  saveMessagesToVariables,
 } from './state/store';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { submitMessage, changeDependency, type ActionContext } from './actions';
@@ -145,6 +148,9 @@ const ctx: ActionContext = {
     state.notification = null;
     if (shouldRender) render();
   },
+  persistConversation: () => {
+    saveMessagesToVariables(win, state.uiMessages);
+  },
   closeReaderContextMenu: (shouldRender: boolean) => {
     if (!state.readerContextMenu) return;
     state.readerContextMenu = null;
@@ -202,10 +208,11 @@ function jumpMessage(index: number) {
   flipDirection = '';
 }
 
-function rollbackToReaderInput(readerIndex: number) {
-  const target = rollbackConversation(state, readerIndex);
+async function rollbackToReaderInput(readerIndex: number) {
+  const target = await rollbackConversation(state, readerIndex, win);
   if (!target?.sourceUserText) return;
   state.draft = target.sourceUserText;
+  ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
   render();
   focusComposer();
@@ -213,9 +220,10 @@ function rollbackToReaderInput(readerIndex: number) {
 
 async function regenerateReaderMessage(readerIndex: number) {
   if (state.generating) return;
-  const target = rollbackConversation(state, readerIndex);
+  const target = await rollbackConversation(state, readerIndex, win);
   if (!target?.sourceUserText) return;
   state.draft = target.sourceUserText;
+  ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
   render();
   await submitMessage(ctx, { text: target.sourceUserText, keepDraft: true, clearDraftOnSuccess: true });
@@ -425,7 +433,7 @@ function bindEvents() {
   });
   root?.querySelector<HTMLButtonElement>('[data-action="reader-rollback"]')?.addEventListener('click', () => {
     if (!state.readerContextMenu) return;
-    rollbackToReaderInput(state.readerContextMenu.readerIndex);
+    void rollbackToReaderInput(state.readerContextMenu.readerIndex);
   });
   root?.querySelector<HTMLButtonElement>('[data-action="reader-regenerate"]')?.addEventListener('click', () => {
     if (!state.readerContextMenu) return;
@@ -453,6 +461,37 @@ function render() {
   syncFocusedMessage(state);
   root.innerHTML = renderApp(state, flipDirection);
   bindEvents();
+}
+
+async function reloadConversation(options: { resetDraft?: boolean } = {}) {
+  const { resetDraft = false } = options;
+  const loadedMessages = await loadConversationHistory(win);
+  replaceConversationMessages(state, loadedMessages);
+  state.currentGenerationId = '';
+  state.finalizedGenerationId = '';
+  state.generating = false;
+  state.notification = null;
+  state.readerContextMenu = null;
+  if (resetDraft) {
+    state.draft = '';
+  }
+  render();
+}
+
+function setupConversationSyncHooks() {
+  if (typeof win.eventOn !== 'function' || !win.tavern_events) {
+    return;
+  }
+
+  const { CHAT_CHANGED } = win.tavern_events;
+
+  if (CHAT_CHANGED) {
+    const stop = win.eventOn(CHAT_CHANGED, async () => {
+      state.statusData = adapter.load();
+      await reloadConversation({ resetDraft: true });
+    });
+    eventStops.push(stop.stop);
+  }
 }
 
 // ── Global events ──
@@ -489,20 +528,22 @@ async function init() {
   adapter = await createVariableAdapter(win);
   state.statusData = adapter.load();
   setupStreamingHooks(ctx, eventStops);
-  render();
-  adapter.onUpdate(data => {
+  await reloadConversation();
+  setupConversationSyncHooks();
+  const stopAdapterUpdate = adapter.onUpdate(data => {
     if (JSON.stringify(data) !== JSON.stringify(state.statusData)) {
       state.statusData = data;
       const target = getActiveTarget(data);
       ctx.showNotification({
         kind: 'status',
-        title: '状态数据同步完成',
+        title: 'Status updated',
         preview: `${data.world.currentLocation} · ${target?.stage ?? ''}`,
         targetTab: 'status',
         timestamp: formatTime(data.world.currentTime),
       });
     }
   });
+  eventStops.push(stopAdapterUpdate);
 }
 init();
 

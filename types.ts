@@ -38,6 +38,7 @@ export type UiMessage = {
   speaker: string;
   text: string;
   streaming?: boolean;
+  tavernMessageId?: number;
 };
 
 export type NotificationState = {
@@ -78,6 +79,38 @@ export type AppState = {
 
 export type TavernWindow = Window &
   typeof globalThis & {
+    getChatMessages?: (
+      range: string | number,
+      option?: {
+        role?: 'all' | 'system' | 'assistant' | 'user';
+        hide_state?: 'all' | 'hidden' | 'unhidden';
+        include_swipes?: false;
+      },
+    ) => Array<{
+      message_id: number;
+      name: string;
+      role: 'system' | 'assistant' | 'user';
+      is_hidden: boolean;
+      message: string;
+      data: Record<string, unknown>;
+      extra: Record<string, unknown>;
+    }>;
+    setChatMessages?: (
+      messages: Array<{
+        message_id: number;
+        is_hidden?: boolean;
+        message?: string;
+        name?: string;
+        role?: 'system' | 'assistant' | 'user';
+        data?: Record<string, unknown>;
+        extra?: Record<string, unknown>;
+      }>,
+      option?: { refresh?: 'none' | 'affected' | 'all' },
+    ) => Promise<void>;
+    deleteChatMessages?: (
+      messageIds: number[],
+      option?: { refresh?: 'none' | 'affected' | 'all' },
+    ) => Promise<void>;
     generate?: (config: Record<string, unknown>) => Promise<string>;
     generateRaw?: (config: Record<string, unknown>) => Promise<string>;
     createChatMessages?: (
@@ -89,4 +122,5 @@ export type TavernWindow = Window &
     getCurrentMessageId?: () => number;
     eventOn?: (eventType: string, listener: (...args: any[]) => void) => { stop: () => void };
     iframe_events?: Record<string, string>;
+    tavern_events?: Record<string, string>;
   };

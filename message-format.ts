@@ -5,7 +5,7 @@ export const PRIMARY_VISIBLE_TAG = 'content';
 export const FALLBACK_VISIBLE_TAGS = ['context'];
 
 export function sanitizeVisibleReply(text: string) {
-  return text.replace(/^\s*(?:assistant|ai|reply|response)\s*[:：]\s*/i, '').trim();
+  return text.replace(/^\s*(?:assistant|ai|reply|response)\s*[:：\-\s]*/i, '').trim();
 }
 
 function dedupeAdjacentReply(text: string) {
@@ -90,22 +90,41 @@ export function getReaderMessages(messages: UiMessage[]) {
   );
 }
 
-export function buildPrompt(statusData: StatusData, userInput: string) {
+function buildConversationHistory(uiMessages: UiMessage[]) {
+  const historyLines = uiMessages
+    .filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
+    .map(message => {
+      const visibleText = (message.role === 'assistant' ? getVisibleMessageText(message) || message.text : message.text).trim();
+      if (!visibleText) return '';
+      const speaker = (message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')).trim();
+      return `[${message.role}:${speaker}]\n${visibleText}`;
+    })
+    .filter(Boolean);
+
+  if (!historyLines.length) {
+    return '';
+  }
+
+  return ['Conversation history:', ...historyLines].join('\n\n');
+}
+
+export function buildPrompt(statusData: StatusData, uiMessages: UiMessage[], userInput: string) {
   const target = getActiveTarget(statusData);
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
-  const targetName = target?.name ?? '角色';
+  const targetName = target?.name ?? 'Target';
+  const conversationHistory = buildConversationHistory(uiMessages);
+
   return [
-    `你正在扮演${targetName}，请结合当前酒馆预设生成回复。`,
-    '要求：',
-    `1. 可见正文必须且只能放在 <${PRIMARY_VISIBLE_TAG}>...</${PRIMARY_VISIBLE_TAG}> 里。`,
-    '2. 不要输出 <context>，也不要同时输出多份可见正文。',
-    '3. 正文不要 markdown、不要角色名前缀、不要解释。',
-    '4. 2~4 句，语气带有轻度依赖与夜间私聊感。',
-    '5. 结合当前地点、依存度阶段、近期事务。',
-    `当前地点：${statusData.world.currentLocation}`,
-    `当前阶段：${target?.stage ?? ''}`,
-    topEvent ? `当前最重要事务：${topEvent[0]}：${topEvent[1]}` : '',
-    `玩家输入：${userInput}`,
+    `You are continuing the diary-style chat for ${targetName}.`,
+    `Visible reply text must be wrapped in <${PRIMARY_VISIBLE_TAG}>...</${PRIMARY_VISIBLE_TAG}>.`,
+    'You may use <context>...</context> for hidden reasoning/context, but keep the visible reply only inside the visible tag.',
+    'Avoid markdown tables unless the user explicitly asks for them.',
+    'Keep the response focused, natural, and consistent with the current scene.',
+    `Current location: ${statusData.world.currentLocation}`,
+    `Current relationship stage: ${target?.stage ?? ''}`,
+    topEvent ? `Latest event: ${topEvent[0]} - ${topEvent[1]}` : '',
+    conversationHistory,
+    userInput ? `Current user input: ${userInput}` : '',
   ]
     .filter(Boolean)
     .join('\n');

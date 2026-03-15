@@ -9,6 +9,7 @@ export type StreamingContext = {
   win: TavernWindow;
   render: () => void;
   showNotification: (n: NotificationState) => void;
+  persistConversation: () => void;
 };
 
 export function ensureStreamingMessage(ctx: StreamingContext) {
@@ -52,6 +53,7 @@ export function finalizeStreamingText(ctx: StreamingContext, text: string, gener
   current.streaming = false;
   state.currentGenerationId = '';
   syncFocusedMessage(state, { keepLatest: true });
+  ctx.persistConversation();
 
   if (current.text) {
     const target = getActiveTarget(state.statusData);

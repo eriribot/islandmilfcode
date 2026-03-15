@@ -1,7 +1,83 @@
 import { getReaderMessages } from '../message-format';
-import { clamp } from '../variables/normalize';
-import { normalizeStatusData, defaultStatusData } from '../variables/normalize';
-import type { AppState, FloatingPhonePosition, NotificationState, UiMessage } from '../types';
+import type { AppState, FloatingPhonePosition, TavernWindow, UiMessage } from '../types';
+import { clamp, defaultStatusData, normalizeStatusData } from '../variables/normalize';
+
+export const ANTIML_MESSAGE_MARKER = 'islandmilfcode';
+export const ANTIML_CHATLOG_KEY = 'chatlog';
+
+type PersistedConversation = {
+  version: 1;
+  messages: Array<Pick<UiMessage, 'role' | 'speaker' | 'text'>>;
+};
+
+function createSystemMessage(): UiMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: 'system',
+    speaker: 'system',
+    text: '',
+  };
+}
+
+function mapChatMessageToUiMessage(message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>): UiMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: message.role,
+    speaker: message.name || message.role,
+    text: String(message.message ?? ''),
+    tavernMessageId: message.message_id,
+  };
+}
+
+function isMarkedAntimlMessage(message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>) {
+  return message?.data?.antiml_source === ANTIML_MESSAGE_MARKER;
+}
+
+function isLegacyAntimlMessage(message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>) {
+  return message?.is_hidden === true && (message?.role === 'user' || message?.role === 'assistant');
+}
+
+function getMessageVariableOption(win: TavernWindow) {
+  return {
+    type: 'message' as const,
+    message_id: typeof win.getCurrentMessageId === 'function' ? win.getCurrentMessageId() : 'latest',
+  };
+}
+
+function serializeConversation(messages: UiMessage[]): PersistedConversation {
+  return {
+    version: 1,
+    messages: messages
+      .filter(message => message.role === 'user' || message.role === 'assistant')
+      .map(message => ({
+        role: message.role,
+        speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
+        text: String(message.text ?? ''),
+      })),
+  };
+}
+
+function deserializeConversation(raw: unknown): UiMessage[] {
+  if (!raw || typeof raw !== 'object') return [];
+  const messages = Array.isArray((raw as PersistedConversation).messages)
+    ? (raw as PersistedConversation).messages
+    : Array.isArray(raw)
+      ? raw
+      : [];
+
+  return messages
+    .filter((message): message is Pick<UiMessage, 'role' | 'speaker' | 'text'> => {
+      if (!message || typeof message !== 'object') return false;
+      const role = (message as UiMessage).role;
+      return (role === 'user' || role === 'assistant') && typeof (message as UiMessage).text === 'string';
+    })
+    .map(message => ({
+      id: crypto.randomUUID(),
+      role: message.role,
+      speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
+      text: String(message.text ?? ''),
+    }));
+}
 
 export function createInitialState(floatingPhone: FloatingPhonePosition): AppState {
   return {
@@ -14,18 +90,111 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     generating: false,
     currentGenerationId: '',
     finalizedGenerationId: '',
-    uiMessages: [
-      {
-        id: crypto.randomUUID(),
-        role: 'system',
-        speaker: '记录',
-        text: '',
-      },
-    ],
+    uiMessages: [createSystemMessage()],
     statusData: normalizeStatusData(defaultStatusData),
     notification: null,
     readerContextMenu: null,
   };
+}
+
+export function replaceConversationMessages(state: AppState, messages: UiMessage[]) {
+  state.uiMessages = [createSystemMessage(), ...messages];
+  syncFocusedMessage(state, { keepLatest: true });
+}
+
+export function loadMessagesFromVariables(win: TavernWindow): UiMessage[] | null {
+  try {
+    const variables = win.getVariables?.(getMessageVariableOption(win)) ?? {};
+    if (!(ANTIML_CHATLOG_KEY in variables)) {
+      return null;
+    }
+    return deserializeConversation(variables[ANTIML_CHATLOG_KEY]);
+  } catch {
+    return null;
+  }
+}
+
+export function saveMessagesToVariables(win: TavernWindow, messages: UiMessage[]) {
+  try {
+    win.updateVariablesWith?.(variables => {
+      variables[ANTIML_CHATLOG_KEY] = serializeConversation(messages);
+      return variables;
+    }, getMessageVariableOption(win));
+  } catch {
+    // ignore outside Tavern
+  }
+}
+
+export async function clearLegacyMessagesFromChat(messages: UiMessage[], win?: TavernWindow) {
+  const removedMessageIds = messages
+    .map(message => message.tavernMessageId)
+    .filter((messageId): messageId is number => typeof messageId === 'number');
+
+  if (!removedMessageIds.length || typeof win?.deleteChatMessages !== 'function') {
+    return;
+  }
+
+  try {
+    await win.deleteChatMessages(removedMessageIds, { refresh: 'all' });
+  } catch {
+    // ignore outside Tavern or deletion failures
+  }
+}
+
+export async function loadConversationHistory(win: TavernWindow): Promise<UiMessage[]> {
+  const variableMessages = loadMessagesFromVariables(win);
+  if (variableMessages) {
+    return variableMessages;
+  }
+
+  const legacyMessages = await loadMessagesFromChat(win);
+  if (!legacyMessages.length) {
+    return [];
+  }
+
+  saveMessagesToVariables(win, legacyMessages);
+  await clearLegacyMessagesFromChat(legacyMessages, win);
+  return legacyMessages.map(({ tavernMessageId, ...message }) => message);
+}
+
+export async function loadMessagesFromChat(
+  win: TavernWindow,
+): Promise<UiMessage[]> {
+  if (typeof win.getChatMessages !== 'function') {
+    return [];
+  }
+
+  try {
+    const allMessages = win.getChatMessages('0-{{lastMessageId}}', {
+      hide_state: 'all',
+      include_swipes: false,
+    });
+
+    if (!Array.isArray(allMessages) || !allMessages.length) {
+      return [];
+    }
+
+    const markedMessages = allMessages.filter(
+      (message): message is NonNullable<typeof message> =>
+        Boolean(message) && typeof message.message_id === 'number' && isMarkedAntimlMessage(message),
+    );
+
+    const selectedMessages = markedMessages.length
+      ? markedMessages
+      : allMessages.filter(
+          (message): message is NonNullable<typeof message> =>
+            Boolean(message) && typeof message.message_id === 'number' && isLegacyAntimlMessage(message),
+        );
+
+    if (!selectedMessages.length) {
+      return [];
+    }
+
+    return selectedMessages
+      .map(message => mapChatMessageToUiMessage(message));
+  } catch {
+    return [];
+  }
 }
 
 export function clampFocusedMessageIndex(state: AppState, index: number) {
@@ -77,9 +246,22 @@ export function getSourceUserTextForReaderIndex(state: AppState, index: number) 
   return getRollbackTargetForReaderIndex(state, index)?.sourceUserText ?? '';
 }
 
-export function rollbackConversation(state: AppState, readerIndex: number) {
+export async function rollbackConversation(state: AppState, readerIndex: number, win?: TavernWindow) {
   const target = getRollbackTargetForReaderIndex(state, readerIndex);
   if (!target) return null;
+
+  const removedMessageIds = state.uiMessages
+    .slice(target.sourceUserIndex)
+    .map(message => message.tavernMessageId)
+    .filter((messageId): messageId is number => typeof messageId === 'number');
+
+  if (removedMessageIds.length && typeof win?.deleteChatMessages === 'function') {
+    try {
+      await win.deleteChatMessages(removedMessageIds, { refresh: 'none' });
+    } catch {
+      // ignore outside Tavern or deletion failures
+    }
+  }
 
   state.uiMessages = state.uiMessages.slice(0, Math.max(1, target.sourceUserIndex));
   state.focusedMessageIndex = Math.max(getReaderMessages(state.uiMessages).length - 1, 0);
@@ -94,4 +276,5 @@ export function rollbackConversation(state: AppState, readerIndex: number) {
 export function pushMessage(state: AppState, message: UiMessage) {
   state.uiMessages = [...state.uiMessages, message];
   syncFocusedMessage(state, { keepLatest: true });
+  return message;
 }
