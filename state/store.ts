@@ -19,7 +19,9 @@ function createSystemMessage(): UiMessage {
   };
 }
 
-function mapChatMessageToUiMessage(message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>): UiMessage {
+function mapChatMessageToUiMessage(
+  message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>,
+): UiMessage {
   return {
     id: crypto.randomUUID(),
     role: message.role,
@@ -37,10 +39,9 @@ function isLegacyAntimlMessage(message: NonNullable<ReturnType<NonNullable<Taver
   return message?.is_hidden === true && (message?.role === 'user' || message?.role === 'assistant');
 }
 
-function getMessageVariableOption(win: TavernWindow) {
+function getChatVariableOption() {
   return {
-    type: 'message' as const,
-    message_id: typeof win.getCurrentMessageId === 'function' ? win.getCurrentMessageId() : 'latest',
+    type: 'chat' as const,
   };
 }
 
@@ -104,7 +105,7 @@ export function replaceConversationMessages(state: AppState, messages: UiMessage
 
 export function loadMessagesFromVariables(win: TavernWindow): UiMessage[] | null {
   try {
-    const variables = win.getVariables?.(getMessageVariableOption(win)) ?? {};
+    const variables = win.getVariables?.(getChatVariableOption()) ?? {};
     if (!(ANTIML_CHATLOG_KEY in variables)) {
       return null;
     }
@@ -119,7 +120,7 @@ export function saveMessagesToVariables(win: TavernWindow, messages: UiMessage[]
     win.updateVariablesWith?.(variables => {
       variables[ANTIML_CHATLOG_KEY] = serializeConversation(messages);
       return variables;
-    }, getMessageVariableOption(win));
+    }, getChatVariableOption());
   } catch {
     // ignore outside Tavern
   }
@@ -157,9 +158,7 @@ export async function loadConversationHistory(win: TavernWindow): Promise<UiMess
   return legacyMessages.map(({ tavernMessageId, ...message }) => message);
 }
 
-export async function loadMessagesFromChat(
-  win: TavernWindow,
-): Promise<UiMessage[]> {
+export async function loadMessagesFromChat(win: TavernWindow): Promise<UiMessage[]> {
   if (typeof win.getChatMessages !== 'function') {
     return [];
   }
@@ -190,8 +189,7 @@ export async function loadMessagesFromChat(
       return [];
     }
 
-    return selectedMessages
-      .map(message => mapChatMessageToUiMessage(message));
+    return selectedMessages.map(message => mapChatMessageToUiMessage(message));
   } catch {
     return [];
   }
