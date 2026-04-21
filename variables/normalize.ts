@@ -160,7 +160,9 @@ function normalizeWorld(raw: Record<string, any>) {
   const eventsInput = raw?.世界?.近期事务 ?? raw?.world?.recentEvents ?? {};
   return {
     currentTime: String(raw?.世界?.当前时间 ?? raw?.world?.currentTime ?? defaultStatusData.world.currentTime),
-    currentLocation: String(raw?.世界?.当前地点 ?? raw?.world?.currentLocation ?? defaultStatusData.world.currentLocation),
+    currentLocation: String(
+      raw?.世界?.当前地点 ?? raw?.world?.currentLocation ?? defaultStatusData.world.currentLocation,
+    ),
     recentEvents: Object.fromEntries(
       Object.entries(eventsInput)
         .filter(([key]) => Boolean(key))
@@ -234,4 +236,64 @@ export function serializeStatusData(statusData: StatusData): Record<string, any>
       ),
     },
   };
+}
+
+// ── 从 <progress> 解析结果应用变量更新 ──
+
+import type { ProgressUpdate } from '../message-format';
+
+const MAX_RECENT_EVENTS = 5;
+
+export function applyProgressUpdate(statusData: StatusData, update: ProgressUpdate): void {
+  if (update.time) {
+    statusData.world.currentTime = update.time;
+  }
+  if (update.location) {
+    statusData.world.currentLocation = update.location;
+  }
+
+  // Affinity delta → update active target
+  if (update.affinityDelta !== undefined && update.affinityDelta !== 0) {
+    const target = statusData.targets.find(t => t.id === statusData.activeTargetId);
+    if (target) {
+      target.affinity = clamp(0, 100, (target.affinity ?? 50) + update.affinityDelta);
+      target.stage = affinityStage(target.affinity);
+    }
+  }
+
+  // Outfit changes → update active target
+  if (Object.keys(update.outfitChanges).length) {
+    const target = statusData.targets.find(t => t.id === statusData.activeTargetId);
+    if (target) {
+      for (const [part, desc] of Object.entries(update.outfitChanges)) {
+        target.outfits[part] = desc;
+      }
+    }
+  }
+
+  // Merge events: new ones go first, trim to MAX_RECENT_EVENTS
+  if (Object.keys(update.events).length) {
+    const merged = { ...update.events, ...statusData.world.recentEvents };
+    const entries = Object.entries(merged).slice(0, MAX_RECENT_EVENTS);
+    statusData.world.recentEvents = Object.fromEntries(entries);
+  }
+
+  // Items gained
+  for (const item of update.itemsGained) {
+    const existing = statusData.player.inventory[item.name];
+    if (existing) {
+      existing.count += item.count;
+      if (item.description) existing.description = item.description;
+    } else {
+      statusData.player.inventory[item.name] = {
+        description: item.description || '暂无描述',
+        count: item.count,
+      };
+    }
+  }
+
+  // Items lost
+  for (const name of update.itemsLost) {
+    delete statusData.player.inventory[name];
+  }
 }

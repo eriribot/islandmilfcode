@@ -1,8 +1,8 @@
 import { extractContextReply } from '../message-format';
 import { syncFocusedMessage } from '../state/store';
-import { formatTime } from '../variables/normalize';
 import type { AppState, NotificationState, TavernWindow, UiMessage } from '../types';
 import { getActiveTarget } from '../types';
+import { formatTime } from '../variables/normalize';
 
 export type StreamingContext = {
   state: AppState;
@@ -38,7 +38,11 @@ export function updateStreamingText(ctx: StreamingContext, text: string) {
   ctx.render();
 }
 
-export function finalizeStreamingText(ctx: StreamingContext, text: string, generationId = ctx.state.currentGenerationId) {
+export function finalizeStreamingText(
+  ctx: StreamingContext,
+  text: string,
+  generationId = ctx.state.currentGenerationId,
+) {
   const { state } = ctx;
   if (generationId && state.finalizedGenerationId === generationId) {
     return;
@@ -83,6 +87,11 @@ export function setupStreamingHooks(ctx: StreamingContext, eventStops: Array<() 
   if (fully) {
     const stop = win.eventOn(fully, (fullText: string, generationId: string) => {
       if (
+        typeof generationId === 'string' &&
+        (generationId.startsWith('summary-') || generationId.startsWith('progress-'))
+      )
+        return;
+      if (
         state.finalizedGenerationId !== generationId &&
         (!state.currentGenerationId || generationId === state.currentGenerationId)
       ) {
@@ -94,6 +103,11 @@ export function setupStreamingHooks(ctx: StreamingContext, eventStops: Array<() 
 
   if (ended) {
     const stop = win.eventOn(ended, (text: string, generationId: string) => {
+      if (
+        typeof generationId === 'string' &&
+        (generationId.startsWith('summary-') || generationId.startsWith('progress-'))
+      )
+        return;
       if (
         state.finalizedGenerationId !== generationId &&
         (!state.currentGenerationId || generationId === state.currentGenerationId)

@@ -1,20 +1,20 @@
-import { buildPrompt, extractContextReply } from '../message-format';
+import { buildProgressPrompt, buildPrompt, parseProgressUpdate } from '../message-format';
 import { pushMessage } from '../state/store';
+import { runSummary, type SummaryContext } from '../summary';
+import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import { getActiveTarget } from '../types';
 import type { VariableAdapter } from '../variables/adapter';
-import { affinityStage, clamp, formatTime } from '../variables/normalize';
-import {
-  ensureStreamingMessage,
-  finalizeStreamingText,
-  type StreamingContext,
-  updateStreamingText,
-} from './streaming';
+import { affinityStage, applyProgressUpdate, clamp, formatTime } from '../variables/normalize';
+import { ensureStreamingMessage, finalizeStreamingText, type StreamingContext, updateStreamingText } from './streaming';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
   clearNotification: (shouldRender: boolean) => void;
   closeReaderContextMenu: (shouldRender: boolean) => void;
   persistConversation: () => void;
+  summaryStore: SummaryStore;
+  summaryApiConfig: SummaryApiConfig | null;
+  onSummaryStoreUpdated: () => void;
 };
 
 async function simulateGeneration(ctx: ActionContext, userInput: string) {
@@ -62,6 +62,7 @@ export async function submitMessage(
     role: 'user',
     speaker: 'User',
     text: userInput,
+    statusSnapshot: JSON.parse(JSON.stringify(state.statusData)),
   });
   ctx.persistConversation();
   ctx.render();
@@ -97,7 +98,9 @@ export async function submitMessage(
             ordered_prompts: [
               {
                 role: 'system',
-                content: buildPrompt(state.statusData, promptHistory, ''),
+                content: buildPrompt(state.statusData, promptHistory, '', ctx.summaryStore, {
+                  skipProgress: !!ctx.summaryApiConfig,
+                }),
               },
               {
                 role: 'user',
@@ -107,11 +110,58 @@ export async function submitMessage(
           }
         : {
             ...baseConfig,
-            user_input: buildPrompt(state.statusData, promptHistory, userInput),
+            user_input: buildPrompt(state.statusData, promptHistory, userInput, ctx.summaryStore, {
+              skipProgress: !!ctx.summaryApiConfig,
+            }),
           },
     );
 
     finalizeStreamingText(ctx, String(result ?? ''), requestGenerationId);
+
+    // Parse <progress> and apply variable updates
+    if (ctx.summaryApiConfig) {
+      // Secondary API handles variable extraction
+      try {
+        const progressPrompts = buildProgressPrompt(state.statusData, state.uiMessages.slice(-6));
+        const progressConfig: Record<string, unknown> = {
+          should_silence: true,
+          should_stream: false,
+          generation_id: `progress-${crypto.randomUUID()}`,
+          ordered_prompts: progressPrompts,
+          custom_api: {
+            apiurl: ctx.summaryApiConfig.apiurl,
+            key: ctx.summaryApiConfig.key,
+            model: ctx.summaryApiConfig.model,
+            source: ctx.summaryApiConfig.source,
+          },
+        };
+        const progressResult = await win.generateRaw?.(progressConfig);
+        const progressRaw = String(progressResult ?? '');
+        const progressUpdate = parseProgressUpdate(progressRaw);
+        if (progressUpdate) {
+          applyProgressUpdate(state.statusData, progressUpdate);
+          ctx.adapter.save(state.statusData);
+        }
+      } catch (e) {
+        console.warn('[progress] secondary API failed:', e);
+      }
+    } else {
+      // Main API already included <progress> in response
+      const mainRaw = String(result ?? '');
+      const progressUpdate = parseProgressUpdate(mainRaw);
+      if (progressUpdate) {
+        applyProgressUpdate(state.statusData, progressUpdate);
+        ctx.adapter.save(state.statusData);
+      }
+    }
+
+    // Save a statusData snapshot on the latest assistant message for rollback support
+    const lastMsg = state.uiMessages[state.uiMessages.length - 1];
+    if (lastMsg && lastMsg.role === 'assistant') {
+      lastMsg.statusSnapshot = JSON.parse(JSON.stringify(state.statusData));
+      ctx.persistConversation();
+    }
+
     if (options.clearDraftOnSuccess) {
       state.draft = '';
     }
@@ -125,6 +175,23 @@ export async function submitMessage(
   } finally {
     state.generating = false;
     ctx.render();
+
+    // Trigger summary in the background (non-blocking)
+    if (typeof win.generateRaw === 'function') {
+      const summaryCtx: SummaryContext = {
+        win,
+        summaryStore: ctx.summaryStore,
+        summaryApiConfig: ctx.summaryApiConfig,
+        uiMessages: state.uiMessages,
+        onStoreUpdated: () => {
+          ctx.onSummaryStoreUpdated();
+          ctx.render();
+        },
+      };
+      runSummary(summaryCtx).catch(() => {
+        /* summary errors handled internally */
+      });
+    }
   }
 }
 

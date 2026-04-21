@@ -1,0 +1,452 @@
+/* ╔═══════════════════════════════════════╗
+   ║   Galgame 标题画面 — 经典白色系        ║
+   ╚═══════════════════════════════════════╝ */
+
+/* ── 全屏容器 ── */
+.gal-title {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 20%, rgba(255, 228, 235, 0.3) 0%, transparent 60%),
+    radial-gradient(ellipse at 80% 80%, rgba(220, 230, 255, 0.25) 0%, transparent 50%),
+    linear-gradient(180deg, #fefcfa 0%, #f5f0eb 40%, #eee8e0 100%);
+}
+
+/* ── 光粒子装饰 ── */
+.gal-particle {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  animation: gal-float 8s ease-in-out infinite;
+}
+
+.gal-particle--1 {
+  width: 6px;
+  height: 6px;
+  background: rgba(242, 181, 196, 0.5);
+  top: 15%;
+  left: 20%;
+  animation-delay: 0s;
+}
+
+.gal-particle--2 {
+  width: 4px;
+  height: 4px;
+  background: rgba(201, 184, 232, 0.45);
+  top: 30%;
+  right: 18%;
+  animation-delay: 1.5s;
+}
+
+.gal-particle--3 {
+  width: 8px;
+  height: 8px;
+  background: rgba(168, 219, 197, 0.35);
+  bottom: 25%;
+  left: 35%;
+  animation-delay: 3s;
+}
+
+.gal-particle--4 {
+  width: 5px;
+  height: 5px;
+  background: rgba(245, 196, 161, 0.4);
+  top: 60%;
+  right: 30%;
+  animation-delay: 4.5s;
+}
+
+.gal-particle--5 {
+  width: 3px;
+  height: 3px;
+  background: rgba(242, 181, 196, 0.5);
+  bottom: 15%;
+  right: 15%;
+  animation-delay: 6s;
+}
+
+@keyframes gal-float {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translateY(0) scale(1);
+  }
+  20% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 0.6;
+    transform: translateY(-20px) scale(1.2);
+  }
+  80% {
+    opacity: 0.3;
+  }
+}
+
+/* ── 内容面板 ── */
+.gal-title__content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 480px;
+  padding: 48px 32px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+}
+
+/* ── 标题头部 ── */
+.gal-title__header {
+  text-align: center;
+}
+
+.gal-title__ornament {
+  font-size: 0.78rem;
+  color: rgba(184, 92, 110, 0.35);
+  letter-spacing: 0.3em;
+  margin: 0 0 12px;
+}
+
+.gal-title__name {
+  font-family: 'Yuji Syuku', 'Klee One', serif;
+  font-size: 2.1rem;
+  font-weight: 400;
+  color: #3a3028;
+  letter-spacing: 0.12em;
+  margin: 0;
+  line-height: 1.4;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.8);
+}
+
+.gal-title__sub {
+  font-family: 'Klee One', serif;
+  font-size: 0.78rem;
+  color: #b0a08a;
+  letter-spacing: 0.35em;
+  margin: 8px 0 0;
+  text-transform: uppercase;
+}
+
+/* ── 信息卡片三栏 ── */
+.gal-info-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  width: 100%;
+}
+
+.gal-info-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 10px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(220, 210, 195, 0.5);
+  backdrop-filter: blur(8px);
+  text-align: center;
+  transition: all 0.2s ease;
+}
+
+.gal-info-card:hover {
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+  transform: translateY(-1px);
+}
+
+.gal-info-card__icon {
+  font-size: 1.4rem;
+}
+
+.gal-info-card strong {
+  font-family: 'Klee One', serif;
+  font-size: 0.88rem;
+  color: #3a3028;
+}
+
+.gal-info-card p {
+  font-size: 0.72rem;
+  color: #b0a08a;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ── 按钮 ── */
+.gal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 36px;
+  border-radius: 999px;
+  font-family: 'Klee One', serif;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: 0.06em;
+}
+
+.gal-btn--primary {
+  color: #fff;
+  background: linear-gradient(135deg, #d4829a 0%, #c9b8e8 100%);
+  border: none;
+  box-shadow:
+    0 4px 16px rgba(184, 92, 110, 0.2),
+    0 1px 0 rgba(255, 255, 255, 0.2) inset;
+}
+
+.gal-btn--primary:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 6px 24px rgba(184, 92, 110, 0.3),
+    0 1px 0 rgba(255, 255, 255, 0.2) inset;
+}
+
+.gal-btn--ghost {
+  color: #7d6f5e;
+  background: transparent;
+  border: 1.5px solid rgba(220, 210, 195, 0.6);
+}
+
+.gal-btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.5);
+  border-color: rgba(184, 92, 110, 0.3);
+  color: #3a3028;
+}
+
+/* ── 按钮容器 ── */
+.gal-title__actions {
+  display: flex;
+  justify-content: center;
+}
+
+/* ── 存档区域 ── */
+.gal-saves-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.gal-saves-label {
+  font-family: 'Klee One', serif;
+  font-size: 0.78rem;
+  color: #b0a08a;
+  letter-spacing: 0.2em;
+  margin: 0;
+}
+
+.gal-saves-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gal-save-slot {
+  display: flex;
+  align-items: stretch;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(220, 210, 195, 0.5);
+  overflow: hidden;
+  backdrop-filter: blur(6px);
+  transition: all 0.2s ease;
+}
+
+.gal-save-slot:hover {
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06);
+}
+
+.gal-save-load {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 16px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.gal-save-load:hover {
+  background: rgba(242, 181, 196, 0.08);
+}
+
+.gal-save-name {
+  font-family: 'Klee One', serif;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #3a3028;
+}
+
+.gal-save-detail {
+  font-size: 0.76rem;
+  color: #7d6f5e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gal-save-meta {
+  font-size: 0.7rem;
+  color: #b0a08a;
+  margin-top: 2px;
+}
+
+.gal-save-delete {
+  width: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: #b0a08a;
+  cursor: pointer;
+  font-size: 0.8rem;
+  border-left: 1px solid rgba(220, 210, 195, 0.4) !important;
+  transition: all 0.15s ease;
+}
+
+.gal-save-delete:hover {
+  background: rgba(184, 92, 110, 0.06);
+  color: #b85c6e;
+}
+
+/* ── 底部文字 ── */
+.gal-title__footer {
+  font-size: 0.68rem;
+  color: #b0a08a;
+  letter-spacing: 0.15em;
+  opacity: 0.5;
+  margin: 0;
+}
+
+/* ╔═══════════════════════════════════════╗
+   ║   角色创建表单                         ║
+   ╚═══════════════════════════════════════╝ */
+
+.gal-create-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.gal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gal-field__label {
+  font-family: 'Klee One', serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #3a3028;
+  letter-spacing: 0.04em;
+}
+
+.gal-field__hint {
+  font-size: 0.76rem;
+  font-weight: 400;
+  color: #b85c6e;
+  opacity: 0.7;
+}
+
+.gal-field__input,
+.gal-field__textarea {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(220, 210, 195, 0.6);
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(6px);
+  font-family: 'Klee One', serif;
+  font-size: 0.92rem;
+  color: #3a3028;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.gal-field__input::placeholder,
+.gal-field__textarea::placeholder {
+  color: #b0a08a;
+  opacity: 0.6;
+}
+
+.gal-field__input:focus,
+.gal-field__textarea:focus {
+  border-color: rgba(184, 92, 110, 0.4);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 3px rgba(184, 92, 110, 0.08);
+}
+
+.gal-field__textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.7;
+}
+
+.gal-create-actions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+/* ╔═══════════════════════════════════════╗
+   ║   响应式                              ║
+   ╚═══════════════════════════════════════╝ */
+
+@media (max-width: 520px) {
+  .gal-title__content {
+    padding: 32px 18px 28px;
+    gap: 22px;
+  }
+
+  .gal-title__name {
+    font-size: 1.6rem;
+  }
+
+  .gal-info-cards {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .gal-info-card {
+    flex-direction: row;
+    gap: 10px;
+    padding: 12px 14px;
+    text-align: left;
+  }
+
+  .gal-info-card__icon {
+    font-size: 1.2rem;
+    flex-shrink: 0;
+  }
+
+  .gal-btn {
+    padding: 10px 28px;
+    font-size: 0.88rem;
+  }
+
+  .gal-create-actions {
+    flex-direction: column-reverse;
+    gap: 10px;
+  }
+
+  .gal-create-actions .gal-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

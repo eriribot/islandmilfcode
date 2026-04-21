@@ -1,14 +1,9 @@
 import { getReaderMessages } from '../message-format';
-import type { AppState, FloatingPhonePosition, TavernWindow, UiMessage } from '../types';
+import { createDefaultSummaryStore } from '../summary/types';
+import type { AppState, FloatingPhonePosition, PersistedMessage, TavernWindow, UiMessage } from '../types';
 import { clamp, defaultStatusData, normalizeStatusData } from '../variables/normalize';
 
-export const ANTIML_MESSAGE_MARKER = 'islandmilfcode';
-export const ANTIML_CHATLOG_KEY = 'chatlog';
-
-type PersistedConversation = {
-  version: 1;
-  messages: Array<Pick<UiMessage, 'role' | 'speaker' | 'text'>>;
-};
+export const MESSAGE_MARKER = 'islandmilfcode';
 
 function createSystemMessage(): UiMessage {
   return {
@@ -31,57 +26,54 @@ function mapChatMessageToUiMessage(
   };
 }
 
-function isMarkedAntimlMessage(message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>) {
-  return message?.data?.antiml_source === ANTIML_MESSAGE_MARKER;
+function isMarkedMessage(message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>) {
+  return message?.data?.islandmilfcode_source === MESSAGE_MARKER;
 }
 
-function isLegacyAntimlMessage(message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>) {
+function isLegacyHiddenMessage(message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>) {
   return message?.is_hidden === true && (message?.role === 'user' || message?.role === 'assistant');
 }
 
-function getChatVariableOption() {
-  return {
-    type: 'chat' as const,
-  };
-}
-
-function serializeConversation(messages: UiMessage[]): PersistedConversation {
-  return {
-    version: 1,
-    messages: messages
-      .filter(message => message.role === 'user' || message.role === 'assistant')
-      .map(message => ({
+/** Serialize uiMessages to PersistedMessage[] for save slots. */
+export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
+  return messages
+    .filter(message => message.role === 'user' || message.role === 'assistant')
+    .map(message => {
+      const base: PersistedMessage = {
         role: message.role,
         speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
         text: String(message.text ?? ''),
-      })),
-  };
+      };
+      if (message.statusSnapshot) {
+        base.statusSnapshot = message.statusSnapshot;
+      }
+      return base;
+    });
 }
 
-function deserializeConversation(raw: unknown): UiMessage[] {
-  if (!raw || typeof raw !== 'object') return [];
-  const messages = Array.isArray((raw as PersistedConversation).messages)
-    ? (raw as PersistedConversation).messages
-    : Array.isArray(raw)
-      ? raw
-      : [];
-
+/** Deserialize PersistedMessage[] from a save slot into UiMessage[]. */
+export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
+  if (!Array.isArray(messages)) return [];
   return messages
-    .filter((message): message is Pick<UiMessage, 'role' | 'speaker' | 'text'> => {
-      if (!message || typeof message !== 'object') return false;
-      const role = (message as UiMessage).role;
-      return (role === 'user' || role === 'assistant') && typeof (message as UiMessage).text === 'string';
-    })
-    .map(message => ({
-      id: crypto.randomUUID(),
-      role: message.role,
-      speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
-      text: String(message.text ?? ''),
-    }));
+    .filter(msg => msg && (msg.role === 'user' || msg.role === 'assistant') && typeof msg.text === 'string')
+    .map(msg => {
+      const ui: UiMessage = {
+        id: crypto.randomUUID(),
+        role: msg.role,
+        speaker: String(msg.speaker || (msg.role === 'assistant' ? 'Assistant' : 'User')),
+        text: String(msg.text ?? ''),
+      };
+      if (msg.statusSnapshot) {
+        ui.statusSnapshot = msg.statusSnapshot;
+      }
+      return ui;
+    });
 }
 
 export function createInitialState(floatingPhone: FloatingPhonePosition): AppState {
   return {
+    activeSaveId: null,
+    creatingCharacter: false,
     activeTab: 'summary',
     phoneOpen: false,
     floatingPhone,
@@ -95,67 +87,15 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     statusData: normalizeStatusData(defaultStatusData),
     notification: null,
     readerContextMenu: null,
+    summaryStore: createDefaultSummaryStore(),
+    summaryApiConfig: null,
+    summarizing: false,
   };
 }
 
 export function replaceConversationMessages(state: AppState, messages: UiMessage[]) {
   state.uiMessages = [createSystemMessage(), ...messages];
   syncFocusedMessage(state, { keepLatest: true });
-}
-
-export function loadMessagesFromVariables(win: TavernWindow): UiMessage[] | null {
-  try {
-    const variables = win.getVariables?.(getChatVariableOption()) ?? {};
-    if (!(ANTIML_CHATLOG_KEY in variables)) {
-      return null;
-    }
-    return deserializeConversation(variables[ANTIML_CHATLOG_KEY]);
-  } catch {
-    return null;
-  }
-}
-
-export function saveMessagesToVariables(win: TavernWindow, messages: UiMessage[]) {
-  try {
-    win.updateVariablesWith?.(variables => {
-      variables[ANTIML_CHATLOG_KEY] = serializeConversation(messages);
-      return variables;
-    }, getChatVariableOption());
-  } catch {
-    // ignore outside Tavern
-  }
-}
-
-export async function clearLegacyMessagesFromChat(messages: UiMessage[], win?: TavernWindow) {
-  const removedMessageIds = messages
-    .map(message => message.tavernMessageId)
-    .filter((messageId): messageId is number => typeof messageId === 'number');
-
-  if (!removedMessageIds.length || typeof win?.deleteChatMessages !== 'function') {
-    return;
-  }
-
-  try {
-    await win.deleteChatMessages(removedMessageIds, { refresh: 'all' });
-  } catch {
-    // ignore outside Tavern or deletion failures
-  }
-}
-
-export async function loadConversationHistory(win: TavernWindow): Promise<UiMessage[]> {
-  const variableMessages = loadMessagesFromVariables(win);
-  if (variableMessages) {
-    return variableMessages;
-  }
-
-  const legacyMessages = await loadMessagesFromChat(win);
-  if (!legacyMessages.length) {
-    return [];
-  }
-
-  saveMessagesToVariables(win, legacyMessages);
-  await clearLegacyMessagesFromChat(legacyMessages, win);
-  return legacyMessages.map(({ tavernMessageId, ...message }) => message);
 }
 
 export async function loadMessagesFromChat(win: TavernWindow): Promise<UiMessage[]> {
@@ -175,14 +115,14 @@ export async function loadMessagesFromChat(win: TavernWindow): Promise<UiMessage
 
     const markedMessages = allMessages.filter(
       (message): message is NonNullable<typeof message> =>
-        Boolean(message) && typeof message.message_id === 'number' && isMarkedAntimlMessage(message),
+        Boolean(message) && typeof message.message_id === 'number' && isMarkedMessage(message),
     );
 
     const selectedMessages = markedMessages.length
       ? markedMessages
       : allMessages.filter(
           (message): message is NonNullable<typeof message> =>
-            Boolean(message) && typeof message.message_id === 'number' && isLegacyAntimlMessage(message),
+            Boolean(message) && typeof message.message_id === 'number' && isLegacyHiddenMessage(message),
         );
 
     if (!selectedMessages.length) {
@@ -258,6 +198,16 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
       await win.deleteChatMessages(removedMessageIds, { refresh: 'none' });
     } catch {
       // ignore outside Tavern or deletion failures
+    }
+  }
+
+  // Restore the snapshot at the source user message itself first,
+  // then fall back to earlier messages.
+  for (let i = target.sourceUserIndex; i >= 0; i--) {
+    const msg = state.uiMessages[i];
+    if (msg?.statusSnapshot) {
+      state.statusData = JSON.parse(JSON.stringify(msg.statusSnapshot));
+      break;
     }
   }
 

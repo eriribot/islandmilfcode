@@ -1,3 +1,4 @@
+import type { SummaryStore } from './summary/types';
 import type { StatusData, UiMessage } from './types';
 import { getActiveTarget } from './types';
 
@@ -90,11 +91,14 @@ export function getReaderMessages(messages: UiMessage[]) {
   );
 }
 
-function buildConversationHistory(uiMessages: UiMessage[]) {
+function buildConversationHistory(uiMessages: UiMessage[], startIndex = 0) {
   const historyLines = uiMessages
+    .slice(startIndex)
     .filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
     .map(message => {
-      const visibleText = (message.role === 'assistant' ? getVisibleMessageText(message) || message.text : message.text).trim();
+      const visibleText = (
+        message.role === 'assistant' ? getVisibleMessageText(message) || message.text : message.text
+      ).trim();
       if (!visibleText) return '';
       const speaker = (message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')).trim();
       return `[${message.role}:${speaker}]\n${visibleText}`;
@@ -108,13 +112,31 @@ function buildConversationHistory(uiMessages: UiMessage[]) {
   return ['Conversation history:', ...historyLines].join('\n\n');
 }
 
-export function buildPrompt(statusData: StatusData, uiMessages: UiMessage[], userInput: string) {
+function buildSummaryContextInline(store: SummaryStore): string {
+  const parts: string[] = [];
+  if (store.global) parts.push(`[Story context so far]\n${store.global}`);
+  if (store.major.length) parts.push(`[Recent period summaries]\n${store.major.map(e => e.text).join('\n\n')}`);
+  if (store.minor.length) parts.push(`[Recent event summaries]\n${store.minor.map(e => e.text).join('\n\n')}`);
+  return parts.join('\n\n');
+}
+
+export function buildPrompt(
+  statusData: StatusData,
+  uiMessages: UiMessage[],
+  userInput: string,
+  summaryStore?: SummaryStore | null,
+  options?: { skipProgress?: boolean },
+) {
   const target = getActiveTarget(statusData);
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
   const targetName = target?.name ?? 'Target';
-  const conversationHistory = buildConversationHistory(uiMessages);
 
-  return [
+  const hasSummary = summaryStore && (summaryStore.global || summaryStore.major.length || summaryStore.minor.length);
+  const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
+  const historyStartIndex = hasSummary ? summaryStore.lastSummarizedIndex : 0;
+  const conversationHistory = buildConversationHistory(uiMessages, historyStartIndex);
+
+  const parts = [
     `You are continuing the diary-style chat for ${targetName}.`,
     `Visible reply text must be wrapped in <${PRIMARY_VISIBLE_TAG}>...</${PRIMARY_VISIBLE_TAG}>.`,
     'You may use <context>...</context> for hidden reasoning/context, but keep the visible reply only inside the visible tag.',
@@ -123,9 +145,206 @@ export function buildPrompt(statusData: StatusData, uiMessages: UiMessage[], use
     `Current location: ${statusData.world.currentLocation}`,
     `Current relationship stage: ${target?.stage ?? ''}`,
     topEvent ? `Latest event: ${topEvent[0]} - ${topEvent[1]}` : '',
+    summaryContext,
     conversationHistory,
     userInput ? `Current user input: ${userInput}` : '',
-  ]
+  ];
+
+  // Only ask main API for <progress> when no secondary API is handling it
+  if (!options?.skipProgress) {
+    parts.push(buildProgressInstruction(statusData));
+  }
+
+  return parts.filter(Boolean).join('\n');
+}
+
+// ── Progress instruction & prompt builders ──
+
+function buildProgressInstruction(statusData: StatusData): string {
+  const target = getActiveTarget(statusData);
+  const inventoryList =
+    Object.entries(statusData.player.inventory)
+      .map(([name, d]) => `${name}(${d.count})`)
+      .join('、') || '无';
+  const outfitList = target
+    ? Object.entries(target.outfits)
+        .map(([k, v]) => `${k}:${v}`)
+        .join('；')
+    : '';
+
+  return [
+    '',
+    'After your visible reply, you MUST output a <progress> block to record state changes.',
+    'Use key:value format, one per line. Only include fields that changed; omit unchanged fields.',
+    'Available fields:',
+    '  时间:new_time          — Update if time has advanced (format: YYYY-MM-DD HH:mm)',
+    '  地点:new_location      — Update if characters moved to a new location',
+    '  好感度:±N              — Affinity change (e.g. 好感度:+3 or 好感度:-5), range 0-100',
+    '  着装.部位:描述          — Update outfit for a body part (e.g. 着装.上装:换上了黑色卫衣)',
+    '  事件名:event_description — Add/replace a notable recent event (can have multiple)',
+    '  物品+物品名:数量:描述    — Item gained (e.g. 物品+匕首:1:从地上捡到的)',
+    '  物品-物品名              — Item lost/used',
+    '',
+    'Example:',
+    '<progress>',
+    '时间:2026-03-14 01:30',
+    '地点:旧城区·便利店',
+    '好感度:+2',
+    '着装.上装:换上了便利店买的雨衣',
+    '深夜外出:两人决定去便利店买夜宵。',
+    '物品+塑料袋:1:装着零食的便利店袋子',
+    '</progress>',
+    '',
+    `Current state snapshot:`,
+    `  时间: ${statusData.world.currentTime}`,
+    `  地点: ${statusData.world.currentLocation}`,
+    `  好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+    `  着装: ${outfitList || '无'}`,
+    `  物品: ${inventoryList}`,
+  ].join('\n');
+}
+
+export function buildProgressPrompt(
+  statusData: StatusData,
+  recentMessages: UiMessage[],
+): Array<{ role: 'system' | 'user'; content: string }> {
+  const target = getActiveTarget(statusData);
+  const inventoryList =
+    Object.entries(statusData.player.inventory)
+      .map(([name, d]) => `${name}(${d.count})`)
+      .join('、') || '无';
+  const outfitList = target
+    ? Object.entries(target.outfits)
+        .map(([k, v]) => `${k}:${v}`)
+        .join('；')
+    : '';
+
+  const formatted = recentMessages
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .slice(-6)
+    .map(m => {
+      const text = m.role === 'assistant' ? getVisibleMessageText(m) || m.text : m.text;
+      const speaker = m.speaker || (m.role === 'assistant' ? 'Assistant' : 'User');
+      return `[${speaker}]\n${text.trim()}`;
+    })
     .filter(Boolean)
-    .join('\n');
+    .join('\n\n');
+
+  return [
+    {
+      role: 'system' as const,
+      content: [
+        '你是一个精确的状态追踪器。根据以下对话内容，分析是否有任何变量需要更新。',
+        '',
+        '当前状态：',
+        `  时间: ${statusData.world.currentTime}`,
+        `  地点: ${statusData.world.currentLocation}`,
+        `  好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+        `  着装: ${outfitList || '无'}`,
+        `  物品: ${inventoryList}`,
+        '',
+        '请用 <progress> 标签输出变化的字段，每行一个 key:value。如果没有任何变化，输出空的 <progress></progress>。',
+        '可用字段：',
+        '  时间:YYYY-MM-DD HH:mm',
+        '  地点:新地点',
+        '  好感度:±N（增减值，如 +3 或 -5）',
+        '  着装.部位:描述',
+        '  事件名:事件描述',
+        '  物品+名称:数量:描述',
+        '  物品-名称',
+        '',
+        '只输出变化的字段，未变化的省略。',
+      ].join('\n'),
+    },
+    {
+      role: 'user' as const,
+      content: `请分析以下对话并输出变量更新：\n\n${formatted}`,
+    },
+  ];
+}
+
+// ── Progress tag parser ──
+
+export type ProgressUpdate = {
+  time?: string;
+  location?: string;
+  affinityDelta?: number;
+  outfitChanges: Record<string, string>;
+  events: Record<string, string>;
+  itemsGained: Array<{ name: string; count: number; description: string }>;
+  itemsLost: string[];
+};
+
+export function parseProgressUpdate(rawResponse: string): ProgressUpdate | null {
+  const tagged = extractTaggedReply(rawResponse, 'progress', false);
+  if (!tagged) return null;
+
+  const result: ProgressUpdate = { events: {}, outfitChanges: {}, itemsGained: [], itemsLost: [] };
+  let hasAnyField = false;
+
+  for (const line of tagged.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // 时间:value
+    const timeMatch = trimmed.match(/^时间[:：]\s*(.+)/);
+    if (timeMatch) {
+      result.time = timeMatch[1].trim();
+      hasAnyField = true;
+      continue;
+    }
+
+    // 地点:value
+    const locMatch = trimmed.match(/^地点[:：]\s*(.+)/);
+    if (locMatch) {
+      result.location = locMatch[1].trim();
+      hasAnyField = true;
+      continue;
+    }
+
+    // 好感度:±N
+    const affMatch = trimmed.match(/^好感度[:：]\s*([+\-]?\d+)/);
+    if (affMatch) {
+      result.affinityDelta = parseInt(affMatch[1], 10) || 0;
+      hasAnyField = true;
+      continue;
+    }
+
+    // 着装.部位:描述
+    const outfitMatch = trimmed.match(/^着装[.．]\s*([^:：]+)[:：]\s*(.+)/);
+    if (outfitMatch) {
+      result.outfitChanges[outfitMatch[1].trim()] = outfitMatch[2].trim();
+      hasAnyField = true;
+      continue;
+    }
+
+    // 物品+name:count:desc
+    const gainMatch = trimmed.match(/^物品\+\s*([^:：]+)[:：]\s*(\d+)(?:[:：]\s*(.+))?/);
+    if (gainMatch) {
+      result.itemsGained.push({
+        name: gainMatch[1].trim(),
+        count: Math.max(1, parseInt(gainMatch[2], 10) || 1),
+        description: gainMatch[3]?.trim() ?? '',
+      });
+      hasAnyField = true;
+      continue;
+    }
+
+    // 物品-name
+    const loseMatch = trimmed.match(/^物品[-\-]\s*(.+)/);
+    if (loseMatch) {
+      result.itemsLost.push(loseMatch[1].trim());
+      hasAnyField = true;
+      continue;
+    }
+
+    // Generic event line: eventName:description
+    const eventMatch = trimmed.match(/^([^:：]+)[:：]\s*(.+)/);
+    if (eventMatch) {
+      result.events[eventMatch[1].trim()] = eventMatch[2].trim();
+      hasAnyField = true;
+    }
+  }
+
+  return hasAnyField ? result : null;
 }

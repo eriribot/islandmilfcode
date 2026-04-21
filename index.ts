@@ -1,36 +1,48 @@
 import './styles.css';
+import './title/styles.css';
 
-import { getReaderMessages, getVisibleMessageText } from './message-format';
+import { changeDependency, submitMessage, type ActionContext } from './actions';
+import { setupStreamingHooks } from './actions/streaming';
+import { getReaderMessages } from './message-format';
 import { renderApp } from './render';
-import { clamp } from './variables/normalize';
-import { formatTime } from './variables/normalize';
+import { createSave, deleteSave, loadSave, writeSave } from './state/saves';
 import {
-  createInitialState,
   clampFocusedMessageIndex,
-  syncFocusedMessage,
+  createInitialState,
+  deserializeMessages,
   getReaderMessageByIndex,
   getSourceUserTextForReaderIndex,
-  loadConversationHistory,
   replaceConversationMessages,
   rollbackConversation,
-  saveMessagesToVariables,
+  serializeMessages,
+  syncFocusedMessage,
 } from './state/store';
-import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
-import { submitMessage, changeDependency, type ActionContext } from './actions';
-import { setupStreamingHooks } from './actions/streaming';
-import type { FloatingPhonePosition, NotificationState, TabKey, TavernWindow } from './types';
+import {
+  loadSummaryApiConfig,
+  rerollSummaryEntry,
+  resumeAutoSummary,
+  runSummary,
+  saveSummaryApiConfig,
+} from './summary';
+import type { SummaryApiConfig } from './summary/types';
+import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
+import { renderCharacterCreation, renderTitleHome } from './title/render';
+import type { FloatingPhonePosition, NotificationState, StatusData, TabKey, TavernWindow } from './types';
 import { getActiveTarget } from './types';
+import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
+import { clamp } from './variables/normalize';
 
 const win = window as TavernWindow;
 const root = document.querySelector<HTMLDivElement>('#app');
 
-const FLOATING_PHONE_STORAGE_KEY = 'antiml-floating-phone-position-v3';
-const FLOATING_PHONE_CUSTOMIZED_KEY = 'antiml-floating-phone-customized-v3';
+const FLOATING_PHONE_STORAGE_KEY = 'islandmilfcode-floating-phone-position-v3';
+const FLOATING_PHONE_CUSTOMIZED_KEY = 'islandmilfcode-floating-phone-customized-v3';
 const FLOATING_PHONE_EDGE_GAP = 18;
 const FLOATING_PHONE_DRAG_THRESHOLD = 6;
 const READER_CONTEXT_MENU_GAP = 12;
 const READER_CONTEXT_MENU_WIDTH = 240;
 const READER_CONTEXT_MENU_HEIGHT = 176;
+const STATUS_CACHE_KEY = 'islandmilfcode-status-cache-v1';
 
 let dragState: {
   pointerId: number;
@@ -113,13 +125,17 @@ function loadFloatingPhonePosition(): FloatingPhonePosition {
 function persistFloatingPhonePosition(position: FloatingPhonePosition) {
   try {
     window.localStorage.setItem(FLOATING_PHONE_STORAGE_KEY, JSON.stringify(position));
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function markFloatingPhoneCustomized() {
   try {
     window.localStorage.setItem(FLOATING_PHONE_CUSTOMIZED_KEY, '1');
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function hasCustomizedFloatingPhonePosition() {
@@ -136,35 +152,145 @@ let adapter: VariableAdapter;
 const state = createInitialState(loadFloatingPhonePosition());
 const eventStops: Array<() => void> = [];
 
+// ── StatusData localStorage cache ──
+// Our in-memory state.statusData is the source of truth during a session.
+// We cache to localStorage so it persists reliably across page loads and
+// doesn't get overwritten by stale MVU round-trip echoes.
+
+function getStatusCacheKey() {
+  return STATUS_CACHE_KEY;
+}
+
+function cacheStatusData(data: StatusData) {
+  try {
+    localStorage.setItem(getStatusCacheKey(), JSON.stringify(data));
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadCachedStatusData(): StatusData | null {
+  try {
+    const raw = localStorage.getItem(getStatusCacheKey());
+    return raw ? (JSON.parse(raw) as StatusData) : null;
+  } catch {
+    return null;
+  }
+}
+
+function guardedAdapterSave(data: StatusData) {
+  adapter.save(data);
+  cacheStatusData(data);
+}
+
+/** Wrapped adapter whose save() also writes to localStorage cache */
+const guardedAdapter: VariableAdapter = {
+  get source() {
+    return adapter.source;
+  },
+  load() {
+    return adapter.load();
+  },
+  save(data: StatusData) {
+    guardedAdapterSave(data);
+  },
+  onUpdate(cb: (data: StatusData) => void) {
+    return adapter.onUpdate(cb);
+  },
+};
+
 // Action context — lazily references adapter (set during init)
 const ctx: ActionContext = {
-  get state() { return state; },
-  get win() { return win; },
-  get adapter() { return adapter; },
+  get state() {
+    return state;
+  },
+  get win() {
+    return win;
+  },
+  get adapter() {
+    return guardedAdapter;
+  },
   render: () => render(),
-  showNotification: (n: NotificationState) => { state.notification = n; render(); },
+  showNotification: (n: NotificationState) => {
+    state.notification = n;
+    render();
+  },
   clearNotification: (shouldRender: boolean) => {
     if (!state.notification) return;
     state.notification = null;
     if (shouldRender) render();
   },
   persistConversation: () => {
-    saveMessagesToVariables(win, state.uiMessages);
+    persistToSave();
   },
   closeReaderContextMenu: (shouldRender: boolean) => {
     if (!state.readerContextMenu) return;
     state.readerContextMenu = null;
     if (shouldRender) render();
   },
+  get summaryStore() {
+    return state.summaryStore;
+  },
+  get summaryApiConfig() {
+    return state.summaryApiConfig;
+  },
+  onSummaryStoreUpdated: () => {
+    persistToSave();
+  },
 };
+
+// ── Save system ──
+
+function persistToSave() {
+  if (!state.activeSaveId) return;
+  writeSave(state.activeSaveId, {
+    messages: serializeMessages(state.uiMessages),
+    statusData: state.statusData,
+    summaryStore: state.summaryStore,
+  });
+}
+
+function enterSave(saveId: string) {
+  const save = loadSave(saveId);
+  if (!save) return;
+  state.activeSaveId = saveId;
+  state.creatingCharacter = false;
+  const msgs = deserializeMessages(save.messages);
+  replaceConversationMessages(state, msgs);
+  state.statusData = save.statusData;
+  state.summaryStore = save.summaryStore;
+  cacheStatusData(state.statusData);
+  state.draft = '';
+  state.generating = false;
+  state.currentGenerationId = '';
+  state.finalizedGenerationId = '';
+  state.notification = null;
+  state.readerContextMenu = null;
+  render();
+}
+
+function returnToTitle() {
+  if (state.activeSaveId) {
+    persistToSave();
+  }
+  state.activeSaveId = null;
+  state.creatingCharacter = false;
+  render();
+}
 
 // ── UI actions (thin wrappers that stay in index.ts) ──
 
 function openReaderContextMenu(readerIndex: number, clientX: number, clientY: number) {
   const message = getReaderMessageByIndex(state, readerIndex);
   if (!message) return;
-  const maxX = Math.max(READER_CONTEXT_MENU_GAP, window.innerWidth - READER_CONTEXT_MENU_WIDTH - READER_CONTEXT_MENU_GAP);
-  const maxY = Math.max(READER_CONTEXT_MENU_GAP, window.innerHeight - READER_CONTEXT_MENU_HEIGHT - READER_CONTEXT_MENU_GAP);
+  const maxX = Math.max(
+    READER_CONTEXT_MENU_GAP,
+    window.innerWidth - READER_CONTEXT_MENU_WIDTH - READER_CONTEXT_MENU_GAP,
+  );
+  const maxY = Math.max(
+    READER_CONTEXT_MENU_GAP,
+    window.innerHeight - READER_CONTEXT_MENU_HEIGHT - READER_CONTEXT_MENU_GAP,
+  );
   state.readerContextMenu = {
     readerIndex,
     sourceUserText: getSourceUserTextForReaderIndex(state, readerIndex),
@@ -212,6 +338,7 @@ async function rollbackToReaderInput(readerIndex: number) {
   const target = await rollbackConversation(state, readerIndex, win);
   if (!target?.sourceUserText) return;
   state.draft = target.sourceUserText;
+  guardedAdapterSave(state.statusData);
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
   render();
@@ -223,6 +350,7 @@ async function regenerateReaderMessage(readerIndex: number) {
   const target = await rollbackConversation(state, readerIndex, win);
   if (!target?.sourceUserText) return;
   state.draft = target.sourceUserText;
+  guardedAdapterSave(state.statusData);
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
   render();
@@ -272,8 +400,10 @@ function bindFloatingPhoneEvents() {
     if (event.button !== 0) return;
     dragState = {
       pointerId: event.pointerId,
-      startX: event.clientX, startY: event.clientY,
-      originX: state.floatingPhone.x, originY: state.floatingPhone.y,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: state.floatingPhone.x,
+      originY: state.floatingPhone.y,
       moved: false,
     };
     suppressFloatingPhoneClick = false;
@@ -331,9 +461,12 @@ function bindReaderDragEvents() {
     if ((event.target as HTMLElement).closest('[data-action="jump-message"]')) return;
     readerDragState = {
       pointerId: event.pointerId,
-      startX: event.clientX, startY: event.clientY,
+      startX: event.clientX,
+      startY: event.clientY,
       startedInBody: Boolean((event.target as HTMLElement).closest('.reader-card__body')),
-      intentLocked: false, scrolling: false, moved: false,
+      intentLocked: false,
+      scrolling: false,
+      moved: false,
     };
     if (!readerDragState.startedInBody) {
       reader.setPointerCapture(event.pointerId);
@@ -347,11 +480,16 @@ function bindReaderDragEvents() {
     const dy = event.clientY - readerDragState.startY;
     if (readerDragState.scrolling) return;
     if (!readerDragState.intentLocked && readerDragState.startedInBody) {
-      if (Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) { readerDragState.scrolling = true; return; }
+      if (Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) {
+        readerDragState.scrolling = true;
+        return;
+      }
       if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
         readerDragState.intentLocked = true;
         reader.setPointerCapture(event.pointerId);
-      } else { return; }
+      } else {
+        return;
+      }
     }
     if (Math.abs(dx) > 6) readerDragState.moved = true;
     if (!readerDragState.moved) return;
@@ -383,8 +521,14 @@ function bindReaderDragEvents() {
     if (scrolling) return;
     const THRESHOLD = 60;
     if (moved && Math.abs(dx) >= THRESHOLD) {
-      if (dx < 0 && canFlipReader('next')) { focusMessage(1); return; }
-      if (dx > 0 && canFlipReader('prev')) { focusMessage(-1); return; }
+      if (dx < 0 && canFlipReader('next')) {
+        focusMessage(1);
+        return;
+      }
+      if (dx > 0 && canFlipReader('prev')) {
+        focusMessage(-1);
+        return;
+      }
       resetReaderCardTransform(reader);
     } else {
       resetReaderCardTransform(reader);
@@ -400,7 +544,11 @@ function bindReaderContextMenuEvents() {
   root?.querySelector<HTMLElement>('.reader-card')?.addEventListener('contextmenu', event => {
     event.preventDefault();
     const readerCard = event.currentTarget as HTMLElement;
-    openReaderContextMenu(Number(readerCard.dataset.readerIndex ?? state.focusedMessageIndex), event.clientX, event.clientY);
+    openReaderContextMenu(
+      Number(readerCard.dataset.readerIndex ?? state.focusedMessageIndex),
+      event.clientX,
+      event.clientY,
+    );
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-message"]').forEach(button => {
     button.addEventListener('contextmenu', event => {
@@ -414,7 +562,9 @@ function bindReaderContextMenuEvents() {
 
 function bindEvents() {
   const textarea = root?.querySelector<HTMLTextAreaElement>('.composer-input');
-  textarea?.addEventListener('input', event => { state.draft = (event.target as HTMLTextAreaElement).value; });
+  textarea?.addEventListener('input', event => {
+    state.draft = (event.target as HTMLTextAreaElement).value;
+  });
   textarea?.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       event.preventDefault();
@@ -442,12 +592,110 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="close-phone"]').forEach(button => {
     button.addEventListener('click', () => closePhone());
   });
+  root?.querySelector<HTMLButtonElement>('[data-action="return-to-title"]')?.addEventListener('click', () => {
+    returnToTitle();
+  });
   root?.querySelector<HTMLButtonElement>('[data-action="send"]')?.addEventListener('click', () => {
     void submitMessage(ctx);
   });
-  root?.querySelector<HTMLButtonElement>('[data-action="dep-down"]')?.addEventListener('click', () => changeDependency(ctx, -1));
-  root?.querySelector<HTMLButtonElement>('[data-action="dep-up"]')?.addEventListener('click', () => changeDependency(ctx, 1));
-  root?.querySelector<HTMLButtonElement>('[data-action="open-notification"]')?.addEventListener('click', () => openNotification());
+  root
+    ?.querySelector<HTMLButtonElement>('[data-action="dep-down"]')
+    ?.addEventListener('click', () => changeDependency(ctx, -1));
+  root
+    ?.querySelector<HTMLButtonElement>('[data-action="dep-up"]')
+    ?.addEventListener('click', () => changeDependency(ctx, 1));
+  root
+    ?.querySelector<HTMLButtonElement>('[data-action="open-notification"]')
+    ?.addEventListener('click', () => openNotification());
+
+  // Summary actions
+  function triggerSummary(mode: 'auto' | 'minor' | 'major') {
+    if (state.summarizing) return;
+    state.summarizing = true;
+    render();
+    runSummary(
+      {
+        win,
+        summaryStore: state.summaryStore,
+        summaryApiConfig: state.summaryApiConfig,
+        uiMessages: state.uiMessages,
+        onStoreUpdated: () => {
+          persistToSave();
+          state.summarizing = false;
+          render();
+        },
+      },
+      mode,
+    ).catch(() => {
+      state.summarizing = false;
+      render();
+    });
+  }
+
+  root
+    ?.querySelector<HTMLButtonElement>('[data-action="summary-minor"]')
+    ?.addEventListener('click', () => triggerSummary('minor'));
+  root
+    ?.querySelector<HTMLButtonElement>('[data-action="summary-major"]')
+    ?.addEventListener('click', () => triggerSummary('major'));
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="summary-reroll"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const level = button.dataset.rerollLevel as 'minor' | 'major';
+      const index = parseInt(button.dataset.rerollIndex ?? '', 10);
+      if (!level || isNaN(index)) return;
+      if (state.summarizing) return;
+      state.summarizing = true;
+      render();
+      rerollSummaryEntry(
+        {
+          win,
+          summaryStore: state.summaryStore,
+          summaryApiConfig: state.summaryApiConfig,
+          uiMessages: state.uiMessages,
+          onStoreUpdated: () => {
+            persistToSave();
+            state.summarizing = false;
+            render();
+          },
+        },
+        level,
+        index,
+      ).catch(() => {
+        state.summarizing = false;
+        render();
+      });
+    });
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="summary-retry"]')?.addEventListener('click', () => {
+    state.summaryStore.lastError = null;
+    state.summaryStore.consecutiveFailures = 0;
+    triggerSummary('auto');
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="summary-resume"]')?.addEventListener('click', () => {
+    resumeAutoSummary(state.summaryStore);
+    persistToSave();
+    render();
+  });
+  root?.querySelector<HTMLInputElement>('[data-action="summary-toggle-custom"]')?.addEventListener('change', event => {
+    const checked = (event.target as HTMLInputElement).checked;
+    if (checked) {
+      state.summaryApiConfig = { apiurl: '', key: '', model: '', source: 'openai' };
+    } else {
+      state.summaryApiConfig = null;
+      saveSummaryApiConfig(null);
+    }
+    render();
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="summary-save-config"]')?.addEventListener('click', () => {
+    const apiurl = root?.querySelector<HTMLInputElement>('[data-field="summary-apiurl"]')?.value ?? '';
+    const key = root?.querySelector<HTMLInputElement>('[data-field="summary-key"]')?.value ?? '';
+    const model = root?.querySelector<HTMLInputElement>('[data-field="summary-model"]')?.value ?? '';
+    const source = root?.querySelector<HTMLInputElement>('[data-field="summary-source"]')?.value ?? 'openai';
+    const config: SummaryApiConfig = { apiurl, key, model, source };
+    state.summaryApiConfig = config;
+    saveSummaryApiConfig(config);
+    render();
+  });
 
   bindFloatingPhoneEvents();
   bindReaderDragEvents();
@@ -456,41 +704,38 @@ function bindEvents() {
 
 // ── Render ──
 
+const titleCallbacks: TitleCallbacks = {
+  enterSave,
+  returnToTitle,
+  startCreating: () => {
+    state.creatingCharacter = true;
+    render();
+  },
+  createAndEnter: opts => {
+    const saveId = createSave(opts);
+    enterSave(saveId);
+  },
+  deleteSave: id => {
+    deleteSave(id);
+  },
+  render: () => render(),
+};
+
 function render() {
   if (!root) return;
-  syncFocusedMessage(state);
-  root.innerHTML = renderApp(state, flipDirection);
-  bindEvents();
-}
-
-async function reloadConversation(options: { resetDraft?: boolean } = {}) {
-  const { resetDraft = false } = options;
-  const loadedMessages = await loadConversationHistory(win);
-  replaceConversationMessages(state, loadedMessages);
-  state.currentGenerationId = '';
-  state.finalizedGenerationId = '';
-  state.generating = false;
-  state.notification = null;
-  state.readerContextMenu = null;
-  if (resetDraft) {
-    state.draft = '';
-  }
-  render();
-}
-
-function setupConversationSyncHooks() {
-  if (typeof win.eventOn !== 'function' || !win.tavern_events) {
-    return;
-  }
-
-  const { CHAT_CHANGED } = win.tavern_events;
-
-  if (CHAT_CHANGED) {
-    const stop = win.eventOn(CHAT_CHANGED, async () => {
-      state.statusData = adapter.load();
-      await reloadConversation({ resetDraft: true });
-    });
-    eventStops.push(stop.stop);
+  if (state.activeSaveId) {
+    // Game screen
+    syncFocusedMessage(state);
+    root.innerHTML = renderApp(state, flipDirection);
+    bindEvents();
+  } else if (state.creatingCharacter) {
+    // Character creation screen
+    root.innerHTML = renderCharacterCreation();
+    bindCharacterCreationEvents(root, titleCallbacks);
+  } else {
+    // Title home screen
+    root.innerHTML = renderTitleHome();
+    bindTitleHomeEvents(root, titleCallbacks);
   }
 }
 
@@ -505,11 +750,15 @@ window.addEventListener('resize', () => {
   render();
 });
 
-window.addEventListener('pointerdown', event => {
-  if (!(event.target instanceof HTMLElement)) return;
-  if (event.target.closest('[data-reader-context-menu="true"]')) return;
-  ctx.closeReaderContextMenu(true);
-}, true);
+window.addEventListener(
+  'pointerdown',
+  event => {
+    if (!(event.target instanceof HTMLElement)) return;
+    if (event.target.closest('[data-reader-context-menu="true"]')) return;
+    ctx.closeReaderContextMenu(true);
+  },
+  true,
+);
 
 window.addEventListener('keydown', event => {
   if (event.key === 'Escape' && state.readerContextMenu) {
@@ -518,32 +767,23 @@ window.addEventListener('keydown', event => {
     return;
   }
   if (event.target instanceof HTMLTextAreaElement) return;
-  if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') { event.preventDefault(); focusMessage(-1); }
-  else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') { event.preventDefault(); focusMessage(1); }
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    focusMessage(-1);
+  } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+    event.preventDefault();
+    focusMessage(1);
+  }
 });
 
 // ── Async init ──
 
 async function init() {
   adapter = await createVariableAdapter(win);
-  state.statusData = adapter.load();
+  state.summaryApiConfig = loadSummaryApiConfig();
   setupStreamingHooks(ctx, eventStops);
-  await reloadConversation();
-  setupConversationSyncHooks();
-  const stopAdapterUpdate = adapter.onUpdate(data => {
-    if (JSON.stringify(data) !== JSON.stringify(state.statusData)) {
-      state.statusData = data;
-      const target = getActiveTarget(data);
-      ctx.showNotification({
-        kind: 'status',
-        title: 'Status updated',
-        preview: `${data.world.currentLocation} · ${target?.stage ?? ''}`,
-        targetTab: 'status',
-        timestamp: formatTime(data.world.currentTime),
-      });
-    }
-  });
-  eventStops.push(stopAdapterUpdate);
+  // Start at title screen (activeSaveId is null)
+  render();
 }
 init();
 
@@ -552,28 +792,16 @@ init();
 (window as any).render_game_to_text = () => {
   const target = getActiveTarget(state.statusData);
   return JSON.stringify({
-    screen: 'antiml diary paper page with draggable floating phone',
+    screen: state.activeSaveId ? 'game' : 'title',
+    activeSaveId: state.activeSaveId,
     phoneOpen: state.phoneOpen,
     phoneTab: state.activeTab,
     generating: state.generating,
     focusedMessageIndex: state.focusedMessageIndex,
-    focusedMessagePage: state.focusedMessagePage,
     draft: state.draft,
-    floatingPhone: state.floatingPhone,
     world: state.statusData.world,
-    activeTarget: target ? {
-      id: target.id, name: target.name, affinity: target.affinity,
-      stage: target.stage, titles: Object.keys(target.titles),
-    } : null,
-    notification: state.notification,
-    readerContextMenu: state.readerContextMenu ? {
-      readerIndex: state.readerContextMenu.readerIndex,
-      sourceUserText: state.readerContextMenu.sourceUserText,
-    } : null,
+    activeTarget: target ? { id: target.id, name: target.name, affinity: target.affinity, stage: target.stage } : null,
     messageCount: state.uiMessages.length,
-    lastMessage: state.uiMessages[state.uiMessages.length - 1]
-      ? getVisibleMessageText(state.uiMessages[state.uiMessages.length - 1]!)
-      : '',
   });
 };
 
@@ -582,6 +810,7 @@ init();
     const data = adapter.load();
     if (JSON.stringify(data) !== JSON.stringify(state.statusData)) {
       state.statusData = data;
+      cacheStatusData(data);
       render();
     }
   }

@@ -1,4 +1,25 @@
+import type { SummaryApiConfig, SummaryStore } from './summary/types';
+
 export type TabKey = 'summary' | 'status' | 'inventory';
+
+export type SaveSlot = {
+  id: string;
+  characterName: string;
+  personality: string;
+  appearance: string;
+  messages: PersistedMessage[];
+  statusData: StatusData;
+  summaryStore: SummaryStore;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type PersistedMessage = {
+  role: 'user' | 'assistant';
+  speaker: string;
+  text: string;
+  statusSnapshot?: StatusData;
+};
 
 export type TargetStatus = {
   id: string;
@@ -39,6 +60,7 @@ export type UiMessage = {
   text: string;
   streaming?: boolean;
   tavernMessageId?: number;
+  statusSnapshot?: StatusData;
 };
 
 export type NotificationState = {
@@ -62,6 +84,8 @@ export type ReaderContextMenuState = {
 };
 
 export type AppState = {
+  activeSaveId: string | null;
+  creatingCharacter: boolean;
   activeTab: TabKey;
   phoneOpen: boolean;
   floatingPhone: FloatingPhonePosition;
@@ -75,6 +99,9 @@ export type AppState = {
   statusData: StatusData;
   notification: NotificationState | null;
   readerContextMenu: ReaderContextMenuState | null;
+  summaryStore: SummaryStore;
+  summaryApiConfig: SummaryApiConfig | null;
+  summarizing: boolean;
 };
 
 export type TavernWindow = Window &
@@ -107,17 +134,22 @@ export type TavernWindow = Window &
       }>,
       option?: { refresh?: 'none' | 'affected' | 'all' },
     ) => Promise<void>;
-    deleteChatMessages?: (
-      messageIds: number[],
-      option?: { refresh?: 'none' | 'affected' | 'all' },
-    ) => Promise<void>;
+    deleteChatMessages?: (messageIds: number[], option?: { refresh?: 'none' | 'affected' | 'all' }) => Promise<void>;
     generate?: (config: Record<string, unknown>) => Promise<string>;
     generateRaw?: (config: Record<string, unknown>) => Promise<string>;
     createChatMessages?: (
-      messages: Array<{ role: 'system' | 'assistant' | 'user'; message: string; is_hidden?: boolean; data?: Record<string, unknown> }>,
+      messages: Array<{
+        role: 'system' | 'assistant' | 'user';
+        message: string;
+        is_hidden?: boolean;
+        data?: Record<string, unknown>;
+      }>,
       option?: { refresh?: 'none' | 'affected' | 'all'; insert_before?: number | 'end' },
     ) => Promise<void>;
-    updateVariablesWith?: (updater: (variables: Record<string, unknown>) => void, option?: Record<string, unknown>) => void;
+    updateVariablesWith?: (
+      updater: (variables: Record<string, unknown>) => void,
+      option?: Record<string, unknown>,
+    ) => void;
     getVariables?: (option?: Record<string, unknown>) => Record<string, unknown>;
     getCurrentMessageId?: () => number;
     eventOn?: (eventType: string, listener: (...args: any[]) => void) => { stop: () => void };

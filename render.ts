@@ -1,5 +1,5 @@
 import { getReaderMessages, getVisibleMessageText } from './message-format';
-import { formatDate, formatTime, getInventoryIcon } from './variables/normalize';
+import type { SummaryStore } from './summary/types';
 import type {
   AppState,
   FloatingPhonePosition,
@@ -7,10 +7,10 @@ import type {
   ReaderContextMenuState,
   StatusData,
   TabKey,
-  TargetStatus,
   UiMessage,
 } from './types';
 import { getActiveTarget } from './types';
+import { formatDate, formatTime, getInventoryIcon } from './variables/normalize';
 
 export function escapeHtml(value: string) {
   return value
@@ -315,11 +315,11 @@ function renderPaperWorkspace(state: AppState, flipDir: string = '') {
       </div>
 
       <div class="paper-composer-card">
-        <label class="paper-composer-card__label" for="antiml-composer">この物語の続き…</label>
+        <label class="paper-composer-card__label" for="islandmilfcode-composer">この物語の続き…</label>
         <textarea
-          id="antiml-composer"
+          id="islandmilfcode-composer"
           class="composer-input"
-          name="antiml-composer"
+          name="islandmilfcode-composer"
           placeholder="ここに書き続ける……"
           ${state.generating ? 'disabled' : ''}
         >${escapeHtml(state.draft)}</textarea>
@@ -338,6 +338,7 @@ function renderSummaryPanel(state: AppState) {
   const lastMessage = state.uiMessages[state.uiMessages.length - 1];
   const target = getActiveTarget(state.statusData);
   const alias = target?.alias ?? target?.name ?? '角色';
+  const store = state.summaryStore;
 
   return `
     <section class="panel-card panel-card--generic">
@@ -385,12 +386,139 @@ function renderSummaryPanel(state: AppState) {
             }
           </div>
         </div>
+
+        ${renderMemorySummarySection(store, state.summarizing)}
+        ${renderSummaryConfigSection(state)}
       </div>
     </section>
   `;
 }
 
-function renderStatusPanel(statusData: StatusData) {
+function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): string {
+  let errorHtml = '';
+  if (store.lastError) {
+    errorHtml = `
+      <div class="chip-card" style="border-left:3px solid var(--accent-warm,#e74c3c)">
+        <strong>总结失败 (${escapeHtml(store.lastError.level)})</strong>
+        <p>${escapeHtml(store.lastError.message)}</p>
+        <button class="mini-btn" data-action="summary-retry">重试</button>
+      </div>`;
+  }
+
+  if (store.autoPaused) {
+    errorHtml += `
+      <div class="chip-card" style="border-left:3px solid #f39c12">
+        <strong>自动总结已暂停</strong>
+        <p>连续失败 ${store.consecutiveFailures} 次</p>
+        <button class="mini-btn" data-action="summary-resume">恢复自动总结</button>
+      </div>`;
+  }
+
+  // ── 全局摘要 ──
+  const globalHtml = store.global
+    ? `<div class="subsection">
+        <div class="subsection-title">全局摘要</div>
+        <div class="chip-card"><p>${escapeHtml(store.global)}</p></div>
+      </div>`
+    : '';
+
+  // ── 大总结列表 ──
+  const majorHtml = store.major.length
+    ? `<div class="subsection">
+        <div class="subsection-title">大总结 <span style="opacity:0.5;font-size:11px">(${store.major.length}条)</span></div>
+        <div class="chip-list">${store.major
+          .map(
+            (e, i) =>
+              `<div class="chip-card" style="border-left:3px solid var(--accent-primary,#7c6ca8)">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <strong>#${i + 1} · 消息 ${e.range[0]}–${e.range[1]}</strong>
+                  <button class="mini-btn" data-action="summary-reroll" data-reroll-level="major" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>重roll</button>
+                </div>
+                <p>${escapeHtml(e.text)}</p>
+                <div style="font-size:10px;opacity:0.45;margin-top:4px">${escapeHtml(e.createdAt.slice(0, 16).replace('T', ' '))}</div>
+              </div>`,
+          )
+          .join('')}
+        </div>
+      </div>`
+    : '';
+
+  // ── 小总结列表 ──
+  const minorHtml = store.minor.length
+    ? `<div class="subsection">
+        <div class="subsection-title">小总结 <span style="opacity:0.5;font-size:11px">(${store.minor.length}条)</span></div>
+        <div class="chip-list">${store.minor
+          .map(
+            (e, i) =>
+              `<div class="chip-card">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <strong>#${i + 1} · 消息 ${e.range[0]}–${e.range[1]}</strong>
+                  <button class="mini-btn" data-action="summary-reroll" data-reroll-level="minor" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>重roll</button>
+                </div>
+                <p>${escapeHtml(e.text)}</p>
+                <div style="font-size:10px;opacity:0.45;margin-top:4px">${escapeHtml(e.createdAt.slice(0, 16).replace('T', ' '))}</div>
+              </div>`,
+          )
+          .join('')}
+        </div>
+      </div>`
+    : '';
+
+  const hasAny = store.global || store.major.length || store.minor.length;
+  const statusLine = `已总结到第 ${store.lastSummarizedIndex} 条 · 小总结 ${store.minor.length} · 大总结 ${store.major.length} · 全局 ${store.global ? '✓' : '—'}`;
+
+  return `
+    <div class="subsection">
+      <div class="subsection-title">记忆摘要 ${summarizing ? '<span style="opacity:0.6">⏳ 总结中…</span>' : ''}</div>
+      <div class="summary-status" style="font-size:11px;opacity:0.7;margin-bottom:8px">${statusLine}</div>
+      ${errorHtml}
+      ${hasAny ? [globalHtml, majorHtml, minorHtml].filter(Boolean).join('') : '<div class="empty-card">还没有生成过摘要。</div>'}
+      <div class="summary-actions" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
+        <button class="mini-btn" data-action="summary-minor" style="white-space:nowrap;flex:1;min-height:30px" ${summarizing ? 'disabled' : ''}>小总结</button>
+        <button class="mini-btn" data-action="summary-major" style="white-space:nowrap;flex:1;min-height:30px" ${summarizing ? 'disabled' : ''}>大总结</button>
+      </div>
+    </div>`;
+}
+
+function renderSummaryConfigSection(state: AppState): string {
+  const config = state.summaryApiConfig;
+  const useCustom = config !== null;
+
+  return `
+    <div class="subsection">
+      <div class="subsection-title">总结 API 设置</div>
+      <div class="chip-list">
+        <div class="chip-card">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" data-action="summary-toggle-custom" ${useCustom ? 'checked' : ''}>
+            <span>使用独立 API</span>
+          </label>
+        </div>
+        ${
+          useCustom
+            ? `
+          <div class="chip-card">
+            <label>API URL<br><input type="text" data-field="summary-apiurl" value="${escapeHtml(config?.apiurl ?? '')}" style="width:100%;box-sizing:border-box" placeholder="https://..."></label>
+          </div>
+          <div class="chip-card">
+            <label>API Key<br><input type="password" data-field="summary-key" value="${escapeHtml(config?.key ?? '')}" style="width:100%;box-sizing:border-box" placeholder="sk-..."></label>
+          </div>
+          <div class="chip-card">
+            <label>Model<br><input type="text" data-field="summary-model" value="${escapeHtml(config?.model ?? '')}" style="width:100%;box-sizing:border-box" placeholder="gpt-4o-mini"></label>
+          </div>
+          <div class="chip-card">
+            <label>Source<br><input type="text" data-field="summary-source" value="${escapeHtml(config?.source ?? 'openai')}" style="width:100%;box-sizing:border-box" placeholder="openai"></label>
+          </div>
+          <button class="mini-btn" data-action="summary-save-config">保存配置</button>
+        `
+            : ''
+        }
+      </div>
+    </div>`;
+}
+
+function renderStatusPanel(state: AppState) {
+  const statusData = state.statusData;
   const target = getActiveTarget(statusData);
   const titles = target ? Object.entries(target.titles) : [];
   const recentEvents = Object.entries(statusData.world.recentEvents);
@@ -494,7 +622,7 @@ function renderInventoryPanel(statusData: StatusData) {
 }
 
 function renderPhonePanel(state: AppState) {
-  if (state.activeTab === 'status') return renderStatusPanel(state.statusData);
+  if (state.activeTab === 'status') return renderStatusPanel(state);
   if (state.activeTab === 'inventory') return renderInventoryPanel(state.statusData);
   return renderSummaryPanel(state);
 }
@@ -534,6 +662,7 @@ function renderPhone(state: AppState) {
               </div>
               <div class="top-card__actions">
                 <div class="contact-stage">${escapeHtml(target?.stage ?? '')}</div>
+                <button class="return-title-btn" data-action="return-to-title" aria-label="回到标题" title="タイトルに戻る">⌂</button>
                 <button class="close-phone-btn" data-action="close-phone" aria-label="关闭手帐">×</button>
               </div>
             </header>
@@ -554,7 +683,7 @@ export function renderApp(state: AppState, flipDir: string = '') {
   const unreadBadge = state.notification ? '<span class="floating-phone__badge">1</span>' : '';
 
   return `
-    <main class="antiml-scene">
+    <main class="islandmilfcode-scene">
       ${renderPaperWorkspace(state, flipDir)}
       ${renderReaderContextMenu(state.readerContextMenu, state.generating)}
 
