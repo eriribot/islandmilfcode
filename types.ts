@@ -2,16 +2,55 @@ import type { SummaryApiConfig, SummaryStore } from './summary/types';
 
 export type TabKey = 'summary' | 'status' | 'inventory';
 
-export type SaveSlot = {
-  id: string;
+export type SaveKind = 'manual' | 'autosave';
+
+export type SaveMeta = {
+  saveId: string;
+  runId: string;
+  kind: SaveKind;
+  label: string;
+  createdAt: number;
+  updatedAt: number;
+  messageIndex: number;
   characterName: string;
   personality: string;
   appearance: string;
-  messages: PersistedMessage[];
+  location?: string;
+  gameTime?: string;
+  preview?: string;
+  messageCount: number;
+  version: number;
+};
+
+export type PlayerProfile = {
+  name: string;
+  personality: string;
+  appearance: string;
+};
+
+export type GameState = {
+  runId: string;
   statusData: StatusData;
+  currentMessageIndex: number;
+  worldState?: Record<string, unknown>;
+  runtimeFlags?: Record<string, unknown>;
+};
+
+export type SavePayload = {
+  saveId: string;
+  runId: string;
+  gameState: GameState;
+  chatLog: PersistedMessage[];
   summaryStore: SummaryStore;
-  createdAt: number;
-  updatedAt: number;
+  messageSnapshots?: MessageSnapshot[];
+  version: number;
+};
+
+export type MessageSnapshot = {
+  messageIndex: number;
+  kind: 'base' | 'delta';
+  state: unknown;
+  baseIndex?: number;
 };
 
 export type PersistedMessage = {
@@ -81,11 +120,14 @@ export type ReaderContextMenuState = {
   y: number;
   readerIndex: number;
   sourceUserText: string;
+  canDeleteMessage: boolean;
 };
 
 export type AppState = {
+  activeRunId: string | null;
   activeSaveId: string | null;
   creatingCharacter: boolean;
+  playerProfile: PlayerProfile;
   activeTab: TabKey;
   phoneOpen: boolean;
   floatingPhone: FloatingPhonePosition;

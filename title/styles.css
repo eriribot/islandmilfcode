@@ -269,6 +269,7 @@
 
 .gal-save-load {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -302,10 +303,15 @@
   font-size: 0.7rem;
   color: #b0a08a;
   margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gal-save-delete {
+  flex: 0 0 40px;
   width: 40px;
+  min-width: 40px;
   display: flex;
   align-items: center;
   justify-content: center;

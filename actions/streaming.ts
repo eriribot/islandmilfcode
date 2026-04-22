@@ -38,6 +38,20 @@ export function updateStreamingText(ctx: StreamingContext, text: string) {
   ctx.render();
 }
 
+export function discardStreamingMessage(ctx: StreamingContext) {
+  const { state } = ctx;
+  const current = state.uiMessages[state.uiMessages.length - 1];
+  if (!current?.streaming) {
+    return false;
+  }
+
+  state.uiMessages = state.uiMessages.slice(0, -1);
+  state.currentGenerationId = '';
+  syncFocusedMessage(state, { keepLatest: true });
+  ctx.persistConversation();
+  return true;
+}
+
 export function finalizeStreamingText(
   ctx: StreamingContext,
   text: string,

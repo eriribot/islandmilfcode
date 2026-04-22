@@ -37,7 +37,10 @@ function isLegacyHiddenMessage(message: NonNullable<ReturnType<NonNullable<Taver
 /** Serialize uiMessages to PersistedMessage[] for save slots. */
 export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
   return messages
-    .filter(message => message.role === 'user' || message.role === 'assistant')
+    .filter(
+      (message): message is UiMessage & { role: 'user' | 'assistant' } =>
+        message.role === 'user' || message.role === 'assistant',
+    )
     .map(message => {
       const base: PersistedMessage = {
         role: message.role,
@@ -72,8 +75,14 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
 
 export function createInitialState(floatingPhone: FloatingPhonePosition): AppState {
   return {
+    activeRunId: null,
     activeSaveId: null,
     creatingCharacter: false,
+    playerProfile: {
+      name: '',
+      personality: '',
+      appearance: '',
+    },
     activeTab: 'summary',
     phoneOpen: false,
     floatingPhone,
@@ -219,6 +228,38 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   state.notification = null;
 
   return target;
+}
+
+export async function deleteReaderMessage(state: AppState, readerIndex: number, win?: TavernWindow) {
+  const targetMessage = getReaderMessageByIndex(state, readerIndex);
+  if (!targetMessage) return false;
+
+  const targetUiIndex = state.uiMessages.findIndex(message => message.id === targetMessage.id);
+  if (targetUiIndex < 0) return false;
+
+  if (typeof targetMessage.tavernMessageId === 'number' && typeof win?.deleteChatMessages === 'function') {
+    try {
+      await win.deleteChatMessages([targetMessage.tavernMessageId], { refresh: 'none' });
+    } catch {
+      // ignore outside Tavern or deletion failures
+    }
+  }
+
+  for (let i = targetUiIndex - 1; i >= 0; i -= 1) {
+    const msg = state.uiMessages[i];
+    if (msg?.statusSnapshot) {
+      state.statusData = JSON.parse(JSON.stringify(msg.statusSnapshot));
+      break;
+    }
+  }
+
+  state.uiMessages = state.uiMessages.filter(message => message.id !== targetMessage.id);
+  syncFocusedMessage(state);
+  state.currentGenerationId = '';
+  state.finalizedGenerationId = '';
+  state.notification = null;
+
+  return true;
 }
 
 export function pushMessage(state: AppState, message: UiMessage) {

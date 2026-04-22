@@ -8,7 +8,7 @@ export function loadSummaryStore(): SummaryStore {
   return createDefaultSummaryStore();
 }
 
-export function saveSummaryStore(): void {
+export function saveSummaryStore(_win?: unknown, _store?: SummaryStore): void {
   // no-op: summary is persisted via the save slot in index.ts
 }
 

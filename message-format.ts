@@ -1,5 +1,5 @@
 import type { SummaryStore } from './summary/types';
-import type { StatusData, UiMessage } from './types';
+import type { PlayerProfile, StatusData, UiMessage } from './types';
 import { getActiveTarget } from './types';
 
 export const PRIMARY_VISIBLE_TAG = 'content';
@@ -125,11 +125,21 @@ export function buildPrompt(
   uiMessages: UiMessage[],
   userInput: string,
   summaryStore?: SummaryStore | null,
-  options?: { skipProgress?: boolean },
+  options?: { skipProgress?: boolean; playerProfile?: PlayerProfile | null },
 ) {
   const target = getActiveTarget(statusData);
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
   const targetName = target?.name ?? 'Target';
+  const playerProfile = options?.playerProfile;
+  const playerProfileText = playerProfile?.name
+    ? [
+        `Player name: ${playerProfile.name}`,
+        playerProfile.personality ? `Player personality: ${playerProfile.personality}` : '',
+        playerProfile.appearance ? `Player appearance: ${playerProfile.appearance}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : '';
 
   const hasSummary = summaryStore && (summaryStore.global || summaryStore.major.length || summaryStore.minor.length);
   const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
@@ -145,6 +155,7 @@ export function buildPrompt(
     `Current location: ${statusData.world.currentLocation}`,
     `Current relationship stage: ${target?.stage ?? ''}`,
     topEvent ? `Latest event: ${topEvent[0]} - ${topEvent[1]}` : '',
+    playerProfileText,
     summaryContext,
     conversationHistory,
     userInput ? `Current user input: ${userInput}` : '',

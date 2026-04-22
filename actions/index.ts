@@ -5,7 +5,13 @@ import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import { getActiveTarget } from '../types';
 import type { VariableAdapter } from '../variables/adapter';
 import { affinityStage, applyProgressUpdate, clamp, formatTime } from '../variables/normalize';
-import { ensureStreamingMessage, finalizeStreamingText, type StreamingContext, updateStreamingText } from './streaming';
+import {
+  discardStreamingMessage,
+  ensureStreamingMessage,
+  finalizeStreamingText,
+  type StreamingContext,
+  updateStreamingText,
+} from './streaming';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
@@ -78,6 +84,7 @@ export async function submitMessage(
     return;
   }
 
+  let generationSucceeded = false;
   try {
     ensureStreamingMessage(ctx);
     ctx.render();
@@ -99,6 +106,7 @@ export async function submitMessage(
               {
                 role: 'system',
                 content: buildPrompt(state.statusData, promptHistory, '', ctx.summaryStore, {
+                  playerProfile: state.playerProfile,
                   skipProgress: !!ctx.summaryApiConfig,
                 }),
               },
@@ -111,6 +119,7 @@ export async function submitMessage(
         : {
             ...baseConfig,
             user_input: buildPrompt(state.statusData, promptHistory, userInput, ctx.summaryStore, {
+              playerProfile: state.playerProfile,
               skipProgress: !!ctx.summaryApiConfig,
             }),
           },
@@ -165,19 +174,25 @@ export async function submitMessage(
     if (options.clearDraftOnSuccess) {
       state.draft = '';
     }
+    generationSucceeded = true;
   } catch (error) {
-    const requestGenerationId = state.currentGenerationId;
-    finalizeStreamingText(
-      ctx,
-      `<content>Generation failed: ${error instanceof Error ? error.message : String(error)}</content>`,
-      requestGenerationId,
-    );
+    discardStreamingMessage(ctx);
+    state.draft = userInput;
+    state.currentGenerationId = '';
+    ctx.persistConversation();
+    ctx.showNotification({
+      kind: 'status',
+      title: '生成失败',
+      preview: error instanceof Error ? error.message : String(error),
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
   } finally {
     state.generating = false;
     ctx.render();
 
     // Trigger summary in the background (non-blocking)
-    if (typeof win.generateRaw === 'function') {
+    if (generationSucceeded && typeof win.generateRaw === 'function') {
       const summaryCtx: SummaryContext = {
         win,
         summaryStore: ctx.summaryStore,

@@ -42,7 +42,7 @@ function renderPhoneNotification(notification: NotificationState | null) {
   return `
     <button class="ios-notification" data-action="open-notification">
       <div class="ios-notification-app">
-        <span class="ios-notification-icon">✦</span>
+        <span class="ios-notification-icon">通知</span>
         <span>手帐记录</span>
         <span class="ios-notification-time">${escapeHtml(notification.timestamp)}</span>
       </div>
@@ -148,7 +148,7 @@ function renderPreviewCard(message: UiMessage, index: number, side: 'before' | '
 
 function renderReaderHint(direction: 'prev' | 'next', enabled: boolean) {
   const icon = direction === 'prev' ? '←' : '→';
-  const label = direction === 'prev' ? '前层' : '后层';
+  const label = direction === 'prev' ? '前页' : '后页';
 
   return `
     <span class="reader-card__hint ${enabled ? 'is-active' : 'is-disabled'}" aria-hidden="true">
@@ -162,28 +162,41 @@ function renderReaderContextMenu(menu: ReaderContextMenuState | null, generating
   if (!menu) return '';
 
   const floorLabel = String(menu.readerIndex + 1).padStart(2, '0');
-  const promptPreview = menu.sourceUserText
+  const hasRollbackSource = Boolean(menu.sourceUserText);
+  const promptPreview = hasRollbackSource
     ? escapeHtml(menu.sourceUserText.slice(0, 54).trim() + (menu.sourceUserText.length > 54 ? '…' : ''))
     : '该楼层暂时没有可回溯的输入。';
-
-  return `
-    <div class="reader-context-menu" style="left:${menu.x}px;top:${menu.y}px;" data-reader-context-menu="true">
-      <div class="reader-context-menu__meta">楼层 ${floorLabel}</div>
-      <div class="reader-context-menu__preview">${promptPreview}</div>
+  const actionHtml = hasRollbackSource
+    ? `
       <button
         class="reader-context-menu__action"
         data-action="reader-rollback"
-        ${menu.sourceUserText ? '' : 'disabled'}
       >
         回溯楼层输入
       </button>
       <button
         class="reader-context-menu__action reader-context-menu__action--primary"
         data-action="reader-regenerate"
-        ${menu.sourceUserText && !generating ? '' : 'disabled'}
+        ${generating ? 'disabled' : ''}
       >
         ${generating ? '生成中…' : '重新生成该楼层'}
       </button>
+    `
+    : `
+      <button
+        class="reader-context-menu__action reader-context-menu__action--primary"
+        data-action="reader-delete"
+        ${menu.canDeleteMessage ? '' : 'disabled'}
+      >
+        删除该楼层
+      </button>
+    `;
+
+  return `
+    <div class="reader-context-menu" style="left:${menu.x}px;top:${menu.y}px;" data-reader-context-menu="true">
+      <div class="reader-context-menu__meta">楼层 ${floorLabel}</div>
+      <div class="reader-context-menu__preview">${promptPreview}</div>
+      ${actionHtml}
     </div>
   `;
 }
@@ -205,7 +218,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
             </div>
           </div>
           <div class="reader-card__body">
-            <p class="reader-card__text">等待新的记录写入。</p>
+            <p class="reader-card__text">等待着你的故事开始。</p>
           </div>
         </article>
         <div class="paper-reader__lane paper-reader__lane--bottom"><div class="reader-preview reader-preview--ghost"></div></div>
@@ -227,7 +240,6 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
     </div>
   `;
 
-  // Empty text: show only preview lanes, no card body
   if (!visibleText && !message.streaming) {
     return `<section class="paper-reader">${topLane}${bottomLane}</section>`;
   }
@@ -248,7 +260,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
             ${renderReaderHint('prev', Boolean(model.previousMessage))}
           </div>
           <span class="reader-card__index">${String(model.currentIndex + 1).padStart(2, '0')}</span>
-          ${message.streaming ? '<span class="reader-card__streaming">記録中…</span>' : ''}
+          ${message.streaming ? '<span class="reader-card__streaming">记录中…</span>' : ''}
           <div class="reader-card__hint-group reader-card__hint-group--right">
             ${renderReaderHint('next', Boolean(model.nextMessage))}
           </div>
@@ -267,7 +279,7 @@ function getWeekday(dateStr: string) {
   const days = ['日', '月', '火', '水', '木', '金', '土'];
   try {
     const d = new Date(dateStr.replace(/\s.*$/, ''));
-    if (!isNaN(d.getTime())) return days[d.getDay()] + '曜日';
+    if (!isNaN(d.getTime())) return `${days[d.getDay()]}曜日`;
   } catch {
     /* ignore */
   }
@@ -286,10 +298,10 @@ function renderJournalHeader(state: AppState) {
         <div class="journal-date">
           ${escapeHtml(dateStr)}<small>${escapeHtml(formatTime(state.statusData.world.currentTime))}</small>
         </div>
-        <div class="journal-location">📍 ${escapeHtml(state.statusData.world.currentLocation)}</div>
+        <div class="journal-location">地点 ${escapeHtml(state.statusData.world.currentLocation)}</div>
       </div>
       <div class="journal-sticker">
-        ✿ ${escapeHtml(target?.stage ?? '')}
+        阶段 ${escapeHtml(target?.stage ?? '')}
       </div>
     </header>
   `;
@@ -304,29 +316,29 @@ function renderPaperWorkspace(state: AppState, flipDir: string = '') {
       ${renderJournalHeader(state)}
 
       <div class="section-tab">
-        <span class="section-tab__label">対話ログ</span>
-        <span class="section-tab__status">${state.generating ? '✎ 記録中…' : '✓ 落筆済み'}</span>
+        <span class="section-tab__label">对话记录</span>
+        <span class="section-tab__status">${state.generating ? '记录中…' : '已落笔'}</span>
       </div>
 
       ${renderReaderDeck(state, flipDir)}
 
       <div class="section-tab" style="margin-top:16px">
-        <span class="section-tab__label" style="background:var(--washi-mint)">続きを書く</span>
+        <span class="section-tab__label" style="background:var(--washi-mint)">继续书写</span>
       </div>
 
       <div class="paper-composer-card">
-        <label class="paper-composer-card__label" for="islandmilfcode-composer">この物語の続き…</label>
+        <label class="paper-composer-card__label" for="islandmilfcode-composer">这个故事的后续…</label>
         <textarea
           id="islandmilfcode-composer"
           class="composer-input"
           name="islandmilfcode-composer"
-          placeholder="ここに書き続ける……"
+          placeholder="在这里写下接下来的内容……"
           ${state.generating ? 'disabled' : ''}
         >${escapeHtml(state.draft)}</textarea>
 
         <div class="composer-actions">
-          ${state.generating ? '<span class="composer-tip">✎ 書き込み中……</span>' : ''}
-          <button class="send-btn" data-action="send" ${state.generating ? 'disabled' : ''}>記録する ❋</button>
+          ${state.generating ? '<span class="composer-tip">写入中……</span>' : ''}
+          <button class="send-btn" data-action="send" ${state.generating ? 'disabled' : ''}>记录</button>
         </div>
       </div>
     </section>
@@ -414,7 +426,6 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
       </div>`;
   }
 
-  // ── 全局摘要 ──
   const globalHtml = store.global
     ? `<div class="subsection">
         <div class="subsection-title">全局摘要</div>
@@ -422,7 +433,6 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
       </div>`
     : '';
 
-  // ── 大总结列表 ──
   const majorHtml = store.major.length
     ? `<div class="subsection">
         <div class="subsection-title">大总结 <span style="opacity:0.5;font-size:11px">(${store.major.length}条)</span></div>
@@ -431,7 +441,7 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
             (e, i) =>
               `<div class="chip-card" style="border-left:3px solid var(--accent-primary,#7c6ca8)">
                 <div style="display:flex;justify-content:space-between;align-items:center">
-                  <strong>#${i + 1} · 消息 ${e.range[0]}–${e.range[1]}</strong>
+                  <strong>#${i + 1} · 消息 ${e.range[0]}-${e.range[1]}</strong>
                   <button class="mini-btn" data-action="summary-reroll" data-reroll-level="major" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>重roll</button>
                 </div>
                 <p>${escapeHtml(e.text)}</p>
@@ -443,7 +453,6 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
       </div>`
     : '';
 
-  // ── 小总结列表 ──
   const minorHtml = store.minor.length
     ? `<div class="subsection">
         <div class="subsection-title">小总结 <span style="opacity:0.5;font-size:11px">(${store.minor.length}条)</span></div>
@@ -452,7 +461,7 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
             (e, i) =>
               `<div class="chip-card">
                 <div style="display:flex;justify-content:space-between;align-items:center">
-                  <strong>#${i + 1} · 消息 ${e.range[0]}–${e.range[1]}</strong>
+                  <strong>#${i + 1} · 消息 ${e.range[0]}-${e.range[1]}</strong>
                   <button class="mini-btn" data-action="summary-reroll" data-reroll-level="minor" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>重roll</button>
                 </div>
                 <p>${escapeHtml(e.text)}</p>
@@ -465,11 +474,11 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
     : '';
 
   const hasAny = store.global || store.major.length || store.minor.length;
-  const statusLine = `已总结到第 ${store.lastSummarizedIndex} 条 · 小总结 ${store.minor.length} · 大总结 ${store.major.length} · 全局 ${store.global ? '✓' : '—'}`;
+  const statusLine = `已总结到第 ${store.lastSummarizedIndex} 条 · 小总结 ${store.minor.length} · 大总结 ${store.major.length} · 全局 ${store.global ? '有' : '无'}`;
 
   return `
     <div class="subsection">
-      <div class="subsection-title">记忆摘要 ${summarizing ? '<span style="opacity:0.6">⏳ 总结中…</span>' : ''}</div>
+      <div class="subsection-title">记忆摘要 ${summarizing ? '<span style="opacity:0.6">总结中…</span>' : ''}</div>
       <div class="summary-status" style="font-size:11px;opacity:0.7;margin-bottom:8px">${statusLine}</div>
       ${errorHtml}
       ${hasAny ? [globalHtml, majorHtml, minorHtml].filter(Boolean).join('') : '<div class="empty-card">还没有生成过摘要。</div>'}
@@ -522,7 +531,6 @@ function renderStatusPanel(state: AppState) {
   const target = getActiveTarget(statusData);
   const titles = target ? Object.entries(target.titles) : [];
   const recentEvents = Object.entries(statusData.world.recentEvents);
-  const alias = target?.alias ?? target?.name ?? '角色';
 
   return `
     <section class="panel-card panel-card--generic">
@@ -644,7 +652,7 @@ function renderPhone(state: AppState) {
           <header class="system-bar">
             <span class="system-time">${escapeHtml(formatTime(state.statusData.world.currentTime))}</span>
             <div class="system-icons">
-              <span>✿</span>
+              <span>花</span>
               <span>${escapeHtml(formatDate(state.statusData.world.currentTime))}</span>
             </div>
           </header>
@@ -662,7 +670,8 @@ function renderPhone(state: AppState) {
               </div>
               <div class="top-card__actions">
                 <div class="contact-stage">${escapeHtml(target?.stage ?? '')}</div>
-                <button class="return-title-btn" data-action="return-to-title" aria-label="回到标题" title="タイトルに戻る">⌂</button>
+                <button class="mini-btn" data-action="manual-save" aria-label="手动存档">存档</button>
+                <button class="return-title-btn" data-action="return-to-title" aria-label="回到标题" title="回到标题">⌂</button>
                 <button class="close-phone-btn" data-action="close-phone" aria-label="关闭手帐">×</button>
               </div>
             </header>
@@ -692,12 +701,9 @@ export function renderApp(state: AppState, flipDir: string = '') {
         data-action="open-phone"
         data-drag-handle="true"
         style="${renderFloatingPhoneStyle(state.floatingPhone)}"
-        aria-label="打开口袋手帐"
+        aria-label="打开记事本"
       >
         ${unreadBadge}
-        <span class="floating-phone__grip">··· ···</span>
-        <span class="floating-phone__icon">📓</span>
-        <span class="floating-phone__label">手帐</span>
       </button>
 
       ${renderPhone(state)}

@@ -5,10 +5,22 @@ import { changeDependency, submitMessage, type ActionContext } from './actions';
 import { setupStreamingHooks } from './actions/streaming';
 import { getReaderMessages } from './message-format';
 import { renderApp } from './render';
-import { createSave, deleteSave, loadSave, writeSave } from './state/saves';
+import {
+  clearActiveSaveId,
+  createManualSave,
+  createSave,
+  deleteSave,
+  getActiveRunId,
+  getActiveSaveId,
+  loadSave,
+  setActiveRunId,
+  setActiveSaveId,
+  writeAutosave,
+} from './state/saves';
 import {
   clampFocusedMessageIndex,
   createInitialState,
+  deleteReaderMessage,
   deserializeMessages,
   getReaderMessageByIndex,
   getSourceUserTextForReaderIndex,
@@ -27,7 +39,7 @@ import {
 import type { SummaryApiConfig } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
-import type { FloatingPhonePosition, NotificationState, StatusData, TabKey, TavernWindow } from './types';
+import type { FloatingPhonePosition, GameState, NotificationState, StatusData, TabKey, TavernWindow } from './types';
 import { getActiveTarget } from './types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp } from './variables/normalize';
@@ -42,7 +54,7 @@ const FLOATING_PHONE_DRAG_THRESHOLD = 6;
 const READER_CONTEXT_MENU_GAP = 12;
 const READER_CONTEXT_MENU_WIDTH = 240;
 const READER_CONTEXT_MENU_HEIGHT = 176;
-const STATUS_CACHE_KEY = 'islandmilfcode-status-cache-v1';
+const STATUS_CACHE_KEY_PREFIX = 'islandmilfcode:status-cache:v2:';
 
 let dragState: {
   pointerId: number;
@@ -158,20 +170,24 @@ const eventStops: Array<() => void> = [];
 // doesn't get overwritten by stale MVU round-trip echoes.
 
 function getStatusCacheKey() {
-  return STATUS_CACHE_KEY;
+  return state.activeRunId ? `${STATUS_CACHE_KEY_PREFIX}${state.activeRunId}` : null;
 }
 
 function cacheStatusData(data: StatusData) {
+  const key = getStatusCacheKey();
+  if (!key) return;
   try {
-    localStorage.setItem(getStatusCacheKey(), JSON.stringify(data));
+    localStorage.setItem(key, JSON.stringify(data));
   } catch {
     /* ignore */
   }
 }
 
 function loadCachedStatusData(): StatusData | null {
+  const key = getStatusCacheKey();
+  if (!key) return null;
   try {
-    const raw = localStorage.getItem(getStatusCacheKey());
+    const raw = localStorage.getItem(key);
     return raw ? (JSON.parse(raw) as StatusData) : null;
   } catch {
     return null;
@@ -241,39 +257,88 @@ const ctx: ActionContext = {
 
 // ── Save system ──
 
-function persistToSave() {
-  if (!state.activeSaveId) return;
-  writeSave(state.activeSaveId, {
-    messages: serializeMessages(state.uiMessages),
-    statusData: state.statusData,
-    summaryStore: state.summaryStore,
-  });
+function buildGameState(statusData: StatusData = state.statusData): GameState {
+  return {
+    runId: state.activeRunId ?? crypto.randomUUID(),
+    statusData: JSON.parse(JSON.stringify(statusData)),
+    currentMessageIndex: Math.max(getReaderMessages(state.uiMessages).length - 1, 0),
+    runtimeFlags: {
+      playerProfile: JSON.parse(JSON.stringify(state.playerProfile)),
+    },
+  };
 }
 
-function enterSave(saveId: string) {
-  const save = loadSave(saveId);
-  if (!save) return;
-  state.activeSaveId = saveId;
-  state.creatingCharacter = false;
-  const msgs = deserializeMessages(save.messages);
-  replaceConversationMessages(state, msgs);
-  state.statusData = save.statusData;
-  state.summaryStore = save.summaryStore;
-  cacheStatusData(state.statusData);
+function persistToSave() {
+  let label = '';
+  label = '手动存档';
+  if (!state.activeRunId) return;
+  const meta = writeAutosave({
+    runId: state.activeRunId,
+    gameState: buildGameState(),
+    chatLog: serializeMessages(state.uiMessages),
+    summaryStore: state.summaryStore,
+  });
+  if (meta) {
+    state.activeSaveId = meta.saveId;
+    setActiveSaveId(meta.saveId);
+  }
+}
+
+function persistManualSave(label = '手动存档') {
+  if (!state.activeRunId) return;
+  const meta = createManualSave({
+    runId: state.activeRunId,
+    label: '手动存档',
+    gameState: buildGameState(),
+    chatLog: serializeMessages(state.uiMessages),
+    summaryStore: state.summaryStore,
+  });
+  state.activeSaveId = meta.saveId;
+  setActiveSaveId(meta.saveId);
+}
+
+function rebuildRuntimeAfterRestore() {
   state.draft = '';
   state.generating = false;
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
   state.notification = null;
   state.readerContextMenu = null;
+  state.focusedMessagePage = 0;
+}
+
+function enterSave(saveId: string) {
+  const save = loadSave(saveId);
+  if (!save) return;
+  state.activeRunId = save.payload.runId;
+  state.activeSaveId = saveId;
+  setActiveRunId(save.payload.runId);
+  setActiveSaveId(saveId);
+  state.creatingCharacter = false;
+  const msgs = deserializeMessages(save.payload.chatLog);
+  replaceConversationMessages(state, msgs);
+  state.statusData = save.payload.gameState.statusData;
+  state.playerProfile =
+    ((save.payload.gameState.runtimeFlags?.playerProfile as typeof state.playerProfile | undefined) ?? {
+      name: save.meta.characterName ?? '',
+      personality: save.meta.personality ?? '',
+      appearance: save.meta.appearance ?? '',
+    });
+  state.summaryStore = save.payload.summaryStore;
+  cacheStatusData(state.statusData);
+  guardedAdapterSave(state.statusData);
+  rebuildRuntimeAfterRestore();
   render();
 }
 
 function returnToTitle() {
-  if (state.activeSaveId) {
+  if (state.activeRunId) {
     persistToSave();
   }
+  state.activeRunId = null;
   state.activeSaveId = null;
+  setActiveRunId(null);
+  clearActiveSaveId();
   state.creatingCharacter = false;
   render();
 }
@@ -294,6 +359,7 @@ function openReaderContextMenu(readerIndex: number, clientX: number, clientY: nu
   state.readerContextMenu = {
     readerIndex,
     sourceUserText: getSourceUserTextForReaderIndex(state, readerIndex),
+    canDeleteMessage: Boolean(message),
     x: clamp(clientX, READER_CONTEXT_MENU_GAP, maxX),
     y: clamp(clientY, READER_CONTEXT_MENU_GAP, maxY),
   };
@@ -355,6 +421,16 @@ async function regenerateReaderMessage(readerIndex: number) {
   ctx.closeReaderContextMenu(false);
   render();
   await submitMessage(ctx, { text: target.sourceUserText, keepDraft: true, clearDraftOnSuccess: true });
+}
+
+async function deleteReaderFloor(readerIndex: number) {
+  if (state.generating) return;
+  const deleted = await deleteReaderMessage(state, readerIndex, win);
+  if (!deleted) return;
+  guardedAdapterSave(state.statusData);
+  ctx.persistConversation();
+  ctx.closeReaderContextMenu(false);
+  render();
 }
 
 function switchTab(tab: TabKey) {
@@ -589,11 +665,19 @@ function bindEvents() {
     if (!state.readerContextMenu) return;
     void regenerateReaderMessage(state.readerContextMenu.readerIndex);
   });
+  root?.querySelector<HTMLButtonElement>('[data-action="reader-delete"]')?.addEventListener('click', () => {
+    if (!state.readerContextMenu) return;
+    void deleteReaderFloor(state.readerContextMenu.readerIndex);
+  });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="close-phone"]').forEach(button => {
     button.addEventListener('click', () => closePhone());
   });
   root?.querySelector<HTMLButtonElement>('[data-action="return-to-title"]')?.addEventListener('click', () => {
     returnToTitle();
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="manual-save"]')?.addEventListener('click', () => {
+    persistManualSave();
+    render();
   });
   root?.querySelector<HTMLButtonElement>('[data-action="send"]')?.addEventListener('click', () => {
     void submitMessage(ctx);
@@ -712,18 +796,24 @@ const titleCallbacks: TitleCallbacks = {
     render();
   },
   createAndEnter: opts => {
-    const saveId = createSave(opts);
-    enterSave(saveId);
+    const save = createSave(opts);
+    enterSave(save.saveId);
   },
   deleteSave: id => {
     deleteSave(id);
+    if (state.activeSaveId === id) {
+      state.activeRunId = null;
+      state.activeSaveId = null;
+      setActiveRunId(null);
+      clearActiveSaveId();
+    }
   },
   render: () => render(),
 };
 
 function render() {
   if (!root) return;
-  if (state.activeSaveId) {
+  if (state.activeRunId) {
     // Game screen
     syncFocusedMessage(state);
     root.innerHTML = renderApp(state, flipDirection);
@@ -782,7 +872,21 @@ async function init() {
   adapter = await createVariableAdapter(win);
   state.summaryApiConfig = loadSummaryApiConfig();
   setupStreamingHooks(ctx, eventStops);
-  // Start at title screen (activeSaveId is null)
+  const persistedRunId = getActiveRunId();
+  const persistedSaveId = getActiveSaveId();
+  if (persistedSaveId && loadSave(persistedSaveId)) {
+    enterSave(persistedSaveId);
+    return;
+  }
+  if (persistedRunId) {
+    const autosaveId = `autosave_${persistedRunId}`;
+    if (loadSave(autosaveId)) {
+      enterSave(autosaveId);
+      return;
+    }
+    setActiveRunId(null);
+    clearActiveSaveId();
+  }
   render();
 }
 init();
@@ -792,7 +896,8 @@ init();
 (window as any).render_game_to_text = () => {
   const target = getActiveTarget(state.statusData);
   return JSON.stringify({
-    screen: state.activeSaveId ? 'game' : 'title',
+    screen: state.activeRunId ? 'game' : 'title',
+    activeRunId: state.activeRunId,
     activeSaveId: state.activeSaveId,
     phoneOpen: state.phoneOpen,
     phoneTab: state.activeTab,

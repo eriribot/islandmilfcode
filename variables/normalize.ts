@@ -119,6 +119,30 @@ function normalizeTarget(raw: Record<string, any>, fallback: TargetStatus): Targ
   };
 }
 
+function findLegacyTargetEntry(raw: Record<string, any>): { name: string; value: Record<string, any> } | null {
+  for (const key of ['白娅', 'baiya']) {
+    const value = raw[key];
+    if (value && typeof value === 'object') {
+      return { name: key, value: value as Record<string, any> };
+    }
+  }
+
+  const ignoredKeys = new Set(['世界', 'world', '主角', 'player', 'targets', 'activeTargetId']);
+  for (const [key, value] of Object.entries(raw)) {
+    if (ignoredKeys.has(key) || !value || typeof value !== 'object' || Array.isArray(value)) {
+      continue;
+    }
+
+    const looksLikeTarget =
+      '依存度' in value || 'dependency' in value || 'affinity' in value || '着装' in value || 'outfits' in value || '称号' in value || 'titles' in value;
+    if (looksLikeTarget) {
+      return { name: key, value: value as Record<string, any> };
+    }
+  }
+
+  return null;
+}
+
 /**
  * 将任意 stat_data 归一化为新 StatusData 结构。
  *
@@ -145,8 +169,16 @@ export function normalizeStatusData(input: unknown): StatusData {
   }
 
   // 旧格式：baiya / 白娅 → 包装为 targets[0]
-  const targetRaw = raw?.白娅 ?? raw?.baiya ?? {};
-  const target = normalizeTarget(targetRaw, defaultTarget);
+  const legacyTarget = findLegacyTargetEntry(raw);
+  const targetRaw = legacyTarget?.value ?? {};
+  const target = normalizeTarget(
+    {
+      ...targetRaw,
+      id: targetRaw.id ?? legacyTarget?.name ?? defaultTarget.id,
+      name: targetRaw.name ?? legacyTarget?.name ?? defaultTarget.name,
+    },
+    defaultTarget,
+  );
 
   return {
     world: normalizeWorld(raw),
