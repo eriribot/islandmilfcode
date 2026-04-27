@@ -2,8 +2,7 @@ import { listSaves } from '../state/saves';
 import type { SaveMeta } from '../types';
 
 // Replace this with a direct remote audio URL before publishing the character card.
-const TITLE_MUSIC_URL =
-  'https://lw-sycdn.kuwo.cn/0c6ffe8f44c1e9f5df3bb367a2e31a91/69eed9b0/resource/30106/trackmedia/M5000019WwgG3MJdsB.mp3?bitrate$128&from=vip';
+const TITLE_MUSIC_URL = 'https://eriribot.github.io/islandmilfcode/Aimer.mp3';
 
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
