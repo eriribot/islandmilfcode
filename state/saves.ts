@@ -1,6 +1,15 @@
 import type { SummaryStore } from '../summary/types';
 import { createDefaultSummaryStore } from '../summary/types';
-import type { GameState, PersistedMessage, PlayerProfile, SaveKind, SaveMeta, SavePayload, StatusData } from '../types';
+import type {
+  GameState,
+  PersistedMessage,
+  PlayerProfile,
+  SaveKind,
+  SaveMeta,
+  SavePayload,
+  SaveTargetMeta,
+  StatusData,
+} from '../types';
 import { getActiveTarget } from '../types';
 import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
 
@@ -29,13 +38,65 @@ function normalizePlayerProfile(input: unknown): PlayerProfile {
   const raw = typeof input === 'object' && input ? (input as Partial<PlayerProfile>) : {};
   return {
     name: String(raw.name ?? ''),
+    gender: raw.gender ? String(raw.gender) : '男',
     personality: String(raw.personality ?? ''),
     appearance: String(raw.appearance ?? ''),
+    className: raw.className ? String(raw.className) : '2年A班',
   };
 }
 
 function getPlayerProfileFromGameState(gameState: Partial<GameState> | undefined): PlayerProfile {
   return normalizePlayerProfile(gameState?.runtimeFlags?.playerProfile);
+}
+
+function getLegacyPlayerProfile(meta: Partial<SaveMeta> | undefined): PlayerProfile {
+  return normalizePlayerProfile({
+    name: meta?.characterName,
+    personality: meta?.personality,
+    appearance: meta?.appearance,
+  });
+}
+
+function normalizeSaveTargetMeta(input: unknown): SaveTargetMeta | null {
+  const raw = typeof input === 'object' && input ? (input as Partial<SaveTargetMeta>) : null;
+  if (!raw?.id && !raw?.name) return null;
+  return {
+    id: String(raw.id ?? ''),
+    name: String(raw.name ?? ''),
+    ...(raw.alias ? { alias: String(raw.alias) } : {}),
+    affinity: Number(raw.affinity ?? 0) || 0,
+    stage: String(raw.stage ?? ''),
+  };
+}
+
+function createSaveTargetMeta(statusData: StatusData): SaveTargetMeta | null {
+  const target = getActiveTarget(statusData);
+  if (!target) return null;
+  return {
+    id: target.id,
+    name: target.name,
+    ...(target.alias ? { alias: target.alias } : {}),
+    affinity: target.affinity,
+    stage: target.stage,
+  };
+}
+
+function normalizeSaveMeta(meta: SaveMeta): SaveMeta {
+  const raw = meta as Partial<SaveMeta>;
+  const playerProfile = normalizePlayerProfile(raw.playerProfile ?? getLegacyPlayerProfile(raw));
+  return {
+    ...meta,
+    playerProfile,
+    activeTarget: normalizeSaveTargetMeta(raw.activeTarget),
+    characterName: raw.characterName ?? playerProfile.name,
+    personality: raw.personality ?? playerProfile.personality,
+    appearance: raw.appearance ?? playerProfile.appearance,
+  };
+}
+
+function shouldHydrateMetaFromPayload(meta: SaveMeta): boolean {
+  const raw = meta as Partial<SaveMeta>;
+  return !raw.playerProfile || !Object.prototype.hasOwnProperty.call(raw, 'activeTarget');
 }
 
 function cloneJson<T>(value: T): T {
@@ -99,7 +160,6 @@ function normalizeGameState(gameState: Partial<GameState> | undefined, fallbackR
 
 function createMetaFromPayload(payload: SavePayload, input: { kind: SaveKind; label: string; createdAt?: number }): SaveMeta {
   const statusData = payload.gameState.statusData;
-  const activeTarget = getActiveTarget(statusData);
   const playerProfile = getPlayerProfileFromGameState(payload.gameState);
   const messageCount = payload.chatLog.length;
   const latestPreview = payload.chatLog.length ? payload.chatLog[payload.chatLog.length - 1]?.text?.trim() : '';
@@ -113,9 +173,11 @@ function createMetaFromPayload(payload: SavePayload, input: { kind: SaveKind; la
     createdAt: input.createdAt ?? now,
     updatedAt: now,
     messageIndex: payload.gameState.currentMessageIndex,
-    characterName: playerProfile.name || activeTarget?.name || '未命名角色',
-    personality: playerProfile.personality || activeTarget?.stage || '',
-    appearance: playerProfile.appearance || activeTarget?.alias || '',
+    playerProfile,
+    activeTarget: createSaveTargetMeta(statusData),
+    characterName: playerProfile.name,
+    personality: playerProfile.personality,
+    appearance: playerProfile.appearance,
     location: statusData.world.currentLocation,
     gameTime: statusData.world.currentTime,
     preview: latestPreview ? latestPreview.slice(0, 80) : '',
@@ -124,9 +186,76 @@ function createMetaFromPayload(payload: SavePayload, input: { kind: SaveKind; la
   };
 }
 
+function migrateLegacySavesIfNeeded(): void {
+  const existingIndex = safeReadJson<SaveIndexRecord>(SAVE_INDEX_STORAGE_KEY, {});
+  const legacy = safeReadJson<Record<string, LegacySaveSlot>>(LEGACY_SAVES_STORAGE_KEY, {});
+  if (!Object.keys(legacy).length) return;
+
+  const nextIndex = { ...existingIndex };
+  for (const legacySave of Object.values(legacy)) {
+    if (!legacySave?.id || nextIndex[legacySave.id]) continue;
+    const runId = crypto.randomUUID();
+    const statusData = normalizeStatusData(legacySave.statusData ?? defaultStatusData);
+    const playerProfile = normalizePlayerProfile({
+      name: legacySave.characterName,
+      personality: legacySave.personality,
+      appearance: legacySave.appearance,
+    });
+    const payload: SavePayload = {
+      saveId: legacySave.id,
+      runId,
+      gameState: {
+        runId,
+        statusData,
+        currentMessageIndex: Math.max(0, (legacySave.messages?.length ?? 0) - 1),
+        runtimeFlags: {
+          playerProfile,
+        },
+      },
+      chatLog: normalizePersistedMessages(legacySave.messages),
+      summaryStore: cloneJson(legacySave.summaryStore ?? createDefaultSummaryStore()),
+      version: SAVE_VERSION,
+    };
+    writePayload(payload);
+    nextIndex[legacySave.id] = {
+      ...createMetaFromPayload(payload, {
+        kind: legacySave.id.startsWith('autosave_') ? 'autosave' : 'manual',
+        label: legacySave.id.startsWith('autosave_') ? '自动存档' : '手动存档',
+        createdAt: legacySave.createdAt,
+      }),
+      updatedAt: Number(legacySave.updatedAt || legacySave.createdAt || Date.now()),
+    };
+  }
+
+  writeSaveIndex(nextIndex);
+  safeRemove(LEGACY_SAVES_STORAGE_KEY);
+}
+
 function readSaveIndex(): SaveIndexRecord {
   migrateLegacySavesIfNeeded();
-  return safeReadJson<SaveIndexRecord>(SAVE_INDEX_STORAGE_KEY, {});
+  const rawIndex = safeReadJson<SaveIndexRecord>(SAVE_INDEX_STORAGE_KEY, {});
+  const normalizedIndex: SaveIndexRecord = {};
+  let changed = false;
+  for (const [saveId, meta] of Object.entries(rawIndex)) {
+    let nextMeta = normalizeSaveMeta(meta);
+    if (shouldHydrateMetaFromPayload(meta)) {
+      const payload = readPayload(saveId);
+      if (payload) {
+        nextMeta = {
+          ...createMetaFromPayload(payload, {
+            kind: nextMeta.kind,
+            label: nextMeta.label,
+            createdAt: nextMeta.createdAt,
+          }),
+          updatedAt: nextMeta.updatedAt,
+        };
+      }
+    }
+    if (JSON.stringify(meta) !== JSON.stringify(nextMeta)) changed = true;
+    normalizedIndex[saveId] = nextMeta;
+  }
+  if (changed) writeSaveIndex(normalizedIndex);
+  return normalizedIndex;
 }
 
 function writeSaveIndex(index: SaveIndexRecord): void {
@@ -161,6 +290,8 @@ function buildInitialPayload(opts: {
   characterName: string;
   personality: string;
   appearance: string;
+  gender?: string;
+  className?: string;
   kind: SaveKind;
   label: string;
 }): SavePayload {
@@ -177,8 +308,10 @@ function buildInitialPayload(opts: {
         saveKind: opts.kind,
         playerProfile: normalizePlayerProfile({
           name: opts.characterName,
+          gender: opts.gender,
           personality: opts.personality,
           appearance: opts.appearance,
+          className: opts.className,
         }),
       },
     },
@@ -203,45 +336,6 @@ function ensureMeta(saveId: string): SaveMeta | null {
   return meta;
 }
 
-function migrateLegacySavesIfNeeded(): void {
-  const existingIndex = safeReadJson<SaveIndexRecord>(SAVE_INDEX_STORAGE_KEY, {});
-  const legacy = safeReadJson<Record<string, LegacySaveSlot>>(LEGACY_SAVES_STORAGE_KEY, {});
-  if (!Object.keys(legacy).length) return;
-
-  const nextIndex = { ...existingIndex };
-  for (const legacySave of Object.values(legacy)) {
-    if (!legacySave?.id || nextIndex[legacySave.id]) continue;
-    const runId = crypto.randomUUID();
-    const payload: SavePayload = {
-      saveId: legacySave.id,
-      runId,
-      gameState: {
-        runId,
-        statusData: normalizeStatusData(legacySave.statusData ?? defaultStatusData),
-        currentMessageIndex: Math.max(0, (legacySave.messages?.length ?? 0) - 1),
-      },
-      chatLog: normalizePersistedMessages(legacySave.messages),
-      summaryStore: cloneJson(legacySave.summaryStore ?? createDefaultSummaryStore()),
-      version: SAVE_VERSION,
-    };
-    writePayload(payload);
-    nextIndex[legacySave.id] = {
-      ...createMetaFromPayload(payload, {
-        kind: legacySave.id.startsWith('autosave_') ? 'autosave' : 'manual',
-        label: legacySave.id.startsWith('autosave_') ? '自动存档' : '手动存档',
-        createdAt: legacySave.createdAt,
-      }),
-      updatedAt: Number(legacySave.updatedAt || legacySave.createdAt || Date.now()),
-      characterName: legacySave.characterName || '未命名角色',
-      personality: legacySave.personality || '',
-      appearance: legacySave.appearance || '',
-    };
-  }
-
-  writeSaveIndex(nextIndex);
-  safeRemove(LEGACY_SAVES_STORAGE_KEY);
-}
-
 export function listSaves(): SaveMeta[] {
   return Object.values(readSaveIndex()).sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -250,7 +344,7 @@ export function listSavesByRunId(runId: string): SaveMeta[] {
   return listSaves().filter(save => save.runId === runId);
 }
 
-export function createSave(opts: { characterName: string; personality: string; appearance: string }): SaveMeta {
+export function createSave(opts: { characterName: string; gender?: string; personality: string; appearance: string; className?: string }): SaveMeta {
   const runId = crypto.randomUUID();
   const saveId = `autosave_${runId}`;
   const payload = buildInitialPayload({
@@ -264,9 +358,6 @@ export function createSave(opts: { characterName: string; personality: string; a
     kind: 'autosave',
     label: '自动存档',
   });
-  meta.characterName = opts.characterName;
-  meta.personality = opts.personality;
-  meta.appearance = opts.appearance;
 
   const index = readSaveIndex();
   index[saveId] = meta;

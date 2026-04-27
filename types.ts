@@ -4,6 +4,14 @@ export type TabKey = 'summary' | 'status' | 'inventory';
 
 export type SaveKind = 'manual' | 'autosave';
 
+export type SaveTargetMeta = {
+  id: string;
+  name: string;
+  alias?: string;
+  affinity: number;
+  stage: string;
+};
+
 export type SaveMeta = {
   saveId: string;
   runId: string;
@@ -12,20 +20,24 @@ export type SaveMeta = {
   createdAt: number;
   updatedAt: number;
   messageIndex: number;
-  characterName: string;
-  personality: string;
-  appearance: string;
+  playerProfile: PlayerProfile;
+  activeTarget: SaveTargetMeta | null;
   location?: string;
   gameTime?: string;
   preview?: string;
   messageCount: number;
   version: number;
+  characterName?: string;
+  personality?: string;
+  appearance?: string;
 };
 
 export type PlayerProfile = {
   name: string;
+  gender?: string;
   personality: string;
   appearance: string;
+  className?: string;
 };
 
 export type GameState = {

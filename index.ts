@@ -320,9 +320,11 @@ function enterSave(saveId: string) {
   state.statusData = save.payload.gameState.statusData;
   state.playerProfile =
     ((save.payload.gameState.runtimeFlags?.playerProfile as typeof state.playerProfile | undefined) ?? {
-      name: save.meta.characterName ?? '',
-      personality: save.meta.personality ?? '',
-      appearance: save.meta.appearance ?? '',
+      name: save.meta.playerProfile?.name ?? save.meta.characterName ?? '',
+      gender: save.meta.playerProfile?.gender ?? '男',
+      personality: save.meta.playerProfile?.personality ?? save.meta.personality ?? '',
+      appearance: save.meta.playerProfile?.appearance ?? save.meta.appearance ?? '',
+      className: save.meta.playerProfile?.className ?? '2年A班',
     });
   state.summaryStore = save.payload.summaryStore;
   cacheStatusData(state.statusData);
