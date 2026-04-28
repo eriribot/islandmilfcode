@@ -21,8 +21,8 @@ export const defaultTarget: TargetStatus = {
 
 export const defaultStatusData: StatusData = {
   world: {
-    currentTime: '2026-03-13 22:10',
-    currentLocation: '未记录地点',
+    currentTime: '2012-03-31 8:30',
+    currentLocation: '侦探坡',
     recentEvents: {
       初始记录: '新的记录已经建立。',
     },
