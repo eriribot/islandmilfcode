@@ -85,6 +85,8 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     },
     activeTab: 'summary',
     phoneOpen: false,
+    phoneRoute: 'home',
+    phoneRouteHistory: [],
     floatingPhone,
     focusedMessageIndex: 0,
     focusedMessagePage: 0,

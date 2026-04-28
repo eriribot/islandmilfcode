@@ -2,6 +2,8 @@ import type { SummaryApiConfig, SummaryStore } from './summary/types';
 
 export type TabKey = 'summary' | 'status' | 'inventory';
 
+export type PhoneRoute = 'home' | 'app:reader' | 'app:summary' | 'app:status' | 'app:inventory' | 'app:settings';
+
 export type SaveKind = 'manual' | 'autosave';
 
 export type SaveTargetMeta = {
@@ -142,6 +144,8 @@ export type AppState = {
   playerProfile: PlayerProfile;
   activeTab: TabKey;
   phoneOpen: boolean;
+  phoneRoute: PhoneRoute;
+  phoneRouteHistory: PhoneRoute[];
   floatingPhone: FloatingPhonePosition;
   focusedMessageIndex: number;
   focusedMessagePage: number;

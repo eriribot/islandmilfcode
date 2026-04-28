@@ -223,17 +223,44 @@ export function renderCharacterCreation() {
                   <strong>2年B班</strong>
                   <p>重要角色:</p>
                   <div class="gal-class-detail__content">
-                    <img src="https://storage.moegirl.org.cn/moegirl/commons/d/dc/%E8%B7%AF%E4%BA%BA%E5%A5%B3%E4%B8%BB%E7%9A%84%E5%85%BB%E6%88%90%E6%96%B9%E6%B3%95_%E8%A7%92%E8%89%B2%E6%AD%8CCD1.jpg!/fw/200?v=20150212050441" alt="加藤惠" class="gal-class-detail__avatar" />
+                    <span class="gal-class-detail__character">
+                      <span class="gal-class-detail__sprite gal-class-detail__sprite--tomoya" role="img" aria-label="安艺伦也"></span>
+                      <span class="gal-class-detail__name">安艺伦也</span>
+                    </span>
+                    <span class="gal-class-detail__character">
+                      <span class="gal-class-detail__sprite gal-class-detail__sprite--megumi" role="img" aria-label="加藤惠"></span>
+                      <span class="gal-class-detail__name">加藤惠</span>
+                    </span>
                   </div>
                 </div>
               </label>
-              <label class="gal-class-option">
+              <label class="gal-class-option gal-class-option--has-detail">
                 <input type="radio" name="className" value="2年G班" />
                 <span>2年G班</span>
+                <div class="gal-class-detail" role="tooltip">
+                  <strong>2年G班</strong>
+                  <p>重要角色:</p>
+                  <div class="gal-class-detail__content">
+                    <span class="gal-class-detail__character">
+                      <span class="gal-class-detail__sprite gal-class-detail__sprite--eriri" role="img" aria-label="泽村·斯潘塞·英梨梨"></span>
+                      <span class="gal-class-detail__name">泽村·斯潘塞·英梨梨</span>
+                    </span>
+                  </div>
+                </div>
               </label>
-              <label class="gal-class-option">
-                <input type="radio" name="className" value="3年B班" />
+              <label class="gal-class-option gal-class-option--has-detail">
+                <input type="radio" name="className" value="3年C班" />
                 <span>3年C班</span>
+                <div class="gal-class-detail" role="tooltip">
+                  <strong>3年C班</strong>
+                  <p>重要角色:</p>
+                  <div class="gal-class-detail__content">
+                    <span class="gal-class-detail__character">
+                      <span class="gal-class-detail__sprite gal-class-detail__sprite--utaha" role="img" aria-label="霞之丘诗羽"></span>
+                      <span class="gal-class-detail__name">霞之丘诗羽</span>
+                    </span>
+                  </div>
+                </div>
               </label>
             </div>
           </div>

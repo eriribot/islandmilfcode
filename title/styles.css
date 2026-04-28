@@ -776,6 +776,54 @@
   color: #7d6f5e;
 }
 
+.gal-class-detail__content {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.gal-class-detail__character {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-width: 76px;
+}
+
+.gal-class-detail__sprite {
+  display: block;
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  background-image: url('https://eriribot.github.io/islandmilfcode/picresource/Saenai_sprites.jpg');
+  background-repeat: no-repeat;
+  background-size: 432px 72px;
+  box-shadow: 0 6px 14px rgba(98, 72, 62, 0.12);
+}
+
+.gal-class-detail__sprite--tomoya {
+  background-position: 0 0;
+}
+
+.gal-class-detail__sprite--megumi {
+  background-position: -72px 0;
+}
+
+.gal-class-detail__sprite--eriri {
+  background-position: -144px 0;
+}
+
+.gal-class-detail__sprite--utaha {
+  background-position: -216px 0;
+}
+
+.gal-class-detail__name {
+  font-size: 0.68rem;
+  line-height: 1.2;
+  color: #6c5d64;
+  white-space: nowrap;
+}
+
 .gal-class-option--has-detail:hover .gal-class-detail,
 .gal-class-option--has-detail:focus-within .gal-class-detail {
   opacity: 1;

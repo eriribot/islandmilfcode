@@ -198,7 +198,7 @@ function buildProgressInstruction(statusData: StatusData): string {
     '',
     'Example:',
     '<progress>',
-    '时间:2026-03-14 01:30',
+    '时间:2012-03-31 08:30',
     '地点:旧城区·便利店',
     '好感度:+2',
     '着装.上装:换上了便利店买的雨衣',

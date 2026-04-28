@@ -101,7 +101,7 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
       gender: (fd.get('gender') as string)?.trim() || '男',
       personality: (fd.get('personality') as string)?.trim() || '',
       appearance: (fd.get('appearance') as string)?.trim() || '',
-      className: (fd.get('className') as string)?.trim() || '2年A班',
+      className: (fd.get('className') as string)?.trim() || '2年B班',
     });
   });
 }

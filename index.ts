@@ -39,7 +39,15 @@ import {
 import type { SummaryApiConfig } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
-import type { FloatingPhonePosition, GameState, NotificationState, StatusData, TabKey, TavernWindow } from './types';
+import type {
+  FloatingPhonePosition,
+  GameState,
+  NotificationState,
+  PhoneRoute,
+  StatusData,
+  TabKey,
+  TavernWindow,
+} from './types';
 import { getActiveTarget } from './types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp } from './variables/normalize';
@@ -304,6 +312,7 @@ function rebuildRuntimeAfterRestore() {
   state.finalizedGenerationId = '';
   state.notification = null;
   state.readerContextMenu = null;
+  resetPhoneRoute();
   state.focusedMessagePage = 0;
 }
 
@@ -370,7 +379,9 @@ function openReaderContextMenu(readerIndex: number, clientX: number, clientY: nu
 
 function focusComposer(placeCursorAtEnd = true) {
   window.requestAnimationFrame(() => {
-    const textarea = root?.querySelector<HTMLTextAreaElement>('.composer-input');
+    const textarea =
+      root?.querySelector<HTMLTextAreaElement>('.phone-modal.is-open .composer-input') ??
+      root?.querySelector<HTMLTextAreaElement>('.composer-input');
     if (!textarea) return;
     textarea.focus();
     if (placeCursorAtEnd) {
@@ -435,18 +446,69 @@ async function deleteReaderFloor(readerIndex: number) {
   render();
 }
 
-function switchTab(tab: TabKey) {
+function getRouteForTab(tab: TabKey): PhoneRoute {
+  if (tab === 'status') return 'app:status';
+  if (tab === 'inventory') return 'app:inventory';
+  return 'app:summary';
+}
+
+function getTabForRoute(route: PhoneRoute): TabKey | null {
+  if (route === 'app:status') return 'status';
+  if (route === 'app:inventory') return 'inventory';
+  if (route === 'app:summary') return 'summary';
+  return null;
+}
+
+function resetPhoneRoute() {
+  state.phoneRoute = 'home';
+  state.phoneRouteHistory = [];
+}
+
+function navigatePhone(route: PhoneRoute) {
   ctx.closeReaderContextMenu(false);
-  state.activeTab = tab;
-  if (tab === state.notification?.targetTab) ctx.clearNotification(false);
+  if (route === state.phoneRoute) return;
+  state.phoneRouteHistory = [...state.phoneRouteHistory, state.phoneRoute];
+  state.phoneRoute = route;
+  const tab = getTabForRoute(route);
+  if (tab) {
+    state.activeTab = tab;
+    if (tab === state.notification?.targetTab) ctx.clearNotification(false);
+  }
   render();
 }
 
-function openPhone(targetTab?: TabKey) {
+function navigatePhoneBack() {
+  ctx.closeReaderContextMenu(false);
+  const previous = state.phoneRouteHistory[state.phoneRouteHistory.length - 1];
+  if (previous) {
+    state.phoneRoute = previous;
+    state.phoneRouteHistory = state.phoneRouteHistory.slice(0, -1);
+  } else {
+    state.phoneRoute = 'home';
+  }
+  const tab = getTabForRoute(state.phoneRoute);
+  if (tab) state.activeTab = tab;
+  render();
+}
+
+function switchTab(tab: TabKey) {
+  navigatePhone(getRouteForTab(tab));
+}
+
+function openPhone(targetRoute?: PhoneRoute) {
   ctx.closeReaderContextMenu(false);
   state.phoneOpen = true;
-  state.activeTab = targetTab ?? state.activeTab ?? 'summary';
-  if (state.activeTab === state.notification?.targetTab) ctx.clearNotification(false);
+  if (targetRoute) {
+    state.phoneRoute = targetRoute;
+    state.phoneRouteHistory = targetRoute === 'home' ? [] : ['home'];
+  } else {
+    resetPhoneRoute();
+  }
+  const tab = getTabForRoute(state.phoneRoute);
+  if (tab) {
+    state.activeTab = tab;
+    if (tab === state.notification?.targetTab) ctx.clearNotification(false);
+  }
   render();
 }
 
@@ -454,12 +516,13 @@ function closePhone() {
   if (!state.phoneOpen) return;
   ctx.closeReaderContextMenu(false);
   state.phoneOpen = false;
+  resetPhoneRoute();
   render();
 }
 
 function openNotification() {
   if (!state.notification) return;
-  openPhone(state.notification.targetTab);
+  openPhone(getRouteForTab(state.notification.targetTab));
 }
 
 // ── Floating phone drag ──
@@ -531,8 +594,7 @@ function bindFloatingPhoneEvents() {
 // ── Reader drag ──
 
 function bindReaderDragEvents() {
-  const reader = root?.querySelector<HTMLElement>('.paper-reader');
-  if (!reader) return;
+  root?.querySelectorAll<HTMLElement>('.paper-reader').forEach(reader => {
 
   reader.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
@@ -614,12 +676,14 @@ function bindReaderDragEvents() {
   };
   reader.addEventListener('pointerup', finishReaderDrag);
   reader.addEventListener('pointercancel', finishReaderDrag);
+  });
 }
 
 // ── Context menu ──
 
 function bindReaderContextMenuEvents() {
-  root?.querySelector<HTMLElement>('.reader-card')?.addEventListener('contextmenu', event => {
+  root?.querySelectorAll<HTMLElement>('.reader-card').forEach(card => {
+    card.addEventListener('contextmenu', event => {
     event.preventDefault();
     const readerCard = event.currentTarget as HTMLElement;
     openReaderContextMenu(
@@ -627,6 +691,7 @@ function bindReaderContextMenuEvents() {
       event.clientX,
       event.clientY,
     );
+  });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-message"]').forEach(button => {
     button.addEventListener('contextmenu', event => {
@@ -639,19 +704,29 @@ function bindReaderContextMenuEvents() {
 // ── Event binding ──
 
 function bindEvents() {
-  const textarea = root?.querySelector<HTMLTextAreaElement>('.composer-input');
-  textarea?.addEventListener('input', event => {
+  root?.querySelectorAll<HTMLTextAreaElement>('.composer-input').forEach(textarea => {
+  textarea.addEventListener('input', event => {
     state.draft = (event.target as HTMLTextAreaElement).value;
+    root?.querySelectorAll<HTMLTextAreaElement>('.composer-input').forEach(other => {
+      if (other !== event.target) other.value = state.draft;
+    });
   });
-  textarea?.addEventListener('keydown', event => {
+  textarea.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       event.preventDefault();
       void submitMessage(ctx);
     }
   });
+  });
 
   root?.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(button => {
     button.addEventListener('click', () => switchTab(button.dataset.tab as TabKey));
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-phone-route]').forEach(button => {
+    button.addEventListener('click', () => navigatePhone(button.dataset.phoneRoute as PhoneRoute));
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="phone-back"]').forEach(button => {
+    button.addEventListener('click', () => navigatePhoneBack());
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="focus-message"]').forEach(button => {
     button.addEventListener('click', () => focusMessage(Number(button.dataset.direction ?? 0)));
@@ -681,9 +756,9 @@ function bindEvents() {
     persistManualSave();
     render();
   });
-  root?.querySelector<HTMLButtonElement>('[data-action="send"]')?.addEventListener('click', () => {
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="send"]').forEach(button => button.addEventListener('click', () => {
     void submitMessage(ctx);
-  });
+  }));
   root
     ?.querySelector<HTMLButtonElement>('[data-action="dep-down"]')
     ?.addEventListener('click', () => changeDependency(ctx, -1));
@@ -902,6 +977,8 @@ init();
     activeRunId: state.activeRunId,
     activeSaveId: state.activeSaveId,
     phoneOpen: state.phoneOpen,
+    phoneRoute: state.phoneRoute,
+    phoneRouteHistory: state.phoneRouteHistory,
     phoneTab: state.activeTab,
     generating: state.generating,
     focusedMessageIndex: state.focusedMessageIndex,
