@@ -2,7 +2,7 @@ import { listSaves } from '../state/saves';
 import type { SaveMeta } from '../types';
 
 // Replace this with a direct remote audio URL before publishing the character card.
-const TITLE_MUSIC_URL = 'https://eriribot.github.io/islandmilfcode/Aimer.mp3';
+const TITLE_MUSIC_URL = 'https://eriribot.github.io/islandmilfcode/Aimer_星屑ビーナス.mp3';
 
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -216,25 +216,24 @@ export function renderCharacterCreation() {
                 <input type="radio" name="className" value="1年A班" />
                 <span>1年A班</span>
               </label>
-              <label class="gal-class-option">
-                <input type="radio" name="className" value="1年B班" />
-                <span>1年B班</span>
-              </label>
-              <label class="gal-class-option">
-                <input type="radio" name="className" value="2年A班" checked />
-                <span>2年A班</span>
-              </label>
-              <label class="gal-class-option">
+              <label class="gal-class-option gal-class-option--has-detail">
                 <input type="radio" name="className" value="2年B班" />
                 <span>2年B班</span>
+                <div class="gal-class-detail" role="tooltip">
+                  <strong>2年B班</strong>
+                  <p>重要角色:</p>
+                  <div class="gal-class-detail__content">
+                    <img src="https://storage.moegirl.org.cn/moegirl/commons/d/dc/%E8%B7%AF%E4%BA%BA%E5%A5%B3%E4%B8%BB%E7%9A%84%E5%85%BB%E6%88%90%E6%96%B9%E6%B3%95_%E8%A7%92%E8%89%B2%E6%AD%8CCD1.jpg!/fw/200?v=20150212050441" alt="加藤惠" class="gal-class-detail__avatar" />
+                  </div>
+                </div>
               </label>
               <label class="gal-class-option">
-                <input type="radio" name="className" value="3年A班" />
-                <span>3年A班</span>
+                <input type="radio" name="className" value="2年G班" />
+                <span>2年G班</span>
               </label>
               <label class="gal-class-option">
                 <input type="radio" name="className" value="3年B班" />
-                <span>3年B班</span>
+                <span>3年C班</span>
               </label>
             </div>
           </div>

@@ -687,7 +687,7 @@
   pointer-events: none;
 }
 
-.gal-class-option span {
+.gal-class-option > span {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -711,7 +711,7 @@
     transform 0.2s ease;
 }
 
-.gal-class-option:hover span {
+.gal-class-option:hover > span {
   border-color: rgba(184, 92, 110, 0.32);
   background: rgba(255, 255, 255, 0.86);
   color: #4a3a3e;
@@ -730,6 +730,56 @@
 .gal-class-option input:focus-visible + span {
   outline: 2px solid rgba(184, 92, 110, 0.35);
   outline-offset: 2px;
+}
+
+.gal-class-option--has-detail {
+  z-index: 1;
+}
+
+.gal-class-option--has-detail:hover,
+.gal-class-option--has-detail:focus-within {
+  z-index: 5;
+}
+
+.gal-class-detail {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  width: min(260px, 72vw);
+  padding: 12px 14px;
+  border: 1px solid rgba(214, 126, 151, 0.36);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #4a3a3e;
+  box-shadow: 0 12px 28px rgba(98, 72, 62, 0.14);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 6px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.gal-class-detail strong {
+  display: block;
+  margin-bottom: 5px;
+  font-family: 'Klee One', serif;
+  font-size: 0.82rem;
+  color: #b85c6e;
+}
+
+.gal-class-detail p {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.6;
+  color: #7d6f5e;
+}
+
+.gal-class-option--has-detail:hover .gal-class-detail,
+.gal-class-option--has-detail:focus-within .gal-class-detail {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .gal-create-actions {
@@ -800,7 +850,7 @@
     gap: 7px;
   }
 
-  .gal-class-option span {
+  .gal-class-option > span {
     min-height: 36px;
     padding: 8px;
     font-size: 0.78rem;
