@@ -1,7 +1,9 @@
 import { getReaderMessages } from '../message-format';
 import { createDefaultSummaryStore } from '../summary/types';
-import type { AppState, FloatingPhonePosition, PersistedMessage, TavernWindow, UiMessage } from '../types';
+import type { FloatingPhonePosition } from '../phone/types';
+import type { AppState, PersistedMessage, TavernWindow, UiMessage } from '../types';
 import { clamp, defaultStatusData, normalizeStatusData } from '../variables/normalize';
+import { getDefaultWeatherState } from '../phone/weather';
 
 export const MESSAGE_MARKER = 'islandmilfcode';
 
@@ -96,6 +98,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     finalizedGenerationId: '',
     uiMessages: [createSystemMessage()],
     statusData: normalizeStatusData(defaultStatusData),
+    weather: getDefaultWeatherState(),
     notification: null,
     readerContextMenu: null,
     summaryStore: createDefaultSummaryStore(),

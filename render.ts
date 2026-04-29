@@ -1,44 +1,15 @@
 import { getReaderMessages, getVisibleMessageText } from './message-format';
+import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
+import { escapeHtml } from './html';
 import type { SummaryStore } from './summary/types';
 import type {
   AppState,
-  FloatingPhonePosition,
-  NotificationState,
-  PhoneRoute,
   ReaderContextMenuState,
   StatusData,
   UiMessage,
 } from './types';
 import { getActiveTarget } from './types';
 import { formatDate, formatTime, getInventoryIcon } from './variables/normalize';
-
-export function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderPhoneNotification(notification: NotificationState | null) {
-  if (!notification) return '';
-
-  return `
-    <button class="ios-notification" data-action="open-notification">
-      <div class="ios-notification-app">
-        <span class="ios-notification-icon">通知</span>
-        <span>手帐记录</span>
-        <span class="ios-notification-time">${escapeHtml(notification.timestamp)}</span>
-      </div>
-      <div class="ios-notification-title-row">
-        <strong>${escapeHtml(notification.title)}</strong>
-        <span class="ios-notification-pill">新记录</span>
-      </div>
-      <div class="ios-notification-preview">${escapeHtml(notification.preview)}</div>
-    </button>
-  `;
-}
 
 export function paginateMessage(text: string, role: UiMessage['role']) {
   const normalized = text.replace(/\r\n/g, '\n').trim() || '……';
@@ -292,7 +263,7 @@ function renderJournalHeader(state: AppState) {
   `;
 }
 
-function renderPaperWorkspace(state: AppState, flipDir: string = '', options: { embedded?: boolean } = {}) {
+export function renderPaperWorkspace(state: AppState, flipDir: string = '', options: { embedded?: boolean } = {}) {
   const embedded = options.embedded ?? false;
   const composerId = embedded ? 'islandmilfcode-phone-composer' : 'islandmilfcode-composer';
   return `
@@ -332,7 +303,7 @@ function renderPaperWorkspace(state: AppState, flipDir: string = '', options: { 
   `;
 }
 
-function renderSummaryPanel(state: AppState) {
+export function renderSummaryPanel(state: AppState) {
   const recentEvents = Object.entries(state.statusData.world.recentEvents).slice(0, 3);
   const lastMessage = state.uiMessages[state.uiMessages.length - 1];
   const target = getActiveTarget(state.statusData);
@@ -475,7 +446,7 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
     </div>`;
 }
 
-function renderSummaryConfigSection(state: AppState): string {
+export function renderSummaryConfigSection(state: AppState): string {
   const config = state.summaryApiConfig;
   const useCustom = config !== null;
 
@@ -512,7 +483,7 @@ function renderSummaryConfigSection(state: AppState): string {
     </div>`;
 }
 
-function renderStatusPanel(state: AppState) {
+export function renderStatusPanel(state: AppState) {
   const statusData = state.statusData;
   const target = getActiveTarget(statusData);
   const titles = target ? Object.entries(target.titles) : [];
@@ -557,7 +528,7 @@ function renderStatusPanel(state: AppState) {
   `;
 }
 
-function renderInventoryPanel(statusData: StatusData) {
+export function renderInventoryPanel(statusData: StatusData) {
   const inventory = Object.entries(statusData.player.inventory);
   const target = getActiveTarget(statusData);
   const outfits = target ? Object.entries(target.outfits) : [];
@@ -615,201 +586,21 @@ function renderInventoryPanel(statusData: StatusData) {
   `;
 }
 
-function renderFloatingPhoneStyle(position: FloatingPhonePosition) {
-  return `left:${position.x}px;top:${position.y}px;`;
-}
-
-function renderPhoneAppHeader(state: AppState, title: string, subtitle = '') {
-  const canGoBack = state.phoneRoute !== 'home';
-
-  return `
-    <header class="phone-page-header">
-      <button
-        class="phone-nav-btn"
-        data-action="phone-back"
-        aria-label="返回"
-        ${canGoBack ? '' : 'disabled'}
-      >‹</button>
-      <div class="phone-page-title">
-        <strong>${escapeHtml(title)}</strong>
-        ${subtitle ? `<span>${escapeHtml(subtitle)}</span>` : ''}
-      </div>
-      <button class="phone-nav-btn" data-action="close-phone" aria-label="关闭">×</button>
-    </header>
-  `;
-}
-
-function renderPhoneHome(state: AppState) {
-  const target = getActiveTarget(state.statusData);
-  const alias = target?.alias ?? target?.name ?? '角色';
-  const readerCount = Math.max(getReaderMessages(state.uiMessages).length, 0);
-  const summaryCount = state.summaryStore.minor.length + state.summaryStore.major.length + (state.summaryStore.global ? 1 : 0);
-  const inventoryCount = Object.keys(state.statusData.player.inventory).length;
-  const apps: Array<{ route: PhoneRoute; icon: string; label: string; meta: string; dock?: boolean }> = [
-    { route: 'app:reader', icon: 'RD', label: '阅读', meta: `${readerCount} 条记录`, dock: true },
-    { route: 'app:status', icon: 'ST', label: '状态', meta: `${target?.affinity ?? 0}%`, dock: true },
-    { route: 'app:inventory', icon: 'BG', label: '背包', meta: `${inventoryCount} 件` },
-    { route: 'app:summary', icon: 'MM', label: '摘要', meta: `${summaryCount} 条记忆`, dock: true },
-    { route: 'app:settings', icon: 'SV', label: '设置', meta: state.activeSaveId ? '已连接存档' : '未保存' },
-  ];
-  const dockApps = apps.filter(app => app.dock);
-
-  return `
-    <section class="phone-home phone-route-page" data-phone-route-view="home">
-      <div class="phone-home-hero">
-        <div>
-          <span class="phone-home-kicker">${escapeHtml(formatDate(state.statusData.world.currentTime))}</span>
-          <h2>口袋手帐</h2>
-          <p>${escapeHtml(state.statusData.world.currentLocation)}</p>
-        </div>
-        <div class="phone-home-avatar">${escapeHtml(alias)}</div>
-      </div>
-
-      <div class="phone-app-grid">
-        ${apps
-          .map(
-            app => `
-              <button class="phone-app-icon" data-phone-route="${app.route}">
-                <span class="phone-app-icon__glyph">${escapeHtml(app.icon)}</span>
-                <span class="phone-app-icon__label">${escapeHtml(app.label)}</span>
-                <span class="phone-app-icon__meta">${escapeHtml(app.meta)}</span>
-              </button>
-            `,
-          )
-          .join('')}
-      </div>
-
-      <nav class="phone-dock" aria-label="常用应用">
-        ${dockApps
-          .map(
-            app => `
-              <button class="phone-dock-btn" data-phone-route="${app.route}" aria-label="${escapeHtml(app.label)}">
-                ${escapeHtml(app.icon)}
-              </button>
-            `,
-          )
-          .join('')}
-      </nav>
-    </section>
-  `;
-}
-
-function renderReaderPhonePage(state: AppState, flipDir: string) {
-  return `
-    <section class="phone-route-page phone-app-page phone-app-page--reader" data-phone-route-view="app:reader">
-      ${renderPhoneAppHeader(state, '阅读', state.generating ? '记录中' : '手帐')}
-      <div class="phone-page-scroll phone-page-scroll--reader">
-        ${renderPaperWorkspace(state, flipDir, { embedded: true })}
-      </div>
-    </section>
-  `;
-}
-
-function renderSummaryPhonePage(state: AppState) {
-  return `
-    <section class="phone-route-page phone-app-page" data-phone-route-view="app:summary">
-      ${renderPhoneAppHeader(state, '摘要 / 记忆', `${state.summaryStore.minor.length + state.summaryStore.major.length} 条摘要`)}
-      ${renderSummaryPanel(state)}
-    </section>
-  `;
-}
-
-function renderStatusPhonePage(state: AppState) {
-  const target = getActiveTarget(state.statusData);
-  return `
-    <section class="phone-route-page phone-app-page" data-phone-route-view="app:status">
-      ${renderPhoneAppHeader(state, '状态', target?.stage ?? '')}
-      ${renderStatusPanel(state)}
-    </section>
-  `;
-}
-
-function renderInventoryPhonePage(state: AppState) {
-  return `
-    <section class="phone-route-page phone-app-page" data-phone-route-view="app:inventory">
-      ${renderPhoneAppHeader(state, '背包', `${Object.keys(state.statusData.player.inventory).length} 件物品`)}
-      ${renderInventoryPanel(state.statusData)}
-    </section>
-  `;
-}
-
-function renderSettingsPhonePage(state: AppState) {
-  return `
-    <section class="phone-route-page phone-app-page" data-phone-route-view="app:settings">
-      ${renderPhoneAppHeader(state, '设置 / 保存', state.activeSaveId ? '存档已连接' : '未保存')}
-      <section class="panel-card panel-card--generic">
-        <div class="panel-title">操作</div>
-        <div class="panel-scroll">
-          <div class="settings-actions">
-            <button class="settings-action" data-action="manual-save">
-              <strong>手动保存</strong>
-              <span>写入当前记录、状态与摘要。</span>
-            </button>
-            <button class="settings-action" data-action="return-to-title">
-              <strong>返回标题</strong>
-              <span>回到存档选择与角色创建。</span>
-            </button>
-          </div>
-          ${renderSummaryConfigSection(state)}
-        </div>
-      </section>
-    </section>
-  `;
-}
-
-function renderPhoneRoute(state: AppState, flipDir: string) {
-  if (state.phoneRoute === 'app:reader') return renderReaderPhonePage(state, flipDir);
-  if (state.phoneRoute === 'app:summary') return renderSummaryPhonePage(state);
-  if (state.phoneRoute === 'app:status') return renderStatusPhonePage(state);
-  if (state.phoneRoute === 'app:inventory') return renderInventoryPhonePage(state);
-  if (state.phoneRoute === 'app:settings') return renderSettingsPhonePage(state);
-  return renderPhoneHome(state);
-}
-
-function renderPhone(state: AppState, flipDir: string = '') {
-  return `
-    <div class="phone-modal ${state.phoneOpen ? 'is-open' : ''}" aria-hidden="${state.phoneOpen ? 'false' : 'true'}">
-      <button class="phone-backdrop" data-action="close-phone" aria-label="关闭手帐"></button>
-      <section class="phone-shell">
-        <div class="phone-notch"></div>
-        <div class="phone-inner">
-          <header class="system-bar">
-            <span class="system-time">${escapeHtml(formatTime(state.statusData.world.currentTime))}</span>
-            <div class="system-icons">
-              <span>LTE</span>
-              <span>${escapeHtml(formatDate(state.statusData.world.currentTime))}</span>
-            </div>
-          </header>
-
-          ${renderPhoneNotification(state.notification)}
-          <div class="phone-screen">
-            ${renderPhoneRoute(state, flipDir)}
-          </div>
-        </div>
-      </section>
-    </div>
-  `;
-}
+const phoneRenderers: PhoneRenderers = {
+  renderInventoryPanel,
+  renderPaperWorkspace,
+  renderStatusPanel,
+  renderSummaryConfigSection,
+  renderSummaryPanel,
+};
 
 export function renderApp(state: AppState, flipDir: string = '') {
-  const unreadBadge = state.notification ? '<span class="floating-phone__badge">1</span>' : '';
-
   return `
     <main class="islandmilfcode-scene">
       ${renderPaperWorkspace(state, flipDir)}
       ${renderReaderContextMenu(state.readerContextMenu, state.generating)}
-
-      <button
-        class="floating-phone"
-        data-action="open-phone"
-        data-drag-handle="true"
-        style="${renderFloatingPhoneStyle(state.floatingPhone)}"
-        aria-label="打开记事本"
-      >
-        ${unreadBadge}
-      </button>
-
-      ${renderPhone(state, flipDir)}
+      ${renderFloatingPhone(state)}
+      ${renderPhone(state, phoneRenderers, flipDir)}
     </main>
   `;
 }

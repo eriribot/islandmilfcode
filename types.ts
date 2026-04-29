@@ -1,8 +1,7 @@
 import type { SummaryApiConfig, SummaryStore } from './summary/types';
+import type { FloatingPhonePosition, PhoneRoute, WeatherState } from './phone/types';
 
 export type TabKey = 'summary' | 'status' | 'inventory';
-
-export type PhoneRoute = 'home' | 'app:reader' | 'app:summary' | 'app:status' | 'app:inventory' | 'app:settings';
 
 export type SaveKind = 'manual' | 'autosave';
 
@@ -124,11 +123,6 @@ export type NotificationState = {
   timestamp: string;
 };
 
-export type FloatingPhonePosition = {
-  x: number;
-  y: number;
-};
-
 export type ReaderContextMenuState = {
   x: number;
   y: number;
@@ -155,6 +149,7 @@ export type AppState = {
   finalizedGenerationId: string;
   uiMessages: UiMessage[];
   statusData: StatusData;
+  weather: WeatherState;
   notification: NotificationState | null;
   readerContextMenu: ReaderContextMenuState | null;
   summaryStore: SummaryStore;

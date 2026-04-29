@@ -1,9 +1,20 @@
 import './styles.css';
+import './phone/styles.css';
 import './title/styles.css';
 
 import { changeDependency, submitMessage, type ActionContext } from './actions';
 import { setupStreamingHooks } from './actions/streaming';
 import { getReaderMessages } from './message-format';
+import { bindFloatingPhoneEvents, loadFloatingPhonePosition, syncFloatingPhoneAfterResize } from './phone/floating';
+import {
+  closePhoneRoute,
+  getRouteForTab,
+  navigatePhoneBack as navigatePhoneBackRoute,
+  navigatePhoneRoute,
+  openPhoneRoute,
+  resetPhoneRoute as resetPhoneRouteState,
+} from './phone/routes';
+import { refreshWeatherForCurrentState } from './phone/weather';
 import { renderApp } from './render';
 import {
   clearActiveSaveId,
@@ -40,14 +51,13 @@ import type { SummaryApiConfig } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
 import type {
-  FloatingPhonePosition,
   GameState,
   NotificationState,
-  PhoneRoute,
   StatusData,
   TabKey,
   TavernWindow,
 } from './types';
+import type { PhoneRoute } from './phone/types';
 import { getActiveTarget } from './types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp } from './variables/normalize';
@@ -55,24 +65,11 @@ import { clamp } from './variables/normalize';
 const win = window as TavernWindow;
 const root = document.querySelector<HTMLDivElement>('#app');
 
-const FLOATING_PHONE_STORAGE_KEY = 'islandmilfcode-floating-phone-position-v3';
-const FLOATING_PHONE_CUSTOMIZED_KEY = 'islandmilfcode-floating-phone-customized-v3';
-const FLOATING_PHONE_EDGE_GAP = 18;
-const FLOATING_PHONE_DRAG_THRESHOLD = 6;
 const READER_CONTEXT_MENU_GAP = 12;
 const READER_CONTEXT_MENU_WIDTH = 240;
 const READER_CONTEXT_MENU_HEIGHT = 176;
 const STATUS_CACHE_KEY_PREFIX = 'islandmilfcode:status-cache:v2:';
 
-let dragState: {
-  pointerId: number;
-  startX: number;
-  startY: number;
-  originX: number;
-  originY: number;
-  moved: boolean;
-} | null = null;
-let suppressFloatingPhoneClick = false;
 let flipDirection: 'forward' | 'backward' | '' = '';
 
 let readerDragState: {
@@ -97,73 +94,6 @@ function resetReaderCardTransform(reader: HTMLElement) {
   card.style.transition = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.3s ease';
   card.style.transform = '';
   card.style.opacity = '';
-}
-
-function getFloatingPhoneSize() {
-  const isCompact = window.innerWidth <= 720;
-  return {
-    width: isCompact ? 84 : 82,
-    height: isCompact ? 98 : 96,
-    edgeGap: isCompact ? 12 : FLOATING_PHONE_EDGE_GAP,
-  };
-}
-
-function clampFloatingPhonePosition(position: FloatingPhonePosition): FloatingPhonePosition {
-  const { width, height, edgeGap } = getFloatingPhoneSize();
-  const maxX = Math.max(edgeGap, window.innerWidth - width - edgeGap);
-  const maxY = Math.max(edgeGap, window.innerHeight - height - edgeGap);
-  return {
-    x: clamp(position.x, edgeGap, maxX),
-    y: clamp(position.y, edgeGap, maxY),
-  };
-}
-
-function getDefaultFloatingPhonePosition(): FloatingPhonePosition {
-  const { width, height, edgeGap } = getFloatingPhoneSize();
-  return clampFloatingPhonePosition({
-    x: window.innerWidth - width - edgeGap,
-    y: window.innerHeight * 0.5 - height * 0.5,
-  });
-}
-
-function loadFloatingPhonePosition(): FloatingPhonePosition {
-  try {
-    const customized = window.localStorage.getItem(FLOATING_PHONE_CUSTOMIZED_KEY) === '1';
-    if (!customized) return getDefaultFloatingPhonePosition();
-    const raw = window.localStorage.getItem(FLOATING_PHONE_STORAGE_KEY);
-    if (!raw) return getDefaultFloatingPhonePosition();
-    const parsed = JSON.parse(raw) as Partial<FloatingPhonePosition>;
-    if (typeof parsed.x !== 'number' || typeof parsed.y !== 'number') {
-      return getDefaultFloatingPhonePosition();
-    }
-    return clampFloatingPhonePosition({ x: parsed.x, y: parsed.y });
-  } catch {
-    return getDefaultFloatingPhonePosition();
-  }
-}
-
-function persistFloatingPhonePosition(position: FloatingPhonePosition) {
-  try {
-    window.localStorage.setItem(FLOATING_PHONE_STORAGE_KEY, JSON.stringify(position));
-  } catch {
-    /* ignore */
-  }
-}
-
-function markFloatingPhoneCustomized() {
-  try {
-    window.localStorage.setItem(FLOATING_PHONE_CUSTOMIZED_KEY, '1');
-  } catch {
-    /* ignore */
-  }
-}
-
-function hasCustomizedFloatingPhonePosition() {
-  try {
-    return window.localStorage.getItem(FLOATING_PHONE_CUSTOMIZED_KEY) === '1';
-  } catch {
-    return false;
-  }
 }
 
 // ── State & adapter ──
@@ -277,8 +207,6 @@ function buildGameState(statusData: StatusData = state.statusData): GameState {
 }
 
 function persistToSave() {
-  let label = '';
-  label = '手动存档';
   if (!state.activeRunId) return;
   const meta = writeAutosave({
     runId: state.activeRunId,
@@ -292,7 +220,7 @@ function persistToSave() {
   }
 }
 
-function persistManualSave(label = '手动存档') {
+function persistManualSave() {
   if (!state.activeRunId) return;
   const meta = createManualSave({
     runId: state.activeRunId,
@@ -312,7 +240,7 @@ function rebuildRuntimeAfterRestore() {
   state.finalizedGenerationId = '';
   state.notification = null;
   state.readerContextMenu = null;
-  resetPhoneRoute();
+  resetPhoneRouteState(state);
   state.focusedMessagePage = 0;
 }
 
@@ -446,49 +374,12 @@ async function deleteReaderFloor(readerIndex: number) {
   render();
 }
 
-function getRouteForTab(tab: TabKey): PhoneRoute {
-  if (tab === 'status') return 'app:status';
-  if (tab === 'inventory') return 'app:inventory';
-  return 'app:summary';
-}
-
-function getTabForRoute(route: PhoneRoute): TabKey | null {
-  if (route === 'app:status') return 'status';
-  if (route === 'app:inventory') return 'inventory';
-  if (route === 'app:summary') return 'summary';
-  return null;
-}
-
-function resetPhoneRoute() {
-  state.phoneRoute = 'home';
-  state.phoneRouteHistory = [];
-}
-
 function navigatePhone(route: PhoneRoute) {
-  ctx.closeReaderContextMenu(false);
-  if (route === state.phoneRoute) return;
-  state.phoneRouteHistory = [...state.phoneRouteHistory, state.phoneRoute];
-  state.phoneRoute = route;
-  const tab = getTabForRoute(route);
-  if (tab) {
-    state.activeTab = tab;
-    if (tab === state.notification?.targetTab) ctx.clearNotification(false);
-  }
-  render();
+  navigatePhoneRoute(state, route, ctx);
 }
 
 function navigatePhoneBack() {
-  ctx.closeReaderContextMenu(false);
-  const previous = state.phoneRouteHistory[state.phoneRouteHistory.length - 1];
-  if (previous) {
-    state.phoneRoute = previous;
-    state.phoneRouteHistory = state.phoneRouteHistory.slice(0, -1);
-  } else {
-    state.phoneRoute = 'home';
-  }
-  const tab = getTabForRoute(state.phoneRoute);
-  if (tab) state.activeTab = tab;
-  render();
+  navigatePhoneBackRoute(state, ctx);
 }
 
 function switchTab(tab: TabKey) {
@@ -496,99 +387,16 @@ function switchTab(tab: TabKey) {
 }
 
 function openPhone(targetRoute?: PhoneRoute) {
-  ctx.closeReaderContextMenu(false);
-  state.phoneOpen = true;
-  if (targetRoute) {
-    state.phoneRoute = targetRoute;
-    state.phoneRouteHistory = targetRoute === 'home' ? [] : ['home'];
-  } else {
-    resetPhoneRoute();
-  }
-  const tab = getTabForRoute(state.phoneRoute);
-  if (tab) {
-    state.activeTab = tab;
-    if (tab === state.notification?.targetTab) ctx.clearNotification(false);
-  }
-  render();
+  openPhoneRoute(state, ctx, targetRoute);
 }
 
 function closePhone() {
-  if (!state.phoneOpen) return;
-  ctx.closeReaderContextMenu(false);
-  state.phoneOpen = false;
-  resetPhoneRoute();
-  render();
+  closePhoneRoute(state, ctx);
 }
 
 function openNotification() {
   if (!state.notification) return;
   openPhone(getRouteForTab(state.notification.targetTab));
-}
-
-// ── Floating phone drag ──
-
-function applyFloatingPhonePosition(button: HTMLElement, position: FloatingPhonePosition) {
-  button.style.left = `${position.x}px`;
-  button.style.top = `${position.y}px`;
-}
-
-function bindFloatingPhoneEvents() {
-  const button = root?.querySelector<HTMLButtonElement>('[data-action="open-phone"]');
-  if (!button) return;
-  applyFloatingPhonePosition(button, state.floatingPhone);
-
-  button.addEventListener('pointerdown', event => {
-    if (event.button !== 0) return;
-    dragState = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      originX: state.floatingPhone.x,
-      originY: state.floatingPhone.y,
-      moved: false,
-    };
-    suppressFloatingPhoneClick = false;
-    button.setPointerCapture(event.pointerId);
-    button.classList.add('is-dragging');
-    document.body.classList.add('floating-phone-dragging');
-  });
-
-  button.addEventListener('pointermove', event => {
-    if (!dragState || event.pointerId !== dragState.pointerId) return;
-    const dx = event.clientX - dragState.startX;
-    const dy = event.clientY - dragState.startY;
-    if (Math.abs(dx) > FLOATING_PHONE_DRAG_THRESHOLD || Math.abs(dy) > FLOATING_PHONE_DRAG_THRESHOLD) {
-      dragState.moved = true;
-    }
-    if (!dragState.moved) return;
-    state.floatingPhone = clampFloatingPhonePosition({ x: dragState.originX + dx, y: dragState.originY + dy });
-    applyFloatingPhonePosition(button, state.floatingPhone);
-  });
-
-  const finishDrag = (event: PointerEvent) => {
-    if (!dragState || event.pointerId !== dragState.pointerId) return;
-    if (button.hasPointerCapture(event.pointerId)) button.releasePointerCapture(event.pointerId);
-    button.classList.remove('is-dragging');
-    document.body.classList.remove('floating-phone-dragging');
-    if (dragState.moved) {
-      markFloatingPhoneCustomized();
-      persistFloatingPhonePosition(state.floatingPhone);
-      suppressFloatingPhoneClick = true;
-    }
-    dragState = null;
-  };
-  button.addEventListener('pointerup', finishDrag);
-  button.addEventListener('pointercancel', finishDrag);
-
-  button.addEventListener('click', event => {
-    if (suppressFloatingPhoneClick) {
-      event.preventDefault();
-      event.stopPropagation();
-      suppressFloatingPhoneClick = false;
-      return;
-    }
-    openPhone();
-  });
 }
 
 // ── Reader drag ──
@@ -858,7 +666,7 @@ function bindEvents() {
     render();
   });
 
-  bindFloatingPhoneEvents();
+  bindFloatingPhoneEvents(root, state, openPhone);
   bindReaderDragEvents();
   bindReaderContextMenuEvents();
 }
@@ -893,6 +701,7 @@ function render() {
   if (state.activeRunId) {
     // Game screen
     syncFocusedMessage(state);
+    refreshWeatherForCurrentState(state, render);
     root.innerHTML = renderApp(state, flipDirection);
     bindEvents();
   } else if (state.creatingCharacter) {
@@ -910,10 +719,7 @@ function render() {
 
 window.addEventListener('resize', () => {
   ctx.closeReaderContextMenu(false);
-  state.floatingPhone = hasCustomizedFloatingPhonePosition()
-    ? clampFloatingPhonePosition(state.floatingPhone)
-    : getDefaultFloatingPhonePosition();
-  if (hasCustomizedFloatingPhonePosition()) persistFloatingPhonePosition(state.floatingPhone);
+  syncFloatingPhoneAfterResize(state);
   render();
 });
 
