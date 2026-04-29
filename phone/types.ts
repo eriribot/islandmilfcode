@@ -6,7 +6,7 @@ export type FloatingPhonePosition = {
 };
 
 export type WeatherReport = {
-  source: 'Open-Meteo Archive';
+  source: 'Open-Meteo Archive' | 'Story Weather Override';
   sourceUrl: string;
   date: string;
   locationLabel: string;

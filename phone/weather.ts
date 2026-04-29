@@ -1,5 +1,6 @@
 import type { AppState } from '../types';
 import type { WeatherReport, WeatherState } from './types';
+import { resolveWeatherOverride } from './weather-overrides';
 
 const STORY_START_DATE = '2012-03-31';
 
@@ -11,7 +12,7 @@ const DETECTIVE_SLOPE = {
   timezone: 'Asia/Tokyo',
 };
 
-type WeatherRequest = {
+export type WeatherRequest = {
   key: string;
   date: string;
   locationLabel: string;
@@ -96,16 +97,16 @@ export function getWeatherRequestUrl(request: WeatherRequest) {
 }
 
 export function describeWeatherCode(code: number | null) {
-  if (code === null || Number.isNaN(code)) return { label: '\u5929\u6c14\u672a\u77e5', icon: '?' };
-  if (code === 0) return { label: '\u6674', icon: 'SUN' };
-  if ([1, 2].includes(code)) return { label: '\u6674\u95f4\u591a\u4e91', icon: 'SUN' };
-  if (code === 3) return { label: '\u9634', icon: 'CLD' };
-  if ([45, 48].includes(code)) return { label: '\u96fe', icon: 'FOG' };
-  if ([51, 53, 55, 56, 57].includes(code)) return { label: '\u6bdb\u6bdb\u96e8', icon: 'DRZ' };
-  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { label: '\u96e8', icon: 'RAN' };
-  if ([71, 73, 75, 77, 85, 86].includes(code)) return { label: '\u96ea', icon: 'SNW' };
-  if ([95, 96, 99].includes(code)) return { label: '\u96f7\u9635\u96e8', icon: 'STM' };
-  return { label: '\u591a\u4e91', icon: 'CLD' };
+  if (code === null || Number.isNaN(code)) return { label: '\u5929\u6c14\u672a\u77e5', icon: '999' };
+  if (code === 0) return { label: '\u6674', icon: '100' };
+  if ([1, 2].includes(code)) return { label: '\u6674\u95f4\u591a\u4e91', icon: '101' };
+  if (code === 3) return { label: '\u9634', icon: '104' };
+  if ([45, 48].includes(code)) return { label: '\u96fe', icon: '501' };
+  if ([51, 53, 55, 56, 57].includes(code)) return { label: '\u6bdb\u6bdb\u96e8', icon: '309' };
+  if ([61, 63, 65, 66, 67, 80, 81, 82].includes(code)) return { label: '\u96e8', icon: '305' };
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return { label: '\u96ea', icon: '400' };
+  if ([95, 96, 99].includes(code)) return { label: '\u96f7\u9635\u96e8', icon: '302' };
+  return { label: '\u591a\u4e91', icon: '101' };
 }
 
 function pickDailyValue(values: Array<number | null> | undefined) {
@@ -113,6 +114,9 @@ function pickDailyValue(values: Array<number | null> | undefined) {
 }
 
 export async function loadWeatherReport(request: WeatherRequest): Promise<WeatherReport> {
+  const override = resolveWeatherOverride(request);
+  if (override) return override;
+
   const sourceUrl = getWeatherRequestUrl(request);
   const response = await fetch(sourceUrl);
   if (!response.ok) throw new Error(`Open-Meteo request failed: ${response.status}`);
