@@ -974,10 +974,33 @@ button {
 }
 
 .variable-sheet__title {
-  margin-bottom: 10px;
   font-size: 12px;
   font-weight: 700;
   color: var(--ink-soft);
+}
+
+.profile-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.profile-edit-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  cursor: pointer;
+  color: var(--ink-assistant);
+  background: rgba(107, 78, 158, 0.06);
+  border: 1px solid rgba(107, 78, 158, 0.12);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.profile-edit-btn:hover {
+  background: rgba(107, 78, 158, 0.13);
 }
 
 .variable-list,
@@ -1036,6 +1059,49 @@ button {
 .outfit-item p {
   font-size: 0.8rem;
   margin: 4px 0 0;
+}
+
+.profile-edit-field {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 70px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  resize: vertical;
+  border: 1px dashed rgba(180, 160, 130, 0.28);
+  border-radius: 8px;
+  outline: none;
+  color: var(--ink-dark);
+  background: rgba(255, 253, 247, 0.72);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.profile-edit-field:focus {
+  border-color: rgba(107, 78, 158, 0.35);
+  background: rgba(255, 253, 247, 0.95);
+}
+
+.profile-edit-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.profile-cancel-btn {
+  min-height: 34px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--ink-soft);
+  background: rgba(0, 0, 0, 0.04);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.profile-cancel-btn:hover {
+  background: rgba(0, 0, 0, 0.07);
 }
 
 .inventory-item {

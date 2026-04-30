@@ -1,5 +1,5 @@
 import type { SummaryApiConfig, SummaryStore } from './summary/types';
-import type { FloatingPhonePosition, PhoneRoute, WeatherState } from './phone/types';
+import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute, WeatherState } from './phone/types';
 
 export type TabKey = 'summary' | 'status' | 'inventory';
 
@@ -137,10 +137,12 @@ export type AppState = {
   creatingCharacter: boolean;
   showingSaveList: boolean;
   playerProfile: PlayerProfile;
+  playerProfileEditing: boolean;
   activeTab: TabKey;
   phoneOpen: boolean;
   phoneRoute: PhoneRoute;
   phoneRouteHistory: PhoneRoute[];
+  phoneCharacterId: PhoneCharacterId;
   floatingPhone: FloatingPhonePosition;
   focusedMessageIndex: number;
   focusedMessagePage: number;

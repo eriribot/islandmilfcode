@@ -8,7 +8,6 @@ import type {
   StatusData,
   UiMessage,
 } from './types';
-import { getActiveTarget } from './types';
 import { formatDate, formatTime, getInventoryIcon } from './variables/normalize';
 
 export function paginateMessage(text: string, role: UiMessage['role']) {
@@ -245,7 +244,6 @@ function getWeekday(dateStr: string) {
 function renderJournalHeader(state: AppState) {
   const dateStr = formatDate(state.statusData.world.currentTime);
   const weekday = getWeekday(state.statusData.world.currentTime);
-  const target = getActiveTarget(state.statusData);
 
   return `
     <header class="journal-header">
@@ -257,7 +255,7 @@ function renderJournalHeader(state: AppState) {
         <div class="journal-location">地点 ${escapeHtml(state.statusData.world.currentLocation)}</div>
       </div>
       <div class="journal-sticker">
-        阶段 ${escapeHtml(target?.stage ?? '')}
+        ${escapeHtml(state.playerProfile.className || '主角档案')}
       </div>
     </header>
   `;
@@ -306,8 +304,8 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
 export function renderSummaryPanel(state: AppState) {
   const recentEvents = Object.entries(state.statusData.world.recentEvents).slice(0, 3);
   const lastMessage = state.uiMessages[state.uiMessages.length - 1];
-  const target = getActiveTarget(state.statusData);
-  const alias = target?.alias ?? target?.name ?? '角色';
+  const playerName = state.playerProfile.name.trim() || '主角';
+  const playerMeta = [state.playerProfile.className, state.playerProfile.gender].filter(Boolean).join(' · ') || '主角档案';
   const store = state.summaryStore;
 
   return `
@@ -316,17 +314,12 @@ export function renderSummaryPanel(state: AppState) {
       <div class="panel-scroll" data-scroll-region="summary">
         <div class="hero-card">
           <div class="hero-row">
-            <div class="avatar-badge">${escapeHtml(alias)}</div>
+            <div class="avatar-badge">${escapeHtml(playerName)}</div>
             <div>
-              <div class="hero-name">${escapeHtml(target?.stage ?? '')}</div>
-              <div class="hero-sub">${escapeHtml(state.statusData.world.currentLocation)}</div>
+              <div class="hero-name">${escapeHtml(playerName)}</div>
+              <div class="hero-sub">${escapeHtml(playerMeta)}</div>
             </div>
           </div>
-          <div class="meter-head">
-            <span>依赖度</span>
-            <strong>${target?.affinity ?? 0}%</strong>
-          </div>
-          <div class="meter-track"><div class="meter-fill" style="width:${target?.affinity ?? 0}%"></div></div>
         </div>
 
         <div class="subsection">
@@ -485,9 +478,50 @@ export function renderSummaryConfigSection(state: AppState): string {
 
 export function renderStatusPanel(state: AppState) {
   const statusData = state.statusData;
-  const target = getActiveTarget(statusData);
-  const titles = target ? Object.entries(target.titles) : [];
   const recentEvents = Object.entries(statusData.world.recentEvents);
+  const playerName = state.playerProfile.name.trim() || '主角';
+  const playerClass = state.playerProfile.className || '未记录';
+  const playerGender = state.playerProfile.gender || '未记录';
+  const playerPersonality = state.playerProfile.personality.trim() || '未记录';
+  const playerAppearance = state.playerProfile.appearance.trim() || '未记录';
+  const profileEditing = state.playerProfileEditing;
+  const profileBody = profileEditing
+    ? `
+      <div class="chip-card">
+        <label>
+          <strong>主角性格</strong>
+          <textarea
+            class="profile-edit-field"
+            data-field="player-personality"
+            rows="3"
+          >${escapeHtml(playerPersonality === '未记录' ? '' : playerPersonality)}</textarea>
+        </label>
+      </div>
+      <div class="chip-card">
+        <label>
+          <strong>主角相貌</strong>
+          <textarea
+            class="profile-edit-field"
+            data-field="player-appearance"
+            rows="3"
+          >${escapeHtml(playerAppearance === '未记录' ? '' : playerAppearance)}</textarea>
+        </label>
+      </div>
+      <div class="profile-edit-actions">
+        <button class="summary-config-save" data-action="save-player-profile">保存</button>
+        <button class="profile-cancel-btn" data-action="cancel-player-profile-edit">取消</button>
+      </div>
+    `
+    : `
+      <div class="chip-card">
+        <strong>主角性格</strong>
+        <p>${escapeHtml(playerPersonality)}</p>
+      </div>
+      <div class="chip-card">
+        <strong>主角相貌</strong>
+        <p>${escapeHtml(playerAppearance)}</p>
+      </div>
+    `;
 
   return `
     <section class="panel-card panel-card--generic">
@@ -495,31 +529,35 @@ export function renderStatusPanel(state: AppState) {
       <div class="panel-scroll" data-scroll-region="status">
         <div class="hero-card">
           <div class="hero-row">
-            <div class="avatar-badge">${escapeHtml(target?.name ?? '角色')}</div>
+            <div class="avatar-badge">${escapeHtml(playerName)}</div>
             <div>
-              <div class="hero-name">角色状态</div>
-              <div class="hero-sub">当前阶段：${escapeHtml(target?.stage ?? '')}</div>
+              <div class="hero-name">${escapeHtml(playerName)}</div>
+              <div class="hero-sub">${escapeHtml(playerClass)} · ${escapeHtml(playerGender)}</div>
             </div>
           </div>
-          <div class="meter-head">
-            <span>依赖度</span>
-            <strong>${target?.affinity ?? 0}%</strong>
-          </div>
-          <div class="meter-track"><div class="meter-fill" style="width:${target?.affinity ?? 0}%"></div></div>
-          <div class="meter-actions">
-            <button class="mini-btn" data-action="dep-down">-</button>
-            <button class="mini-btn" data-action="dep-up">+</button>
-          </div>
         </div>
+
+        <section class="variable-sheet">
+          <div class="profile-sheet-header">
+            <div class="variable-sheet__title">主角档案</div>
+            ${
+              profileEditing
+                ? ''
+                : '<button class="profile-edit-btn" data-action="edit-player-profile" aria-label="编辑主角档案" title="编辑主角档案">✎</button>'
+            }
+          </div>
+          <div class="chip-list">
+            ${profileBody}
+          </div>
+        </section>
 
         <section class="variable-sheet">
           <div class="variable-sheet__title">变量快照</div>
           <div class="variable-list">
             <div class="variable-row"><span>world.currentTime</span><strong>${escapeHtml(statusData.world.currentTime)}</strong></div>
             <div class="variable-row"><span>world.currentLocation</span><strong>${escapeHtml(statusData.world.currentLocation)}</strong></div>
-            <div class="variable-row"><span>activeTarget.stage</span><strong>${escapeHtml(target?.stage ?? '')}</strong></div>
-            <div class="variable-row"><span>activeTarget.affinity</span><strong>${target?.affinity ?? 0}</strong></div>
-            <div class="variable-row"><span>activeTarget.titleCount</span><strong>${titles.length}</strong></div>
+            <div class="variable-row"><span>player.name</span><strong>${escapeHtml(playerName)}</strong></div>
+            <div class="variable-row"><span>player.className</span><strong>${escapeHtml(playerClass)}</strong></div>
             <div class="variable-row"><span>world.eventCount</span><strong>${recentEvents.length}</strong></div>
           </div>
         </section>
@@ -530,13 +568,10 @@ export function renderStatusPanel(state: AppState) {
 
 export function renderInventoryPanel(statusData: StatusData) {
   const inventory = Object.entries(statusData.player.inventory);
-  const target = getActiveTarget(statusData);
-  const outfits = target ? Object.entries(target.outfits) : [];
-  const alias = target?.alias ?? target?.name ?? '角色';
 
   return `
     <section class="panel-card panel-card--generic">
-      <div class="panel-title">物品 / 装扮</div>
+      <div class="panel-title">物品</div>
       <div class="panel-scroll" data-scroll-region="inventory">
         <div class="subsection">
           <div class="subsection-title">玩家物品</div>
@@ -558,26 +593,6 @@ export function renderInventoryPanel(statusData: StatusData) {
                     )
                     .join('')
                 : '<div class="empty-card">物品栏还是空的。</div>'
-            }
-          </div>
-        </div>
-
-        <div class="subsection">
-          <div class="subsection-title">${escapeHtml(alias)}装扮</div>
-          <div class="outfit-list">
-            ${
-              outfits.length
-                ? outfits
-                    .map(
-                      ([slot, detail]) => `
-                        <div class="outfit-item">
-                          <strong>${escapeHtml(slot)}</strong>
-                          <p>${escapeHtml(detail)}</p>
-                        </div>
-                      `,
-                    )
-                    .join('')
-                : '<div class="empty-card">还没有记录装扮。</div>'
             }
           </div>
         </div>

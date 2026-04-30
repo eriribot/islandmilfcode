@@ -2,7 +2,7 @@ import './styles.css';
 import './phone/styles.css';
 import './title/styles.css';
 
-import { changeDependency, submitMessage, type ActionContext } from './actions';
+import { submitMessage, type ActionContext } from './actions';
 import { setupStreamingHooks } from './actions/streaming';
 import { getReaderMessages } from './message-format';
 import { bindFloatingPhoneEvents, loadFloatingPhonePosition, syncFloatingPhoneAfterResize } from './phone/floating';
@@ -55,7 +55,7 @@ import type {
   TabKey,
   TavernWindow,
 } from './types';
-import type { PhoneRoute } from './phone/types';
+import type { PhoneCharacterId, PhoneRoute } from './phone/types';
 import { getActiveTarget } from './types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp } from './variables/normalize';
@@ -231,6 +231,24 @@ function persistManualSave() {
   setActiveSaveId(meta.saveId);
 }
 
+function savePlayerProfileFromStatusPanel() {
+  const personality = root?.querySelector<HTMLTextAreaElement>('[data-field="player-personality"]')?.value ?? '';
+  const appearance = root?.querySelector<HTMLTextAreaElement>('[data-field="player-appearance"]')?.value ?? '';
+  state.playerProfile = {
+    ...state.playerProfile,
+    personality: personality.trim(),
+    appearance: appearance.trim(),
+  };
+  state.playerProfileEditing = false;
+  persistToSave();
+  render();
+}
+
+function setPlayerProfileEditing(editing: boolean) {
+  state.playerProfileEditing = editing;
+  render();
+}
+
 function rebuildRuntimeAfterRestore() {
   state.draft = '';
   state.generating = false;
@@ -238,6 +256,7 @@ function rebuildRuntimeAfterRestore() {
   state.finalizedGenerationId = '';
   state.notification = null;
   state.readerContextMenu = null;
+  state.playerProfileEditing = false;
   resetPhoneRouteState(state);
   state.focusedMessagePage = 0;
 }
@@ -394,6 +413,12 @@ function closePhone() {
   closePhoneRoute(state, ctx);
 }
 
+function switchPhoneCharacter(characterId: PhoneCharacterId) {
+  if (state.phoneCharacterId === characterId) return;
+  state.phoneCharacterId = characterId;
+  render();
+}
+
 function openNotification() {
   if (!state.notification) return;
   openPhone(getRouteForTab(state.notification.targetTab));
@@ -533,6 +558,12 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-phone-route]').forEach(button => {
     button.addEventListener('click', () => navigatePhone(button.dataset.phoneRoute as PhoneRoute));
   });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="switch-phone-character"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const characterId = button.dataset.characterId as PhoneCharacterId | undefined;
+      if (characterId) switchPhoneCharacter(characterId);
+    });
+  });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="phone-back"]').forEach(button => {
     button.addEventListener('click', () => navigatePhoneBack());
   });
@@ -564,15 +595,18 @@ function bindEvents() {
     persistManualSave();
     render();
   });
+  root?.querySelector<HTMLButtonElement>('[data-action="save-player-profile"]')?.addEventListener('click', () => {
+    savePlayerProfileFromStatusPanel();
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="edit-player-profile"]')?.addEventListener('click', () => {
+    setPlayerProfileEditing(true);
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="cancel-player-profile-edit"]')?.addEventListener('click', () => {
+    setPlayerProfileEditing(false);
+  });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="send"]').forEach(button => button.addEventListener('click', () => {
     void submitMessage(ctx);
   }));
-  root
-    ?.querySelector<HTMLButtonElement>('[data-action="dep-down"]')
-    ?.addEventListener('click', () => changeDependency(ctx, -1));
-  root
-    ?.querySelector<HTMLButtonElement>('[data-action="dep-up"]')
-    ?.addEventListener('click', () => changeDependency(ctx, 1));
   root
     ?.querySelector<HTMLButtonElement>('[data-action="open-notification"]')
     ?.addEventListener('click', () => openNotification());

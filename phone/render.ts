@@ -1,10 +1,40 @@
 import { escapeHtml } from '../html';
 import { getReaderMessages } from '../message-format';
 import type { AppState, NotificationState, StatusData } from '../types';
-import { getActiveTarget } from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
-import type { FloatingPhonePosition, PhoneRoute } from './types';
+import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute } from './types';
 import { resolveWeatherRequest } from './weather';
+
+const PHONE_CHARACTER_THEMES: Record<
+  PhoneCharacterId,
+  {
+    label: string;
+    avatarUrl: string;
+    wallpaperUrl: string;
+  }
+> = {
+  megumi: {
+    label: '加藤惠',
+    avatarUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/c3/C02_main.png!/fw/116?v=20190923162215',
+    wallpaperUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/c3/C02_main.png!/fw/480?v=20190923162215',
+  },
+  eriri: {
+    label: '英梨梨',
+    avatarUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/cc/%E8%8B%B1%E8%8E%89%E8%8E%89%28%E5%A8%87%29.jpg',
+    wallpaperUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/c3/C02_main.png!/fw/480?v=20190923162215',
+  },
+  utaha: {
+    label: '霞之丘诗羽',
+    avatarUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/c3/C02_main.png!/fw/116?v=20190923162215',
+    wallpaperUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/c3/C02_main.png!/fw/480?v=20190923162215',
+  },
+};
+
+const PHONE_CHARACTER_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha'];
+
+function getPhoneCharacterTheme(characterId: PhoneCharacterId) {
+  return PHONE_CHARACTER_THEMES[characterId] ?? PHONE_CHARACTER_THEMES.megumi;
+}
 
 export type PhoneRenderers = {
   renderInventoryPanel: (statusData: StatusData) => string;
@@ -111,9 +141,10 @@ function renderWeatherHero(state: AppState) {
   `;
 }
 
+// 状态栏
 function renderPhoneHome(state: AppState) {
-  const target = getActiveTarget(state.statusData);
-  const alias = target?.alias ?? target?.name ?? '角色';
+  const playerMeta = state.playerProfile.className || state.playerProfile.gender || '主角档案';
+  const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
   const readerCount = Math.max(getReaderMessages(state.uiMessages).length, 0);
   const summaryCount =
     state.summaryStore.minor.length + state.summaryStore.major.length + (state.summaryStore.global ? 1 : 0);
@@ -132,7 +163,7 @@ function renderPhoneHome(state: AppState) {
       icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjOTBjYWY5IiBkPSJNMzMgNDJINVY0aDE5bDkgOXoiLz48cGF0aCBmaWxsPSIjZTFmNWZlIiBkPSJNMzEuNSAxNEgyM1Y1LjV6Ii8+PHBhdGggZmlsbD0iIzYxNjE2MSIgZD0ibTM0LjUwNSAzNy41OGwxLjk4LTEuOThsOC40ODMgOC40ODVsLTEuOTggMS45OHoiLz48Y2lyY2xlIGN4PSIyOCIgY3k9IjI5IiByPSIxMSIgZmlsbD0iIzYxNjE2MSIvPjxjaXJjbGUgY3g9IjI4IiBjeT0iMjkiIHI9IjkiIGZpbGw9IiM5MGNhZjkiLz48cGF0aCBmaWxsPSIjMzc0NzRmIiBkPSJtMzYuODQ5IDM5Ljg4bDEuOTgtMS45OGw2LjE1IDYuMTUxbC0xLjk4IDEuOTh6Ii8+PHBhdGggZmlsbD0iIzE5NzZkMiIgZD0iTTMwIDMxaC05LjdjLjQgMS42IDEuMyAzIDIuNSA0SDMwem0tOS43LTRIMzB2LTRoLTcuM2MtMS4yIDEtMiAyLjQtMi40IDRtLS4yLTdIMTF2Mmg3LjNjLjUtLjcgMS4xLTEuNCAxLjgtMm0tMyA0SDExdjJoNS40Yy4yLS43LjQtMS40LjctMk0xNiAyOWMwLS4zIDAtLjcuMS0xSDExdjJoNS4xYy0uMS0uMy0uMS0uNy0uMS0xbS40IDNIMTF2Mmg2LjFjLS4zLS42LS41LTEuMy0uNy0yIi8+PC9zdmc+',
       iconType: 'image',
       label: '状态',
-      meta: `${target?.affinity ?? 0}%`,
+      meta: playerMeta,
       dock: true,
     },
     {
@@ -157,7 +188,33 @@ function renderPhoneHome(state: AppState) {
     <section class="phone-home phone-route-page" data-phone-route-view="home">
       <div class="phone-home-hero">
         ${renderWeatherHero(state)}
-        <div class="phone-home-avatar">${escapeHtml(alias)}</div>
+        <div class="phone-character-panel" aria-label="角色切换">
+          <div class="phone-home-avatar">
+            <img
+              src="${escapeHtml(selectedCharacter.avatarUrl)}"
+              alt="${escapeHtml(selectedCharacter.label)}"
+              loading="lazy"
+              decoding="async"
+            />
+          </div>
+          <div class="phone-character-switcher">
+            ${PHONE_CHARACTER_ORDER.map(characterId => {
+              const theme = getPhoneCharacterTheme(characterId);
+              const selected = characterId === state.phoneCharacterId;
+              return `
+                <button
+                  class="phone-character-option ${selected ? 'is-active' : ''}"
+                  data-action="switch-phone-character"
+                  data-character-id="${characterId}"
+                  aria-label="切换到${escapeHtml(theme.label)}"
+                  aria-pressed="${selected ? 'true' : 'false'}"
+                >
+                  <img src="${escapeHtml(theme.avatarUrl)}" alt="${escapeHtml(theme.label)}" loading="lazy" decoding="async" />
+                </button>
+              `;
+            }).join('')}
+          </div>
+        </div>
       </div>
 
       <div class="phone-app-grid">
@@ -218,10 +275,10 @@ function renderSummaryPhonePage(state: AppState, renderers: PhoneRenderers) {
 }
 
 function renderStatusPhonePage(state: AppState, renderers: PhoneRenderers) {
-  const target = getActiveTarget(state.statusData);
+  const profileSubtitle = state.playerProfile.className || state.playerProfile.gender || '';
   return `
     <section class="phone-route-page phone-app-page" data-phone-route-view="app:status">
-      ${renderPhoneAppHeader(state, '状态', target?.stage ?? '')}
+      ${renderPhoneAppHeader(state, '状态', profileSubtitle)}
       ${renderers.renderStatusPanel(state)}
     </section>
   `;
@@ -270,12 +327,16 @@ function renderPhoneRoute(state: AppState, flipDir: string, renderers: PhoneRend
 }
 
 export function renderPhone(state: AppState, renderers: PhoneRenderers, flipDir: string = '') {
+  const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
   return `
     <div class="phone-modal ${state.phoneOpen ? 'is-open' : ''}" aria-hidden="${state.phoneOpen ? 'false' : 'true'}">
       <button class="phone-backdrop" data-action="close-phone" aria-label="关闭手帐"></button>
       <section class="phone-shell">
         <div class="phone-notch"></div>
-        <div class="phone-inner">
+        <div
+          class="phone-inner"
+          style="--phone-wallpaper-url:url('${escapeHtml(selectedCharacter.wallpaperUrl)}');"
+        >
           <header class="system-bar">
             <span class="system-time">${escapeHtml(formatTime(state.statusData.world.currentTime))}</span>
             <div class="system-icons">

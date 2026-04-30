@@ -82,8 +82,9 @@ export function renderTitleHome(options: TitleHomeOptions = {}) {
       <div class="gal-title__content">
         <header class="gal-title__header">
           <p class="gal-title__ornament">✦ ─────── ✦</p>
-          <h1 class="gal-title__name">冴えない彼女の育てかた</h1>
-          <p class="gal-title__sub">Saenai Hiroin no Sodatekata</p>
+          <h1 class="gal-title__name">
+          <img src ="https://eriribot.github.io/islandmilfcode/picresource/logo.png" alt="S冴えない彼女の育てかた" class="gal-title__logo" />
+          </h1>
         </header>
 
         <div class="gal-info-cards">

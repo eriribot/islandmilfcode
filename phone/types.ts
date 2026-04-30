@@ -1,5 +1,7 @@
 export type PhoneRoute = 'home' | 'app:reader' | 'app:summary' | 'app:status' | 'app:inventory' | 'app:settings';
 
+export type PhoneCharacterId = 'megumi' | 'eriri' | 'utaha';
+
 export type FloatingPhonePosition = {
   x: number;
   y: number;

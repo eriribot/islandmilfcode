@@ -1,0 +1,768 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Youth Romantic Comedy Is Wrong, As I Expected</title>
+    <style>
+      :root {
+        --ink-dark: #3f342f;
+        --ink-soft: #6f635d;
+        --ink-faint: #9a8d86;
+        --accent: #8c5f7b;
+        --accent-deep: #6f4962;
+        --paper: rgba(255, 250, 246, 0.9);
+        --paper-soft: rgba(255, 250, 246, 0.72);
+        --line: rgba(165, 120, 132, 0.18);
+        --pink: #efb7c6;
+        --mint: #a8dbc5;
+        --sky: #adc7e8;
+        --cream: #fff4df;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        min-height: 100%;
+      }
+
+      body {
+        margin: 0;
+        overflow-x: hidden;
+        font-family: 'Klee One', 'Zen Maru Gothic', 'PingFang SC', 'Microsoft YaHei', serif;
+        color: var(--ink-dark);
+        background:
+          radial-gradient(circle at 18% 10%, rgba(255, 255, 255, 0.68), transparent 28%),
+          linear-gradient(135deg, #fff8e8 0%, #f8d9df 46%, #d7ecf8 100%);
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        border: 0;
+      }
+
+      .gal-title {
+        position: relative;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 26px 16px;
+        overflow: hidden;
+        isolation: isolate;
+      }
+
+      .gal-title::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: -3;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.34) 1px, transparent 1px) 0 0 / 34px 34px,
+          linear-gradient(90deg, rgba(255, 255, 255, 0.32) 1px, transparent 1px) 0 0 / 34px 34px;
+        opacity: 0.6;
+      }
+
+      .gal-title__content {
+        position: relative;
+        z-index: 2;
+        width: min(760px, calc(100vw - 28px));
+        padding: clamp(22px, 4vw, 40px);
+        border-radius: 14px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        box-shadow:
+          0 18px 60px rgba(100, 70, 88, 0.18),
+          inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        backdrop-filter: blur(10px);
+      }
+
+      .gal-title__header {
+        text-align: center;
+      }
+
+      .gal-title__ornament {
+        margin: 0 0 10px;
+        color: var(--ink-faint);
+        font-size: 0.9rem;
+      }
+
+      .gal-title__name {
+        margin: 0;
+        font-size: clamp(1.55rem, 4vw, 2.4rem);
+        letter-spacing: 0;
+        line-height: 1.15;
+      }
+
+      .gal-title__logo {
+        width: min(420px, 86vw);
+        max-height: 150px;
+        object-fit: contain;
+        display: block;
+        margin: 0 auto;
+      }
+
+      .gal-title__sub {
+        margin: 8px 0 0;
+        color: var(--ink-soft);
+        font-size: 0.92rem;
+      }
+
+      .gal-info-cards {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        margin: 28px 0 24px;
+      }
+
+      .gal-info-card {
+        min-height: 86px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px;
+        border-radius: 10px;
+        background: var(--paper-soft);
+        border: 1px solid var(--line);
+      }
+
+      .gal-info-card__icon {
+        width: 38px;
+        height: 38px;
+        flex: 0 0 auto;
+        display: grid;
+        place-items: center;
+        border-radius: 11px;
+        background: rgba(255, 255, 255, 0.55);
+      }
+
+      .gal-info-card__icon img {
+        width: 30px;
+        height: 30px;
+        object-fit: contain;
+      }
+
+      .gal-info-card__text {
+        min-width: 0;
+      }
+
+      .gal-info-card__text strong {
+        display: block;
+        font-size: 0.92rem;
+      }
+
+      .gal-info-card__text p {
+        margin: 3px 0 0;
+        color: var(--ink-soft);
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }
+
+      .gal-title__actions,
+      .gal-create-actions {
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .gal-btn {
+        min-width: 132px;
+        min-height: 42px;
+        padding: 10px 18px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 800;
+        color: var(--ink-dark);
+        background: rgba(255, 255, 255, 0.65);
+        border: 1px solid rgba(140, 95, 123, 0.16);
+        transition:
+          transform 0.15s ease,
+          background 0.15s ease,
+          opacity 0.15s ease;
+      }
+
+      .gal-btn:hover:not(:disabled) {
+        transform: translateY(-1px);
+        background: rgba(255, 255, 255, 0.88);
+      }
+
+      .gal-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      .gal-btn--primary {
+        color: #fff;
+        background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+        border-color: rgba(111, 73, 98, 0.3);
+      }
+
+      .gal-btn--primary:hover:not(:disabled) {
+        background: linear-gradient(135deg, #98698a, #603d56);
+      }
+
+      .gal-btn--ghost {
+        color: var(--accent-deep);
+      }
+
+      .gal-title__footer {
+        margin: 24px 0 0;
+        text-align: center;
+        color: var(--ink-faint);
+        font-size: 0.78rem;
+      }
+
+      .gal-create-form {
+        display: grid;
+        gap: 14px;
+        margin-top: 24px;
+      }
+
+      .gal-field {
+        display: grid;
+        gap: 7px;
+      }
+
+      .gal-field__label {
+        color: var(--ink-soft);
+        font-size: 0.9rem;
+        font-weight: 800;
+      }
+
+      .gal-field__input,
+      .gal-field__textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        outline: none;
+        padding: 10px 12px;
+        color: var(--ink-dark);
+        background: rgba(255, 255, 255, 0.68);
+      }
+
+      .gal-field__textarea {
+        min-height: 82px;
+        resize: vertical;
+        line-height: 1.7;
+      }
+
+      .gal-field__input:focus,
+      .gal-field__textarea:focus {
+        border-color: rgba(140, 95, 123, 0.38);
+        background: rgba(255, 255, 255, 0.9);
+      }
+
+      .gal-class-options {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .gal-class-option {
+        position: relative;
+        min-height: 38px;
+        display: grid;
+        place-items: center;
+        padding: 8px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.58);
+        cursor: pointer;
+        font-size: 0.86rem;
+        font-weight: 800;
+      }
+
+      .gal-class-option input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .gal-class-option:has(input:checked) {
+        color: #fff;
+        background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      }
+
+      .gal-save-panel {
+        margin-top: 22px;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.52);
+      }
+
+      .gal-save-panel h2 {
+        margin: 0 0 10px;
+        font-size: 1rem;
+      }
+
+      .gal-save-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .gal-save-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: center;
+        padding: 10px;
+        border-radius: 10px;
+        background: rgba(255, 250, 246, 0.76);
+        border: 1px solid var(--line);
+      }
+
+      .gal-save-item strong,
+      .gal-save-item span {
+        display: block;
+      }
+
+      .gal-save-item span {
+        color: var(--ink-soft);
+        font-size: 0.78rem;
+        margin-top: 2px;
+      }
+
+      .gal-music-toggle {
+        position: fixed;
+        z-index: 5;
+        top: 18px;
+        right: 18px;
+        width: 42px;
+        height: 42px;
+        border-radius: 14px;
+        cursor: pointer;
+        color: var(--accent-deep);
+        background: rgba(255, 250, 246, 0.82);
+        border: 1px solid var(--line);
+        box-shadow: 0 8px 24px rgba(100, 70, 88, 0.14);
+      }
+
+      .gal-music-toggle.is-playing {
+        color: #fff;
+        background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+      }
+
+      .gal-sakura-field,
+      .gal-title__particles {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+
+      .gal-sakura-petal {
+        position: absolute;
+        top: -40px;
+        left: var(--x);
+        width: var(--size);
+        height: var(--size);
+        opacity: var(--alpha);
+        filter: blur(var(--blur));
+        animation: sakura-fall var(--duration) linear infinite;
+        animation-delay: var(--delay);
+      }
+
+      .gal-sakura-petal span {
+        display: block;
+        width: 100%;
+        height: 100%;
+        border-radius: 70% 12% 70% 12%;
+        background: linear-gradient(135deg, #fff, #f3a9bd);
+        transform: rotate(25deg) scale(var(--scale));
+        animation: sakura-spin 2.8s ease-in-out infinite alternate;
+      }
+
+      @keyframes sakura-fall {
+        from {
+          transform: translate3d(0, -8vh, 0) rotate(0deg);
+        }
+        to {
+          transform: translate3d(var(--sway), 112vh, 0) rotate(calc(360deg * var(--spin)));
+        }
+      }
+
+      @keyframes sakura-spin {
+        from {
+          transform: rotate(18deg) scale(var(--scale));
+        }
+        to {
+          transform: rotate(-18deg) scale(var(--scale));
+        }
+      }
+
+      .gal-particle {
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.72);
+        animation: float-dot 6s ease-in-out infinite;
+      }
+
+      .gal-particle--1 {
+        left: 12%;
+        top: 22%;
+      }
+      .gal-particle--2 {
+        left: 78%;
+        top: 18%;
+        animation-delay: -1s;
+      }
+      .gal-particle--3 {
+        left: 18%;
+        top: 76%;
+        animation-delay: -2s;
+      }
+      .gal-particle--4 {
+        left: 88%;
+        top: 68%;
+        animation-delay: -3s;
+      }
+      .gal-particle--5 {
+        left: 50%;
+        top: 10%;
+        animation-delay: -4s;
+      }
+
+      @keyframes float-dot {
+        0%,
+        100% {
+          transform: translateY(0);
+          opacity: 0.45;
+        }
+        50% {
+          transform: translateY(-16px);
+          opacity: 0.9;
+        }
+      }
+
+      .hidden {
+        display: none;
+      }
+
+      @media (max-width: 680px) {
+        .gal-info-cards,
+        .gal-class-options {
+          grid-template-columns: 1fr;
+        }
+
+        .gal-title {
+          place-items: start center;
+          padding-top: 70px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="app"></main>
+
+    <script>
+      const TITLE_MUSIC_URL = 'https://eriribot.github.io/islandmilfcode/Aimer_星屑ビーナス.mp3';
+      const SAVE_KEY = 'islandmilfcode:chuwu-demo-saves:v1';
+      let screen = 'home';
+      let showSaves = false;
+      let titleAudio = null;
+
+      function escapeHtml(value) {
+        return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+
+      function readSaves() {
+        try {
+          return JSON.parse(localStorage.getItem(SAVE_KEY) || '[]');
+        } catch {
+          return [];
+        }
+      }
+
+      function writeSaves(saves) {
+        localStorage.setItem(SAVE_KEY, JSON.stringify(saves));
+      }
+
+      function renderTitleMusicControl() {
+        return `
+        <button
+          type="button"
+          class="gal-music-toggle"
+          data-action="toggle-title-music"
+          aria-label="播放/暂停标题音乐"
+          aria-pressed="false"
+          title="播放/暂停标题音乐"
+        >♪</button>
+      `;
+      }
+
+      function renderSakuraField(count) {
+        return `
+        <div class="gal-sakura-field" aria-hidden="true">
+          ${Array.from({ length: count }, (_, i) => {
+            const left = (i * 29 + 7) % 104;
+            const size = 9 + ((i * 7) % 18);
+            const delay = -((i * 1.17) % 15);
+            const duration = 13 + ((i * 5) % 12);
+            const sway = 32 + ((i * 17) % 96);
+            const spin = i % 2 === 0 ? 1 : -1;
+            const depth = i % 5 === 0 ? 'near' : i % 3 === 0 ? 'far' : 'mid';
+            const blur = depth === 'near' ? 0.2 : depth === 'far' ? 1.2 : 0.55;
+            const alpha = depth === 'near' ? 0.9 : depth === 'far' ? 0.48 : 0.68;
+            const scale = depth === 'near' ? 1.18 : depth === 'far' ? 0.74 : 1;
+            return `
+              <span
+                class="gal-sakura-petal"
+                style="--x:${left}vw;--size:${size}px;--delay:${delay.toFixed(2)}s;--duration:${duration}s;--sway:${sway}px;--spin:${spin};--blur:${blur}px;--alpha:${alpha};--scale:${scale};"
+              ><span></span></span>
+            `;
+          }).join('')}
+        </div>
+      `;
+      }
+
+      function renderParticles() {
+        return `
+        <div class="gal-title__particles" aria-hidden="true">
+          <span class="gal-particle gal-particle--1"></span>
+          <span class="gal-particle gal-particle--2"></span>
+          <span class="gal-particle gal-particle--3"></span>
+          <span class="gal-particle gal-particle--4"></span>
+          <span class="gal-particle gal-particle--5"></span>
+        </div>
+      `;
+      }
+
+      function renderSavePanel(saves) {
+        if (!showSaves) return '';
+        return `
+        <section class="gal-save-panel">
+          <h2>本地展示存档</h2>
+          <div class="gal-save-list">
+            ${
+              saves.length
+                ? saves
+                    .map(
+                      save => `
+                    <div class="gal-save-item">
+                      <div>
+                        <strong>${escapeHtml(save.characterName)}</strong>
+                        <span>${escapeHtml(save.className)} · ${escapeHtml(save.createdAt)}</span>
+                      </div>
+                      <button class="gal-btn gal-btn--ghost" data-action="delete-save" data-id="${escapeHtml(save.id)}">删除</button>
+                    </div>
+                  `,
+                    )
+                    .join('')
+                : '<div class="gal-save-item"><div><strong>暂无存档</strong><span>创建一个主角后会出现在这里。</span></div></div>'
+            }
+          </div>
+        </section>
+      `;
+      }
+
+      function renderHome() {
+        const saves = readSaves();
+        return `
+        <div class="gal-title">
+          ${renderSakuraField(42)}
+          ${renderTitleMusicControl()}
+          ${renderParticles()}
+          <div class="gal-title__content">
+            <header class="gal-title__header">
+              <p class="gal-title__ornament">✦ ─────── ✦</p>
+              <h1 class="gal-title__name">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/OreGairu_logo.png/1280px-OreGairu_logo.png" alt="My Youth Romantic Comedy Is Wrong, As I Expected" class="gal-title__logo" />
+              </h1>
+            </header>
+
+            <div class="gal-info-cards">
+              <div class="gal-info-card">
+                <span class="gal-info-card__icon">
+                  <img src="https://storage.moegirl.org.cn/moegirl/commons/3/33/%E9%9B%AA%E4%B9%8B%E4%B8%8B%E9%9B%AA%E4%B9%83%E7%94%9F%E6%97%A5%E8%B4%BA%E5%9B%BE3.jpg" alt="礼物" loading="lazy" />
+                </span>
+                <span class="gal-info-card__text">
+                  <strong>本卡完全免费</strong>
+                  <p>永久免费开放<br />禁止二次倒卖</p>
+                </span>
+              </div>
+              <div class="gal-info-card">
+                <span class="gal-info-card__icon">
+                  <img src="https://storage.moegirl.org.cn/moegirl/commons/3/3c/Winner-diamond-2022.png" alt="链接" loading="lazy" />
+                </span>
+                <span class="gal-info-card__text">
+                  <strong>更新地址</strong>
+                  <p>Discord<br />新类脑</p>
+                </span>
+              </div>
+              <div class="gal-info-card">
+                <span class="gal-info-card__icon">
+                  <img src="https://storage.moegirl.org.cn/moegirl/commons/a/ad/EVcAA-ci7.jpg" alt="假日" loading="lazy" />
+                </span>
+                <span class="gal-info-card__text">
+                  <strong>本卡类型</strong>
+                  <p>SillyTavern<br />同人卡</p>
+                </span>
+              </div>
+            </div>
+
+            <div class="gal-title__actions">
+              <button class="gal-btn gal-btn--primary" data-action="new-game">新建角色 →</button>
+              <button class="gal-btn" data-action="toggle-saves">${showSaves ? '收起存档' : '读取存档'}</button>
+            </div>
+
+            ${renderSavePanel(saves)}
+            <p class="gal-title__footer">My Youth Romantic Comedy Is Wrong, As I Expected</p>
+          </div>
+        </div>
+      `;
+      }
+
+      function renderCreate() {
+        return `
+        <div class="gal-title">
+          ${renderSakuraField(28)}
+          ${renderTitleMusicControl()}
+          ${renderParticles()}
+          <div class="gal-title__content">
+            <header class="gal-title__header">
+              <p class="gal-title__ornament">✦ ─────── ✦</p>
+              <h1 class="gal-title__name">创建主角</h1>
+              <p class="gal-title__sub">Character Creation</p>
+            </header>
+
+            <form class="gal-create-form" data-action="create-form">
+              <div class="gal-field">
+                <label class="gal-field__label" for="gal-char-name">主角名</label>
+                <input class="gal-field__input" id="gal-char-name" name="characterName" type="text" placeholder="输入你的主角名称" required autocomplete="off" />
+              </div>
+
+              <div class="gal-field">
+                <label class="gal-field__label" for="gal-char-gender">性别</label>
+                <input class="gal-field__input" id="gal-char-gender" name="gender" type="text" value="男" readonly />
+              </div>
+
+              <div class="gal-field">
+                <label class="gal-field__label" for="gal-char-personality">主角性格</label>
+                <textarea class="gal-field__textarea" id="gal-char-personality" name="personality" placeholder="描述主角的性格特征..." rows="3"></textarea>
+              </div>
+
+              <div class="gal-field">
+                <label class="gal-field__label" for="gal-char-appearance">主角相貌</label>
+                <textarea class="gal-field__textarea" id="gal-char-appearance" name="appearance" placeholder="描述主角的外貌特征..." rows="3"></textarea>
+              </div>
+
+              <div class="gal-field">
+                <span class="gal-field__label">所在班级</span>
+                <div class="gal-class-options" role="radiogroup" aria-label="所在班级">
+                  <label class="gal-class-option"><input type="radio" name="className" value="1年A班" /> <span>1年A班</span></label>
+                  <label class="gal-class-option"><input type="radio" name="className" value="2年B班" checked /> <span>2年B班</span></label>
+                  <label class="gal-class-option"><input type="radio" name="className" value="2年G班" /> <span>2年G班</span></label>
+                  <label class="gal-class-option"><input type="radio" name="className" value="3年C班" /> <span>3年C班</span></label>
+                </div>
+              </div>
+
+              <div class="gal-create-actions">
+                <button type="button" class="gal-btn gal-btn--ghost" data-action="back-home">← 返回</button>
+                <button type="submit" class="gal-btn gal-btn--primary">确认创建 →</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+      }
+
+      function render() {
+        document.getElementById('app').innerHTML = screen === 'create' ? renderCreate() : renderHome();
+        bindEvents();
+        syncMusicButton();
+      }
+
+      function getAudio() {
+        if (!titleAudio) {
+          titleAudio = new Audio(TITLE_MUSIC_URL);
+          titleAudio.loop = true;
+          titleAudio.preload = 'auto';
+          titleAudio.volume = 0.42;
+        }
+        return titleAudio;
+      }
+
+      function syncMusicButton() {
+        const button = document.querySelector("[data-action='toggle-title-music']");
+        if (!button || !titleAudio) return;
+        button.classList.toggle('is-playing', !titleAudio.paused);
+        button.setAttribute('aria-pressed', String(!titleAudio.paused));
+      }
+
+      function bindEvents() {
+        document.querySelector("[data-action='new-game']")?.addEventListener('click', () => {
+          screen = 'create';
+          showSaves = false;
+          render();
+        });
+
+        document.querySelector("[data-action='back-home']")?.addEventListener('click', () => {
+          screen = 'home';
+          render();
+        });
+
+        document.querySelector("[data-action='toggle-saves']")?.addEventListener('click', () => {
+          showSaves = !showSaves;
+          render();
+        });
+
+        document.querySelectorAll("[data-action='delete-save']").forEach(button => {
+          button.addEventListener('click', () => {
+            const id = button.dataset.id;
+            writeSaves(readSaves().filter(save => save.id !== id));
+            render();
+          });
+        });
+
+        document.querySelector("[data-action='toggle-title-music']")?.addEventListener('click', async () => {
+          const audio = getAudio();
+          try {
+            if (audio.paused) {
+              await audio.play();
+            } else {
+              audio.pause();
+            }
+          } catch (error) {
+            console.warn('Unable to play title music.', error);
+          }
+          syncMusicButton();
+        });
+
+        document.querySelector("[data-action='create-form']")?.addEventListener('submit', event => {
+          event.preventDefault();
+          const form = event.currentTarget;
+          const fd = new FormData(form);
+          const characterName = String(fd.get('characterName') || '').trim();
+          if (!characterName) return;
+
+          const save = {
+            id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+            characterName,
+            gender: String(fd.get('gender') || '男').trim(),
+            personality: String(fd.get('personality') || '').trim(),
+            appearance: String(fd.get('appearance') || '').trim(),
+            className: String(fd.get('className') || '2年B班').trim(),
+            createdAt: new Date().toLocaleString(),
+          };
+          writeSaves([save, ...readSaves()]);
+          screen = 'home';
+          showSaves = true;
+          render();
+        });
+      }
+
+      render();
+    </script>
+  </body>
+</html>
