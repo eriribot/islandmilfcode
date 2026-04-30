@@ -80,6 +80,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     activeRunId: null,
     activeSaveId: null,
     creatingCharacter: false,
+    showingSaveList: false,
     playerProfile: {
       name: '',
       personality: '',

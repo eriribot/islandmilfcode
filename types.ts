@@ -135,6 +135,7 @@ export type AppState = {
   activeRunId: string | null;
   activeSaveId: string | null;
   creatingCharacter: boolean;
+  showingSaveList: boolean;
   playerProfile: PlayerProfile;
   activeTab: TabKey;
   phoneOpen: boolean;

@@ -1,5 +1,5 @@
 import { listSaves } from '../state/saves';
-import type { SaveMeta } from '../types';
+import { renderLoadSaveModal } from './loadsave';
 
 // Replace this with a direct remote audio URL before publishing the character card.
 const TITLE_MUSIC_URL = 'https://eriribot.github.io/islandmilfcode/Aimer_星屑ビーナス.mp3';
@@ -8,6 +8,7 @@ function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// 播放音乐
 function renderTitleMusicControl() {
   const musicUrl = TITLE_MUSIC_URL.trim();
   const stateClass = musicUrl ? '' : ' gal-music-toggle--disabled';
@@ -28,6 +29,7 @@ function renderTitleMusicControl() {
   `;
 }
 
+// 樱花散落
 function renderSakuraField(count = 36) {
   return `
     <div class="gal-sakura-field" aria-hidden="true">
@@ -55,36 +57,14 @@ function renderSakuraField(count = 36) {
   `;
 }
 
-function renderSaveSlot(save: SaveMeta, index: number) {
-  const date = new Date(save.updatedAt);
-  const dateStr = `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`;
-  const timeStr = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-  const msgCount = save.messageCount;
-  const kindLabel = save.kind === 'autosave' ? '自动存档' : '手动存档';
-  const playerName = save.playerProfile?.name?.trim() || save.characterName?.trim() || '未命名主角';
-  const target = save.activeTarget;
-  const targetName = target?.alias || target?.name || '未知攻略对象';
-  const targetDetail = target
-    ? [`攻略对象：${targetName}`, target.stage, `好感 ${target.affinity}`].filter(Boolean).join(' · ')
-    : '攻略对象：未知';
-  const detail = save.preview?.trim() || save.location || save.label;
+type TitleHomeOptions = {
+  showSaves?: boolean;
+};
 
-  return `
-    <div class="gal-save-slot" data-save-index="${index}" data-run-id="${escapeHtml(save.runId)}">
-      <button class="gal-save-load" data-action="load-save" data-save-id="${escapeHtml(save.saveId)}">
-        <span class="gal-save-name">${escapeHtml(playerName)}</span>
-        <span class="gal-save-detail">${escapeHtml(targetDetail)}</span>
-        <span class="gal-save-detail">${escapeHtml(detail)}</span>
-        <span class="gal-save-meta">${dateStr} ${timeStr} · ${kindLabel} · ${msgCount} 条记录</span>
-      </button>
-      <button class="gal-save-delete" data-action="delete-save" data-save-id="${escapeHtml(save.saveId)}" title="删除存档">×</button>
-    </div>
-  `;
-}
-
-export function renderTitleHome() {
+export function renderTitleHome(options: TitleHomeOptions = {}) {
   const saves = listSaves();
-  const saveSlots = saves.map((s, i) => renderSaveSlot(s, i)).join('');
+  const showSaves = options.showSaves === true;
+  const hasSaves = saves.length > 0;
 
   return `
     <div class="gal-title">
@@ -140,23 +120,21 @@ export function renderTitleHome() {
           <button class="gal-btn gal-btn--primary" data-action="new-game">
             新建角色 →
           </button>
+          <button
+            class="gal-btn gal-btn--load"
+            data-action="show-saves"
+            ${hasSaves ? '' : 'disabled'}
+            aria-disabled="${hasSaves ? 'false' : 'true'}"
+            title="${hasSaves ? '读取已有存档' : '暂无可读取的存档'}"
+          >
+            读取存档
+          </button>
         </div>
-
-        ${
-          saves.length
-            ? `
-          <div class="gal-saves-section">
-            <p class="gal-saves-label">── 存档列表 ──</p>
-            <div class="gal-saves-list">
-              ${saveSlots}
-            </div>
-          </div>
-        `
-            : ''
-        }
 
         <p class="gal-title__footer">Saenai Hiroin no Sodatekata</p>
       </div>
+
+      ${showSaves ? renderLoadSaveModal() : ''}
     </div>
   `;
 }

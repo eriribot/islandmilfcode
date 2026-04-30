@@ -2,6 +2,8 @@ export type TitleCallbacks = {
   enterSave: (saveId: string) => void;
   returnToTitle: () => void;
   startCreating: () => void;
+  showSaves: () => void;
+  hideSaves: () => void;
   createAndEnter: (opts: { characterName: string; gender: string; personality: string; appearance: string; className: string }) => void;
   deleteSave: (saveId: string) => void;
   render: () => void;
@@ -63,6 +65,18 @@ export function bindTitleHomeEvents(root: HTMLElement | null, cb: TitleCallbacks
 
   root?.querySelector<HTMLButtonElement>('[data-action="new-game"]')?.addEventListener('click', () => {
     cb.startCreating();
+  });
+
+  root?.querySelector<HTMLButtonElement>('[data-action="show-saves"]')?.addEventListener('click', event => {
+    const button = event.currentTarget;
+    if (button.disabled) return;
+    cb.showSaves();
+  });
+
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="hide-saves"]').forEach(button => {
+    button.addEventListener('click', () => {
+      cb.hideSaves();
+    });
   });
 
   root?.querySelectorAll<HTMLButtonElement>('[data-action="load-save"]').forEach(btn => {

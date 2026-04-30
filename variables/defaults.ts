@@ -2,8 +2,8 @@ import type { StatusData, TargetStatus } from '../types';
 
 export const defaultTarget: TargetStatus = {
   id: 'target',
-  name: '同伴',
-  alias: '同伴',
+  name: localStorage.getItem('characterName') || '角色',
+  alias: localStorage.getItem('characterName') || '角色',
   affinity: 50,
   stage: '熟悉彼此',
   titles: {
@@ -31,7 +31,7 @@ export const defaultStatusData: StatusData = {
   activeTargetId: defaultTarget.id,
   player: {
     inventory: {
-      手机: { description: '用于查看记录、状态与摘要。', count: 1 },
+      私立丰之崎学园学生证: { description: '身为丰之崎学园的学生的证明。', count: 1 },
     },
   },
 };

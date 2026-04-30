@@ -434,11 +434,12 @@
 .gal-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 12px 36px;
   border-radius: 999px;
   font-family: 'Klee One', serif;
-  font-size: 0.95rem;
+  font-size: 1.08rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -473,50 +474,218 @@
   color: #3a3028;
 }
 
+.gal-btn--load {
+  color: #8f7d6a;
+  background: linear-gradient(180deg, rgba(255, 252, 249, 0.76), rgba(245, 238, 231, 0.62));
+  border: 1.5px solid rgba(220, 210, 195, 0.76);
+  box-shadow:
+    0 4px 14px rgba(98, 72, 62, 0.075),
+    0 1px 0 rgba(255, 255, 255, 0.62) inset;
+}
+
+.gal-btn--load:hover {
+  border-color: rgba(196, 168, 142, 0.86);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(247, 240, 233, 0.76));
+  color: #5c4d3f;
+  transform: translateY(-2px);
+  box-shadow:
+    0 6px 22px rgba(98, 72, 62, 0.12),
+    0 1px 0 rgba(255, 255, 255, 0.74) inset;
+}
+
+.gal-btn:disabled,
+.gal-btn[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.46;
+  transform: none;
+  box-shadow: none;
+}
+
+.gal-btn:disabled:hover,
+.gal-btn[aria-disabled='true']:hover {
+  background: linear-gradient(180deg, rgba(255, 252, 249, 0.5), rgba(245, 238, 231, 0.44));
+  border-color: rgba(220, 210, 195, 0.6);
+  color: #7d6f5e;
+  transform: none;
+}
+
 /* ── 按钮容器 ── */
 .gal-title__actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
-}
-
-/* ── 存档区域 ── */
-.gal-saves-section {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
   gap: 12px;
 }
 
-.gal-saves-label {
-  font-family: 'Klee One', serif;
-  font-size: 0.78rem;
-  color: #b0a08a;
-  letter-spacing: 0.2em;
-  margin: 0;
+.gal-title__actions .gal-btn {
+  min-width: 208px;
+  min-height: 64px;
 }
 
-.gal-saves-list {
-  width: 100%;
+/* ── 读档弹窗 ── */
+.gal-loadsave {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.gal-loadsave__backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background:
+    radial-gradient(circle at 50% 22%, rgba(255, 246, 250, 0.55), transparent 42%),
+    rgba(70, 48, 50, 0.18);
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+}
+
+.gal-loadsave__panel {
+  position: relative;
+  z-index: 1;
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(72vh, 620px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid rgba(230, 214, 205, 0.78);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 249, 250, 0.82)),
+    linear-gradient(135deg, rgba(244, 178, 196, 0.18), rgba(187, 219, 247, 0.12));
+  box-shadow:
+    0 26px 70px rgba(83, 56, 60, 0.18),
+    0 1px 0 rgba(255, 255, 255, 0.88) inset;
+  backdrop-filter: blur(18px);
+  animation: gal-loadsave-in 0.18s ease-out;
+}
+
+.gal-loadsave__panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(90deg, rgba(212, 130, 154, 0.58), rgba(201, 184, 232, 0.52), rgba(159, 200, 236, 0.36));
+}
+
+.gal-loadsave__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 24px 26px 18px;
+  border-bottom: 1px solid rgba(220, 210, 195, 0.46);
+}
+
+.gal-loadsave__eyebrow {
+  margin: 0 0 3px;
+  color: #b85c6e;
+  font-family: 'Klee One', serif;
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.78;
+}
+
+.gal-loadsave__header h2 {
+  margin: 0;
+  color: #3a3028;
+  font-family: 'Yuji Syuku', 'Klee One', serif;
+  font-size: 1.35rem;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+}
+
+.gal-loadsave__close {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(220, 210, 195, 0.62);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.56);
+  color: #9b8b78;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  transition:
+    color 0.16s ease,
+    background 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.gal-loadsave__close:hover {
+  border-color: rgba(184, 92, 110, 0.3);
+  background: rgba(255, 246, 249, 0.92);
+  color: #b85c6e;
+  transform: rotate(6deg);
+}
+
+.gal-loadsave__list {
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  padding: 16px 18px 20px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(184, 92, 110, 0.32) rgba(255, 255, 255, 0.42);
+}
+
+.gal-loadsave__list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.gal-loadsave__list::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.42);
+  border-radius: 999px;
+}
+
+.gal-loadsave__list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(184, 92, 110, 0.28);
+}
+
+.gal-loadsave__empty {
+  margin: 16px 18px 20px;
+  padding: 24px 16px;
+  border: 1px dashed rgba(220, 210, 195, 0.72);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.48);
+  color: #b0a08a;
+  font-family: 'Klee One', serif;
+  font-size: 0.86rem;
+  text-align: center;
 }
 
 .gal-save-slot {
   display: flex;
   align-items: stretch;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.6);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
   border: 1px solid rgba(220, 210, 195, 0.5);
   overflow: hidden;
   backdrop-filter: blur(6px);
-  transition: all 0.2s ease;
+  box-shadow: 0 8px 22px rgba(98, 72, 62, 0.045);
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
 .gal-save-slot:hover {
   background: rgba(255, 255, 255, 0.85);
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06);
+  border-color: rgba(214, 126, 151, 0.28);
+  box-shadow: 0 12px 28px rgba(98, 72, 62, 0.075);
+  transform: translateY(-1px);
 }
 
 .gal-save-load {
@@ -524,8 +693,8 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 12px 16px;
+  gap: 4px;
+  padding: 14px 16px;
   background: transparent;
   cursor: pointer;
   text-align: left;
@@ -536,11 +705,34 @@
   background: rgba(242, 181, 196, 0.08);
 }
 
+.gal-save-slot__topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
 .gal-save-name {
   font-family: 'Klee One', serif;
   font-size: 0.92rem;
   font-weight: 600;
   color: #3a3028;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gal-save-kind {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid rgba(214, 126, 151, 0.26);
+  border-radius: 999px;
+  background: rgba(255, 246, 249, 0.74);
+  color: #b85c6e;
+  font-family: 'Klee One', serif;
+  font-size: 0.66rem;
+  line-height: 1.2;
 }
 
 .gal-save-detail {
@@ -561,16 +753,16 @@
 }
 
 .gal-save-delete {
-  flex: 0 0 40px;
-  width: 40px;
-  min-width: 40px;
+  flex: 0 0 42px;
+  width: 42px;
+  min-width: 42px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   color: #b0a08a;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   border-left: 1px solid rgba(220, 210, 195, 0.4) !important;
   transition: all 0.15s ease;
 }
@@ -578,6 +770,17 @@
 .gal-save-delete:hover {
   background: rgba(184, 92, 110, 0.06);
   color: #b85c6e;
+}
+
+@keyframes gal-loadsave-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 /* ── 底部文字 ── */
@@ -906,7 +1109,7 @@
 
   .gal-btn {
     padding: 10px 28px;
-    font-size: 0.88rem;
+    font-size: 0.96rem;
   }
 
   .gal-music-toggle {
@@ -925,6 +1128,51 @@
   .gal-create-actions .gal-btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .gal-title__actions {
+    width: 100%;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .gal-title__actions .gal-btn {
+    min-width: 0;
+    min-height: 54px;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .gal-loadsave {
+    padding: 14px;
+  }
+
+  .gal-loadsave__panel {
+    width: 100%;
+    max-height: 78vh;
+    border-radius: 16px;
+  }
+
+  .gal-loadsave__header {
+    padding: 20px 18px 14px;
+  }
+
+  .gal-loadsave__header h2 {
+    font-size: 1.16rem;
+  }
+
+  .gal-loadsave__list {
+    padding: 12px 12px 16px;
+  }
+
+  .gal-save-load {
+    padding: 12px 13px;
+  }
+
+  .gal-save-slot__topline {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
   }
 }
 

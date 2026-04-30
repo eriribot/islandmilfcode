@@ -21,8 +21,6 @@ import {
   createManualSave,
   createSave,
   deleteSave,
-  getActiveRunId,
-  getActiveSaveId,
   loadSave,
   setActiveRunId,
   setActiveSaveId,
@@ -252,6 +250,7 @@ function enterSave(saveId: string) {
   setActiveRunId(save.payload.runId);
   setActiveSaveId(saveId);
   state.creatingCharacter = false;
+  state.showingSaveList = false;
   const msgs = deserializeMessages(save.payload.chatLog);
   replaceConversationMessages(state, msgs);
   state.statusData = save.payload.gameState.statusData;
@@ -279,6 +278,7 @@ function returnToTitle() {
   setActiveRunId(null);
   clearActiveSaveId();
   state.creatingCharacter = false;
+  state.showingSaveList = false;
   render();
 }
 
@@ -678,6 +678,15 @@ const titleCallbacks: TitleCallbacks = {
   returnToTitle,
   startCreating: () => {
     state.creatingCharacter = true;
+    state.showingSaveList = false;
+    render();
+  },
+  showSaves: () => {
+    state.showingSaveList = true;
+    render();
+  },
+  hideSaves: () => {
+    state.showingSaveList = false;
     render();
   },
   createAndEnter: opts => {
@@ -710,7 +719,7 @@ function render() {
     bindCharacterCreationEvents(root, titleCallbacks);
   } else {
     // Title home screen
-    root.innerHTML = renderTitleHome();
+    root.innerHTML = renderTitleHome({ showSaves: state.showingSaveList });
     bindTitleHomeEvents(root, titleCallbacks);
   }
 }
@@ -739,6 +748,12 @@ window.addEventListener('keydown', event => {
     ctx.closeReaderContextMenu(true);
     return;
   }
+  if (event.key === 'Escape' && state.showingSaveList) {
+    event.preventDefault();
+    state.showingSaveList = false;
+    render();
+    return;
+  }
   if (event.target instanceof HTMLTextAreaElement) return;
   if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
     event.preventDefault();
@@ -755,21 +770,8 @@ async function init() {
   adapter = await createVariableAdapter(win);
   state.summaryApiConfig = loadSummaryApiConfig();
   setupStreamingHooks(ctx, eventStops);
-  const persistedRunId = getActiveRunId();
-  const persistedSaveId = getActiveSaveId();
-  if (persistedSaveId && loadSave(persistedSaveId)) {
-    enterSave(persistedSaveId);
-    return;
-  }
-  if (persistedRunId) {
-    const autosaveId = `autosave_${persistedRunId}`;
-    if (loadSave(autosaveId)) {
-      enterSave(autosaveId);
-      return;
-    }
-    setActiveRunId(null);
-    clearActiveSaveId();
-  }
+  setActiveRunId(null);
+  clearActiveSaveId();
   render();
 }
 init();
