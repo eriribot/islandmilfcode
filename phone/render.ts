@@ -15,18 +15,21 @@ const PHONE_CHARACTER_THEMES: Record<
 > = {
   megumi: {
     label: '加藤惠',
-    avatarUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/c3/C02_main.png!/fw/116?v=20190923162215',
-    wallpaperUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/c3/C02_main.png!/fw/480?v=20190923162215',
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/megumi_phone.jpg',
+    wallpaperUrl:
+      'https://gd-hbimg-edge.huaban.com/54d1cd036730fbe2672d7d0795c98aa3fea16c8ab1b1a-8PWLq4_fw1200webp?auth_key=1777536000-6b0536e391314365a7db7170f8c66308-0-12fa6062e7133f46b3eea6583406b6dd',
   },
   eriri: {
     label: '英梨梨',
-    avatarUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/cc/%E8%8B%B1%E8%8E%89%E8%8E%89%28%E5%A8%87%29.jpg',
-    wallpaperUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/c3/C02_main.png!/fw/480?v=20190923162215',
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/eriri_phone.jpg',
+    wallpaperUrl:
+      'https://gd-hbimg-edge.huaban.com/fc233f0e4e74e5987394a03a78a0c22f12e2853429b7d-ecLaSC_fw1200webp?auth_key=1777536000-6b0536e391314365a7db7170f8c66308-0-b46ea9e0571b23913faa4fea47ec1f42',
   },
   utaha: {
     label: '霞之丘诗羽',
-    avatarUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/c3/C02_main.png!/fw/116?v=20190923162215',
-    wallpaperUrl: 'https://storage.moegirl.org.cn/moegirl/commons/c/c3/C02_main.png!/fw/480?v=20190923162215',
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/utaha_phone.jpg',
+    wallpaperUrl:
+      'https://gd-hbimg-edge.huaban.com/ffa523ba07ec0c9f53d90e3f638a72a3ae8035b381df4-AkpqY8_fw1200webp?auth_key=1777536000-6b0536e391314365a7db7170f8c66308-0-3a4728974f9d1f5860a55214f3cdfbf6',
   },
 };
 
