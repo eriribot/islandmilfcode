@@ -904,6 +904,639 @@ body.floating-phone-dragging {
   object-fit: contain;
 }
 
+.archive-phone-scroll {
+  padding-right: 2px;
+}
+
+.archive-page {
+  display: grid;
+  gap: 10px;
+  color: #724d5d;
+}
+
+.archive-topbar,
+.archive-panel,
+.archive-subpanel {
+  border: 1px solid rgba(214, 162, 178, 0.34);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 243, 247, 0.74));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.48);
+}
+
+.archive-topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+}
+
+.archive-eyebrow,
+.archive-topbar aside span,
+.archive-panel__head,
+.archive-foot span,
+.archive-info-grid span,
+.archive-subpanel h3,
+.archive-affection-head span,
+.archive-meter__meta em {
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.archive-eyebrow,
+.archive-topbar aside span {
+  display: block;
+  margin-bottom: 5px;
+  color: #b86b84;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.archive-topbar h2,
+.archive-profile h3 {
+  margin: 0;
+  font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Times New Roman', serif;
+  letter-spacing: 0.08em;
+  color: #8c596d;
+}
+
+.archive-topbar h2 {
+  font-size: 2rem;
+  line-height: 0.95;
+}
+
+.archive-topbar aside {
+  padding: 10px;
+  background: rgba(255, 249, 250, 0.72);
+  border: 1px solid rgba(214, 162, 178, 0.24);
+}
+
+.archive-topbar aside strong {
+  display: block;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+.archive-hero,
+.archive-status {
+  display: grid;
+  gap: 10px;
+}
+
+.archive-panel {
+  overflow: hidden;
+}
+
+.archive-panel__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  color: #b86b84;
+  background: linear-gradient(90deg, rgba(255, 239, 244, 0.95), rgba(255, 250, 247, 0.58));
+  border-bottom: 1px solid rgba(214, 162, 178, 0.24);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.archive-portrait__stage {
+  padding: 14px;
+  background:
+    radial-gradient(circle at 50% 14%, rgba(249, 223, 232, 0.96), transparent 30%),
+    linear-gradient(180deg, rgba(255, 252, 248, 0.45), rgba(248, 230, 237, 0.36));
+}
+
+.archive-portrait__frame {
+  position: relative;
+  aspect-ratio: 4 / 4.8;
+  padding: 8px;
+  background: linear-gradient(180deg, rgba(255, 249, 250, 0.95), rgba(248, 229, 237, 0.78));
+  border: 1px solid rgba(214, 162, 178, 0.34);
+}
+
+.archive-portrait__frame img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center;
+  border: 1px solid rgba(214, 162, 178, 0.18);
+}
+
+.archive-portrait__badge,
+.archive-portrait__code {
+  position: absolute;
+  z-index: 1;
+  padding: 5px 8px;
+  color: #b86b84;
+  background: rgba(255, 249, 250, 0.84);
+  border: 1px solid rgba(214, 162, 178, 0.3);
+  font-size: 10px;
+  font-weight: 800;
+  backdrop-filter: blur(4px);
+}
+
+.archive-portrait__badge {
+  top: 18px;
+  left: 18px;
+}
+
+.archive-portrait__code {
+  right: 18px;
+  bottom: 18px;
+  max-width: calc(100% - 36px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.archive-foot {
+  display: grid;
+  grid-template-columns: 1fr;
+  border-top: 1px solid rgba(214, 162, 178, 0.22);
+}
+
+.archive-foot div {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(214, 162, 178, 0.16);
+}
+
+.archive-foot div:last-child {
+  border-bottom: 0;
+}
+
+.archive-foot span,
+.archive-info-grid span {
+  display: block;
+  margin-bottom: 5px;
+  color: #a48390;
+  font-size: 10px;
+}
+
+.archive-foot strong,
+.archive-info-grid strong {
+  display: block;
+  color: #805166;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.archive-profile__body {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.archive-profile h3 {
+  font-size: 1.65rem;
+  line-height: 1.05;
+}
+
+.archive-roman {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 7px;
+  padding: 5px 10px;
+  overflow: hidden;
+  border: 1px solid rgba(214, 162, 178, 0.34);
+  border-radius: 999px;
+  color: #b86b84;
+  background: rgba(255, 249, 251, 0.86);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.archive-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.archive-tags span {
+  padding: 5px 9px;
+  border: 1px solid rgba(214, 162, 178, 0.28);
+  border-radius: 999px;
+  color: #936172;
+  background: rgba(255, 248, 250, 0.86);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.archive-profile p,
+.archive-subpanel p {
+  margin: 0;
+  color: #8c6b77;
+  font-size: 0.86rem;
+  line-height: 1.75;
+}
+
+.archive-profile blockquote {
+  margin: 0;
+  padding: 12px;
+  color: #835367;
+  background: linear-gradient(90deg, rgba(243, 201, 216, 0.42), rgba(255, 248, 250, 0.22));
+  border-left: 3px solid #d787a0;
+  font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Times New Roman', serif;
+  line-height: 1.65;
+}
+
+.archive-info-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.archive-info-grid div {
+  padding: 10px;
+  background: rgba(255, 250, 248, 0.8);
+  border: 1px solid rgba(214, 162, 178, 0.22);
+}
+
+.archive-subpanel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.archive-subpanel h3 {
+  margin: 0;
+  color: #b86b84;
+  font-size: 0.78rem;
+}
+
+.archive-affection-head,
+.archive-meter__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.archive-affection-head span {
+  color: #a48390;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.archive-affection-head strong {
+  color: #b86b84;
+  font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Times New Roman', serif;
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.archive-hearts {
+  display: flex;
+  gap: 7px;
+}
+
+.archive-hearts span {
+  width: 18px;
+  height: 18px;
+  background: rgba(233, 196, 210, 0.42);
+  clip-path: path('M9 16 C2 11,0 7,0 4 C0 1.8,1.8 0,4 0 C5.8 0,7.4 1,9 3.2 C10.6 1,12.2 0,14 0 C16.2 0,18 1.8,18 4 C18 7,16 11,9 16 Z');
+}
+
+.archive-hearts span.is-active {
+  background: linear-gradient(180deg, #fff7fa, #f3c9d8 46%, #d787a0);
+  box-shadow: 0 0 12px rgba(215, 135, 160, 0.28);
+}
+
+.archive-meter-stack {
+  display: grid;
+  gap: 9px;
+}
+
+.archive-meter {
+  display: grid;
+  gap: 5px;
+}
+
+.archive-meter__meta {
+  color: #8a5569;
+  font-size: 0.76rem;
+}
+
+.archive-meter__meta span {
+  display: inline-flex;
+  min-width: 0;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.archive-meter__meta strong {
+  font-size: 0.76rem;
+}
+
+.archive-meter__meta em {
+  color: #a48390;
+  font-size: 0.68rem;
+  font-style: normal;
+}
+
+.archive-meter__meta b {
+  font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Times New Roman', serif;
+}
+
+.archive-bar {
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(214, 162, 178, 0.34);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 251, 249, 0.96), rgba(245, 221, 230, 0.84));
+}
+
+.archive-bar__fill {
+  position: relative;
+  display: block;
+  width: var(--value);
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f9d8e3 0%, #f0bdd0 52%, #e59db5 100%);
+}
+
+.archive-bar__fill--trust {
+  background: linear-gradient(90deg, #e6f1df 0%, #b8d49f 52%, #84aa6c 100%);
+}
+
+.archive-bar__fill--mood {
+  background: linear-gradient(90deg, #f8ead2 0%, #eac99f 52%, #d7a86e 100%);
+}
+
+.archive-topbar {
+  grid-template-columns: minmax(0, 0.78fr) minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px;
+}
+
+.archive-topbar h2 {
+  font-size: 1.56rem;
+}
+
+.archive-topbar aside {
+  min-width: 0;
+  padding: 8px;
+}
+
+.archive-topbar aside strong {
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+
+.archive-panel__head {
+  min-height: 34px;
+  padding: 8px 10px;
+}
+
+.archive-portrait__stage {
+  padding: 10px;
+}
+
+.archive-portrait__frame {
+  aspect-ratio: 4 / 3.95;
+  padding: 6px;
+}
+
+.archive-portrait__badge,
+.archive-portrait__code {
+  max-width: calc(100% - 28px);
+  padding: 4px 7px;
+  font-size: 9px;
+}
+
+.archive-portrait__badge {
+  top: 14px;
+  left: 14px;
+}
+
+.archive-portrait__code {
+  right: 14px;
+  bottom: 14px;
+}
+
+.archive-foot {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.archive-foot div {
+  min-width: 0;
+  padding: 8px;
+  border-right: 1px solid rgba(214, 162, 178, 0.16);
+  border-bottom: 0;
+}
+
+.archive-foot div:last-child {
+  border-right: 0;
+}
+
+.archive-foot strong,
+.archive-info-grid strong {
+  font-size: 0.76rem;
+}
+
+.archive-profile__body {
+  gap: 10px;
+  padding: 12px;
+}
+
+.archive-profile h3 {
+  font-size: 1.35rem;
+  overflow-wrap: anywhere;
+}
+
+.archive-roman {
+  padding: 4px 8px;
+  font-size: 0.62rem;
+}
+
+.archive-tags span {
+  padding: 4px 8px;
+  font-size: 0.68rem;
+}
+
+.archive-profile p,
+.archive-subpanel p {
+  font-size: 0.8rem;
+  line-height: 1.62;
+}
+
+.archive-profile blockquote {
+  padding: 10px;
+  line-height: 1.5;
+  font-size: 0.86rem;
+}
+
+.archive-info-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.archive-info-grid div {
+  min-width: 0;
+  padding: 8px;
+}
+
+.archive-subpanel {
+  gap: 8px;
+  padding: 11px;
+}
+
+.archive-affection-head strong {
+  font-size: 1.45rem;
+}
+
+.archive-hearts span {
+  width: 16px;
+  height: 16px;
+}
+
+.archive-phone-scroll {
+  display: block;
+  overflow-y: auto;
+}
+
+.archive-page {
+  display: grid;
+  grid-template-rows: none;
+  align-content: start;
+  gap: 8px;
+}
+
+.archive-character-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 2px 0 4px;
+  background: linear-gradient(180deg, rgba(247, 239, 224, 0.96), rgba(247, 239, 224, 0.72));
+  backdrop-filter: blur(8px);
+}
+
+.archive-character-tabs button {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 3px 5px;
+  align-items: center;
+  padding: 5px;
+  border-radius: 8px;
+  color: #8c596d;
+  background: rgba(255, 252, 245, 0.68);
+  border: 1px solid rgba(214, 162, 178, 0.2);
+  cursor: pointer;
+}
+
+.archive-character-tabs button.is-active {
+  background: rgba(255, 244, 247, 0.92);
+  border-color: rgba(184, 107, 132, 0.46);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.56);
+}
+
+.archive-character-tabs img {
+  width: 24px;
+  height: 24px;
+  display: block;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.archive-character-tabs span {
+  min-width: 0;
+  grid-column: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.archive-character-tabs i {
+  grid-column: 2;
+  color: #a48390;
+  font-size: 0.56rem;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.archive-character-tabs button.is-active i {
+  color: #b86b84;
+}
+
+.archive-summary-card {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  padding: 10px;
+  border: 1px solid rgba(214, 162, 178, 0.34);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 243, 247, 0.74));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.48);
+}
+
+.archive-avatar {
+  width: 86px;
+  height: 112px;
+  overflow: hidden;
+  border: 1px solid rgba(214, 162, 178, 0.34);
+  background: rgba(255, 249, 250, 0.86);
+}
+
+.archive-avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center;
+}
+
+.archive-summary-copy {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.archive-summary-copy h2 {
+  margin: 0;
+  color: #8c596d;
+  font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Times New Roman', serif;
+  font-size: 1.24rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.archive-summary-card .archive-roman {
+  max-width: 100%;
+  margin-top: 0;
+}
+
+.archive-summary-card .archive-tags {
+  gap: 5px;
+}
+
+.archive-summary-card .archive-tags span {
+  padding: 3px 7px;
+  font-size: 0.64rem;
+}
+
+.archive-profile__body {
+  gap: 8px;
+  padding: 10px;
+}
+
+.archive-info-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.archive-subpanel {
+  padding: 10px;
+}
+
 @media (max-width: 720px) {
   .floating-phone {
     width: 66px;

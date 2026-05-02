@@ -2,6 +2,7 @@ import { escapeHtml } from '../html';
 import { getReaderMessages } from '../message-format';
 import type { AppState, NotificationState, PhoneChatThread, StatusData, TargetStatus } from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
+import { renderCharacterArchivePanel } from './archive';
 import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute } from './types';
 import { resolveWeatherRequest } from './weather';
 
@@ -173,6 +174,13 @@ function renderPhoneHome(state: AppState) {
       dock: true,
     },
     { route: 'app:reader', icon: 'RD', label: '阅读', meta: `${readerCount} 条记录` },
+    {
+      route: 'app:archive',
+      icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjNDU1YTY0IiBkPSJNMzYgNEgyNmMwIDEuMS0uOSAyLTIgMnMtMi0uOS0yLTJIMTJDOS44IDQgOCA1LjggOCA4djMyYzAgMi4yIDEuOCA0IDQgNGgyNGMyLjIgMCA0LTEuOCA0LTRWOGMwLTIuMi0xLjgtNC00LTQiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMzYgNDFIMTJjLS42IDAtMS0uNC0xLTFWOGMwLS42LjQtMSAxLTFoMjRjLjYgMCAxIC40IDEgMXYzMmMwIC42LS40IDEtMSAxIi8+PGcgZmlsbD0iIzkwYTRhZSI+PHBhdGggZD0iTTI2IDRjMCAxLjEtLjkgMi0yIDJzLTItLjktMi0yaC03djRjMCAxLjEuOSAyIDIgMmgxNGMxLjEgMCAyLS45IDItMlY0eiIvPjxwYXRoIGQ9Ik0yNCAwYy0yLjIgMC00IDEuOC00IDRzMS44IDQgNCA0czQtMS44IDQtNHMtMS44LTQtNC00bTAgNmMtMS4xIDAtMi0uOS0yLTJzLjktMiAyLTJzMiAuOSAyIDJzLS45IDItMiAyIi8+PC9nPjxwYXRoIGZpbGw9IiM0Y2FmNTAiIGQ9Im0zMC42IDE4LjZsLTkgOWwtNC4yLTQuM2wtMi41IDIuNWw2LjggNi43bDExLjQtMTEuNHoiLz48L3N2Zz4=',
+      iconType: 'image',
+      label: '档案',
+      meta: selectedCharacter.label,
+    },
     {
       route: 'app:status',
       icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjOTBjYWY5IiBkPSJNMzMgNDJINVY0aDE5bDkgOXoiLz48cGF0aCBmaWxsPSIjZTFmNWZlIiBkPSJNMzEuNSAxNEgyM1Y1LjV6Ii8+PHBhdGggZmlsbD0iIzYxNjE2MSIgZD0ibTM0LjUwNSAzNy41OGwxLjk4LTEuOThsOC40ODMgOC40ODVsLTEuOTggMS45OHoiLz48Y2lyY2xlIGN4PSIyOCIgY3k9IjI5IiByPSIxMSIgZmlsbD0iIzYxNjE2MSIvPjxjaXJjbGUgY3g9IjI4IiBjeT0iMjkiIHI9IjkiIGZpbGw9IiM5MGNhZjkiLz48cGF0aCBmaWxsPSIjMzc0NzRmIiBkPSJtMzYuODQ5IDM5Ljg4bDEuOTgtMS45OGw2LjE1IDYuMTUxbC0xLjk4IDEuOTh6Ii8+PHBhdGggZmlsbD0iIzE5NzZkMiIgZD0iTTMwIDMxaC05LjdjLjQgMS42IDEuMyAzIDIuNSA0SDMwem0tOS43LTRIMzB2LTRoLTcuM2MtMS4yIDEtMiAyLjQtMi40IDRtLS4yLTdIMTF2Mmg3LjNjLjUtLjcgMS4xLTEuNCAxLjgtMm0tMyA0SDExdjJoNS40Yy4yLS43LjQtMS40LjctMk0xNiAyOWMwLS4zIDAtLjcuMS0xSDExdjJoNS4xYy0uMS0uMy0uMS0uNy0uMS0xbS40IDNIMTF2Mmg2LjFjLS4zLS42LS41LTEuMy0uNy0yIi8+PC9zdmc+',
@@ -369,7 +377,9 @@ function renderMessagesPhonePage(state: AppState) {
           ${
             contactTargets.length
               ? contactTargets
-                  .map(target => renderPhoneContactRow(target, Boolean(state.phoneMessages.threads[target.id]?.messages.length)))
+                  .map(target =>
+                    renderPhoneContactRow(target, Boolean(state.phoneMessages.threads[target.id]?.messages.length)),
+                  )
                   .join('')
               : '<div class="phone-chat-empty">当前没有可联系的角色。</div>'
           }
@@ -445,6 +455,18 @@ function renderStatusPhonePage(state: AppState, renderers: PhoneRenderers) {
   `;
 }
 
+function renderArchivePhonePage(state: AppState) {
+  const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
+  return `
+    <section class="phone-route-page phone-app-page phone-app-page--archive" data-phone-route-view="app:archive">
+      ${renderPhoneAppHeader(state, '人物档案', selectedCharacter.label)}
+      <div class="phone-page-scroll archive-phone-scroll">
+        ${renderCharacterArchivePanel(state.phoneCharacterId, state.statusData.targets)}
+      </div>
+    </section>
+  `;
+}
+
 function renderInventoryPhonePage(statusData: StatusData, state: AppState, renderers: PhoneRenderers) {
   return `
     <section class="phone-route-page phone-app-page" data-phone-route-view="app:inventory">
@@ -483,6 +505,7 @@ function renderPhoneRoute(state: AppState, flipDir: string, renderers: PhoneRend
   if (state.phoneRoute === 'app:chat') return renderPhoneChatPage(state);
   if (state.phoneRoute === 'app:reader') return renderReaderPhonePage(state, flipDir, renderers);
   if (state.phoneRoute === 'app:summary') return renderSummaryPhonePage(state, renderers);
+  if (state.phoneRoute === 'app:archive') return renderArchivePhonePage(state);
   if (state.phoneRoute === 'app:status') return renderStatusPhonePage(state, renderers);
   if (state.phoneRoute === 'app:inventory') return renderInventoryPhonePage(state.statusData, state, renderers);
   if (state.phoneRoute === 'app:settings') return renderSettingsPhonePage(state, renderers);

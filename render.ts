@@ -580,14 +580,8 @@ export function renderStatusPanel(state: AppState) {
         </section>
 
         <section class="variable-sheet">
-          <div class="variable-sheet__title">变量快照</div>
-          <div class="variable-list">
-            <div class="variable-row"><span>world.currentTime</span><strong>${escapeHtml(statusData.world.currentTime)}</strong></div>
-            <div class="variable-row"><span>world.currentLocation</span><strong>${escapeHtml(statusData.world.currentLocation)}</strong></div>
-            <div class="variable-row"><span>player.name</span><strong>${escapeHtml(playerName)}</strong></div>
-            <div class="variable-row"><span>player.className</span><strong>${escapeHtml(playerClass)}</strong></div>
-            <div class="variable-row"><span>world.eventCount</span><strong>${recentEvents.length}</strong></div>
-          </div>
+          <div class="variable-sheet__title">主角能力</div>
+          <div class="radar-chart-container" id="status-radar"></div>
         </section>
       </div>
     </section>

@@ -16,6 +16,7 @@ import {
 } from './phone/routes';
 import { refreshWeatherForCurrentState } from './phone/weather';
 import { renderApp } from './render';
+import { mountRadarChart, unmountRadarChart } from './phone/radar';
 import {
   clearActiveSaveId,
   createManualSave,
@@ -202,6 +203,7 @@ function buildGameState(statusData: StatusData = state.statusData): GameState {
     statusData: JSON.parse(JSON.stringify(statusData)),
     currentMessageIndex: Math.max(getReaderMessages(state.uiMessages).length - 1, 0),
     runtimeFlags: {
+      ...JSON.parse(JSON.stringify(state.runtimeFlags)),
       playerProfile: JSON.parse(JSON.stringify(state.playerProfile)),
       phoneMessages: JSON.parse(JSON.stringify(state.phoneMessages)),
     },
@@ -300,8 +302,9 @@ function enterSave(saveId: string) {
       appearance: save.meta.playerProfile?.appearance ?? save.meta.appearance ?? '',
       className: save.meta.playerProfile?.className ?? '2年A班',
     });
+  state.runtimeFlags = JSON.parse(JSON.stringify(save.payload.gameState.runtimeFlags ?? {}));
   state.summaryStore = save.payload.summaryStore;
-  state.phoneMessages = normalizePhoneMessageStore(save.payload.gameState.runtimeFlags?.phoneMessages);
+  state.phoneMessages = normalizePhoneMessageStore(state.runtimeFlags.phoneMessages);
   cacheStatusData(state.statusData);
   guardedAdapterSave(state.statusData);
   rebuildRuntimeAfterRestore();
@@ -488,12 +491,25 @@ function openPhoneThread(targetId: string) {
     };
   }
   state.phoneMessages.activeThreadId = target.id;
+  state.phoneMessages.threads[target.id].unread = 0;
+  if (state.notification?.targetId === target.id) {
+    state.notification = null;
+  }
+  persistToSave();
   navigatePhone('app:chat');
 }
 
 function openNotification() {
   if (!state.notification) return;
-  openPhone(getRouteForTab(state.notification.targetTab));
+  const notification = state.notification;
+  if (notification.targetId) {
+    state.phoneMessages.activeThreadId = notification.targetId;
+    const thread = state.phoneMessages.threads[notification.targetId];
+    if (thread) thread.unread = 0;
+  }
+  state.notification = null;
+  persistToSave();
+  openPhone(notification.phoneRoute ?? getRouteForTab(notification.targetTab));
 }
 
 function readSummaryApiConfigForm(): SummaryApiConfig {
@@ -956,6 +972,14 @@ function render() {
     refreshWeatherForCurrentState(state, render);
     root.innerHTML = renderApp(state, flipDirection);
     bindEvents();
+
+    // 状态页打开时挂载 P5 雷达图
+    const radarEl = root.querySelector<HTMLElement>('#status-radar');
+    if (radarEl) {
+      mountRadarChart(radarEl);
+    } else {
+      unmountRadarChart();
+    }
   } else if (state.creatingCharacter) {
     // 角色创建界面。
     root.innerHTML = renderCharacterCreation();

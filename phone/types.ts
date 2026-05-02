@@ -4,6 +4,7 @@ export type PhoneRoute =
   | 'app:chat'
   | 'app:reader'
   | 'app:summary'
+  | 'app:archive'
   | 'app:status'
   | 'app:inventory'
   | 'app:settings';

@@ -26,7 +26,7 @@ export function applyProgressUpdate(statusData: StatusData, update: ProgressUpda
   if (update.affinityDelta !== undefined && update.affinityDelta !== 0) {
     const target = statusData.targets.find(t => t.id === targetId);
     if (target) {
-      target.affinity = clamp((target.affinity ?? 50) + update.affinityDelta, 0, 100);
+      target.affinity = clamp((target.affinity ?? 0) + update.affinityDelta, 0, 100);
       target.stage = affinityStage(target.affinity);
     }
   }

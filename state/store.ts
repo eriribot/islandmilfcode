@@ -150,6 +150,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     generating: false,
     currentGenerationId: '',
     finalizedGenerationId: '',
+    runtimeFlags: {},
     uiMessages: [createSystemMessage()],
     statusData: normalizeStatusData(defaultStatusData),
     weather: getDefaultWeatherState(),

@@ -1,3 +1,4 @@
+import { getRelationshipGuidance, getRelationshipMiniPersona } from './relationship';
 import type { SummaryStore } from './summary/types';
 import type { PhoneChatMessage, PlayerProfile, StatusData, TargetStatus, UiMessage } from './types';
 import { getActiveTarget } from './types';
@@ -125,6 +126,14 @@ function buildPhoneChatHistory(messages: PhoneChatMessage[]) {
   return lines.length ? ['手机聊天记录：', ...lines].join('\n\n') : '';
 }
 
+function buildRecentEventsContext(statusData: StatusData) {
+  const lines = Object.entries(statusData.world.recentEvents)
+    .slice(0, 3)
+    .map(([name, description]) => `- ${name}：${description}`);
+
+  return lines.length ? ['正文近期事件：', ...lines].join('\n') : '';
+}
+
 function buildSummaryContextInline(store: SummaryStore): string {
   const parts: string[] = [];
   if (store.global) parts.push(`[Story context so far]\n${store.global}`);
@@ -143,6 +152,7 @@ export function buildPrompt(
   const target = getActiveTarget(statusData);
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
   const targetName = target?.name ?? 'Target';
+  const relationshipGuidance = getRelationshipGuidance(target);
   const playerProfile = options?.playerProfile;
   const playerProfileText = playerProfile?.name
     ? [
@@ -167,6 +177,7 @@ export function buildPrompt(
     'Keep the response focused, natural, and consistent with the current scene.',
     `Current location: ${statusData.world.currentLocation}`,
     `Current relationship stage: ${target?.stage ?? ''}`,
+    relationshipGuidance ? `Relationship behavior guidance: ${relationshipGuidance}` : '',
     topEvent ? `Latest event: ${topEvent[0]} - ${topEvent[1]}` : '',
     playerProfileText,
     summaryContext,
@@ -189,8 +200,12 @@ export function buildPhoneChatPrompt(input: {
   userInput: string;
   playerProfile?: PlayerProfile | null;
   skipProgress?: boolean;
+  triggerEvent?: string;
 }) {
-  const { statusData, target, history, userInput, playerProfile, skipProgress = false } = input;
+  const { statusData, target, history, userInput, playerProfile, skipProgress = false, triggerEvent } = input;
+  const miniPersona = getRelationshipMiniPersona(target);
+  const relationshipGuidance = getRelationshipGuidance(target);
+  const recentEventsContext = buildRecentEventsContext(statusData);
   const playerProfileText = playerProfile?.name
     ? [
         `玩家姓名：${playerProfile.name}`,
@@ -207,12 +222,16 @@ export function buildPhoneChatPrompt(input: {
     `可见回复必须写在 <message>...</message> 中，只输出 ${target.name} 发出的手机消息。`,
     '语气要像即时通讯，不要写旁白、舞台说明或第三人称叙述。',
     '可以短一些，自然一些；除非玩家要求，不要一次发长篇。',
+    miniPersona,
     `当前时间：${statusData.world.currentTime}`,
     `当前位置：${statusData.world.currentLocation}`,
     `当前关系：${target.stage} · 好感度 ${target.affinity}`,
+    relationshipGuidance ? `当前关系反应：${relationshipGuidance}` : '',
     playerProfileText,
+    recentEventsContext,
     buildPhoneChatHistory(history),
-    `玩家刚发来的消息：${userInput}`,
+    triggerEvent ? `这条消息的触发事件：${triggerEvent}` : '',
+    triggerEvent ? `请基于触发事件主动发一条手机消息：${userInput}` : `玩家刚发来的消息：${userInput}`,
   ];
 
   if (!skipProgress) {
@@ -344,6 +363,8 @@ export function buildPhoneProgressPrompt(input: {
       content: [
         '你是一个精确的手机聊天状态追踪器。根据手机聊天内容，判断变量是否需要更新。',
         '手机聊天默认只影响好感度、近期事务和必要的时间推进。',
+        '只要玩家的消息让聊天对象产生了明确情绪反应，就应评估好感度变化：普通友好互动通常 +0到+1，明显关心/理解/帮忙通常 +2，冒犯、越界、揭短或骚扰通常 -1 到 -6。',
+        '不要因为数值很小就省略好感度；只有完全寒暄、无效输入或关系没有任何变化时，才输出空的 <progress></progress>。',
         '只有聊天明确导致现实行动时，才允许更新地点、着装或物品。',
         '',
         '当前状态：',

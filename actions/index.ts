@@ -10,7 +10,7 @@ import { pushMessage } from '../state/store';
 import { runSummary, type SummaryContext } from '../summary';
 import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import { getActiveTarget } from '../types';
-import type { PhoneChatMessage, TargetStatus } from '../types';
+import type { PhoneChatMessage, PhoneProactiveState, TargetStatus } from '../types';
 import type { VariableAdapter } from '../variables/adapter';
 import { affinityStage, applyProgressUpdate, clamp, formatTime } from '../variables/normalize';
 import {
@@ -30,6 +30,8 @@ export type ActionContext = StreamingContext & {
   summaryApiConfig: SummaryApiConfig | null;
   onSummaryStoreUpdated: () => void;
 };
+
+const PHONE_PROACTIVE_COOLDOWN_MS = 3 * 60 * 1000;
 
 async function simulateGeneration(ctx: ActionContext, userInput: string) {
   const { state } = ctx;
@@ -82,12 +84,14 @@ export async function submitMessage(
   ctx.render();
 
   const hasTavernGenerate = typeof win.generate === 'function' || typeof win.generateRaw === 'function';
+  const eventBeforeGeneration = getLatestRecentEvent(ctx)?.key ?? null;
   if (!hasTavernGenerate) {
     await simulateGeneration(ctx, userInput);
     if (options.clearDraftOnSuccess) {
       state.draft = '';
     }
     state.generating = false;
+    await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
     ctx.render();
     return;
   }
@@ -183,6 +187,8 @@ export async function submitMessage(
       state.draft = '';
     }
     generationSucceeded = true;
+    state.generating = false;
+    await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
   } catch (error) {
     discardStreamingMessage(ctx);
     state.draft = userInput;
@@ -244,6 +250,121 @@ async function simulatePhoneGeneration(target: TargetStatus, userInput: string) 
   return `<message>${target.alias ?? target.name}：我看到消息了。关于“${userInput}”，等见面时再继续说吧。</message>`;
 }
 
+function getLatestRecentEvent(ctx: ActionContext) {
+  const [name, description] = Object.entries(ctx.state.statusData.world.recentEvents)[0] ?? [];
+  if (!name || !description) return null;
+  return {
+    key: `${name}:${description}`,
+    text: `${name}：${description}`,
+  };
+}
+
+function getPhoneProactiveState(ctx: ActionContext): PhoneProactiveState {
+  const flags = (ctx.state.runtimeFlags ??= {});
+  const raw = flags.phoneProactive;
+  if (raw && typeof raw === 'object') {
+    return raw as PhoneProactiveState;
+  }
+  const next: PhoneProactiveState = {};
+  flags.phoneProactive = next;
+  return next;
+}
+
+function shouldQueueProactivePhoneMessage(
+  ctx: ActionContext,
+  target: TargetStatus,
+  eventKey: string,
+  previousEventKey?: string | null,
+) {
+  if (previousEventKey === eventKey) return false;
+  if (ctx.state.phoneMessages.generating || ctx.state.generating) return false;
+  const proactiveState = getPhoneProactiveState(ctx);
+  if (proactiveState.lastEventKey === eventKey) return false;
+  const lastQueuedAt = Number(proactiveState.lastQueuedAt ?? 0) || 0;
+  if (Date.now() - lastQueuedAt < PHONE_PROACTIVE_COOLDOWN_MS) return false;
+  const thread = ctx.state.phoneMessages.threads[target.id];
+  const lastMessage = thread?.messages[thread.messages.length - 1];
+  if (lastMessage?.role === 'assistant' && Date.now() - thread.updatedAt < PHONE_PROACTIVE_COOLDOWN_MS) return false;
+  return true;
+}
+
+async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEventKey?: string | null) {
+  const { state, win } = ctx;
+  const target = getActiveTarget(state.statusData);
+  const latestEvent = getLatestRecentEvent(ctx);
+  const hasTavernGenerate = typeof win.generateRaw === 'function' || typeof win.generate === 'function';
+  if (!target || !latestEvent || !hasTavernGenerate) return;
+  if (!shouldQueueProactivePhoneMessage(ctx, target, latestEvent.key, previousEventKey)) return;
+
+  const proactiveState = getPhoneProactiveState(ctx);
+  proactiveState.lastEventKey = latestEvent.key;
+  proactiveState.lastQueuedAt = Date.now();
+
+  const thread = ensurePhoneThread(ctx, target);
+  const prompt = buildPhoneChatPrompt({
+    statusData: state.statusData,
+    target,
+    history: thread.messages,
+    userInput:
+      '根据刚刚正文发生的事件，如果你会主动发一条手机消息，就生成这条消息；如果完全不该主动联系，也要用角色口吻发一条很短的试探或回避消息。',
+    playerProfile: state.playerProfile,
+    skipProgress: true,
+    triggerEvent: latestEvent.text,
+  });
+
+  try {
+    const generationId = `phone-proactive-${crypto.randomUUID()}`;
+    const rawResult =
+      typeof win.generateRaw === 'function'
+        ? await win.generateRaw({
+            should_silence: true,
+            should_stream: false,
+            generation_id: generationId,
+            ordered_prompts: [
+              {
+                role: 'system',
+                content: prompt,
+              },
+            ],
+          })
+        : await win.generate?.({
+            should_silence: true,
+            should_stream: false,
+            generation_id: generationId,
+            user_input: prompt,
+          });
+    const replyText = extractPhoneChatReply(String(rawResult ?? '')).trim();
+    if (!replyText) return;
+
+    const assistantMessage: PhoneChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      speaker: target.alias ?? target.name,
+      text: replyText,
+      timestamp: formatTime(state.statusData.world.currentTime),
+      statusSnapshot: JSON.parse(JSON.stringify(state.statusData)),
+    };
+
+    thread.messages = [...thread.messages, assistantMessage];
+    thread.updatedAt = Date.now();
+    if (!(state.phoneOpen && state.phoneRoute === 'app:chat' && state.phoneMessages.activeThreadId === target.id)) {
+      thread.unread += 1;
+    }
+    ctx.persistConversation();
+    ctx.showNotification({
+      kind: 'message',
+      title: `${target.alias ?? target.name} 发来一条消息`,
+      preview: replyText,
+      targetTab: 'summary',
+      phoneRoute: 'app:chat',
+      targetId: target.id,
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+  } catch (e) {
+    console.warn('[phone-proactive] generation failed:', e);
+  }
+}
+
 export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
   const { state, win } = ctx;
   const target = getPhoneThreadTarget(ctx, targetId);
@@ -282,7 +403,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
         history: thread.messages,
         userInput,
         playerProfile: state.playerProfile,
-        skipProgress: !!ctx.summaryApiConfig,
+        skipProgress: true,
       });
 
       if (typeof win.generateRaw === 'function') {
@@ -325,31 +446,57 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
     thread.messages = [...thread.messages, assistantMessage];
     thread.updatedAt = Date.now();
 
-    if (ctx.summaryApiConfig && typeof win.generateRaw === 'function') {
+    if (hasTavernGenerate) {
       try {
-        const progressResult = await win.generateRaw({
-          should_silence: true,
-          should_stream: false,
-          generation_id: `phone-progress-${crypto.randomUUID()}`,
-          ordered_prompts: buildPhoneProgressPrompt({
-            statusData: state.statusData,
-            target,
-            messages: thread.messages,
-          }),
-          custom_api: {
-            apiurl: ctx.summaryApiConfig.apiurl,
-            key: ctx.summaryApiConfig.key,
-            model: ctx.summaryApiConfig.model,
-            source: ctx.summaryApiConfig.source,
-          },
+        const progressPrompts = buildPhoneProgressPrompt({
+          statusData: state.statusData,
+          target,
+          messages: thread.messages,
         });
-        const progressUpdate = parseProgressUpdate(String(progressResult ?? ''));
+        let progressRaw = '';
+
+        if (ctx.summaryApiConfig && typeof win.generateRaw === 'function') {
+          progressRaw = String(
+            (await win.generateRaw({
+              should_silence: true,
+              should_stream: false,
+              generation_id: `phone-progress-${crypto.randomUUID()}`,
+              ordered_prompts: progressPrompts,
+              custom_api: {
+                apiurl: ctx.summaryApiConfig.apiurl,
+                key: ctx.summaryApiConfig.key,
+                model: ctx.summaryApiConfig.model,
+                source: ctx.summaryApiConfig.source,
+              },
+            })) ?? '',
+          );
+        } else if (typeof win.generateRaw === 'function') {
+          progressRaw = String(
+            (await win.generateRaw({
+              should_silence: true,
+              should_stream: false,
+              generation_id: `phone-progress-${crypto.randomUUID()}`,
+              ordered_prompts: progressPrompts,
+            })) ?? '',
+          );
+        } else if (typeof win.generate === 'function') {
+          progressRaw = String(
+            (await win.generate({
+              should_silence: true,
+              should_stream: false,
+              generation_id: `phone-progress-${crypto.randomUUID()}`,
+              user_input: progressPrompts.map(prompt => prompt.content).join('\n\n'),
+            })) ?? '',
+          );
+        }
+
+        const progressUpdate = parseProgressUpdate(progressRaw);
         if (progressUpdate) {
           applyProgressUpdate(state.statusData, progressUpdate, target.id);
           ctx.adapter.save(state.statusData);
         }
       } catch (e) {
-        console.warn('[phone-progress] secondary API failed:', e);
+        console.warn('[phone-progress] analysis failed:', e);
       }
     } else {
       const progressUpdate = parseProgressUpdate(rawResult);

@@ -979,6 +979,22 @@ button {
   color: var(--ink-soft);
 }
 
+/* ── 雷达图容器 ── */
+
+.radar-chart-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 8px;
+  min-height: 200px;
+}
+
+.radar-chart-container canvas {
+  display: block;
+  max-width: 100%;
+  height: auto !important;
+}
+
 .profile-sheet-header {
   display: flex;
   align-items: center;

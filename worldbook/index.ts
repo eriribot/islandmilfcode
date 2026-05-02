@@ -1,8 +1,7 @@
 import type { StatusData, TargetStatus, TavernWindow, WorldbookEntry } from '../types';
-import { defaultTarget } from '../variables/normalize';
+import { affinityStage, defaultTarget } from '../variables/normalize';
 
 const TARGET_KIND = 'islandmilfcode.target';
-const LOADED_STAGE = '资料已载入';
 const TARGET_AVATAR_RULES: Array<{ patterns: string[]; avatarUrl: string }> = [
   {
     patterns: ['英梨梨', '泽村', '澤村', 'eriri', 'sawamura'],
@@ -56,17 +55,6 @@ function getStringField(raw: Record<string, unknown>, keys: string[]) {
     }
   }
   return '';
-}
-
-function getNumberField(raw: Record<string, unknown>, keys: string[], fallback: number) {
-  for (const key of keys) {
-    const value = raw[key];
-    const parsed = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-    if (Number.isFinite(parsed)) {
-      return Math.max(0, Math.min(100, parsed));
-    }
-  }
-  return fallback;
 }
 
 function getRecordField(raw: Record<string, unknown>, key: string) {
@@ -123,8 +111,8 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
     id: getStringField(raw, ['id']) || createIdFromName(targetName),
     name: targetName,
     alias: getStringField(raw, ['alias', '别名']) || undefined,
-    affinity: getNumberField(raw, ['affinity', '好感度'], defaultTarget.affinity),
-    stage: getStringField(raw, ['stage', '阶段']) || defaultTarget.stage,
+    affinity: defaultTarget.affinity,
+    stage: affinityStage(defaultTarget.affinity),
     titles: Object.keys(titles).length ? titles : legacyTitles,
     outfits: {
       ...defaultTarget.outfits,
@@ -155,7 +143,7 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
     id: createIdFromName(name),
     name,
     affinity: defaultTarget.affinity,
-    stage: LOADED_STAGE,
+    stage: affinityStage(defaultTarget.affinity),
     titles: {},
     outfits: { ...defaultTarget.outfits },
     meta: {

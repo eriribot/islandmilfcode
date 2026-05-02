@@ -96,6 +96,11 @@ export type PhoneMessageStore = {
   threads: Record<string, PhoneChatThread>;
 };
 
+export type PhoneProactiveState = {
+  lastEventKey?: string;
+  lastQueuedAt?: number;
+};
+
 export type TargetStatus = {
   id: string;
   name: string;
@@ -157,6 +162,8 @@ export type NotificationState = {
   preview: string;
   targetTab: TabKey;
   timestamp: string;
+  phoneRoute?: PhoneRoute;
+  targetId?: string;
 };
 
 export type ReaderContextMenuState = {
@@ -187,6 +194,7 @@ export type AppState = {
   generating: boolean;
   currentGenerationId: string;
   finalizedGenerationId: string;
+  runtimeFlags: Record<string, unknown>;
   uiMessages: UiMessage[];
   statusData: StatusData;
   weather: WeatherState;
