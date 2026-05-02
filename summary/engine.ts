@@ -150,7 +150,7 @@ export function buildGlobalCompressionPrompt(oldGlobal: string | null, majors: S
 export function parseSummaryResult(text: string): string {
   const tagged = extractTaggedReply(text, 'summary', false);
   if (tagged) return tagged;
-  // fallback: return trimmed raw text if no tags found (small models may skip tags)
+  // 后备逻辑：找不到标签时返回裁剪后的原文，小模型有时会漏掉标签。
   return text.trim();
 }
 

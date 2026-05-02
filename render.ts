@@ -236,7 +236,7 @@ function getWeekday(dateStr: string) {
     const d = new Date(dateStr.replace(/\s.*$/, ''));
     if (!isNaN(d.getTime())) return `${days[d.getDay()]}曜日`;
   } catch {
-    /* ignore */
+    /* 忽略 */
   }
   return '';
 }
@@ -442,6 +442,29 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
 export function renderSummaryConfigSection(state: AppState): string {
   const config = state.summaryApiConfig;
   const useCustom = config !== null;
+  const modelFetch = state.summaryModelFetch;
+  const models = modelFetch.models;
+  const selectedModel = config?.model ?? '';
+  const modelOptions = models
+    .map(model => {
+      const selected = model.id === selectedModel ? 'selected' : '';
+      const label = model.ownedBy ? `${model.id} (${model.ownedBy})` : model.id;
+      return `<option value="${escapeHtml(model.id)}" ${selected}>${escapeHtml(label)}</option>`;
+    })
+    .join('');
+  const modelSelector = models.length
+    ? `
+            <select data-field="summary-model-select" style="width:100%;box-sizing:border-box;margin-top:8px">
+              <option value="">Select fetched model...</option>
+              ${modelOptions}
+            </select>
+          `
+    : '';
+  const modelFetchStatus = modelFetch.error
+    ? `<p style="color:#c0392b;font-size:11px;margin:6px 0 0">${escapeHtml(modelFetch.error)}</p>`
+    : modelFetch.fetchedAt
+      ? `<p style="font-size:11px;opacity:0.65;margin:6px 0 0">Fetched ${models.length} model(s)</p>`
+      : '';
 
   return `
     <div class="subsection">
@@ -464,7 +487,12 @@ export function renderSummaryConfigSection(state: AppState): string {
           </div>
           <div class="chip-card">
             <label>Model<br><input type="text" data-field="summary-model" value="${escapeHtml(config?.model ?? '')}" style="width:100%;box-sizing:border-box" placeholder="gpt-4o-mini"></label>
-          </div>
+            ${modelSelector}
+            <button class="mini-btn" data-action="summary-fetch-models" style="width:100%;margin-top:8px;font-size:12px" ${modelFetch.loading ? 'disabled' : ''}>
+              ${modelFetch.loading ? 'Fetching models...' : 'Fetch models'}
+            </button>
+            ${modelFetchStatus}
+·          </div>
           <div class="chip-card">
             <label>Source<br><input type="text" data-field="summary-source" value="${escapeHtml(config?.source ?? 'openai')}" style="width:100%;box-sizing:border-box" placeholder="openai"></label>
           </div>

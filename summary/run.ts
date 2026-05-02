@@ -86,13 +86,13 @@ function formatMessagesAsText(messages: UiMessage[]): string {
     .join('\n\n');
 }
 
-// ── Auto summary (triggered after generation) ──
+// ── 自动摘要：生成结束后触发 ──
 
 export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | 'major' = 'auto'): Promise<void> {
   const { win, summaryStore: store, summaryApiConfig, uiMessages } = ctx;
   const messageCount = countConversationMessages(uiMessages);
 
-  // Minor summary: run if auto+threshold met, or if mode=minor (forced)
+  // 小摘要：自动模式达到阈值时运行，或 mode=minor 时强制运行。
   const runMinor = mode === 'minor' || (mode === 'auto' && shouldRunMinorSummary(store, messageCount));
   if (runMinor) {
     const unsummarized = getUnsummarizedMessages(uiMessages, store.lastSummarizedIndex);
@@ -117,7 +117,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
         return;
       }
     }
-    // Mode 'minor': stop here, no cascade
+    // 小摘要模式到此为止，不继续级联。
     if (mode === 'minor') {
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();
@@ -125,11 +125,11 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
     }
   }
 
-  // Major summary: run if auto+threshold met, or if mode=major (forced)
+  // 大摘要：自动模式达到阈值时运行，或 mode=major 时强制运行。
   const runMajor = mode === 'major' || (mode === 'auto' && shouldRunMajorSummary(store));
   if (runMajor) {
     if (store.minor.length === 0) {
-      // Nothing to promote
+      // 没有可提升的摘要。
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();
       return;
@@ -149,7 +149,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
         });
         clearFailureState(store);
       } else {
-        // Restore consumed minors if parsing failed
+        // 解析失败时恢复已消费的小摘要。
         store.minor.unshift(...consumed);
       }
     } catch (error) {
@@ -159,7 +159,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
       ctx.onStoreUpdated();
       return;
     }
-    // Mode 'major': stop after major, no global compression
+    // 大摘要模式在大摘要后停止，不做全局压缩。
     if (mode === 'major') {
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();
@@ -167,7 +167,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
     }
   }
 
-  // Global compression (auto cascade only)
+  // 全局压缩：只在自动级联中执行。
   if (shouldRunGlobalCompression(store)) {
     const consumed = store.major.splice(0, store.major.length);
     try {
@@ -193,7 +193,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
   ctx.onStoreUpdated();
 }
 
-// ── Reroll a specific summary entry ──
+// ── 重roll指定摘要条目 ──
 
 export async function rerollSummaryEntry(
   ctx: SummaryContext,
@@ -224,15 +224,15 @@ export async function rerollSummaryEntry(
   } else {
     const entry = store.major[entryIndex];
     if (!entry) return;
-    // Collect all minor entries whose range falls within this major's range to rebuild prompt
-    // If no minors available, use messages directly
+    // 收集范围落在该大摘要内的小摘要来重建 prompt。
+    // 如果没有可用小摘要，就直接使用原始消息。
     const messagesInRange = uiMessages
       .slice(entry.range[0], entry.range[1] + 1)
       .filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant'));
     if (!messagesInRange.length) return;
 
     try {
-      // Build major prompt from the raw messages in range (treated as minor-like entries)
+      // 将范围内原始消息当作“小摘要式条目”来构建大摘要 prompt。
       const pseudoMinors: import('./types').SummaryEntry[] = [
         { range: entry.range, text: formatMessagesAsText(messagesInRange), createdAt: '' },
       ];
@@ -252,7 +252,7 @@ export async function rerollSummaryEntry(
   ctx.onStoreUpdated();
 }
 
-// ── Resume auto summary after pause ──
+// ── 暂停后恢复自动摘要 ──
 
 export function resumeAutoSummary(store: SummaryStore): void {
   store.autoPaused = false;

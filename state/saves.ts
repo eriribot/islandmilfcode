@@ -10,6 +10,7 @@ import type {
   SaveTargetMeta,
   StatusData,
 } from '../types';
+import { normalizePhoneMessageStore } from './store';
 import { getActiveTarget } from '../types';
 import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
 
@@ -120,7 +121,7 @@ function safeWriteJson(key: string, value: unknown): void {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    /* ignore quota errors */
+    /* 忽略容量限制错误 */
   }
 }
 
@@ -128,7 +129,7 @@ function safeRemove(key: string): void {
   try {
     localStorage.removeItem(key);
   } catch {
-    /* ignore */
+    /* 忽略 */
   }
 }
 
@@ -148,6 +149,7 @@ function normalizeGameState(gameState: Partial<GameState> | undefined, fallbackR
   const runtimeFlags = gameState?.runtimeFlags ? cloneJson(gameState.runtimeFlags) : undefined;
   if (runtimeFlags && typeof runtimeFlags === 'object') {
     runtimeFlags.playerProfile = normalizePlayerProfile((runtimeFlags as Record<string, unknown>).playerProfile);
+    runtimeFlags.phoneMessages = normalizePhoneMessageStore((runtimeFlags as Record<string, unknown>).phoneMessages);
   }
   return {
     runId: String(gameState?.runId || fallbackRunId),
@@ -210,6 +212,7 @@ function migrateLegacySavesIfNeeded(): void {
         currentMessageIndex: Math.max(0, (legacySave.messages?.length ?? 0) - 1),
         runtimeFlags: {
           playerProfile,
+          phoneMessages: normalizePhoneMessageStore(null),
         },
       },
       chatLog: normalizePersistedMessages(legacySave.messages),
@@ -313,6 +316,7 @@ function buildInitialPayload(opts: {
           appearance: opts.appearance,
           className: opts.className,
         }),
+        phoneMessages: normalizePhoneMessageStore(null),
       },
     },
     chatLog: [],
@@ -480,7 +484,7 @@ export function setActiveRunId(runId: string | null): void {
     try {
       localStorage.setItem(ACTIVE_RUN_ID_STORAGE_KEY, runId);
     } catch {
-      /* ignore */
+      /* 忽略 */
     }
     return;
   }
@@ -500,7 +504,7 @@ export function setActiveSaveId(saveId: string | null): void {
     try {
       localStorage.setItem(ACTIVE_SAVE_ID_STORAGE_KEY, saveId);
     } catch {
-      /* ignore */
+      /* 忽略 */
     }
     return;
   }

@@ -1,8 +1,16 @@
-import { buildProgressPrompt, buildPrompt, parseProgressUpdate } from '../message-format';
+import {
+  buildPhoneChatPrompt,
+  buildPhoneProgressPrompt,
+  buildProgressPrompt,
+  buildPrompt,
+  extractPhoneChatReply,
+  parseProgressUpdate,
+} from '../message-format';
 import { pushMessage } from '../state/store';
 import { runSummary, type SummaryContext } from '../summary';
 import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import { getActiveTarget } from '../types';
+import type { PhoneChatMessage, TargetStatus } from '../types';
 import type { VariableAdapter } from '../variables/adapter';
 import { affinityStage, applyProgressUpdate, clamp, formatTime } from '../variables/normalize';
 import {
@@ -127,9 +135,9 @@ export async function submitMessage(
 
     finalizeStreamingText(ctx, String(result ?? ''), requestGenerationId);
 
-    // Parse <progress> and apply variable updates
+    // 解析 <progress> 并应用变量更新。
     if (ctx.summaryApiConfig) {
-      // Secondary API handles variable extraction
+      // 副 API 负责变量提取。
       try {
         const progressPrompts = buildProgressPrompt(state.statusData, state.uiMessages.slice(-6));
         const progressConfig: Record<string, unknown> = {
@@ -155,7 +163,7 @@ export async function submitMessage(
         console.warn('[progress] secondary API failed:', e);
       }
     } else {
-      // Main API already included <progress> in response
+      // 主 API 的回复中已经包含 <progress>。
       const mainRaw = String(result ?? '');
       const progressUpdate = parseProgressUpdate(mainRaw);
       if (progressUpdate) {
@@ -164,7 +172,7 @@ export async function submitMessage(
       }
     }
 
-    // Save a statusData snapshot on the latest assistant message for rollback support
+    // 在最新助手消息上保存 statusData 快照，供回溯使用。
     const lastMsg = state.uiMessages[state.uiMessages.length - 1];
     if (lastMsg && lastMsg.role === 'assistant') {
       lastMsg.statusSnapshot = JSON.parse(JSON.stringify(state.statusData));
@@ -191,7 +199,7 @@ export async function submitMessage(
     state.generating = false;
     ctx.render();
 
-    // Trigger summary in the background (non-blocking)
+    // 后台触发摘要，不阻塞当前生成流程。
     if (generationSucceeded && typeof win.generateRaw === 'function') {
       const summaryCtx: SummaryContext = {
         win,
@@ -204,9 +212,169 @@ export async function submitMessage(
         },
       };
       runSummary(summaryCtx).catch(() => {
-        /* summary errors handled internally */
+        /* 摘要错误在内部处理 */
       });
     }
+  }
+}
+
+function getPhoneThreadTarget(ctx: ActionContext, targetId: string): TargetStatus | null {
+  return ctx.state.statusData.targets.find(target => target.id === targetId) ?? null;
+}
+
+function ensurePhoneThread(ctx: ActionContext, target: TargetStatus) {
+  const existing = ctx.state.phoneMessages.threads[target.id];
+  if (existing) return existing;
+
+  const thread = {
+    targetId: target.id,
+    messages: [] as PhoneChatMessage[],
+    unread: 0,
+    updatedAt: Date.now(),
+  };
+  ctx.state.phoneMessages.threads = {
+    ...ctx.state.phoneMessages.threads,
+    [target.id]: thread,
+  };
+  return thread;
+}
+
+async function simulatePhoneGeneration(target: TargetStatus, userInput: string) {
+  await new Promise(resolve => window.setTimeout(resolve, 240));
+  return `<message>${target.alias ?? target.name}：我看到消息了。关于“${userInput}”，等见面时再继续说吧。</message>`;
+}
+
+export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
+  const { state, win } = ctx;
+  const target = getPhoneThreadTarget(ctx, targetId);
+  const userInput = state.phoneMessages.draft.trim();
+  if (!target || !userInput || state.phoneMessages.generating) return;
+
+  const thread = ensurePhoneThread(ctx, target);
+  const now = formatTime(state.statusData.world.currentTime);
+  const userMessage: PhoneChatMessage = {
+    id: crypto.randomUUID(),
+    role: 'user',
+    speaker: state.playerProfile.name.trim() || '我',
+    text: userInput,
+    timestamp: now,
+    statusSnapshot: JSON.parse(JSON.stringify(state.statusData)),
+  };
+
+  thread.messages = [...thread.messages, userMessage];
+  thread.updatedAt = Date.now();
+  thread.unread = 0;
+  state.phoneMessages.draft = '';
+  state.phoneMessages.generating = true;
+  state.phoneMessages.activeThreadId = target.id;
+  ctx.persistConversation();
+  ctx.render();
+
+  const hasTavernGenerate = typeof win.generateRaw === 'function' || typeof win.generate === 'function';
+  let rawResult = '';
+
+  try {
+    if (hasTavernGenerate) {
+      const generationId = `phone-${crypto.randomUUID()}`;
+      const prompt = buildPhoneChatPrompt({
+        statusData: state.statusData,
+        target,
+        history: thread.messages,
+        userInput,
+        playerProfile: state.playerProfile,
+        skipProgress: !!ctx.summaryApiConfig,
+      });
+
+      if (typeof win.generateRaw === 'function') {
+        rawResult = String(
+          (await win.generateRaw({
+            should_silence: true,
+            should_stream: false,
+            generation_id: generationId,
+            ordered_prompts: [
+              {
+                role: 'system',
+                content: prompt,
+              },
+            ],
+          })) ?? '',
+        );
+      } else {
+        rawResult = String(
+          (await win.generate?.({
+            should_silence: true,
+            should_stream: false,
+            generation_id: generationId,
+            user_input: prompt,
+          })) ?? '',
+        );
+      }
+    } else {
+      rawResult = await simulatePhoneGeneration(target, userInput);
+    }
+
+    const replyText = extractPhoneChatReply(rawResult) || '……';
+    const assistantMessage: PhoneChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      speaker: target.alias ?? target.name,
+      text: replyText,
+      timestamp: formatTime(state.statusData.world.currentTime),
+    };
+
+    thread.messages = [...thread.messages, assistantMessage];
+    thread.updatedAt = Date.now();
+
+    if (ctx.summaryApiConfig && typeof win.generateRaw === 'function') {
+      try {
+        const progressResult = await win.generateRaw({
+          should_silence: true,
+          should_stream: false,
+          generation_id: `phone-progress-${crypto.randomUUID()}`,
+          ordered_prompts: buildPhoneProgressPrompt({
+            statusData: state.statusData,
+            target,
+            messages: thread.messages,
+          }),
+          custom_api: {
+            apiurl: ctx.summaryApiConfig.apiurl,
+            key: ctx.summaryApiConfig.key,
+            model: ctx.summaryApiConfig.model,
+            source: ctx.summaryApiConfig.source,
+          },
+        });
+        const progressUpdate = parseProgressUpdate(String(progressResult ?? ''));
+        if (progressUpdate) {
+          applyProgressUpdate(state.statusData, progressUpdate, target.id);
+          ctx.adapter.save(state.statusData);
+        }
+      } catch (e) {
+        console.warn('[phone-progress] secondary API failed:', e);
+      }
+    } else {
+      const progressUpdate = parseProgressUpdate(rawResult);
+      if (progressUpdate) {
+        applyProgressUpdate(state.statusData, progressUpdate, target.id);
+        ctx.adapter.save(state.statusData);
+      }
+    }
+
+    assistantMessage.statusSnapshot = JSON.parse(JSON.stringify(state.statusData));
+    ctx.persistConversation();
+  } catch (error) {
+    thread.messages = thread.messages.filter(message => message.id !== userMessage.id);
+    thread.updatedAt = Date.now();
+    state.phoneMessages.draft = userInput;
+    ctx.showNotification({
+      kind: 'status',
+      title: '消息发送失败',
+      preview: error instanceof Error ? error.message : String(error),
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+  } finally {
+    state.phoneMessages.generating = false;
+    ctx.render();
   }
 }
 

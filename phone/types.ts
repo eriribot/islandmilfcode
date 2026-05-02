@@ -1,4 +1,12 @@
-export type PhoneRoute = 'home' | 'app:reader' | 'app:summary' | 'app:status' | 'app:inventory' | 'app:settings';
+export type PhoneRoute =
+  | 'home'
+  | 'app:messages'
+  | 'app:chat'
+  | 'app:reader'
+  | 'app:summary'
+  | 'app:status'
+  | 'app:inventory'
+  | 'app:settings';
 
 export type PhoneCharacterId = 'megumi' | 'eriri' | 'utaha';
 

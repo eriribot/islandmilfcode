@@ -1,6 +1,6 @@
 import { escapeHtml } from '../html';
 import { getReaderMessages } from '../message-format';
-import type { AppState, NotificationState, StatusData } from '../types';
+import type { AppState, NotificationState, PhoneChatThread, StatusData, TargetStatus } from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
 import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute } from './types';
 import { resolveWeatherRequest } from './weather';
@@ -16,20 +16,17 @@ const PHONE_CHARACTER_THEMES: Record<
   megumi: {
     label: '加藤惠',
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/megumi_phone.jpg',
-    wallpaperUrl:
-      'https://gd-hbimg-edge.huaban.com/54d1cd036730fbe2672d7d0795c98aa3fea16c8ab1b1a-8PWLq4_fw1200webp?auth_key=1777536000-6b0536e391314365a7db7170f8c66308-0-12fa6062e7133f46b3eea6583406b6dd',
+    wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_megumi.png',
   },
   eriri: {
     label: '英梨梨',
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/eriri_phone.jpg',
-    wallpaperUrl:
-      'https://gd-hbimg-edge.huaban.com/fc233f0e4e74e5987394a03a78a0c22f12e2853429b7d-ecLaSC_fw1200webp?auth_key=1777536000-6b0536e391314365a7db7170f8c66308-0-b46ea9e0571b23913faa4fea47ec1f42',
+    wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_eriri.png',
   },
   utaha: {
     label: '霞之丘诗羽',
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/utaha_phone.jpg',
-    wallpaperUrl:
-      'https://gd-hbimg-edge.huaban.com/ffa523ba07ec0c9f53d90e3f638a72a3ae8035b381df4-AkpqY8_fw1200webp?auth_key=1777536000-6b0536e391314365a7db7170f8c66308-0-3a4728974f9d1f5860a55214f3cdfbf6',
+    wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_utaha.png',
   },
 };
 
@@ -149,6 +146,7 @@ function renderPhoneHome(state: AppState) {
   const playerMeta = state.playerProfile.className || state.playerProfile.gender || '主角档案';
   const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
   const readerCount = Math.max(getReaderMessages(state.uiMessages).length, 0);
+  const phoneThreadCount = Object.values(state.phoneMessages.threads).filter(thread => thread.messages.length).length;
   const summaryCount =
     state.summaryStore.minor.length + state.summaryStore.major.length + (state.summaryStore.global ? 1 : 0);
   const inventoryCount = Object.keys(state.statusData.player.inventory).length;
@@ -160,7 +158,15 @@ function renderPhoneHome(state: AppState) {
     meta: string;
     dock?: boolean;
   }> = [
-    { route: 'app:reader', icon: 'RD', label: '阅读', meta: `${readerCount} 条记录`, dock: true },
+    {
+      route: 'app:messages',
+      icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjOGJjMzRhIiBkPSJNMzcgMzlIMTFsLTYgNlYxMWMwLTMuMyAyLjctNiA2LTZoMjZjMy4zIDAgNiAyLjcgNiA2djIyYzAgMy4zLTIuNyA2LTYgNiIvPjwvc3ZnPg==',
+      iconType: 'image',
+      label: '消息',
+      meta: phoneThreadCount ? `${phoneThreadCount} 个会话` : '暂无会话',
+      dock: true,
+    },
+    { route: 'app:reader', icon: 'RD', label: '阅读', meta: `${readerCount} 条记录` },
     {
       route: 'app:status',
       icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjOTBjYWY5IiBkPSJNMzMgNDJINVY0aDE5bDkgOXoiLz48cGF0aCBmaWxsPSIjZTFmNWZlIiBkPSJNMzEuNSAxNEgyM1Y1LjV6Ii8+PHBhdGggZmlsbD0iIzYxNjE2MSIgZD0ibTM0LjUwNSAzNy41OGwxLjk4LTEuOThsOC40ODMgOC40ODVsLTEuOTggMS45OHoiLz48Y2lyY2xlIGN4PSIyOCIgY3k9IjI5IiByPSIxMSIgZmlsbD0iIzYxNjE2MSIvPjxjaXJjbGUgY3g9IjI4IiBjeT0iMjkiIHI9IjkiIGZpbGw9IiM5MGNhZjkiLz48cGF0aCBmaWxsPSIjMzc0NzRmIiBkPSJtMzYuODQ5IDM5Ljg4bDEuOTgtMS45OGw2LjE1IDYuMTUxbC0xLjk4IDEuOTh6Ii8+PHBhdGggZmlsbD0iIzE5NzZkMiIgZD0iTTMwIDMxaC05LjdjLjQgMS42IDEuMyAzIDIuNSA0SDMwem0tOS43LTRIMzB2LTRoLTcuM2MtMS4yIDEtMiAyLjQtMi40IDRtLS4yLTdIMTF2Mmg3LjNjLjUtLjcgMS4xLTEuNCAxLjgtMm0tMyA0SDExdjJoNS40Yy4yLS43LjQtMS40LjctMk0xNiAyOWMwLS4zIDAtLjcuMS0xSDExdjJoNS4xYy0uMS0uMy0uMS0uNy0uMS0xbS40IDNIMTF2Mmg2LjFjLS4zLS42LS41LTEuMy0uNy0yIi8+PC9zdmc+',
@@ -239,7 +245,7 @@ function renderPhoneHome(state: AppState) {
           .map(
             app => `
               <button class="phone-dock-btn" data-phone-route="${app.route}" aria-label="${escapeHtml(app.label)}">
-                ${escapeHtml(app.icon)}
+                ${renderAppIcon(app)}
               </button>
             `,
           )
@@ -263,6 +269,151 @@ function renderReaderPhonePage(state: AppState, flipDir: string, renderers: Phon
       ${renderPhoneAppHeader(state, '阅读', state.generating ? '记录中' : '手帐')}
       <div class="phone-page-scroll phone-page-scroll--reader">
         ${renderers.renderPaperWorkspace(state, flipDir, { embedded: true })}
+      </div>
+    </section>
+  `;
+}
+
+function getTargetName(target: TargetStatus) {
+  return target.name || target.alias || '角色';
+}
+
+function getTargetAvatarUrl(target: TargetStatus) {
+  const avatarUrl = target.meta?.avatarUrl;
+  return typeof avatarUrl === 'string' && avatarUrl.trim() ? avatarUrl.trim() : '';
+}
+
+function renderTargetAvatar(target: TargetStatus) {
+  const avatarUrl = getTargetAvatarUrl(target);
+  const targetName = getTargetName(target);
+  if (avatarUrl) {
+    return `
+      <span class="phone-chat-avatar phone-chat-avatar--image">
+        <img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(targetName)}" loading="lazy" decoding="async" />
+      </span>
+    `;
+  }
+  return `<span class="phone-chat-avatar">${escapeHtml(targetName.slice(0, 1))}</span>`;
+}
+
+function getThreadPreview(thread: PhoneChatThread) {
+  const last = thread.messages[thread.messages.length - 1];
+  return last?.text?.trim() || '还没有消息。';
+}
+
+function renderPhoneThreadRow(target: TargetStatus, thread: PhoneChatThread) {
+  const unread = thread.unread > 0 ? `<span class="phone-chat-unread">${thread.unread}</span>` : '';
+  const last = thread.messages[thread.messages.length - 1];
+  const timestamp = last?.timestamp || '';
+  return `
+    <button class="phone-chat-row" data-action="open-phone-thread" data-target-id="${escapeHtml(target.id)}">
+      ${renderTargetAvatar(target)}
+      <span class="phone-chat-copy">
+        <strong>${escapeHtml(getTargetName(target))}</strong>
+        <small>${escapeHtml(getThreadPreview(thread))}</small>
+      </span>
+      <span class="phone-chat-meta">
+        ${timestamp ? `<small>${escapeHtml(timestamp)}</small>` : ''}
+        ${unread}
+      </span>
+    </button>
+  `;
+}
+
+function renderPhoneContactRow(target: TargetStatus, hasThread: boolean) {
+  return `
+    <button class="phone-contact-row" data-action="open-phone-thread" data-target-id="${escapeHtml(target.id)}">
+      ${renderTargetAvatar(target)}
+      <span class="phone-chat-copy">
+        <strong>${escapeHtml(getTargetName(target))}</strong>
+        <small>${escapeHtml(target.stage)} · 好感度 ${target.affinity}</small>
+      </span>
+      <span class="phone-contact-state">${hasThread ? '继续' : '发消息'}</span>
+    </button>
+  `;
+}
+
+function renderMessagesPhonePage(state: AppState) {
+  const threads = Object.values(state.phoneMessages.threads)
+    .filter(thread => thread.messages.length)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  const targetsById = new Map(state.statusData.targets.map(target => [target.id, target]));
+  const contactTargets = state.statusData.targets;
+
+  return `
+    <section class="phone-route-page phone-app-page phone-app-page--messages" data-phone-route-view="app:messages">
+      ${renderPhoneAppHeader(state, '消息', threads.length ? `${threads.length} 个会话` : '没有会话')}
+      <div class="phone-page-scroll phone-message-scroll">
+        <section class="phone-chat-section">
+          <div class="phone-chat-section-title">最近消息</div>
+          ${
+            threads.length
+              ? threads
+                  .map(thread => {
+                    const target = targetsById.get(thread.targetId);
+                    return target ? renderPhoneThreadRow(target, thread) : '';
+                  })
+                  .join('')
+              : '<div class="phone-chat-empty">还没有开始任何聊天。</div>'
+          }
+        </section>
+        <section class="phone-chat-section">
+          <div class="phone-chat-section-title">联系人</div>
+          ${
+            contactTargets.length
+              ? contactTargets
+                  .map(target => renderPhoneContactRow(target, Boolean(state.phoneMessages.threads[target.id]?.messages.length)))
+                  .join('')
+              : '<div class="phone-chat-empty">当前没有可联系的角色。</div>'
+          }
+        </section>
+      </div>
+    </section>
+  `;
+}
+
+function renderPhoneChatPage(state: AppState) {
+  const targetId = state.phoneMessages.activeThreadId;
+  const target = targetId ? state.statusData.targets.find(item => item.id === targetId) : null;
+  if (!target) {
+    return renderMessagesPhonePage(state);
+  }
+
+  const thread = state.phoneMessages.threads[target.id];
+  const messages = thread?.messages ?? [];
+
+  return `
+    <section class="phone-route-page phone-app-page phone-app-page--chat" data-phone-route-view="app:chat">
+      ${renderPhoneAppHeader(state, getTargetName(target), `${target.stage} · ${target.affinity}`)}
+      <div class="phone-chat-log">
+        ${
+          messages.length
+            ? messages
+                .map(
+                  message => `
+                    <div class="phone-chat-bubble phone-chat-bubble--${message.role}">
+                      <span>${escapeHtml(message.text)}</span>
+                      <small>${escapeHtml(message.timestamp)}</small>
+                    </div>
+                  `,
+                )
+                .join('')
+            : '<div class="phone-chat-empty phone-chat-empty--log">发送第一条消息。</div>'
+        }
+      </div>
+      <div class="phone-chat-composer">
+        <textarea
+          class="phone-chat-input"
+          data-field="phone-chat-draft"
+          placeholder="输入消息"
+          ${state.phoneMessages.generating ? 'disabled' : ''}
+        >${escapeHtml(state.phoneMessages.draft)}</textarea>
+        <button
+          class="phone-chat-send"
+          data-action="send-phone-message"
+          data-target-id="${escapeHtml(target.id)}"
+          ${state.phoneMessages.generating ? 'disabled' : ''}
+        >${state.phoneMessages.generating ? '…' : '发送'}</button>
       </div>
     </section>
   `;
@@ -321,6 +472,8 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
 }
 
 function renderPhoneRoute(state: AppState, flipDir: string, renderers: PhoneRenderers) {
+  if (state.phoneRoute === 'app:messages') return renderMessagesPhonePage(state);
+  if (state.phoneRoute === 'app:chat') return renderPhoneChatPage(state);
   if (state.phoneRoute === 'app:reader') return renderReaderPhonePage(state, flipDir, renderers);
   if (state.phoneRoute === 'app:summary') return renderSummaryPhonePage(state, renderers);
   if (state.phoneRoute === 'app:status') return renderStatusPhonePage(state, renderers);

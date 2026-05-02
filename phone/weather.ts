@@ -55,7 +55,7 @@ function resolveStoryLocation(currentLocation: string) {
   const trimmed = currentLocation.trim();
   if (!trimmed) return DETECTIVE_SLOPE;
 
-  // Open-Meteo needs coordinates, while the story UI keeps the current story label.
+  // Open-Meteo 需要坐标，故事界面则保留当前剧情地点文本。
   return {
     ...DETECTIVE_SLOPE,
     displayLabel: trimmed,

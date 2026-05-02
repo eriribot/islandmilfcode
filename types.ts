@@ -1,4 +1,4 @@
-import type { SummaryApiConfig, SummaryStore } from './summary/types';
+import type { SummaryApiConfig, SummaryModelFetchState, SummaryStore } from './summary/types';
 import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute, WeatherState } from './phone/types';
 
 export type TabKey = 'summary' | 'status' | 'inventory';
@@ -73,6 +73,29 @@ export type PersistedMessage = {
   statusSnapshot?: StatusData;
 };
 
+export type PhoneChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  speaker: string;
+  text: string;
+  timestamp: string;
+  statusSnapshot?: StatusData;
+};
+
+export type PhoneChatThread = {
+  targetId: string;
+  messages: PhoneChatMessage[];
+  unread: number;
+  updatedAt: number;
+};
+
+export type PhoneMessageStore = {
+  activeThreadId: string | null;
+  draft: string;
+  generating: boolean;
+  threads: Record<string, PhoneChatThread>;
+};
+
 export type TargetStatus = {
   id: string;
   name: string;
@@ -82,6 +105,19 @@ export type TargetStatus = {
   titles: Record<string, { effect: string; selfComment: string }>;
   outfits: Record<string, string>;
   meta?: Record<string, unknown>;
+};
+
+export type CharWorldbooks = {
+  primary: string | null;
+  additional: string[];
+};
+
+export type WorldbookEntry = {
+  uid: number;
+  name: string;
+  enabled: boolean;
+  content: string;
+  extra?: Record<string, unknown>;
 };
 
 export type StatusData = {
@@ -143,6 +179,7 @@ export type AppState = {
   phoneRoute: PhoneRoute;
   phoneRouteHistory: PhoneRoute[];
   phoneCharacterId: PhoneCharacterId;
+  phoneMessages: PhoneMessageStore;
   floatingPhone: FloatingPhonePosition;
   focusedMessageIndex: number;
   focusedMessagePage: number;
@@ -157,6 +194,7 @@ export type AppState = {
   readerContextMenu: ReaderContextMenuState | null;
   summaryStore: SummaryStore;
   summaryApiConfig: SummaryApiConfig | null;
+  summaryModelFetch: SummaryModelFetchState;
   summarizing: boolean;
 };
 
@@ -208,6 +246,8 @@ export type TavernWindow = Window &
     ) => void;
     getVariables?: (option?: Record<string, unknown>) => Record<string, unknown>;
     getCurrentMessageId?: () => number;
+    getCharWorldbookNames?: (characterName: 'current' | string) => CharWorldbooks;
+    getWorldbook?: (worldbookName: string) => Promise<WorldbookEntry[]>;
     eventOn?: (eventType: string, listener: (...args: any[]) => void) => { stop: () => void };
     iframe_events?: Record<string, string>;
     tavern_events?: Record<string, string>;

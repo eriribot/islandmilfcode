@@ -1,7 +1,7 @@
 import { getReaderMessages } from '../message-format';
 import { createDefaultSummaryStore } from '../summary/types';
 import type { FloatingPhonePosition } from '../phone/types';
-import type { AppState, PersistedMessage, TavernWindow, UiMessage } from '../types';
+import type { AppState, PersistedMessage, PhoneMessageStore, TavernWindow, UiMessage } from '../types';
 import { clamp, defaultStatusData, normalizeStatusData } from '../variables/normalize';
 import { getDefaultWeatherState } from '../phone/weather';
 
@@ -13,6 +13,56 @@ function createSystemMessage(): UiMessage {
     role: 'system',
     speaker: 'system',
     text: '',
+  };
+}
+
+export function createDefaultPhoneMessageStore(): PhoneMessageStore {
+  return {
+    activeThreadId: null,
+    draft: '',
+    generating: false,
+    threads: {},
+  };
+}
+
+export function normalizePhoneMessageStore(input: unknown): PhoneMessageStore {
+  const fallback = createDefaultPhoneMessageStore();
+  const raw = typeof input === 'object' && input ? (input as Partial<PhoneMessageStore>) : {};
+  const rawThreads = typeof raw.threads === 'object' && raw.threads ? raw.threads : {};
+  const threads: PhoneMessageStore['threads'] = {};
+
+  for (const [targetId, thread] of Object.entries(rawThreads)) {
+    if (!thread || typeof thread !== 'object') continue;
+    const rawThread = thread as Partial<PhoneMessageStore['threads'][string]>;
+    const messages = Array.isArray(rawThread.messages)
+      ? rawThread.messages
+          .filter(message => message && (message.role === 'user' || message.role === 'assistant'))
+          .map(message => ({
+            id: String(message.id || crypto.randomUUID()),
+            role: message.role,
+            speaker: String(message.speaker || (message.role === 'assistant' ? '角色' : '我')),
+            text: String(message.text ?? ''),
+            timestamp: String(message.timestamp || ''),
+            ...(message.statusSnapshot ? { statusSnapshot: normalizeStatusData(message.statusSnapshot) } : {}),
+          }))
+      : [];
+
+    threads[targetId] = {
+      targetId: String(rawThread.targetId || targetId),
+      messages,
+      unread: Math.max(0, Number(rawThread.unread ?? 0) || 0),
+      updatedAt: Number(rawThread.updatedAt ?? 0) || 0,
+    };
+  }
+
+  const activeThreadId =
+    raw.activeThreadId && threads[String(raw.activeThreadId)] ? String(raw.activeThreadId) : fallback.activeThreadId;
+
+  return {
+    activeThreadId,
+    draft: String(raw.draft ?? ''),
+    generating: Boolean(raw.generating),
+    threads,
   };
 }
 
@@ -36,7 +86,7 @@ function isLegacyHiddenMessage(message: NonNullable<ReturnType<NonNullable<Taver
   return message?.is_hidden === true && (message?.role === 'user' || message?.role === 'assistant');
 }
 
-/** Serialize uiMessages to PersistedMessage[] for save slots. */
+/** 将界面消息序列化为存档槽里的 PersistedMessage[]。 */
 export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
   return messages
     .filter(
@@ -56,7 +106,7 @@ export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
     });
 }
 
-/** Deserialize PersistedMessage[] from a save slot into UiMessage[]. */
+/** 将存档槽里的 PersistedMessage[] 反序列化为界面消息。 */
 export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
   if (!Array.isArray(messages)) return [];
   return messages
@@ -92,6 +142,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     phoneRoute: 'home',
     phoneRouteHistory: [],
     phoneCharacterId: 'megumi',
+    phoneMessages: createDefaultPhoneMessageStore(),
     floatingPhone,
     focusedMessageIndex: 0,
     focusedMessagePage: 0,
@@ -106,6 +157,12 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     readerContextMenu: null,
     summaryStore: createDefaultSummaryStore(),
     summaryApiConfig: null,
+    summaryModelFetch: {
+      loading: false,
+      models: [],
+      error: null,
+      fetchedAt: null,
+    },
     summarizing: false,
   };
 }
@@ -214,12 +271,11 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
     try {
       await win.deleteChatMessages(removedMessageIds, { refresh: 'none' });
     } catch {
-      // ignore outside Tavern or deletion failures
+      // 不在 Tavern 内或删除失败时直接忽略。
     }
   }
 
-  // Restore the snapshot at the source user message itself first,
-  // then fall back to earlier messages.
+  // 优先恢复源用户消息自身的快照，再回退到更早的消息快照。
   for (let i = target.sourceUserIndex; i >= 0; i--) {
     const msg = state.uiMessages[i];
     if (msg?.statusSnapshot) {
@@ -249,7 +305,7 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
     try {
       await win.deleteChatMessages([targetMessage.tavernMessageId], { refresh: 'none' });
     } catch {
-      // ignore outside Tavern or deletion failures
+      // 不在 Tavern 内或删除失败时直接忽略。
     }
   }
 

@@ -2,14 +2,14 @@ import { createDefaultSummaryStore, type SummaryApiConfig, type SummaryStore } f
 
 const SUMMARY_API_CONFIG_KEY = 'islandmilfcode-summary-api-config';
 
-/** Summary data now lives inside SaveSlot. These functions are kept for API config only. */
+/** 摘要数据现在保存在 SaveSlot 中；这里的函数仅保留给 API 配置使用。 */
 
 export function loadSummaryStore(): SummaryStore {
   return createDefaultSummaryStore();
 }
 
 export function saveSummaryStore(_win?: unknown, _store?: SummaryStore): void {
-  // no-op: summary is persisted via the save slot in index.ts
+  // 空操作：摘要通过 index.ts 的存档槽持久化。
 }
 
 export function loadSummaryApiConfig(): SummaryApiConfig | null {
@@ -26,7 +26,7 @@ export function loadSummaryApiConfig(): SummaryApiConfig | null {
       return parsed as SummaryApiConfig;
     }
   } catch {
-    /* ignore */
+    /* 忽略 */
   }
   return null;
 }
@@ -39,6 +39,6 @@ export function saveSummaryApiConfig(config: SummaryApiConfig | null): void {
       localStorage.removeItem(SUMMARY_API_CONFIG_KEY);
     }
   } catch {
-    /* ignore */
+    /* 忽略 */
   }
 }

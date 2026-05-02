@@ -604,6 +604,208 @@ body.floating-phone-dragging {
   line-height: 1.45;
 }
 
+.phone-message-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 2px;
+}
+
+.phone-chat-section {
+  display: grid;
+  gap: 8px;
+}
+
+.phone-chat-section-title {
+  padding: 0 2px;
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.phone-chat-row,
+.phone-contact-row {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--ink-dark);
+  background: rgba(255, 252, 245, 0.74);
+  border: 1px solid rgba(180, 160, 130, 0.16);
+  cursor: pointer;
+}
+
+.phone-chat-avatar {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  color: #fff;
+  background: linear-gradient(145deg, #4f6f7f, #8d7aa9);
+  font-weight: 900;
+}
+
+.phone-chat-avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.phone-chat-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.phone-chat-copy strong,
+.phone-chat-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-chat-copy strong {
+  font-size: 13px;
+}
+
+.phone-chat-copy small,
+.phone-chat-meta small {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.phone-chat-meta {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+}
+
+.phone-chat-unread {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--ink-system);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.phone-contact-state {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--ink-assistant);
+  background: rgba(107, 78, 158, 0.08);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.phone-chat-empty {
+  padding: 16px 12px;
+  border-radius: 8px;
+  color: var(--ink-faint);
+  text-align: center;
+  background: rgba(255, 252, 245, 0.54);
+  border: 1px dashed rgba(180, 160, 130, 0.24);
+  font-size: 12px;
+}
+
+.phone-chat-log {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 2px 8px;
+}
+
+.phone-chat-empty--log {
+  margin: auto 0;
+}
+
+.phone-chat-bubble {
+  max-width: 78%;
+  display: grid;
+  gap: 4px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  line-height: 1.45;
+  font-size: 13px;
+  word-break: break-word;
+  box-shadow: 0 4px 10px rgba(80, 60, 30, 0.08);
+}
+
+.phone-chat-bubble small {
+  opacity: 0.58;
+  font-size: 10px;
+}
+
+.phone-chat-bubble--assistant {
+  align-self: flex-start;
+  color: var(--ink-dark);
+  background: rgba(255, 252, 245, 0.86);
+  border-bottom-left-radius: 3px;
+}
+
+.phone-chat-bubble--user {
+  align-self: flex-end;
+  color: #fff;
+  background: #4f6f7f;
+  border-bottom-right-radius: 3px;
+}
+
+.phone-chat-composer {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 54px;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(180, 160, 130, 0.14);
+}
+
+.phone-chat-input {
+  min-width: 0;
+  height: 42px;
+  max-height: 82px;
+  resize: vertical;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: var(--ink-dark);
+  background: rgba(255, 252, 245, 0.82);
+  border: 1px solid rgba(180, 160, 130, 0.2);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.phone-chat-send {
+  min-width: 0;
+  height: 42px;
+  border-radius: 8px;
+  color: #fff;
+  background: var(--ink-assistant);
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.phone-chat-send:disabled,
+.phone-chat-input:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .summary-config-save {
   width: 100%;
   min-height: 34px;

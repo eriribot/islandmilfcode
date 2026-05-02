@@ -2,7 +2,7 @@ import './styles.css';
 import './phone/styles.css';
 import './title/styles.css';
 
-import { submitMessage, type ActionContext } from './actions';
+import { submitMessage, submitPhoneMessage, type ActionContext } from './actions';
 import { setupStreamingHooks } from './actions/streaming';
 import { getReaderMessages } from './message-format';
 import { bindFloatingPhoneEvents, loadFloatingPhonePosition, syncFloatingPhoneAfterResize } from './phone/floating';
@@ -36,6 +36,7 @@ import {
   replaceConversationMessages,
   rollbackConversation,
   serializeMessages,
+  normalizePhoneMessageStore,
   syncFocusedMessage,
 } from './state/store';
 import {
@@ -45,7 +46,7 @@ import {
   runSummary,
   saveSummaryApiConfig,
 } from './summary';
-import type { SummaryApiConfig } from './summary/types';
+import type { SummaryApiConfig, SummaryModelOption } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
 import type {
@@ -59,6 +60,7 @@ import type { PhoneCharacterId, PhoneRoute } from './phone/types';
 import { getActiveTarget } from './types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp } from './variables/normalize';
+import { loadCharacterWorldbookTargets, mergeWorldbookTargets } from './worldbook';
 
 const win = window as TavernWindow;
 const root = document.querySelector<HTMLDivElement>('#app');
@@ -100,10 +102,9 @@ let adapter: VariableAdapter;
 const state = createInitialState(loadFloatingPhonePosition());
 const eventStops: Array<() => void> = [];
 
-// ── StatusData localStorage cache ──
-// Our in-memory state.statusData is the source of truth during a session.
-// We cache to localStorage so it persists reliably across page loads and
-// doesn't get overwritten by stale MVU round-trip echoes.
+// ── StatusData localStorage 缓存 ──
+// 会话期间以内存里的 state.statusData 作为权威状态。
+// 同时写入 localStorage，避免刷新后丢失，且不会被滞后的 MVU 回声覆盖。
 
 function getStatusCacheKey() {
   return state.activeRunId ? `${STATUS_CACHE_KEY_PREFIX}${state.activeRunId}` : null;
@@ -115,7 +116,7 @@ function cacheStatusData(data: StatusData) {
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch {
-    /* ignore */
+    /* 忽略 */
   }
 }
 
@@ -135,7 +136,7 @@ function guardedAdapterSave(data: StatusData) {
   cacheStatusData(data);
 }
 
-/** Wrapped adapter whose save() also writes to localStorage cache */
+/** 包装后的 adapter：save() 会同时写入 localStorage 缓存。 */
 const guardedAdapter: VariableAdapter = {
   get source() {
     return adapter.source;
@@ -151,7 +152,7 @@ const guardedAdapter: VariableAdapter = {
   },
 };
 
-// Action context — lazily references adapter (set during init)
+// 操作上下文会惰性引用 adapter，adapter 在初始化阶段设置。
 const ctx: ActionContext = {
   get state() {
     return state;
@@ -200,6 +201,7 @@ function buildGameState(statusData: StatusData = state.statusData): GameState {
     currentMessageIndex: Math.max(getReaderMessages(state.uiMessages).length - 1, 0),
     runtimeFlags: {
       playerProfile: JSON.parse(JSON.stringify(state.playerProfile)),
+      phoneMessages: JSON.parse(JSON.stringify(state.phoneMessages)),
     },
   };
 }
@@ -261,6 +263,21 @@ function rebuildRuntimeAfterRestore() {
   state.focusedMessagePage = 0;
 }
 
+async function refreshCharacterWorldbookTargets(options: { persist?: boolean } = {}) {
+  const targets = await loadCharacterWorldbookTargets(win);
+  if (!targets.length) return;
+
+  const previous = JSON.stringify(state.statusData.targets);
+  state.statusData = mergeWorldbookTargets(state.statusData, targets);
+  if (JSON.stringify(state.statusData.targets) === previous) return;
+
+  guardedAdapterSave(state.statusData);
+  if (options.persist) {
+    persistToSave();
+  }
+  render();
+}
+
 function enterSave(saveId: string) {
   const save = loadSave(saveId);
   if (!save) return;
@@ -282,10 +299,12 @@ function enterSave(saveId: string) {
       className: save.meta.playerProfile?.className ?? '2年A班',
     });
   state.summaryStore = save.payload.summaryStore;
+  state.phoneMessages = normalizePhoneMessageStore(save.payload.gameState.runtimeFlags?.phoneMessages);
   cacheStatusData(state.statusData);
   guardedAdapterSave(state.statusData);
   rebuildRuntimeAfterRestore();
   render();
+  void refreshCharacterWorldbookTargets({ persist: true });
 }
 
 function returnToTitle() {
@@ -419,9 +438,134 @@ function switchPhoneCharacter(characterId: PhoneCharacterId) {
   render();
 }
 
+function openPhoneThread(targetId: string) {
+  const target = state.statusData.targets.find(item => item.id === targetId);
+  if (!target) return;
+  if (!state.phoneMessages.threads[target.id]) {
+    state.phoneMessages.threads = {
+      ...state.phoneMessages.threads,
+      [target.id]: {
+        targetId: target.id,
+        messages: [],
+        unread: 0,
+        updatedAt: Date.now(),
+      },
+    };
+  }
+  state.phoneMessages.activeThreadId = target.id;
+  navigatePhone('app:chat');
+}
+
 function openNotification() {
   if (!state.notification) return;
   openPhone(getRouteForTab(state.notification.targetTab));
+}
+
+function readSummaryApiConfigForm(): SummaryApiConfig {
+  const apiurl = root?.querySelector<HTMLInputElement>('[data-field="summary-apiurl"]')?.value.trim() ?? '';
+  const key = root?.querySelector<HTMLInputElement>('[data-field="summary-key"]')?.value.trim() ?? '';
+  const model = root?.querySelector<HTMLInputElement>('[data-field="summary-model"]')?.value.trim() ?? '';
+  const source = root?.querySelector<HTMLInputElement>('[data-field="summary-source"]')?.value.trim() || 'openai';
+  return { apiurl, key, model, source };
+}
+
+function buildSummaryModelsUrl(apiurl: string): string {
+  const url = new URL(apiurl);
+  const path = url.pathname.replace(/\/+$/, '');
+
+  if (/\/models$/i.test(path)) {
+    return url.toString();
+  }
+
+  if (/\/chat\/completions$/i.test(path)) {
+    url.pathname = path.replace(/\/chat\/completions$/i, '/models');
+    return url.toString();
+  }
+
+  if (/\/(completions|responses)$/i.test(path)) {
+    url.pathname = path.replace(/\/(completions|responses)$/i, '/models');
+    return url.toString();
+  }
+
+  url.pathname = path ? `${path}/models` : '/v1/models';
+  return url.toString();
+}
+
+function parseSummaryModelsResponse(payload: unknown): SummaryModelOption[] {
+  const rawList =
+    payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data)
+      ? (payload as { data: unknown[] }).data
+      : Array.isArray(payload)
+        ? payload
+        : [];
+  const byId = new Map<string, SummaryModelOption>();
+
+  for (const raw of rawList) {
+    if (!raw || typeof raw !== 'object') continue;
+    const item = raw as { id?: unknown; name?: unknown; owned_by?: unknown; ownedBy?: unknown };
+    const id = typeof item.id === 'string' ? item.id : typeof item.name === 'string' ? item.name : '';
+    if (!id) continue;
+    const ownedBy =
+      typeof item.owned_by === 'string'
+        ? item.owned_by
+        : typeof item.ownedBy === 'string'
+          ? item.ownedBy
+          : undefined;
+    byId.set(id, { id, ...(ownedBy ? { ownedBy } : {}) });
+  }
+
+  return Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+async function fetchSummaryModels() {
+  if (state.summaryModelFetch.loading) return;
+  const config = readSummaryApiConfigForm();
+
+  if (!config.apiurl) {
+    state.summaryModelFetch = {
+      loading: false,
+      models: [],
+      error: 'Please fill API URL first.',
+      fetchedAt: null,
+    };
+    render();
+    return;
+  }
+
+  state.summaryApiConfig = config;
+  state.summaryModelFetch = {
+    ...state.summaryModelFetch,
+    loading: true,
+    error: null,
+  };
+  render();
+
+  try {
+    const response = await fetch(buildSummaryModelsUrl(config.apiurl), {
+      headers: {
+        ...(config.key ? { Authorization: `Bearer ${config.key}` } : {}),
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`Fetch models failed: HTTP ${response.status}`);
+    }
+    const models = parseSummaryModelsResponse(await response.json());
+    state.summaryModelFetch = {
+      loading: false,
+      models,
+      error: models.length ? null : 'No models found in response.',
+      fetchedAt: Date.now(),
+    };
+  } catch (error) {
+    state.summaryModelFetch = {
+      loading: false,
+      models: [],
+      error: error instanceof Error ? error.message : String(error),
+      fetchedAt: null,
+    };
+  }
+
+  render();
 }
 
 // ── Reader drag ──
@@ -544,6 +688,19 @@ function bindEvents() {
       if (other !== event.target) other.value = state.draft;
     });
   });
+
+  root?.querySelectorAll<HTMLTextAreaElement>('.phone-chat-input').forEach(textarea => {
+    textarea.addEventListener('input', event => {
+      state.phoneMessages.draft = (event.target as HTMLTextAreaElement).value;
+    });
+    textarea.addEventListener('keydown', event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        const targetId = state.phoneMessages.activeThreadId;
+        if (targetId) void submitPhoneMessage(ctx, targetId);
+      }
+    });
+  });
   textarea.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       event.preventDefault();
@@ -562,6 +719,18 @@ function bindEvents() {
     button.addEventListener('click', () => {
       const characterId = button.dataset.characterId as PhoneCharacterId | undefined;
       if (characterId) switchPhoneCharacter(characterId);
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="open-phone-thread"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const targetId = button.dataset.targetId;
+      if (targetId) openPhoneThread(targetId);
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="send-phone-message"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const targetId = button.dataset.targetId ?? state.phoneMessages.activeThreadId;
+      if (targetId) void submitPhoneMessage(ctx, targetId);
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="phone-back"]').forEach(button => {
@@ -611,7 +780,7 @@ function bindEvents() {
     ?.querySelector<HTMLButtonElement>('[data-action="open-notification"]')
     ?.addEventListener('click', () => openNotification());
 
-  // Summary actions
+  // 摘要操作。
   function triggerSummary(mode: 'auto' | 'minor' | 'major') {
     if (state.summarizing) return;
     state.summarizing = true;
@@ -685,16 +854,21 @@ function bindEvents() {
       state.summaryApiConfig = { apiurl: '', key: '', model: '', source: 'openai' };
     } else {
       state.summaryApiConfig = null;
+      state.summaryModelFetch = { loading: false, models: [], error: null, fetchedAt: null };
       saveSummaryApiConfig(null);
     }
     render();
   });
+  root?.querySelector<HTMLButtonElement>('[data-action="summary-fetch-models"]')?.addEventListener('click', () => {
+    void fetchSummaryModels();
+  });
+  root?.querySelector<HTMLSelectElement>('[data-field="summary-model-select"]')?.addEventListener('change', event => {
+    const model = (event.target as HTMLSelectElement).value;
+    const input = root?.querySelector<HTMLInputElement>('[data-field="summary-model"]');
+    if (input && model) input.value = model;
+  });
   root?.querySelector<HTMLButtonElement>('[data-action="summary-save-config"]')?.addEventListener('click', () => {
-    const apiurl = root?.querySelector<HTMLInputElement>('[data-field="summary-apiurl"]')?.value ?? '';
-    const key = root?.querySelector<HTMLInputElement>('[data-field="summary-key"]')?.value ?? '';
-    const model = root?.querySelector<HTMLInputElement>('[data-field="summary-model"]')?.value ?? '';
-    const source = root?.querySelector<HTMLInputElement>('[data-field="summary-source"]')?.value ?? 'openai';
-    const config: SummaryApiConfig = { apiurl, key, model, source };
+    const config = readSummaryApiConfigForm();
     state.summaryApiConfig = config;
     saveSummaryApiConfig(config);
     render();
@@ -742,17 +916,17 @@ const titleCallbacks: TitleCallbacks = {
 function render() {
   if (!root) return;
   if (state.activeRunId) {
-    // Game screen
+    // 游戏界面。
     syncFocusedMessage(state);
     refreshWeatherForCurrentState(state, render);
     root.innerHTML = renderApp(state, flipDirection);
     bindEvents();
   } else if (state.creatingCharacter) {
-    // Character creation screen
+    // 角色创建界面。
     root.innerHTML = renderCharacterCreation();
     bindCharacterCreationEvents(root, titleCallbacks);
   } else {
-    // Title home screen
+    // 标题界面。
     root.innerHTML = renderTitleHome({ showSaves: state.showingSaveList });
     bindTitleHomeEvents(root, titleCallbacks);
   }

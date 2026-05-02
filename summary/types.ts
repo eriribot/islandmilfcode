@@ -27,6 +27,18 @@ export type SummaryApiConfig = {
   source: string;
 };
 
+export type SummaryModelOption = {
+  id: string;
+  ownedBy?: string;
+};
+
+export type SummaryModelFetchState = {
+  loading: boolean;
+  models: SummaryModelOption[];
+  error: string | null;
+  fetchedAt: number | null;
+};
+
 export function createDefaultSummaryStore(): SummaryStore {
   return {
     global: null,

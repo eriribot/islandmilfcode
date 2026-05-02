@@ -1,7 +1,7 @@
 import { listSaves } from '../state/saves';
 import { renderLoadSaveModal } from './loadsave';
 
-// Replace this with a direct remote audio URL before publishing the character card.
+// 发布角色卡前，把这里替换为可直接访问的远程音频 URL。
 const TITLE_MUSIC_URL = 'https://eriribot.github.io/islandmilfcode/Aimer_星屑ビーナス.mp3';
 
 function escapeHtml(str: string): string {

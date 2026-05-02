@@ -1,5 +1,5 @@
 import type { SummaryStore } from './summary/types';
-import type { PlayerProfile, StatusData, UiMessage } from './types';
+import type { PhoneChatMessage, PlayerProfile, StatusData, TargetStatus, UiMessage } from './types';
 import { getActiveTarget } from './types';
 
 export const PRIMARY_VISIBLE_TAG = 'content';
@@ -74,6 +74,10 @@ export function extractContextReply(text: string, { streaming = false }: { strea
   return dedupeAdjacentReply(raw);
 }
 
+export function extractPhoneChatReply(text: string) {
+  return extractTaggedReply(String(text ?? ''), 'message', false) || extractContextReply(String(text ?? '')) || '';
+}
+
 export function getVisibleMessageText(message: UiMessage) {
   if (message.role !== 'assistant') {
     return message.text;
@@ -110,6 +114,15 @@ function buildConversationHistory(uiMessages: UiMessage[], startIndex = 0) {
   }
 
   return ['Conversation history:', ...historyLines].join('\n\n');
+}
+
+function buildPhoneChatHistory(messages: PhoneChatMessage[]) {
+  const lines = messages
+    .slice(-12)
+    .filter(message => message.text.trim())
+    .map(message => `[${message.speaker}]\n${message.text.trim()}`);
+
+  return lines.length ? ['手机聊天记录：', ...lines].join('\n\n') : '';
 }
 
 function buildSummaryContextInline(store: SummaryStore): string {
@@ -161,7 +174,7 @@ export function buildPrompt(
     userInput ? `Current user input: ${userInput}` : '',
   ];
 
-  // Only ask main API for <progress> when no secondary API is handling it
+  // 只有没有副 API 处理变量时，才要求主 API 输出 <progress>。
   if (!options?.skipProgress) {
     parts.push(buildProgressInstruction(statusData));
   }
@@ -169,10 +182,49 @@ export function buildPrompt(
   return parts.filter(Boolean).join('\n');
 }
 
+export function buildPhoneChatPrompt(input: {
+  statusData: StatusData;
+  target: TargetStatus;
+  history: PhoneChatMessage[];
+  userInput: string;
+  playerProfile?: PlayerProfile | null;
+  skipProgress?: boolean;
+}) {
+  const { statusData, target, history, userInput, playerProfile, skipProgress = false } = input;
+  const playerProfileText = playerProfile?.name
+    ? [
+        `玩家姓名：${playerProfile.name}`,
+        playerProfile.className ? `玩家班级：${playerProfile.className}` : '',
+        playerProfile.personality ? `玩家性格：${playerProfile.personality}` : '',
+        playerProfile.appearance ? `玩家外貌：${playerProfile.appearance}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : '';
+
+  const parts = [
+    `你正在扮演 ${target.name}，通过手机消息和玩家聊天。`,
+    `可见回复必须写在 <message>...</message> 中，只输出 ${target.name} 发出的手机消息。`,
+    '语气要像即时通讯，不要写旁白、舞台说明或第三人称叙述。',
+    '可以短一些，自然一些；除非玩家要求，不要一次发长篇。',
+    `当前时间：${statusData.world.currentTime}`,
+    `当前位置：${statusData.world.currentLocation}`,
+    `当前关系：${target.stage} · 好感度 ${target.affinity}`,
+    playerProfileText,
+    buildPhoneChatHistory(history),
+    `玩家刚发来的消息：${userInput}`,
+  ];
+
+  if (!skipProgress) {
+    parts.push(buildProgressInstruction(statusData, target));
+  }
+
+  return parts.filter(Boolean).join('\n');
+}
+
 // ── Progress instruction & prompt builders ──
 
-function buildProgressInstruction(statusData: StatusData): string {
-  const target = getActiveTarget(statusData);
+function buildProgressInstruction(statusData: StatusData, target = getActiveTarget(statusData)): string {
   const inventoryList =
     Object.entries(statusData.player.inventory)
       .map(([name, d]) => `${name}(${d.count})`)
@@ -274,6 +326,50 @@ export function buildProgressPrompt(
   ];
 }
 
+export function buildPhoneProgressPrompt(input: {
+  statusData: StatusData;
+  target: TargetStatus;
+  messages: PhoneChatMessage[];
+}): Array<{ role: 'system' | 'user'; content: string }> {
+  const { statusData, target, messages } = input;
+  const formatted = messages
+    .slice(-8)
+    .map(message => `[${message.speaker}]\n${message.text.trim()}`)
+    .filter(Boolean)
+    .join('\n\n');
+
+  return [
+    {
+      role: 'system' as const,
+      content: [
+        '你是一个精确的手机聊天状态追踪器。根据手机聊天内容，判断变量是否需要更新。',
+        '手机聊天默认只影响好感度、近期事务和必要的时间推进。',
+        '只有聊天明确导致现实行动时，才允许更新地点、着装或物品。',
+        '',
+        '当前状态：',
+        `  时间: ${statusData.world.currentTime}`,
+        `  地点: ${statusData.world.currentLocation}`,
+        `  聊天对象: ${target.name}`,
+        `  好感度: ${target.affinity} (${target.stage})`,
+        '',
+        '请用 <progress> 标签输出变化字段，每行一个 key:value。没有变化就输出空的 <progress></progress>。',
+        '可用字段：',
+        '  时间:YYYY-MM-DD HH:mm',
+        '  地点:新地点',
+        '  好感度:±N',
+        '  着装.部位:描述',
+        '  事件名:事件描述',
+        '  物品+名称:数量:描述',
+        '  物品-名称',
+      ].join('\n'),
+    },
+    {
+      role: 'user' as const,
+      content: `请分析以下手机聊天并输出变量更新：\n\n${formatted}`,
+    },
+  ];
+}
+
 // ── Progress tag parser ──
 
 export type ProgressUpdate = {
@@ -349,7 +445,7 @@ export function parseProgressUpdate(rawResponse: string): ProgressUpdate | null 
       continue;
     }
 
-    // Generic event line: eventName:description
+    // 通用事件行：事件名:描述。
     const eventMatch = trimmed.match(/^([^:：]+)[:：]\s*(.+)/);
     if (eventMatch) {
       result.events[eventMatch[1].trim()] = eventMatch[2].trim();

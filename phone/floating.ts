@@ -65,7 +65,7 @@ function persistFloatingPhonePosition(position: FloatingPhonePosition) {
   try {
     window.localStorage.setItem(FLOATING_PHONE_STORAGE_KEY, JSON.stringify(position));
   } catch {
-    /* ignore */
+    /* 忽略 */
   }
 }
 
@@ -73,7 +73,7 @@ function markFloatingPhoneCustomized() {
   try {
     window.localStorage.setItem(FLOATING_PHONE_CUSTOMIZED_KEY, '1');
   } catch {
-    /* ignore */
+    /* 忽略 */
   }
 }
 

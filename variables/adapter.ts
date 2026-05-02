@@ -8,7 +8,7 @@ export interface VariableAdapter {
   onUpdate(callback: (data: StatusData) => void): () => void;
 }
 
-// ── MVU adapter: event-driven via VARIABLE_UPDATE_ENDED ──
+// ── MVU 适配器：通过 VARIABLE_UPDATE_ENDED 事件驱动 ──
 
 function createMvuAdapter(win: TavernWindow, Mvu: any): VariableAdapter {
   function getMessageId() {
@@ -25,9 +25,9 @@ function createMvuAdapter(win: TavernWindow, Mvu: any): VariableAdapter {
         if (data?.stat_data) {
           return normalizeStatusData(data.stat_data);
         }
-      } catch { /* fallthrough */ }
+      } catch { /* 继续尝试后备读取 */ }
 
-      // MVU available but no data yet — try getVariables as secondary
+      // MVU 可用但暂时没有数据时，改用 getVariables 作为次级来源。
       try {
         const messageId = getMessageId();
         const variables =
@@ -36,7 +36,7 @@ function createMvuAdapter(win: TavernWindow, Mvu: any): VariableAdapter {
         if (variables.stat_data) {
           return normalizeStatusData(variables.stat_data);
         }
-      } catch { /* fallthrough */ }
+      } catch { /* 继续使用默认状态 */ }
 
       return normalizeStatusData(defaultStatusData);
     },
@@ -46,22 +46,22 @@ function createMvuAdapter(win: TavernWindow, Mvu: any): VariableAdapter {
         const messageId = getMessageId();
         const serialized = serializeStatusData(data);
 
-        // Try MVU replaceMvuData first
+        // 优先尝试 MVU 的 replaceMvuData。
         if (typeof Mvu.replaceMvuData === 'function') {
           const currentData = Mvu.getMvuData?.({ type: 'message', message_id: messageId }) ?? {};
           Mvu.replaceMvuData({ ...currentData, stat_data: serialized }, { type: 'message', message_id: messageId });
           return;
         }
 
-        // Fallback to updateVariablesWith
+        // 回退到 updateVariablesWith。
         win.updateVariablesWith?.(variables => {
           variables.stat_data = serialized;
         }, { type: 'message', message_id: messageId });
-      } catch { /* ignore outside Tavern */ }
+      } catch { /* 不在 Tavern 内时忽略 */ }
     },
 
     onUpdate(callback: (data: StatusData) => void): () => void {
-      // Listen to MVU's VARIABLE_UPDATE_ENDED event
+      // 监听 MVU 的 VARIABLE_UPDATE_ENDED 事件。
       if (Mvu.events?.VARIABLE_UPDATE_ENDED && typeof win.eventOn === 'function') {
         const { stop } = win.eventOn(Mvu.events.VARIABLE_UPDATE_ENDED, () => {
           callback(this.load());
@@ -69,7 +69,7 @@ function createMvuAdapter(win: TavernWindow, Mvu: any): VariableAdapter {
         return stop;
       }
 
-      // MVU exists but no event support — fall back to polling
+      // MVU 存在但没有事件支持时，回退到轮询。
       const timer = window.setInterval(() => {
         callback(this.load());
       }, 1500);
@@ -78,7 +78,7 @@ function createMvuAdapter(win: TavernWindow, Mvu: any): VariableAdapter {
   };
 }
 
-// ── Fallback adapter: polling via setInterval ──
+// ── 后备适配器：通过 setInterval 轮询 ──
 
 function createFallbackAdapter(win: TavernWindow): VariableAdapter {
   function getMessageId() {
@@ -97,7 +97,7 @@ function createFallbackAdapter(win: TavernWindow): VariableAdapter {
         if (variables.stat_data) {
           return normalizeStatusData(variables.stat_data);
         }
-      } catch { /* fallthrough */ }
+      } catch { /* 继续使用默认状态 */ }
 
       return normalizeStatusData(defaultStatusData);
     },
@@ -108,7 +108,7 @@ function createFallbackAdapter(win: TavernWindow): VariableAdapter {
         win.updateVariablesWith?.(variables => {
           variables.stat_data = serializeStatusData(data);
         }, { type: 'message', message_id: messageId });
-      } catch { /* ignore outside Tavern */ }
+      } catch { /* 不在 Tavern 内时忽略 */ }
     },
 
     onUpdate(callback: (data: StatusData) => void): () => void {
@@ -120,15 +120,15 @@ function createFallbackAdapter(win: TavernWindow): VariableAdapter {
   };
 }
 
-// ── Factory: async init, tries MVU first ──
+// ── 工厂：异步初始化，优先尝试 MVU ──
 
 /**
- * Creates the appropriate variable adapter.
- * Attempts to wait for MVU initialization; falls back to direct getVariables.
+ * 创建合适的变量适配器。
+ * 优先等待 MVU 初始化，失败后回退到直接读取 getVariables。
  */
 export async function createVariableAdapter(win: TavernWindow): Promise<VariableAdapter> {
   try {
-    // waitGlobalInitialized is provided by the tavern helper runtime
+    // waitGlobalInitialized 由 tavern helper 运行时提供。
     const waitGlobal = (window as any).waitGlobalInitialized;
     if (typeof waitGlobal === 'function') {
       const Mvu = await Promise.race([
@@ -139,7 +139,7 @@ export async function createVariableAdapter(win: TavernWindow): Promise<Variable
         return createMvuAdapter(win, Mvu);
       }
     }
-  } catch { /* MVU not available, use fallback */ }
+  } catch { /* MVU 不可用，使用后备适配器 */ }
 
   return createFallbackAdapter(win);
 }

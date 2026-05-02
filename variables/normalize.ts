@@ -15,7 +15,7 @@ export { normalizeStatusData, serializeStatusData } from './legacy';
 
 const MAX_RECENT_EVENTS = 5;
 
-export function applyProgressUpdate(statusData: StatusData, update: ProgressUpdate): void {
+export function applyProgressUpdate(statusData: StatusData, update: ProgressUpdate, targetId = statusData.activeTargetId): void {
   if (update.time) {
     statusData.world.currentTime = update.time;
   }
@@ -24,7 +24,7 @@ export function applyProgressUpdate(statusData: StatusData, update: ProgressUpda
   }
 
   if (update.affinityDelta !== undefined && update.affinityDelta !== 0) {
-    const target = statusData.targets.find(t => t.id === statusData.activeTargetId);
+    const target = statusData.targets.find(t => t.id === targetId);
     if (target) {
       target.affinity = clamp((target.affinity ?? 50) + update.affinityDelta, 0, 100);
       target.stage = affinityStage(target.affinity);
@@ -32,7 +32,7 @@ export function applyProgressUpdate(statusData: StatusData, update: ProgressUpda
   }
 
   if (Object.keys(update.outfitChanges).length) {
-    const target = statusData.targets.find(t => t.id === statusData.activeTargetId);
+    const target = statusData.targets.find(t => t.id === targetId);
     if (target) {
       for (const [part, desc] of Object.entries(update.outfitChanges)) {
         target.outfits[part] = desc;
