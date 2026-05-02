@@ -71,6 +71,8 @@ const READER_CONTEXT_MENU_HEIGHT = 176;
 const STATUS_CACHE_KEY_PREFIX = 'islandmilfcode:status-cache:v2:';
 
 let flipDirection: 'forward' | 'backward' | '' = '';
+let phoneBgmAudio: HTMLAudioElement | null = null;
+let phoneBgmResolvedUrl = '';
 
 let readerDragState: {
   pointerId: number;
@@ -432,7 +434,40 @@ function closePhone() {
   closePhoneRoute(state, ctx);
 }
 
-function switchPhoneCharacter(characterId: PhoneCharacterId) {
+function playPhoneCharacterBgm(bgmUrl: string | undefined) {
+  const nextUrl = bgmUrl?.trim();
+  if (!nextUrl) return;
+
+  // 音频播放必须从用户点击事件里触发，不能放进 render() 这类自动渲染流程里。
+  // 这里复用一个 Audio 实例，切换女主时先停掉上一首，避免多首 BGM 同时叠在一起。
+  const resolvedUrl = new URL(nextUrl, window.location.href).href;
+  if (phoneBgmAudio && phoneBgmResolvedUrl === resolvedUrl && !phoneBgmAudio.paused) {
+    // 同一个头像再次点击视为关闭当前 BGM，避免循环音乐一直播放打扰阅读。
+    phoneBgmAudio.pause();
+    phoneBgmAudio.currentTime = 0;
+    return;
+  }
+
+  if (!phoneBgmAudio || phoneBgmResolvedUrl !== resolvedUrl) {
+    phoneBgmAudio?.pause();
+    phoneBgmAudio = new Audio(resolvedUrl);
+    phoneBgmAudio.loop = true;
+    phoneBgmAudio.volume = 0.45;
+    phoneBgmAudio.preload = 'auto';
+    phoneBgmResolvedUrl = resolvedUrl;
+  } else {
+    // 当前音乐已经暂停时，再次点击同一头像恢复从头播放。
+    phoneBgmAudio.currentTime = 0;
+  }
+
+  // play() 在浏览器里返回 Promise；如果网络、格式或自动播放策略失败，不影响切换主题。
+  void phoneBgmAudio.play().catch(error => {
+    console.warn('角色 BGM 播放失败：', error);
+  });
+}
+
+function switchPhoneCharacter(characterId: PhoneCharacterId, bgmUrl?: string) {
+  playPhoneCharacterBgm(bgmUrl);
   if (state.phoneCharacterId === characterId) return;
   state.phoneCharacterId = characterId;
   render();
@@ -718,7 +753,7 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="switch-phone-character"]').forEach(button => {
     button.addEventListener('click', () => {
       const characterId = button.dataset.characterId as PhoneCharacterId | undefined;
-      if (characterId) switchPhoneCharacter(characterId);
+      if (characterId) switchPhoneCharacter(characterId, button.dataset.bgmUrl);
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="open-phone-thread"]').forEach(button => {

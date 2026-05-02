@@ -11,22 +11,28 @@ const PHONE_CHARACTER_THEMES: Record<
     label: string;
     avatarUrl: string;
     wallpaperUrl: string;
+    // 每个女主的 BGM 地址跟主题资源放在同一处维护；渲染头像按钮时会写进 data-bgm-url。
+    // 点击事件只读取这个地址播放音乐，不再额外维护一份容易不同步的角色/音乐映射。
+    bgmUrl: string;
   }
 > = {
   megumi: {
     label: '加藤惠',
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/megumi_phone.jpg',
     wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_megumi.png',
+    bgmUrl: 'https://eriribot.github.io/islandmilfcode/music/megumi.mp3',
   },
   eriri: {
     label: '英梨梨',
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/eriri_phone.jpg',
     wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_eriri.png',
+    bgmUrl: 'https://eriribot.github.io/islandmilfcode/music/eriri.mp3',
   },
   utaha: {
     label: '霞之丘诗羽',
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/utaha_phone.jpg',
     wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_utaha.png',
+    bgmUrl: 'https://eriribot.github.io/islandmilfcode/music/utaha.mp3',
   },
 };
 
@@ -215,6 +221,7 @@ function renderPhoneHome(state: AppState) {
                   class="phone-character-option ${selected ? 'is-active' : ''}"
                   data-action="switch-phone-character"
                   data-character-id="${characterId}"
+                  data-bgm-url="${escapeHtml(theme.bgmUrl)}"
                   aria-label="切换到${escapeHtml(theme.label)}"
                   aria-pressed="${selected ? 'true' : 'false'}"
                 >
