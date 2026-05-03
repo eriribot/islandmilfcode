@@ -8,6 +8,19 @@ function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+/** 渲染单行属性分配控件 */
+function renderStatRow(key: string, label: string, defaultValue: number): string {
+  return `
+    <div class="gal-stat-row">
+      <span class="gal-stat-row__label">${escapeHtml(label)}</span>
+      <button type="button" class="gal-stat-row__btn" data-stat-action="dec" data-stat-key="${key}" aria-label="${escapeHtml(label)}减少">−</button>
+      <span class="gal-stat-row__value" data-stat-display="${key}">${defaultValue}</span>
+      <input type="hidden" name="stat-${key}" value="${defaultValue}" />
+      <button type="button" class="gal-stat-row__btn" data-stat-action="inc" data-stat-key="${key}" aria-label="${escapeHtml(label)}增加">+</button>
+    </div>
+  `;
+}
+
 // 播放音乐
 function renderTitleMusicControl() {
   const musicUrl = TITLE_MUSIC_URL.trim();
@@ -184,6 +197,46 @@ export function renderCharacterCreation() {
             </label>
             <textarea class="gal-field__textarea" id="gal-char-appearance" name="appearance"
               placeholder="描述主角的外貌特征..." rows="3"></textarea>
+          </div>
+
+          <div class="gal-field">
+            <span class="gal-field__label">游戏难度</span>
+            <div class="gal-difficulty-options" role="radiogroup" aria-label="游戏难度">
+              <label class="gal-difficulty-option">
+                <input type="radio" name="difficulty" value="easy" />
+                <span class="gal-difficulty-option__card">
+                  <strong>轻松</strong>
+                  <small>350 点 · 各项 30-90</small>
+                </span>
+              </label>
+              <label class="gal-difficulty-option">
+                <input type="radio" name="difficulty" value="normal" checked />
+                <span class="gal-difficulty-option__card">
+                  <strong>普通</strong>
+                  <small>300 点 · 各项 10-90</small>
+                </span>
+              </label>
+              <label class="gal-difficulty-option">
+                <input type="radio" name="difficulty" value="hard" />
+                <span class="gal-difficulty-option__card">
+                  <strong>困难</strong>
+                  <small>250 点 · 各项 10-80</small>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div class="gal-field">
+            <span class="gal-field__label">
+              能力分配 <span class="gal-field__hint">剩余 <span data-stat-remaining>0</span> 点</span>
+            </span>
+            <div class="gal-stat-allocator">
+              ${renderStatRow('knowledge', '知识', 60)}
+              ${renderStatRow('charm', '魅力', 60)}
+              ${renderStatRow('proficiency', '灵巧', 60)}
+              ${renderStatRow('kindness', '体贴', 60)}
+              ${renderStatRow('courage', '勇气', 60)}
+            </div>
           </div>
 
           <div class="gal-field">

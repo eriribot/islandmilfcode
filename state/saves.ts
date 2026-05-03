@@ -1,9 +1,11 @@
 import type { SummaryStore } from '../summary/types';
 import { createDefaultSummaryStore } from '../summary/types';
 import type {
+  Difficulty,
   GameState,
   PersistedMessage,
   PlayerProfile,
+  PlayerStats,
   SaveKind,
   SaveMeta,
   SavePayload,
@@ -35,6 +37,25 @@ type LegacySaveSlot = {
 
 type SaveIndexRecord = Record<string, SaveMeta>;
 
+const DEFAULT_STATS: PlayerStats = { knowledge: 60, charm: 60, proficiency: 60, kindness: 60, courage: 60 };
+
+function normalizeStats(input: unknown): PlayerStats {
+  const raw = typeof input === 'object' && input ? (input as Partial<PlayerStats>) : {};
+  const clamp = (v: unknown, min: number, max: number) => Math.max(min, Math.min(max, Number(v) || 0));
+  return {
+    knowledge: clamp(raw.knowledge ?? DEFAULT_STATS.knowledge, 0, 100),
+    charm: clamp(raw.charm ?? DEFAULT_STATS.charm, 0, 100),
+    proficiency: clamp(raw.proficiency ?? DEFAULT_STATS.proficiency, 0, 100),
+    kindness: clamp(raw.kindness ?? DEFAULT_STATS.kindness, 0, 100),
+    courage: clamp(raw.courage ?? DEFAULT_STATS.courage, 0, 100),
+  };
+}
+
+function normalizeDifficulty(input: unknown): Difficulty {
+  if (input === 'easy' || input === 'normal' || input === 'hard') return input;
+  return 'normal';
+}
+
 function normalizePlayerProfile(input: unknown): PlayerProfile {
   const raw = typeof input === 'object' && input ? (input as Partial<PlayerProfile>) : {};
   return {
@@ -43,6 +64,8 @@ function normalizePlayerProfile(input: unknown): PlayerProfile {
     personality: String(raw.personality ?? ''),
     appearance: String(raw.appearance ?? ''),
     className: raw.className ? String(raw.className) : '2年A班',
+    stats: normalizeStats(raw.stats),
+    difficulty: normalizeDifficulty(raw.difficulty),
   };
 }
 
@@ -295,6 +318,8 @@ function buildInitialPayload(opts: {
   appearance: string;
   gender?: string;
   className?: string;
+  stats?: PlayerStats;
+  difficulty?: Difficulty;
   kind: SaveKind;
   label: string;
 }): SavePayload {
@@ -315,6 +340,8 @@ function buildInitialPayload(opts: {
           personality: opts.personality,
           appearance: opts.appearance,
           className: opts.className,
+          stats: opts.stats,
+          difficulty: opts.difficulty,
         }),
         phoneMessages: normalizePhoneMessageStore(null),
       },
@@ -348,7 +375,7 @@ export function listSavesByRunId(runId: string): SaveMeta[] {
   return listSaves().filter(save => save.runId === runId);
 }
 
-export function createSave(opts: { characterName: string; gender?: string; personality: string; appearance: string; className?: string }): SaveMeta {
+export function createSave(opts: { characterName: string; gender?: string; personality: string; appearance: string; className?: string; stats?: PlayerStats; difficulty?: Difficulty }): SaveMeta {
   const runId = crypto.randomUUID();
   const saveId = `autosave_${runId}`;
   const payload = buildInitialPayload({

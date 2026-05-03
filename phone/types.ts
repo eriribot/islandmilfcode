@@ -2,7 +2,7 @@ export type PhoneRoute =
   | 'home'
   | 'app:messages'
   | 'app:chat'
-  | 'app:reader'
+  | 'app:calendar'
   | 'app:summary'
   | 'app:archive'
   | 'app:status'

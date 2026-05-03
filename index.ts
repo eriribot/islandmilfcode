@@ -17,6 +17,7 @@ import {
 import { refreshWeatherForCurrentState } from './phone/weather';
 import { renderApp } from './render';
 import { mountRadarChart, unmountRadarChart } from './phone/radar';
+import { getCalendarMonthOffset, setCalendarMonthOffset } from './phone/render';
 import {
   clearActiveSaveId,
   createManualSave,
@@ -808,6 +809,15 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="close-phone"]').forEach(button => {
     button.addEventListener('click', () => closePhone());
   });
+  // 日历月份切换
+  root?.querySelector<HTMLButtonElement>('[data-action="calendar-prev"]')?.addEventListener('click', () => {
+    setCalendarMonthOffset(getCalendarMonthOffset() - 1);
+    render();
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="calendar-next"]')?.addEventListener('click', () => {
+    setCalendarMonthOffset(getCalendarMonthOffset() + 1);
+    render();
+  });
   root?.querySelector<HTMLButtonElement>('[data-action="return-to-title"]')?.addEventListener('click', () => {
     returnToTitle();
   });
@@ -863,6 +873,10 @@ function bindEvents() {
     ?.addEventListener('click', () => triggerSummary('major'));
   root?.querySelectorAll<HTMLButtonElement>('[data-action="summary-reroll"]').forEach(button => {
     button.addEventListener('click', () => {
+      // 触发骰子翻滚动画
+      button.classList.add('is-rolling');
+      button.addEventListener('animationend', () => button.classList.remove('is-rolling'), { once: true });
+
       const level = button.dataset.rerollLevel as 'minor' | 'major';
       const index = parseInt(button.dataset.rerollIndex ?? '', 10);
       if (!level || isNaN(index)) return;
@@ -976,7 +990,11 @@ function render() {
     // 状态页打开时挂载 P5 雷达图
     const radarEl = root.querySelector<HTMLElement>('#status-radar');
     if (radarEl) {
-      mountRadarChart(radarEl);
+      const stats = state.playerProfile.stats;
+      const statsArray = stats
+        ? [stats.knowledge, stats.charm, stats.proficiency, stats.kindness, stats.courage]
+        : [60, 60, 60, 60, 60];
+      mountRadarChart(radarEl, statsArray, true);
     } else {
       unmountRadarChart();
     }

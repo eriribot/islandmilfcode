@@ -871,6 +871,111 @@
   line-height: 1.7;
 }
 
+/* ── 难度选择 ── */
+
+.gal-difficulty-options {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.gal-difficulty-option {
+  position: relative;
+  cursor: pointer;
+}
+
+.gal-difficulty-option input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gal-difficulty-option__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 8px;
+  border: 1px solid rgba(220, 210, 195, 0.62);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.45);
+  font-size: 0.88rem;
+  transition: all 0.2s ease;
+}
+
+.gal-difficulty-option__card small {
+  font-size: 0.7rem;
+  color: #b0a08a;
+}
+
+.gal-difficulty-option input:checked ~ .gal-difficulty-option__card {
+  border-color: rgba(184, 92, 110, 0.5);
+  background: rgba(184, 92, 110, 0.08);
+  box-shadow: 0 0 0 2px rgba(184, 92, 110, 0.12);
+}
+
+/* ── 属性点数分配 ── */
+
+.gal-stat-allocator {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gal-stat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(220, 210, 195, 0.5);
+}
+
+.gal-stat-row__label {
+  flex: 1;
+  font-family: 'Klee One', serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #5a4a3a;
+}
+
+.gal-stat-row__btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid rgba(184, 92, 110, 0.25);
+  background: rgba(184, 92, 110, 0.06);
+  color: #b85c6e;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.gal-stat-row__btn:hover {
+  background: rgba(184, 92, 110, 0.14);
+  border-color: rgba(184, 92, 110, 0.4);
+}
+
+.gal-stat-row__btn:active {
+  transform: scale(0.92);
+}
+
+.gal-stat-row__value {
+  min-width: 32px;
+  text-align: center;
+  font-family: 'Zen Maru Gothic', serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #6b4e9e;
+}
+
 .gal-class-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -1,5 +1,4 @@
 import { escapeHtml } from '../html';
-import { getReaderMessages } from '../message-format';
 import type { AppState, NotificationState, PhoneChatThread, StatusData, TargetStatus } from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
 import { renderCharacterArchivePanel } from './archive';
@@ -152,7 +151,6 @@ function renderWeatherHero(state: AppState) {
 function renderPhoneHome(state: AppState) {
   const playerMeta = state.playerProfile.className || state.playerProfile.gender || '主角档案';
   const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
-  const readerCount = Math.max(getReaderMessages(state.uiMessages).length, 0);
   const phoneThreadCount = Object.values(state.phoneMessages.threads).filter(thread => thread.messages.length).length;
   const summaryCount =
     state.summaryStore.minor.length + state.summaryStore.major.length + (state.summaryStore.global ? 1 : 0);
@@ -174,11 +172,11 @@ function renderPhoneHome(state: AppState) {
       dock: true,
     },
     {
-      route: 'app:reader',
+      route: 'app:calendar',
       icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjY2ZkOGRjIiBkPSJNNSAzOFYxNGgzOHYyNGMwIDIuMi0xLjggNC00IDRIOWMtMi4yIDAtNC0xLjgtNC00Ii8+PHBhdGggZmlsbD0iI2Y0NDMzNiIgZD0iTTQzIDEwdjZINXYtNmMwLTIuMiAxLjgtNCA0LTRoMzBjMi4yIDAgNCAxLjggNCA0Ii8+PGcgZmlsbD0iI2I3MWMxYyI+PGNpcmNsZSBjeD0iMzMiIGN5PSIxMCIgcj0iMyIvPjxjaXJjbGUgY3g9IjE1IiBjeT0iMTAiIHI9IjMiLz48L2c+PHBhdGggZmlsbD0iI2IwYmVjNSIgZD0iTTMzIDNjLTEuMSAwLTIgLjktMiAydjVjMCAxLjEuOSAyIDIgMnMyLS45IDItMlY1YzAtMS4xLS45LTItMi0yTTE1IDNjLTEuMSAwLTIgLjktMiAydjVjMCAxLjEuOSAyIDIgMnMyLS45IDItMlY1YzAtMS4xLS45LTItMi0ybS0yIDE4aDZ2NmgtNnptOCAwaDZ2NmgtNnptOCAwaDZ2NmgtNnptLTE2IDhoNnY2aC02em04IDBoNnY2aC02eiIvPjxwYXRoIGZpbGw9IiNmNDQzMzYiIGQ9Ik0yOSAyOWg2djZoLTZ6Ii8+PC9zdmc+',
       iconType: 'image',
       label: '日历',
-      meta: `${readerCount} 条记录`,
+      meta: escapeHtml(formatDate(state.statusData.world.currentTime)),
     },
     {
       route: 'app:archive',
@@ -291,12 +289,98 @@ function renderAppIcon(app: { icon: string; iconType?: 'text' | 'image'; label: 
   return escapeHtml(app.icon);
 }
 
-function renderReaderPhonePage(state: AppState, flipDir: string, renderers: PhoneRenderers) {
+/** 日历起始日期 */
+const CALENDAR_EPOCH = new Date(2012, 2, 31);
+const WEEKDAY_HEADERS = ['日', '月', '火', '水', '木', '金', '土'];
+
+/** 从游戏时间字符串解析年月日 */
+function parseGameDate(timeStr: string): { year: number; month: number; day: number } {
+  try {
+    const d = new Date(timeStr.replace(/\s.*$/, ''));
+    if (!isNaN(d.getTime())) return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate() };
+  } catch { /* fallback */ }
+  return { year: 2012, month: 2, day: 31 };
+}
+
+/** 收集有事件的日期集合（格式 "YYYY-M-D"） */
+function collectEventDates(state: AppState): Set<string> {
+  const dates = new Set<string>();
+  for (const key of Object.keys(state.statusData.world.recentEvents)) {
+    try {
+      const d = new Date(key.replace(/\s.*$/, ''));
+      if (!isNaN(d.getTime())) dates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
+    } catch { /* skip */ }
+  }
+  return dates;
+}
+
+/** 渲染日历网格 */
+function renderCalendarGrid(state: AppState, monthOffset: number): string {
+  const gd = parseGameDate(state.statusData.world.currentTime);
+  const viewDate = new Date(gd.year, gd.month + monthOffset, 1);
+  const viewYear = viewDate.getFullYear();
+  const viewMonth = viewDate.getMonth();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDow = new Date(viewYear, viewMonth, 1).getDay();
+  const eventDates = collectEventDates(state);
+
+  const monthLabel = `${viewYear}年${viewMonth + 1}月`;
+  const isCurrentMonth = viewYear === gd.year && viewMonth === gd.month;
+
+  let cells = '';
+  // 前置空白
+  for (let i = 0; i < firstDow; i++) {
+    cells += '<span class="phone-calendar__cell phone-calendar__cell--empty"></span>';
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const isToday = isCurrentMonth && d === gd.day;
+    const dateKey = `${viewYear}-${viewMonth}-${d}`;
+    const hasEvent = eventDates.has(dateKey);
+    const todayCls = isToday ? ' phone-calendar__cell--today' : '';
+    const dot = hasEvent ? '<span class="phone-calendar__dot"></span>' : '';
+    cells += `<span class="phone-calendar__cell${todayCls}">${d}${dot}</span>`;
+  }
+
+  // 月份边界检查（不早于起始日期）
+  const prevMonth = new Date(viewYear, viewMonth - 1, 1);
+  const canPrev = prevMonth >= new Date(CALENDAR_EPOCH.getFullYear(), CALENDAR_EPOCH.getMonth(), 1);
+
   return `
-    <section class="phone-route-page phone-app-page phone-app-page--reader" data-phone-route-view="app:reader">
-      ${renderPhoneAppHeader(state, '阅读', state.generating ? '记录中' : '手帐')}
-      <div class="phone-page-scroll phone-page-scroll--reader">
-        ${renderers.renderPaperWorkspace(state, flipDir, { embedded: true })}
+    <div class="phone-calendar">
+      <div class="phone-calendar__nav">
+        <button class="phone-calendar__nav-btn" data-action="calendar-prev" ${canPrev ? '' : 'disabled'}>‹</button>
+        <span class="phone-calendar__month">${escapeHtml(monthLabel)}</span>
+        <button class="phone-calendar__nav-btn" data-action="calendar-next">›</button>
+      </div>
+      <div class="phone-calendar__header">
+        ${WEEKDAY_HEADERS.map(h => `<span class="phone-calendar__weekday">${h}</span>`).join('')}
+      </div>
+      <div class="phone-calendar__grid">
+        ${cells}
+      </div>
+    </div>
+  `;
+}
+
+/** 日历月份偏移量（由 index.ts 管理） */
+let calendarMonthOffset = 0;
+
+export function setCalendarMonthOffset(offset: number) {
+  calendarMonthOffset = offset;
+}
+
+export function getCalendarMonthOffset(): number {
+  return calendarMonthOffset;
+}
+
+function renderCalendarPhonePage(state: AppState) {
+  const gd = parseGameDate(state.statusData.world.currentTime);
+  const subtitle = `${gd.year}年${gd.month + 1}月${gd.day}日`;
+  return `
+    <section class="phone-route-page phone-app-page" data-phone-route-view="app:calendar">
+      ${renderPhoneAppHeader(state, '日历', subtitle)}
+      <div class="phone-page-scroll">
+        ${renderCalendarGrid(state, calendarMonthOffset)}
       </div>
     </section>
   `;
@@ -518,7 +602,7 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
 function renderPhoneRoute(state: AppState, flipDir: string, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:messages') return renderMessagesPhonePage(state);
   if (state.phoneRoute === 'app:chat') return renderPhoneChatPage(state);
-  if (state.phoneRoute === 'app:reader') return renderReaderPhonePage(state, flipDir, renderers);
+  if (state.phoneRoute === 'app:calendar') return renderCalendarPhonePage(state);
   if (state.phoneRoute === 'app:summary') return renderSummaryPhonePage(state, renderers);
   if (state.phoneRoute === 'app:archive') return renderArchivePhonePage(state);
   if (state.phoneRoute === 'app:status') return renderStatusPhonePage(state, renderers);

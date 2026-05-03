@@ -33,12 +33,24 @@ export type SaveMeta = {
   appearance?: string;
 };
 
+export type PlayerStats = {
+  knowledge: number;
+  charm: number;
+  proficiency: number;
+  kindness: number;
+  courage: number;
+};
+
+export type Difficulty = 'easy' | 'normal' | 'hard';
+
 export type PlayerProfile = {
   name: string;
   gender?: string;
   personality: string;
   appearance: string;
   className?: string;
+  stats?: PlayerStats;
+  difficulty?: Difficulty;
 };
 
 export type GameState = {

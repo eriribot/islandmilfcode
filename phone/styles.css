@@ -500,8 +500,96 @@ body.floating-phone-dragging {
   overscroll-behavior: contain;
 }
 
-.phone-page-scroll--reader {
-  padding-right: 2px;
+/* ── 日历 ── */
+
+.phone-calendar {
+  padding: 12px;
+}
+
+.phone-calendar__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.phone-calendar__nav-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.5);
+  font-size: 16px;
+  font-weight: 700;
+  color: #5a4a3a;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.phone-calendar__nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.phone-calendar__month {
+  font-family: 'Klee One', serif;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #3a3028;
+}
+
+.phone-calendar__header {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+.phone-calendar__weekday {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #b0a08a;
+  padding: 4px 0;
+}
+
+.phone-calendar__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.phone-calendar__cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  font-size: 0.78rem;
+  color: #5a4a3a;
+  border-radius: 50%;
+}
+
+.phone-calendar__cell--empty {
+  visibility: hidden;
+}
+
+.phone-calendar__cell--today {
+  background: rgba(184, 92, 110, 0.18);
+  color: #b85c6e;
+  font-weight: 700;
+}
+
+.phone-calendar__dot {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #6b4e9e;
 }
 
 .paper-workspace--phone {

@@ -940,6 +940,44 @@ button {
   background: linear-gradient(90deg, var(--washi-mint) 0%, var(--washi-lavender) 60%, var(--washi-pink) 100%);
 }
 
+/* ── 骰子按钮动画 ── */
+
+@keyframes dice-tumble {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  15% {
+    transform: rotate(90deg) scale(1.25);
+  }
+  30% {
+    transform: rotate(200deg) scale(0.9);
+  }
+  50% {
+    transform: rotate(360deg) scale(1.15);
+  }
+  65% {
+    transform: rotate(430deg) scale(0.95);
+  }
+  80% {
+    transform: rotate(500deg) scale(1.08);
+  }
+  100% {
+    transform: rotate(720deg) scale(1);
+  }
+}
+
+@keyframes dice-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(168, 147, 210, 0);
+  }
+  30% {
+    box-shadow: 0 0 10px 3px rgba(168, 147, 210, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(168, 147, 210, 0);
+  }
+}
+
 .mini-btn {
   width: 30px;
   height: 30px;
@@ -954,6 +992,13 @@ button {
 
 .mini-btn:hover {
   background: rgba(107, 78, 158, 0.12);
+}
+
+/* 骰子翻滚动画激活态 */
+.mini-btn.is-rolling {
+  animation: dice-tumble 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+             dice-glow 0.7s ease-out;
+  pointer-events: none;
 }
 
 .meter-actions {
