@@ -173,7 +173,13 @@ function renderPhoneHome(state: AppState) {
       meta: phoneThreadCount ? `${phoneThreadCount} 个会话` : '暂无会话',
       dock: true,
     },
-    { route: 'app:reader', icon: 'RD', label: '阅读', meta: `${readerCount} 条记录` },
+    {
+      route: 'app:reader',
+      icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjY2ZkOGRjIiBkPSJNNSAzOFYxNGgzOHYyNGMwIDIuMi0xLjggNC00IDRIOWMtMi4yIDAtNC0xLjgtNC00Ii8+PHBhdGggZmlsbD0iI2Y0NDMzNiIgZD0iTTQzIDEwdjZINXYtNmMwLTIuMiAxLjgtNCA0LTRoMzBjMi4yIDAgNCAxLjggNCA0Ii8+PGcgZmlsbD0iI2I3MWMxYyI+PGNpcmNsZSBjeD0iMzMiIGN5PSIxMCIgcj0iMyIvPjxjaXJjbGUgY3g9IjE1IiBjeT0iMTAiIHI9IjMiLz48L2c+PHBhdGggZmlsbD0iI2IwYmVjNSIgZD0iTTMzIDNjLTEuMSAwLTIgLjktMiAydjVjMCAxLjEuOSAyIDIgMnMyLS45IDItMlY1YzAtMS4xLS45LTItMi0yTTE1IDNjLTEuMSAwLTIgLjktMiAydjVjMCAxLjEuOSAyIDIgMnMyLS45IDItMlY1YzAtMS4xLS45LTItMi0ybS0yIDE4aDZ2NmgtNnptOCAwaDZ2NmgtNnptOCAwaDZ2NmgtNnptLTE2IDhoNnY2aC02em04IDBoNnY2aC02eiIvPjxwYXRoIGZpbGw9IiNmNDQzMzYiIGQ9Ik0yOSAyOWg2djZoLTZ6Ii8+PC9zdmc+',
+      iconType: 'image',
+      label: '日历',
+      meta: `${readerCount} 条记录`,
+    },
     {
       route: 'app:archive',
       icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjNDU1YTY0IiBkPSJNMzYgNEgyNmMwIDEuMS0uOSAyLTIgMnMtMi0uOS0yLTJIMTJDOS44IDQgOCA1LjggOCA4djMyYzAgMi4yIDEuOCA0IDQgNGgyNGMyLjIgMCA0LTEuOCA0LTRWOGMwLTIuMi0xLjgtNC00LTQiLz48cGF0aCBmaWxsPSIjZmZmIiBkPSJNMzYgNDFIMTJjLS42IDAtMS0uNC0xLTFWOGMwLS42LjQtMSAxLTFoMjRjLjYgMCAxIC40IDEgMXYzMmMwIC42LS40IDEtMSAxIi8+PGcgZmlsbD0iIzkwYTRhZSI+PHBhdGggZD0iTTI2IDRjMCAxLjEtLjkgMi0yIDJzLTItLjktMi0yaC03djRjMCAxLjEuOSAyIDIgMmgxNGMxLjEgMCAyLS45IDItMlY0eiIvPjxwYXRoIGQ9Ik0yNCAwYy0yLjIgMC00IDEuOC00IDRzMS44IDQgNCA0czQtMS44IDQtNHMtMS44LTQtNC00bTAgNmMtMS4xIDAtMi0uOS0yLTJzLjktMiAyLTJzMiAuOSAyIDJzLS45IDItMiAyIi8+PC9nPjxwYXRoIGZpbGw9IiM0Y2FmNTAiIGQ9Im0zMC42IDE4LjZsLTkgOWwtNC4yLTQuM2wtMi41IDIuNWw2LjggNi43bDExLjQtMTEuNHoiLz48L3N2Zz4=',
@@ -196,7 +202,14 @@ function renderPhoneHome(state: AppState) {
       label: '背包',
       meta: `${inventoryCount} 件`,
     },
-    { route: 'app:summary', icon: 'MM', label: '摘要', meta: `${summaryCount} 条记忆`, dock: true },
+    {
+      route: 'app:summary',
+      icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjZmZjMTA3IiBkPSJtMjEuMiA0NC44bC0xOC0xOGMtMS42LTEuNi0xLjYtNC4xIDAtNS43bDE4LTE4YzEuNi0xLjYgNC4xLTEuNiA1LjcgMGwxOCAxOGMxLjYgMS42IDEuNiA0LjEgMCA1LjdsLTE4IDE4Yy0xLjYgMS42LTQuMiAxLjYtNS43IDAiLz48ZyBmaWxsPSIjMzc0NzRmIj48Y2lyY2xlIGN4PSIyNCIgY3k9IjI0IiByPSIyIi8+PGNpcmNsZSBjeD0iMzIiIGN5PSIyNCIgcj0iMiIvPjxjaXJjbGUgY3g9IjE2IiBjeT0iMjQiIHI9IjIiLz48L2c+PC9zdmc+',
+      iconType: 'image',
+      label: '摘要',
+      meta: `${summaryCount} 条记忆`,
+      dock: true,
+    },
     {
       route: 'app:settings',
       icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjNjA3ZDhiIiBkPSJNMzkuNiAyNy4yYy4xLS43LjItMS40LjItMi4ycy0uMS0xLjUtLjItMi4ybDQuNS0zLjJjLjQtLjMuNi0uOS4zLTEuNEw0MCAxMC44Yy0uMy0uNS0uOC0uNy0xLjMtLjRsLTUgMi4zYy0xLjItLjktMi40LTEuNi0zLjgtMi4yTDI5LjQgNWMtLjEtLjUtLjUtLjktMS0uOWgtOC42Yy0uNSAwLTEgLjQtMSAuOWwtLjUgNS41Yy0xLjQuNi0yLjcgMS4zLTMuOCAyLjJsLTUtMi4zYy0uNS0uMi0xLjEgMC0xLjMuNGwtNC4zIDcuNGMtLjMuNS0uMSAxLjEuMyAxLjRsNC41IDMuMmMtLjEuNy0uMiAxLjQtLjIgMi4ycy4xIDEuNS4yIDIuMkw0IDMwLjRjLS40LjMtLjYuOS0uMyAxLjRMOCAzOS4yYy4zLjUuOC43IDEuMy40bDUtMi4zYzEuMi45IDIuNCAxLjYgMy44IDIuMmwuNSA1LjVjLjEuNS41LjkgMSAuOWg4LjZjLjUgMCAxLS40IDEtLjlsLjUtNS41YzEuNC0uNiAyLjctMS4zIDMuOC0yLjJsNSAyLjNjLjUuMiAxLjEgMCAxLjMtLjRsNC4zLTcuNGMuMy0uNS4xLTEuMS0uMy0xLjR6TTI0IDM1Yy01LjUgMC0xMC00LjUtMTAtMTBzNC41LTEwIDEwLTEwczEwIDQuNSAxMCAxMHMtNC41IDEwLTEwIDEwIi8+PHBhdGggZmlsbD0iIzQ1NWE2NCIgZD0iTTI0IDEzYy02LjYgMC0xMiA1LjQtMTIgMTJzNS40IDEyIDEyIDEyczEyLTUuNCAxMi0xMnMtNS40LTEyLTEyLTEybTAgMTdjLTIuOCAwLTUtMi4yLTUtNXMyLjItNSA1LTVzNSAyLjIgNSA1cy0yLjIgNS01IDUiLz48L3N2Zz4=',
@@ -398,6 +411,8 @@ function renderPhoneChatPage(state: AppState) {
 
   const thread = state.phoneMessages.threads[target.id];
   const messages = thread?.messages ?? [];
+  // 正文生成期间锁住手机输入，防止后台手机生成抢占正文流式事件。
+  const chatLocked = state.phoneMessages.generating || state.generating;
 
   return `
     <section class="phone-route-page phone-app-page phone-app-page--chat" data-phone-route-view="app:chat">
@@ -423,13 +438,13 @@ function renderPhoneChatPage(state: AppState) {
           class="phone-chat-input"
           data-field="phone-chat-draft"
           placeholder="输入消息"
-          ${state.phoneMessages.generating ? 'disabled' : ''}
+          ${chatLocked ? 'disabled' : ''}
         >${escapeHtml(state.phoneMessages.draft)}</textarea>
         <button
           class="phone-chat-send"
           data-action="send-phone-message"
           data-target-id="${escapeHtml(target.id)}"
-          ${state.phoneMessages.generating ? 'disabled' : ''}
+          ${chatLocked ? 'disabled' : ''}
         >${state.phoneMessages.generating ? '…' : '发送'}</button>
       </div>
     </section>

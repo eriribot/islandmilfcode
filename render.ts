@@ -1,13 +1,8 @@
+import { escapeHtml } from './html';
 import { getReaderMessages, getVisibleMessageText } from './message-format';
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
-import { escapeHtml } from './html';
 import type { SummaryStore } from './summary/types';
-import type {
-  AppState,
-  ReaderContextMenuState,
-  StatusData,
-  UiMessage,
-} from './types';
+import type { AppState, ReaderContextMenuState, StatusData, UiMessage } from './types';
 import { formatDate, formatTime, getInventoryIcon } from './variables/normalize';
 
 export function paginateMessage(text: string, role: UiMessage['role']) {
@@ -305,7 +300,8 @@ export function renderSummaryPanel(state: AppState) {
   const recentEvents = Object.entries(state.statusData.world.recentEvents).slice(0, 3);
   const lastMessage = state.uiMessages[state.uiMessages.length - 1];
   const playerName = state.playerProfile.name.trim() || '主角';
-  const playerMeta = [state.playerProfile.className, state.playerProfile.gender].filter(Boolean).join(' · ') || '主角档案';
+  const playerMeta =
+    [state.playerProfile.className, state.playerProfile.gender].filter(Boolean).join(' · ') || '主角档案';
   const store = state.summaryStore;
 
   return `
@@ -392,7 +388,7 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
               `<div class="chip-card" style="border-left:3px solid var(--accent-primary,#7c6ca8)">
                 <div style="display:flex;justify-content:space-between;align-items:center">
                   <strong>#${i + 1} · 消息 ${e.range[0]}-${e.range[1]}</strong>
-                  <button class="mini-btn" data-action="summary-reroll" data-reroll-level="major" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>重roll</button>
+                  <button class="mini-btn" data-action="summary-reroll" data-reroll-level="major" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>🎲</button>
                 </div>
                 <p>${escapeHtml(e.text)}</p>
                 <div style="font-size:10px;opacity:0.45;margin-top:4px">${escapeHtml(e.createdAt.slice(0, 16).replace('T', ' '))}</div>
@@ -412,7 +408,7 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
               `<div class="chip-card">
                 <div style="display:flex;justify-content:space-between;align-items:center">
                   <strong>#${i + 1} · 消息 ${e.range[0]}-${e.range[1]}</strong>
-                  <button class="mini-btn" data-action="summary-reroll" data-reroll-level="minor" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>重roll</button>
+                  <button class="mini-btn" data-action="summary-reroll" data-reroll-level="minor" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>🎲</button>
                 </div>
                 <p>${escapeHtml(e.text)}</p>
                 <div style="font-size:10px;opacity:0.45;margin-top:4px">${escapeHtml(e.createdAt.slice(0, 16).replace('T', ' '))}</div>

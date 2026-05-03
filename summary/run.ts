@@ -12,6 +12,7 @@ import {
 import { saveSummaryStore } from './store';
 import type { SummaryApiConfig, SummaryStore } from './types';
 
+/** 摘要运行所需的上下文。 */
 export type SummaryContext = {
   win: TavernWindow;
   summaryStore: SummaryStore;
@@ -20,6 +21,7 @@ export type SummaryContext = {
   onStoreUpdated: () => void;
 };
 
+/** 调用酒馆的 generateRaw 接口发送摘要请求。 */
 async function callGenerateRaw(
   win: TavernWindow,
   prompts: Array<{ role: string; content: string }>,
@@ -49,6 +51,7 @@ async function callGenerateRaw(
   return String(result ?? '');
 }
 
+/** 记录摘要失败；连续失败 3 次后自动暂停。 */
 function recordFailure(store: SummaryStore, level: 'minor' | 'major' | 'global', error: unknown): void {
   store.consecutiveFailures += 1;
   store.lastError = {
@@ -61,20 +64,24 @@ function recordFailure(store: SummaryStore, level: 'minor' | 'major' | 'global',
   }
 }
 
+/** 成功后清除失败计数和暂停状态。 */
 function clearFailureState(store: SummaryStore): void {
   store.consecutiveFailures = 0;
   store.autoPaused = false;
   store.lastError = null;
 }
 
+/** 获取 lastIndex 之后尚未被摘要覆盖的用户/助手消息。 */
 function getUnsummarizedMessages(messages: UiMessage[], lastIndex: number): UiMessage[] {
   return messages.slice(lastIndex).filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant'));
 }
 
+/** 统计非流式的用户/助手消息总数（用作 lastSummarizedIndex 的基准）。 */
 function countConversationMessages(messages: UiMessage[]): number {
   return messages.filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant')).length;
 }
 
+/** 将消息列表格式化为 [说话人]\n内容 的纯文本，用于重roll大摘要。 */
 function formatMessagesAsText(messages: UiMessage[]): string {
   return messages
     .map(m => {

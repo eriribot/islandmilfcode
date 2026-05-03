@@ -17,6 +17,7 @@ import {
   discardStreamingMessage,
   ensureStreamingMessage,
   finalizeStreamingText,
+  recordGenerationDebug,
   type StreamingContext,
   updateStreamingText,
 } from './streaming';
@@ -70,6 +71,10 @@ export async function submitMessage(
   state.currentGenerationId = crypto.randomUUID();
   state.finalizedGenerationId = '';
   state.focusedMessagePage = 0;
+  recordGenerationDebug(ctx, 'submit:start', {
+    userInputLength: userInput.length,
+    keepDraft: Boolean(options.keepDraft),
+  });
   ctx.clearNotification(false);
   ctx.closeReaderContextMenu(false);
 
@@ -110,6 +115,10 @@ export async function submitMessage(
       generation_id: requestGenerationId,
     };
 
+    recordGenerationDebug(ctx, 'submit:before-generate', {
+      requestGenerationId,
+      generator: generator === win.generateRaw ? 'generateRaw' : 'generate',
+    });
     const result = await generator?.(
       generator === win.generateRaw
         ? {
@@ -137,6 +146,10 @@ export async function submitMessage(
           },
     );
 
+    recordGenerationDebug(ctx, 'submit:generate-returned', {
+      requestGenerationId,
+      resultLength: String(result ?? '').length,
+    });
     finalizeStreamingText(ctx, String(result ?? ''), requestGenerationId);
 
     // 解析 <progress> 并应用变量更新。
@@ -188,25 +201,49 @@ export async function submitMessage(
     }
     generationSucceeded = true;
     state.generating = false;
+    recordGenerationDebug(ctx, 'submit:main-success-before-phone', { requestGenerationId });
     await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
   } catch (error) {
-    discardStreamingMessage(ctx);
-    state.draft = userInput;
-    state.currentGenerationId = '';
-    ctx.persistConversation();
-    ctx.showNotification({
-      kind: 'status',
-      title: '生成失败',
-      preview: error instanceof Error ? error.message : String(error),
-      targetTab: 'summary',
-      timestamp: formatTime(state.statusData.world.currentTime),
+    recordGenerationDebug(ctx, 'submit:catch', {
+      error: error instanceof Error ? error.message : String(error),
     });
+    const currentStreamingMessage = state.uiMessages[state.uiMessages.length - 1];
+    const hasStreamingText = Boolean(currentStreamingMessage?.streaming && currentStreamingMessage.text.trim());
+    const removedStreamingMessage = discardStreamingMessage(ctx);
+    state.currentGenerationId = '';
+    if (hasStreamingText && !removedStreamingMessage) {
+      // 流式正文已经写入时，把它当作成功楼层处理；不要再回填草稿或弹失败。
+      const lastMsg = state.uiMessages[state.uiMessages.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant') {
+        lastMsg.statusSnapshot = JSON.parse(JSON.stringify(state.statusData));
+        ctx.persistConversation();
+      }
+      if (options.clearDraftOnSuccess) {
+        state.draft = '';
+      }
+      generationSucceeded = true;
+      state.generating = false;
+      recordGenerationDebug(ctx, 'submit:catch-preserved-as-success');
+      await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
+    } else {
+      state.draft = userInput;
+      ctx.persistConversation();
+      ctx.showNotification({
+        kind: 'status',
+        title: '生成失败',
+        preview: error instanceof Error ? error.message : String(error),
+        targetTab: 'summary',
+        timestamp: formatTime(state.statusData.world.currentTime),
+      });
+    }
   } finally {
     state.generating = false;
+    recordGenerationDebug(ctx, 'submit:finally-before-render', { generationSucceeded });
     ctx.render();
 
-    // 后台触发摘要，不阻塞当前生成流程。
+    // 正文和主动小手机都结束后再顺序执行摘要，避免后台 generateRaw 抢占正文流。
     if (generationSucceeded && typeof win.generateRaw === 'function') {
+      recordGenerationDebug(ctx, 'submit:summary-start');
       const summaryCtx: SummaryContext = {
         win,
         summaryStore: ctx.summaryStore,
@@ -217,9 +254,10 @@ export async function submitMessage(
           ctx.render();
         },
       };
-      runSummary(summaryCtx).catch(() => {
+      await runSummary(summaryCtx).catch(() => {
         /* 摘要错误在内部处理 */
       });
+      recordGenerationDebug(ctx, 'submit:summary-finished');
     }
   }
 }
@@ -306,7 +344,7 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
     target,
     history: thread.messages,
     userInput:
-      '根据刚刚正文发生的事件，如果你会主动发一条手机消息，就生成这条消息；如果完全不该主动联系，也要用角色口吻发一条很短的试探或回避消息。',
+      '根据刚刚正文发生的事件，判断你是否会主动发一条手机消息。如果事件与你有关、你有话想说、或者你有理由关心，就生成这条消息；如果事件和你无关、你没有理由主动联系、或者当前情境不适合发消息，就只输出 <message></message> 表示不发送。不要为了发消息而发消息。',
     playerProfile: state.playerProfile,
     skipProgress: true,
     triggerEvent: latestEvent.text,
@@ -369,7 +407,8 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
   const { state, win } = ctx;
   const target = getPhoneThreadTarget(ctx, targetId);
   const userInput = state.phoneMessages.draft.trim();
-  if (!target || !userInput || state.phoneMessages.generating) return;
+  // 正文生成时不并发发手机消息，避免两个 generateRaw 的流式事件在酒馆侧串到同一个正文楼层。
+  if (!target || !userInput || state.phoneMessages.generating || state.generating) return;
 
   const thread = ensurePhoneThread(ctx, target);
   const now = formatTime(state.statusData.world.currentTime);

@@ -4,7 +4,8 @@ import type { PhoneChatMessage, PlayerProfile, StatusData, TargetStatus, UiMessa
 import { getActiveTarget } from './types';
 
 export const PRIMARY_VISIBLE_TAG = 'content';
-export const FALLBACK_VISIBLE_TAGS = ['context'];
+// 兼容用户自定义预设里要求的中文正文标签，避免模型输出 <正文> 时被当成未知标签吞掉。
+export const FALLBACK_VISIBLE_TAGS = ['正文', 'context'];
 
 export function sanitizeVisibleReply(text: string) {
   return text.replace(/^\s*(?:assistant|ai|reply|response)\s*[:：\-\s]*/i, '').trim();
@@ -46,7 +47,7 @@ export function extractTaggedReply(raw: string, tagName: string, streaming: bool
   if (openMatch?.index != null) {
     const afterOpen = raw.slice(openMatch.index + openMatch[0].length);
     const nextSectionIndex = afterOpen.search(
-      /<\/?(?:think|content|context|tucao|current_event|progress|roleplay_options)\b[^>]*>/i,
+      /<\/?(?:think|content|正文|context|tucao|current_event|progress|roleplay_options)\b[^>]*>/i,
     );
     const visible = nextSectionIndex >= 0 ? afterOpen.slice(0, nextSectionIndex) : afterOpen;
     return dedupeAdjacentReply(visible);
@@ -95,6 +96,9 @@ export function getReaderMessages(messages: UiMessage[]) {
       Boolean(getVisibleMessageText(message) || message.streaming),
   );
 }
+
+// 摘要完成后至少保留最近几条原始消息，防止模型丢失近期对话细节。
+const SUMMARY_KEEP_RECENT = 6;
 
 function buildConversationHistory(uiMessages: UiMessage[], startIndex = 0) {
   const historyLines = uiMessages
@@ -166,7 +170,11 @@ export function buildPrompt(
 
   const hasSummary = summaryStore && (summaryStore.global || summaryStore.major.length || summaryStore.minor.length);
   const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
-  const historyStartIndex = hasSummary ? summaryStore.lastSummarizedIndex : 0;
+  // 取 lastSummarizedIndex 和「总消息数 - 保留窗口」中较小的那个，
+  // 保证即使全部消息都已被摘要，最近几条原文仍会出现在 prompt 中。
+  const historyStartIndex = hasSummary
+    ? Math.min(summaryStore.lastSummarizedIndex, Math.max(0, uiMessages.length - SUMMARY_KEEP_RECENT))
+    : 0;
   const conversationHistory = buildConversationHistory(uiMessages, historyStartIndex);
 
   const parts = [

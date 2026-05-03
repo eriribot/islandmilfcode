@@ -2,29 +2,36 @@ import { extractTaggedReply, getVisibleMessageText } from '../message-format';
 import type { UiMessage } from '../types';
 import type { SummaryEntry, SummaryStore } from './types';
 
+// 小摘要：每累积 5 条新消息触发一次。
 const MINOR_THRESHOLD = 5;
+// 大摘要：每累积 4 条小摘要触发一次。
 const MAJOR_THRESHOLD = 4;
+// 全局压缩：每累积 4 条大摘要触发一次。
 const GLOBAL_THRESHOLD = 4;
 
-// ── Threshold checks ──
+// ── 阈值判断 ──
 
+/** 是否应运行小摘要：未暂停且新消息数达到阈值。 */
 export function shouldRunMinorSummary(store: SummaryStore, messageCount: number): boolean {
   if (store.autoPaused) return false;
   return messageCount - store.lastSummarizedIndex >= MINOR_THRESHOLD;
 }
 
+/** 是否应运行大摘要：小摘要条数达到阈值。 */
 export function shouldRunMajorSummary(store: SummaryStore): boolean {
   return store.minor.length >= MAJOR_THRESHOLD;
 }
 
+/** 是否应运行全局压缩：大摘要条数达到阈值。 */
 export function shouldRunGlobalCompression(store: SummaryStore): boolean {
   return store.major.length >= GLOBAL_THRESHOLD;
 }
 
-// ── Prompt builders ──
+// ── Prompt 构建 ──
 
 type OrderedPrompt = { role: 'system' | 'user' | 'assistant'; content: string };
 
+/** 将消息列表格式化为 [说话人]\n内容 的文本块，供摘要 prompt 使用。 */
 function formatMessagesForSummary(messages: UiMessage[]): string {
   return messages
     .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -37,6 +44,7 @@ function formatMessagesForSummary(messages: UiMessage[]): string {
     .join('\n\n');
 }
 
+/** 构建小摘要 prompt：对一段对话片段做约 100 字的剧情记录。 */
 export function buildMinorSummaryPrompt(messages: UiMessage[]): OrderedPrompt[] {
   const formatted = formatMessagesForSummary(messages);
   return [
@@ -67,6 +75,7 @@ export function buildMinorSummaryPrompt(messages: UiMessage[]): OrderedPrompt[] 
   ];
 }
 
+/** 构建大摘要 prompt：将多条小摘要合并为按时间线组织的总结。 */
 export function buildMajorSummaryPrompt(minors: SummaryEntry[]): OrderedPrompt[] {
   const formatted = minors
     .map((entry, i) => `[片段${i + 1} | 消息 ${entry.range[0]}-${entry.range[1]}]\n${entry.text}`)
@@ -107,6 +116,7 @@ export function buildMajorSummaryPrompt(minors: SummaryEntry[]): OrderedPrompt[]
   ];
 }
 
+/** 构建全局压缩 prompt：将已有全局摘要与新增大摘要合并，控制在 400 字以内。 */
 export function buildGlobalCompressionPrompt(oldGlobal: string | null, majors: SummaryEntry[]): OrderedPrompt[] {
   const majorFormatted = majors
     .map((entry, i) => `[总结${i + 1} | 消息 ${entry.range[0]}-${entry.range[1]}]\n${entry.text}`)
@@ -145,8 +155,9 @@ export function buildGlobalCompressionPrompt(oldGlobal: string | null, majors: S
   ];
 }
 
-// ── Result parser ──
+// ── 结果解析 ──
 
+/** 从 AI 回复中提取 <summary> 标签内的文本；找不到标签时回退到裁剪原文。 */
 export function parseSummaryResult(text: string): string {
   const tagged = extractTaggedReply(text, 'summary', false);
   if (tagged) return tagged;
@@ -154,4 +165,4 @@ export function parseSummaryResult(text: string): string {
   return text.trim();
 }
 
-// ── Summary context builder is in message-format.ts to avoid circular dependency ──
+// ── 摘要上下文构建器位于 message-format.ts，避免循环依赖 ──
