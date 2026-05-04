@@ -4,13 +4,14 @@ import {
   buildProgressPrompt,
   buildPrompt,
   extractPhoneChatReply,
+  type ProgressUpdate,
   parseProgressUpdate,
 } from '../message-format';
 import { pushMessage } from '../state/store';
 import { runSummary, type SummaryContext } from '../summary';
 import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import { getActiveTarget } from '../types';
-import type { PhoneChatMessage, PhoneProactiveState, TargetStatus } from '../types';
+import type { PhoneChatMessage, PhoneProactiveState, PlayerProfile, PlayerStats, TargetStatus } from '../types';
 import type { VariableAdapter } from '../variables/adapter';
 import { affinityStage, applyProgressUpdate, clamp, formatTime } from '../variables/normalize';
 import {
@@ -33,6 +34,49 @@ export type ActionContext = StreamingContext & {
 };
 
 const PHONE_PROACTIVE_COOLDOWN_MS = 3 * 60 * 1000;
+
+function mergeMissingAffinity(primary: ProgressUpdate | null, fallback: ProgressUpdate | null) {
+  if (!primary || primary.affinityDelta !== undefined || fallback?.affinityDelta === undefined) return primary;
+  return {
+    ...primary,
+    affinityDelta: fallback.affinityDelta,
+  };
+}
+
+const DEFAULT_PLAYER_STATS: PlayerStats = {
+  knowledge: 0,
+  charm: 0,
+  proficiency: 0,
+  kindness: 0,
+  courage: 0,
+};
+
+function applyPlayerStatDeltas(playerProfile: PlayerProfile, update: ProgressUpdate | null) {
+  if (!update || !Object.keys(update.statDeltas).length) return false;
+  const current = { ...DEFAULT_PLAYER_STATS, ...(playerProfile.stats ?? {}) };
+  let changed = false;
+
+  for (const [key, delta] of Object.entries(update.statDeltas) as Array<[keyof PlayerStats, number]>) {
+    if (!delta) continue;
+    const nextValue = clamp((current[key] ?? 0) + delta, 0, 100);
+    if (nextValue === current[key]) continue;
+    current[key] = nextValue;
+    changed = true;
+  }
+
+  if (changed) {
+    playerProfile.stats = current;
+  }
+  return changed;
+}
+
+function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | null, targetId?: string | null) {
+  if (!update) return false;
+  applyProgressUpdate(ctx.state.statusData, update, targetId ?? ctx.state.statusData.activeTargetId);
+  const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, update);
+  ctx.adapter.save(ctx.state.statusData);
+  return statsChanged || true;
+}
 
 async function simulateGeneration(ctx: ActionContext, userInput: string) {
   const { state } = ctx;
@@ -156,6 +200,7 @@ export async function submitMessage(
     if (ctx.summaryApiConfig) {
       // 副 API 负责变量提取。
       try {
+        const mainProgressUpdate = parseProgressUpdate(String(result ?? ''));
         const progressPrompts = buildProgressPrompt(state.statusData, state.uiMessages.slice(-6));
         const progressConfig: Record<string, unknown> = {
           should_silence: true,
@@ -171,10 +216,9 @@ export async function submitMessage(
         };
         const progressResult = await win.generateRaw?.(progressConfig);
         const progressRaw = String(progressResult ?? '');
-        const progressUpdate = parseProgressUpdate(progressRaw);
+        const progressUpdate = mergeMissingAffinity(parseProgressUpdate(progressRaw), mainProgressUpdate);
         if (progressUpdate) {
-          applyProgressUpdate(state.statusData, progressUpdate);
-          ctx.adapter.save(state.statusData);
+          applyFullProgressUpdate(ctx, progressUpdate);
         }
       } catch (e) {
         console.warn('[progress] secondary API failed:', e);
@@ -184,8 +228,7 @@ export async function submitMessage(
       const mainRaw = String(result ?? '');
       const progressUpdate = parseProgressUpdate(mainRaw);
       if (progressUpdate) {
-        applyProgressUpdate(state.statusData, progressUpdate);
-        ctx.adapter.save(state.statusData);
+        applyFullProgressUpdate(ctx, progressUpdate);
       }
     }
 
@@ -531,8 +574,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
 
         const progressUpdate = parseProgressUpdate(progressRaw);
         if (progressUpdate) {
-          applyProgressUpdate(state.statusData, progressUpdate, target.id);
-          ctx.adapter.save(state.statusData);
+          applyFullProgressUpdate(ctx, progressUpdate, target.id);
         }
       } catch (e) {
         console.warn('[phone-progress] analysis failed:', e);
@@ -540,8 +582,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
     } else {
       const progressUpdate = parseProgressUpdate(rawResult);
       if (progressUpdate) {
-        applyProgressUpdate(state.statusData, progressUpdate, target.id);
-        ctx.adapter.save(state.statusData);
+        applyFullProgressUpdate(ctx, progressUpdate, target.id);
       }
     }
 

@@ -33,9 +33,18 @@ function normalizeTarget(raw: Record<string, any>, fallback: TargetStatus): Targ
 
 function normalizeWorld(raw: Record<string, any>) {
   const eventsInput = raw?.world?.recentEvents ?? {};
+  const mainEventsInput = raw?.world?.mainEvents ?? {};
   return {
     currentTime: String(raw?.world?.currentTime ?? defaultStatusData.world.currentTime),
     currentLocation: String(raw?.world?.currentLocation ?? defaultStatusData.world.currentLocation),
+    mainEvents: {
+      ...defaultStatusData.world.mainEvents,
+      ...Object.fromEntries(
+        Object.entries(mainEventsInput)
+          .filter(([key]) => Boolean(key))
+          .map(([key, value]) => [String(key), String(value)]),
+      ),
+    },
     recentEvents: Object.fromEntries(
       Object.entries(eventsInput)
         .filter(([key]) => Boolean(key))
@@ -80,6 +89,7 @@ export function serializeStatusData(statusData: StatusData): Record<string, any>
     world: {
       currentTime: statusData.world.currentTime,
       currentLocation: statusData.world.currentLocation,
+      mainEvents: statusData.world.mainEvents,
       recentEvents: statusData.world.recentEvents,
     },
     targets: statusData.targets.map(target => ({

@@ -15,7 +15,7 @@ function renderStatRow(key: string, label: string, defaultValue: number): string
       <span class="gal-stat-row__label">${escapeHtml(label)}</span>
       <button type="button" class="gal-stat-row__btn" data-stat-action="dec" data-stat-key="${key}" aria-label="${escapeHtml(label)}减少">−</button>
       <span class="gal-stat-row__value" data-stat-display="${key}">${defaultValue}</span>
-      <input type="hidden" name="stat-${key}" value="${defaultValue}" />
+      <input type="number" class="gal-stat-row__input" name="stat-${key}" value="${defaultValue}" min="0" max="100" step="1" data-stat-input="${key}" aria-label="${escapeHtml(label)}数值" />
       <button type="button" class="gal-stat-row__btn" data-stat-action="inc" data-stat-key="${key}" aria-label="${escapeHtml(label)}增加">+</button>
     </div>
   `;
@@ -206,21 +206,21 @@ export function renderCharacterCreation() {
                 <input type="radio" name="difficulty" value="easy" />
                 <span class="gal-difficulty-option__card">
                   <strong>轻松</strong>
-                  <small>350 点 · 各项 30-90</small>
+                  <small>500 点 · 每次 ±10</small>
                 </span>
               </label>
               <label class="gal-difficulty-option">
                 <input type="radio" name="difficulty" value="normal" checked />
                 <span class="gal-difficulty-option__card">
                   <strong>普通</strong>
-                  <small>300 点 · 各项 10-90</small>
+                  <small>300 点 · 每次 ±10</small>
                 </span>
               </label>
               <label class="gal-difficulty-option">
                 <input type="radio" name="difficulty" value="hard" />
                 <span class="gal-difficulty-option__card">
                   <strong>困难</strong>
-                  <small>250 点 · 各项 10-80</small>
+                  <small>150 点 · 每次 ±10</small>
                 </span>
               </label>
             </div>
@@ -231,11 +231,11 @@ export function renderCharacterCreation() {
               能力分配 <span class="gal-field__hint">剩余 <span data-stat-remaining>0</span> 点</span>
             </span>
             <div class="gal-stat-allocator">
-              ${renderStatRow('knowledge', '知识', 60)}
-              ${renderStatRow('charm', '魅力', 60)}
-              ${renderStatRow('proficiency', '灵巧', 60)}
-              ${renderStatRow('kindness', '体贴', 60)}
-              ${renderStatRow('courage', '勇气', 60)}
+              ${renderStatRow('knowledge', '知识', 0)}
+              ${renderStatRow('charm', '魅力', 0)}
+              ${renderStatRow('proficiency', '灵巧', 0)}
+              ${renderStatRow('kindness', '体贴', 0)}
+              ${renderStatRow('courage', '勇气', 0)}
             </div>
           </div>
 

@@ -23,6 +23,10 @@ export const defaultStatusData: StatusData = {
   world: {
     currentTime: '2012-03-31 08:30',
     currentLocation: '\u4fa6\u63a2\u5761',
+    mainEvents: {
+      'SAE_01-1': '未触发',
+      'SAE_01-2': '未触发',
+    },
     recentEvents: {
       初始记录: '新的记录已经建立，等待攻略对象资料载入。',
     },

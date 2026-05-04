@@ -61,7 +61,7 @@ import type {
 import type { PhoneCharacterId, PhoneRoute } from './phone/types';
 import { getActiveTarget } from './types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
-import { clamp } from './variables/normalize';
+import { clamp, syncMainEvents } from './variables/normalize';
 import { loadCharacterWorldbookTargets, mergeWorldbookTargets } from './worldbook';
 
 const win = window as TavernWindow;
@@ -117,6 +117,7 @@ function getStatusCacheKey() {
 function cacheStatusData(data: StatusData) {
   const key = getStatusCacheKey();
   if (!key) return;
+  syncMainEvents(data);
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch {
@@ -136,6 +137,7 @@ function loadCachedStatusData(): StatusData | null {
 }
 
 function guardedAdapterSave(data: StatusData) {
+  syncMainEvents(data);
   adapter.save(data);
   cacheStatusData(data);
 }
@@ -982,6 +984,10 @@ function render() {
   if (!root) return;
   if (state.activeRunId) {
     // 游戏界面。
+    if (syncMainEvents(state.statusData)) {
+      guardedAdapterSave(state.statusData);
+      persistToSave();
+    }
     syncFocusedMessage(state);
     refreshWeatherForCurrentState(state, render);
     root.innerHTML = renderApp(state, flipDirection);

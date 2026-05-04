@@ -142,6 +142,7 @@ export type StatusData = {
     currentTime: string;
     currentLocation: string;
     recentEvents: Record<string, string>;
+    mainEvents: Record<string, string>;
   };
   targets: TargetStatus[];
   activeTargetId: string | null;

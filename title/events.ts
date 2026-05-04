@@ -40,6 +40,11 @@ function setMusicButtonState(button: HTMLButtonElement, playing: boolean) {
   button.setAttribute('aria-pressed', String(playing));
 }
 
+function readStatValue(fd: FormData, key: keyof PlayerStats) {
+  const value = Number(fd.get(`stat-${key}`));
+  return Number.isFinite(value) ? value : 0;
+}
+
 function bindTitleMusicEvents(root: HTMLElement | null) {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="toggle-title-music"]').forEach(button => {
     const url = button.dataset.musicUrl?.trim();
@@ -125,13 +130,15 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
     if (!characterName) return;
 
     const difficulty = (fd.get('difficulty') as Difficulty) || 'normal';
+    const config = DIFFICULTY_CONFIG[difficulty] ?? DIFFICULTY_CONFIG.normal;
     const stats: PlayerStats = {
-      knowledge: Number(fd.get('stat-knowledge')) || 60,
-      charm: Number(fd.get('stat-charm')) || 60,
-      proficiency: Number(fd.get('stat-proficiency')) || 60,
-      kindness: Number(fd.get('stat-kindness')) || 60,
-      courage: Number(fd.get('stat-courage')) || 60,
+      knowledge: readStatValue(fd, 'knowledge'),
+      charm: readStatValue(fd, 'charm'),
+      proficiency: readStatValue(fd, 'proficiency'),
+      kindness: readStatValue(fd, 'kindness'),
+      courage: readStatValue(fd, 'courage'),
     };
+    const normalizedStats = normalizeStatsForConfig(stats, config);
 
     cb.createAndEnter({
       characterName,
@@ -139,7 +146,7 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
       personality: (fd.get('personality') as string)?.trim() || '',
       appearance: (fd.get('appearance') as string)?.trim() || '',
       className: (fd.get('className') as string)?.trim() || '2年B班',
-      stats,
+      stats: normalizedStats,
       difficulty,
     });
   });
@@ -147,12 +154,44 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
 
 // ── 难度配置 ──
 const DIFFICULTY_CONFIG = {
-  easy: { total: 350, default: 70, min: 30, max: 90 },
-  normal: { total: 300, default: 60, min: 10, max: 90 },
-  hard: { total: 250, default: 50, min: 10, max: 80 },
+  easy: { total: 500, default: 0, min: 0, max: 100 },
+  normal: { total: 300, default: 0, min: 0, max: 100 },
+  hard: { total: 150, default: 0, min: 0, max: 100 },
 } as const;
 
 const STAT_KEYS = ['knowledge', 'charm', 'proficiency', 'kindness', 'courage'] as const;
+const STAT_STEP = 10;
+type DifficultyConfig = (typeof DIFFICULTY_CONFIG)[Difficulty];
+
+function clampToStep(value: number, config: DifficultyConfig) {
+  const clamped = Math.min(config.max, Math.max(config.min, Number.isFinite(value) ? value : config.default));
+  return Math.round(clamped / STAT_STEP) * STAT_STEP;
+}
+
+function clampStatValue(value: number, config: DifficultyConfig) {
+  return Math.min(config.max, Math.max(config.min, Number.isFinite(value) ? Math.floor(value) : config.default));
+}
+
+function getStatTotal(stats: PlayerStats) {
+  return STAT_KEYS.reduce((total, key) => total + Number(stats[key] ?? 0), 0);
+}
+
+function normalizeStatsForConfig(stats: PlayerStats, config: DifficultyConfig): PlayerStats {
+  const next = Object.fromEntries(
+    STAT_KEYS.map(key => [key, clampStatValue(Number(stats[key]), config)]),
+  ) as unknown as PlayerStats;
+
+  let total = getStatTotal(next);
+  while (total > config.total) {
+    const key = [...STAT_KEYS].reverse().find(item => next[item] > config.min);
+    if (!key) break;
+    const reduceBy = Math.min(next[key] - config.min, total - config.total);
+    next[key] = Math.max(config.min, next[key] - reduceBy);
+    total -= reduceBy;
+  }
+
+  return next;
+}
 
 /** 绑定点数分配区域的交互事件 */
 function bindStatAllocatorEvents(root: HTMLElement | null) {
@@ -174,7 +213,7 @@ function bindStatAllocatorEvents(root: HTMLElement | null) {
       used += Number(input?.value ?? config.default);
     }
     const remaining = config.total - used;
-    const el = container!.querySelector<HTMLElement>('[data-stat-remaining]');
+    const el = root!.querySelector<HTMLElement>('[data-stat-remaining]');
     if (el) el.textContent = String(remaining);
   }
 
@@ -216,16 +255,37 @@ function bindStatAllocatorEvents(root: HTMLElement | null) {
       if (action === 'inc') {
         const remaining = config.total - used;
         if (val >= config.max || remaining <= 0) return;
-        val = Math.min(val + 5, config.max, val + remaining);
+        val = Math.min(val + STAT_STEP, config.max, val + remaining);
       } else {
         if (val <= config.min) return;
-        val = Math.max(val - 5, config.min);
+        val = Math.max(val - STAT_STEP, config.min);
       }
 
       input.value = String(val);
       if (display) display.textContent = String(val);
       recalcRemaining();
     });
+  });
+
+  container.querySelectorAll<HTMLInputElement>('[data-stat-input]').forEach(input => {
+    const normalizeInput = () => {
+      const config = getConfig();
+      const key = input.dataset.statInput;
+      const oldValue = Number(input.defaultValue || config.default);
+      const display = key ? container!.querySelector<HTMLElement>(`[data-stat-display="${key}"]`) : null;
+      const otherUsed = STAT_KEYS.filter(item => item !== key).reduce((total, item) => {
+        const other = container!.querySelector<HTMLInputElement>(`input[name="stat-${item}"]`);
+        return total + Number(other?.value ?? config.default);
+      }, 0);
+      const maxAllowed = Math.min(config.max, config.total - otherUsed);
+      const nextValue = Math.min(clampStatValue(Number(input.value || oldValue), config), Math.max(config.min, maxAllowed));
+      input.value = String(nextValue);
+      input.defaultValue = String(nextValue);
+      if (display) display.textContent = String(nextValue);
+      recalcRemaining();
+    };
+    input.addEventListener('change', normalizeInput);
+    input.addEventListener('input', normalizeInput);
   });
 
   recalcRemaining();
