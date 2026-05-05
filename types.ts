@@ -147,6 +147,7 @@ export type StatusData = {
   world: {
     currentTime: string;
     currentLocation: string;
+    currentMainEventId: string;
     recentEvents: Record<string, string>;
     mainEvents: Record<string, string>;
   };

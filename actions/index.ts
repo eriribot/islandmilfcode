@@ -4,6 +4,7 @@ import {
   buildProgressPrompt,
   buildPrompt,
   extractPhoneChatReply,
+  extractTaggedReply,
   type ProgressUpdate,
   parseProgressUpdate,
 } from '../message-format';
@@ -34,6 +35,12 @@ export type ActionContext = StreamingContext & {
 };
 
 const PHONE_PROACTIVE_COOLDOWN_MS = 3 * 60 * 1000;
+const PHONE_ACTION_DETECTOR_CONFIDENCE = new Set(['high', 'medium', '中', '高', '确定', '较高']);
+
+type PhoneDirective = {
+  target: TargetStatus;
+  text: string;
+};
 
 function mergeMissingAffinity(primary: ProgressUpdate | null, fallback: ProgressUpdate | null) {
   if (!primary || primary.affinityDelta !== undefined || fallback?.affinityDelta === undefined) return primary;
@@ -115,9 +122,12 @@ export async function submitMessage(
   state.currentGenerationId = crypto.randomUUID();
   state.finalizedGenerationId = '';
   state.focusedMessagePage = 0;
+  let phoneDirective = extractPhoneMessageDirective(ctx, userInput);
   recordGenerationDebug(ctx, 'submit:start', {
     userInputLength: userInput.length,
     keepDraft: Boolean(options.keepDraft),
+    phoneDirectiveTargetId: phoneDirective?.target.id ?? null,
+    phoneDirectiveSource: phoneDirective ? 'fallback-parser' : null,
   });
   ctx.clearNotification(false);
   ctx.closeReaderContextMenu(false);
@@ -133,6 +143,19 @@ export async function submitMessage(
   ctx.render();
 
   const hasTavernGenerate = typeof win.generate === 'function' || typeof win.generateRaw === 'function';
+  if (hasTavernGenerate) {
+    const llmDirective = await detectPhoneDirectiveWithLlm(ctx, userInput).catch(error => {
+      console.warn('[phone-directive] detector failed:', error);
+      return null;
+    });
+    if (llmDirective) {
+      phoneDirective = llmDirective;
+      recordGenerationDebug(ctx, 'submit:phone-directive-detected', {
+        targetId: llmDirective.target.id,
+        textLength: llmDirective.text.length,
+      });
+    }
+  }
   const eventBeforeGeneration = getLatestRecentEvent(ctx)?.key ?? null;
   if (!hasTavernGenerate) {
     await simulateGeneration(ctx, userInput);
@@ -140,7 +163,11 @@ export async function submitMessage(
       state.draft = '';
     }
     state.generating = false;
-    await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
+    if (phoneDirective) {
+      await sendPhoneMessageFromDirective(ctx, phoneDirective);
+    } else {
+      await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
+    }
     ctx.render();
     return;
   }
@@ -173,6 +200,8 @@ export async function submitMessage(
                 content: buildPrompt(state.statusData, promptHistory, '', ctx.summaryStore, {
                   playerProfile: state.playerProfile,
                   skipProgress: !!ctx.summaryApiConfig,
+                  suppressPhoneMessageContent: Boolean(phoneDirective),
+                  phoneMessageTargetName: phoneDirective?.target.name,
                 }),
               },
               {
@@ -186,6 +215,8 @@ export async function submitMessage(
             user_input: buildPrompt(state.statusData, promptHistory, userInput, ctx.summaryStore, {
               playerProfile: state.playerProfile,
               skipProgress: !!ctx.summaryApiConfig,
+              suppressPhoneMessageContent: Boolean(phoneDirective),
+              phoneMessageTargetName: phoneDirective?.target.name,
             }),
           },
     );
@@ -245,7 +276,11 @@ export async function submitMessage(
     generationSucceeded = true;
     state.generating = false;
     recordGenerationDebug(ctx, 'submit:main-success-before-phone', { requestGenerationId });
-    await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
+    if (phoneDirective) {
+      await sendPhoneMessageFromDirective(ctx, phoneDirective);
+    } else {
+      await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
+    }
   } catch (error) {
     recordGenerationDebug(ctx, 'submit:catch', {
       error: error instanceof Error ? error.message : String(error),
@@ -267,7 +302,11 @@ export async function submitMessage(
       generationSucceeded = true;
       state.generating = false;
       recordGenerationDebug(ctx, 'submit:catch-preserved-as-success');
-      await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
+      if (phoneDirective) {
+        await sendPhoneMessageFromDirective(ctx, phoneDirective);
+      } else {
+        await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
+      }
     } else {
       state.draft = userInput;
       ctx.persistConversation();
@@ -307,6 +346,158 @@ export async function submitMessage(
 
 function getPhoneThreadTarget(ctx: ActionContext, targetId: string): TargetStatus | null {
   return ctx.state.statusData.targets.find(target => target.id === targetId) ?? null;
+}
+
+function normalizeForDirectiveMatch(text: string) {
+  return String(text ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[・·.\s　]+/g, '');
+}
+
+function stripDirectiveQuotes(text: string) {
+  return text
+    .trim()
+    .replace(/^[「『“"']\s*/, '')
+    .replace(/\s*[」』”"']$/, '')
+    .trim();
+}
+
+function getPhoneTargetSearchTerms(target: TargetStatus) {
+  return [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
+    .map(value => String(value ?? '').trim())
+    .filter(Boolean);
+}
+
+function findPhoneDirectiveTarget(ctx: ActionContext, rawName: string) {
+  const needle = normalizeForDirectiveMatch(rawName);
+  if (!needle) return null;
+
+  return (
+    ctx.state.statusData.targets.find(target =>
+      getPhoneTargetSearchTerms(target).some(term => {
+        const normalizedTerm = normalizeForDirectiveMatch(term);
+        return normalizedTerm && (normalizedTerm.includes(needle) || needle.includes(normalizedTerm));
+      }),
+    ) ?? null
+  );
+}
+
+function buildPhoneActionDetectorPrompt(ctx: ActionContext, userInput: string) {
+  const contacts = ctx.state.statusData.targets
+    .map(target => {
+      const aliases = getPhoneTargetSearchTerms(target)
+        .filter(term => term !== target.id && term !== target.name)
+        .join('、');
+      return `- id=${target.id}；姓名=${target.name}${target.alias ? `；别名=${target.alias}` : ''}${
+        aliases ? `；可匹配线索=${aliases}` : ''
+      }`;
+    })
+    .join('\n');
+
+  return [
+    '你是一个手机动作意图识别器，只判断玩家这句话是否要求“用手机给某个联系人发送一条消息”。',
+    '不要续写剧情，不要扮演角色，不要解释。',
+    '',
+    '可聊天联系人：',
+    contacts || '无',
+    '',
+    '判定规则：',
+    '1. 只有玩家明确想用手机、短信、私聊、微信、聊天软件联系某人时，才输出 send。',
+    '2. “问英梨梨今天吃什么”“打开手机发送消息询问英梨梨今天吃什么”“给诗羽学姐发个短信说我晚点到”都属于 send。',
+    '3. 如果只是正文里提到手机、提到某人，或角色主动发消息，不算玩家发送。',
+    '4. target_id 必须从联系人列表选择，不能编造。无法确定联系人时输出 none。',
+    '5. message 要改写成真正发给对方的手机文本，不要包含“打开手机/发消息/询问某某”等动作描述。',
+    '6. 如果玩家没有明确写消息内容，但能从“问/询问/告诉/说”后面的语义推出，就提炼成自然短消息。',
+    '',
+    '只输出以下 XML 之一：',
+    '<phone_action>',
+    'action: send',
+    'target_id: 联系人id',
+    'message: 要发送的手机消息',
+    'confidence: high|medium|low',
+    '</phone_action>',
+    '',
+    '<phone_action>',
+    'action: none',
+    '</phone_action>',
+    '',
+    `玩家输入：${userInput}`,
+  ].join('\n');
+}
+
+function parsePhoneActionDetectorResult(ctx: ActionContext, rawResult: string): PhoneDirective | null {
+  const tagged = extractTaggedReply(rawResult, 'phone_action', false);
+  if (!tagged) return null;
+
+  const action = tagged.match(/^action[:：]\s*(.+)$/im)?.[1]?.trim().toLowerCase() ?? '';
+  if (action !== 'send') return null;
+
+  const targetId = tagged.match(/^target_id[:：]\s*(.+)$/im)?.[1]?.trim() ?? '';
+  const message = stripDirectiveQuotes(tagged.match(/^message[:：]\s*([\s\S]*?)(?:\nconfidence[:：]|\n?$)/im)?.[1] ?? '');
+  const confidence = tagged.match(/^confidence[:：]\s*(.+)$/im)?.[1]?.trim().toLowerCase() ?? '';
+  if (!targetId || !message || !PHONE_ACTION_DETECTOR_CONFIDENCE.has(confidence)) return null;
+
+  const target = getPhoneThreadTarget(ctx, targetId) ?? findPhoneDirectiveTarget(ctx, targetId);
+  return target ? { target, text: message } : null;
+}
+
+async function detectPhoneDirectiveWithLlm(ctx: ActionContext, userInput: string): Promise<PhoneDirective | null> {
+  const { win } = ctx;
+  if (!ctx.state.statusData.targets.length) return null;
+
+  const prompt = buildPhoneActionDetectorPrompt(ctx, userInput);
+  const generationId = `phone-directive-detect-${crypto.randomUUID()}`;
+  const rawResult =
+    typeof win.generateRaw === 'function'
+      ? await win.generateRaw({
+          should_silence: true,
+          should_stream: false,
+          generation_id: generationId,
+          ordered_prompts: [
+            {
+              role: 'system',
+              content: prompt,
+            },
+          ],
+        })
+      : await win.generate?.({
+          should_silence: true,
+          should_stream: false,
+          generation_id: generationId,
+          user_input: prompt,
+        });
+
+  return parsePhoneActionDetectorResult(ctx, String(rawResult ?? ''));
+}
+
+function extractPhoneMessageDirective(ctx: ActionContext, userInput: string): PhoneDirective | null {
+  const normalizedInput = normalizeForDirectiveMatch(userInput);
+  if (!/(发消息|发送消息|发短信|发送短信|手机联系|短信|私聊|微信|问|询问|告诉)/.test(normalizedInput)) return null;
+
+  const patterns = [
+    /(?:给|向|对)\s*([^，。！？\n,!?]{1,32})\s*(?:发消息|发送消息|发短信|发送短信|发个消息|发条消息|手机联系|私聊|微信)\s*[：:，,]?\s*([\s\S]*)/i,
+    /(?:发消息|发送消息|发短信|发送短信|发个消息|发条消息|短信|私聊|微信)\s*(?:给|向|对)\s*([^，。！？\n,!?]{1,32})\s*[：:，,]?\s*([\s\S]*)/i,
+    /(?:用手机|打开手机)\s*(?:给|向|对)\s*([^，。！？\n,!?]{1,32})\s*(?:说|发送|发)\s*[：:，,]?\s*([\s\S]*)/i,
+    /(?:用手机|打开手机)?\s*(?:发送消息|发消息|发短信|发送短信|私聊|微信)?\s*(?:问|询问|告诉)\s*([^，。！？\n,!?]{1,32})\s*([\s\S]*)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = userInput.match(pattern);
+    if (!match) continue;
+
+    const target = findPhoneDirectiveTarget(ctx, match[1] ?? '');
+    if (!target) continue;
+
+    const explicitText = stripDirectiveQuotes(match[2] ?? '');
+    const fallbackText = stripDirectiveQuotes(userInput);
+    return {
+      target,
+      text: explicitText || fallbackText,
+    };
+  }
+
+  return null;
 }
 
 function ensurePhoneThread(ctx: ActionContext, target: TargetStatus) {
@@ -388,6 +579,7 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
     history: thread.messages,
     userInput:
       '根据刚刚正文发生的事件，判断你是否会主动发一条手机消息。如果事件与你有关、你有话想说、或者你有理由关心，就生成这条消息；如果事件和你无关、你没有理由主动联系、或者当前情境不适合发消息，就只输出 <message></message> 表示不发送。不要为了发消息而发消息。',
+    summaryStore: ctx.summaryStore,
     playerProfile: state.playerProfile,
     skipProgress: true,
     triggerEvent: latestEvent.text,
@@ -446,6 +638,176 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
   }
 }
 
+async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: PhoneDirective) {
+  const { state, win } = ctx;
+  const target = directive.target;
+  const userInput = directive.text.trim();
+  if (!userInput || state.phoneMessages.generating) return;
+
+  const thread = ensurePhoneThread(ctx, target);
+  const now = formatTime(state.statusData.world.currentTime);
+  const userMessage: PhoneChatMessage = {
+    id: crypto.randomUUID(),
+    role: 'user',
+    speaker: state.playerProfile.name.trim() || '我',
+    text: userInput,
+    timestamp: now,
+    statusSnapshot: createRollbackSnapshot(state),
+  };
+
+  thread.messages = [...thread.messages, userMessage];
+  thread.updatedAt = Date.now();
+  thread.unread = 0;
+  state.phoneMessages.activeThreadId = target.id;
+  state.phoneMessages.generating = true;
+  ctx.persistConversation();
+  ctx.render();
+
+  const hasTavernGenerate = typeof win.generateRaw === 'function' || typeof win.generate === 'function';
+  let rawResult = '';
+
+  try {
+    if (hasTavernGenerate) {
+      const prompt = buildPhoneChatPrompt({
+        statusData: state.statusData,
+        target,
+        history: thread.messages,
+        userInput,
+        summaryStore: ctx.summaryStore,
+        playerProfile: state.playerProfile,
+        skipProgress: true,
+      });
+      const generationId = `phone-directive-${crypto.randomUUID()}`;
+
+      rawResult =
+        typeof win.generateRaw === 'function'
+          ? String(
+              (await win.generateRaw({
+                should_silence: true,
+                should_stream: false,
+                generation_id: generationId,
+                ordered_prompts: [
+                  {
+                    role: 'system',
+                    content: prompt,
+                  },
+                ],
+              })) ?? '',
+            )
+          : String(
+              (await win.generate?.({
+                should_silence: true,
+                should_stream: false,
+                generation_id: generationId,
+                user_input: prompt,
+              })) ?? '',
+            );
+    } else {
+      rawResult = await simulatePhoneGeneration(target, userInput);
+    }
+
+    const replyText = extractPhoneChatReply(rawResult) || '……';
+    const assistantMessage: PhoneChatMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      speaker: target.alias ?? target.name,
+      text: replyText,
+      timestamp: formatTime(state.statusData.world.currentTime),
+    };
+
+    thread.messages = [...thread.messages, assistantMessage];
+    thread.updatedAt = Date.now();
+
+    // 正文触发的手机发送也走手机变量分析，保证好感度和近期事件会生效。
+    if (hasTavernGenerate) {
+      try {
+        const progressPrompts = buildPhoneProgressPrompt({
+          statusData: state.statusData,
+          target,
+          messages: thread.messages,
+        });
+        let progressRaw = '';
+
+        if (ctx.summaryApiConfig && typeof win.generateRaw === 'function') {
+          progressRaw = String(
+            (await win.generateRaw({
+              should_silence: true,
+              should_stream: false,
+              generation_id: `phone-progress-${crypto.randomUUID()}`,
+              ordered_prompts: progressPrompts,
+              custom_api: {
+                apiurl: ctx.summaryApiConfig.apiurl,
+                key: ctx.summaryApiConfig.key,
+                model: ctx.summaryApiConfig.model,
+                source: ctx.summaryApiConfig.source,
+              },
+            })) ?? '',
+          );
+        } else if (typeof win.generateRaw === 'function') {
+          progressRaw = String(
+            (await win.generateRaw({
+              should_silence: true,
+              should_stream: false,
+              generation_id: `phone-progress-${crypto.randomUUID()}`,
+              ordered_prompts: progressPrompts,
+            })) ?? '',
+          );
+        } else if (typeof win.generate === 'function') {
+          progressRaw = String(
+            (await win.generate({
+              should_silence: true,
+              should_stream: false,
+              generation_id: `phone-progress-${crypto.randomUUID()}`,
+              user_input: progressPrompts.map(prompt => prompt.content).join('\n\n'),
+            })) ?? '',
+          );
+        }
+
+        const progressUpdate = parseProgressUpdate(progressRaw);
+        if (progressUpdate) {
+          applyFullProgressUpdate(ctx, progressUpdate, target.id);
+        }
+      } catch (e) {
+        console.warn('[phone-progress] directive analysis failed:', e);
+      }
+    } else {
+      const progressUpdate = parseProgressUpdate(rawResult);
+      if (progressUpdate) {
+        applyFullProgressUpdate(ctx, progressUpdate, target.id);
+      }
+    }
+
+    assistantMessage.statusSnapshot = createRollbackSnapshot(state);
+    if (!(state.phoneOpen && state.phoneRoute === 'app:chat' && state.phoneMessages.activeThreadId === target.id)) {
+      thread.unread += 1;
+    }
+    ctx.persistConversation();
+    ctx.showNotification({
+      kind: 'message',
+      title: `${target.alias ?? target.name} 回复了手机消息`,
+      preview: replyText,
+      targetTab: 'summary',
+      phoneRoute: 'app:chat',
+      targetId: target.id,
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+  } catch (error) {
+    // 正文指令失败时回滚这条手机用户消息，避免界面显示已发但实际未生成回复。
+    thread.messages = thread.messages.filter(message => message.id !== userMessage.id);
+    thread.updatedAt = Date.now();
+    ctx.showNotification({
+      kind: 'status',
+      title: '正文手机指令失败',
+      preview: error instanceof Error ? error.message : String(error),
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+  } finally {
+    state.phoneMessages.generating = false;
+    ctx.render();
+  }
+}
+
 export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
   const { state, win } = ctx;
   const target = getPhoneThreadTarget(ctx, targetId);
@@ -484,6 +846,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
         target,
         history: thread.messages,
         userInput,
+        summaryStore: ctx.summaryStore,
         playerProfile: state.playerProfile,
         skipProgress: true,
       });

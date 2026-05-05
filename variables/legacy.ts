@@ -37,6 +37,7 @@ function normalizeWorld(raw: Record<string, any>) {
   return {
     currentTime: String(raw?.world?.currentTime ?? defaultStatusData.world.currentTime),
     currentLocation: String(raw?.world?.currentLocation ?? defaultStatusData.world.currentLocation),
+    currentMainEventId: String(raw?.world?.currentMainEventId ?? defaultStatusData.world.currentMainEventId ?? ''),
     mainEvents: {
       ...defaultStatusData.world.mainEvents,
       ...Object.fromEntries(
@@ -89,6 +90,7 @@ export function serializeStatusData(statusData: StatusData): Record<string, any>
     world: {
       currentTime: statusData.world.currentTime,
       currentLocation: statusData.world.currentLocation,
+      currentMainEventId: statusData.world.currentMainEventId,
       mainEvents: statusData.world.mainEvents,
       recentEvents: statusData.world.recentEvents,
     },

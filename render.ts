@@ -502,7 +502,11 @@ export function renderSummaryConfigSection(state: AppState): string {
 
 export function renderStatusPanel(state: AppState) {
   const statusData = state.statusData;
-  const recentEvents = Object.entries(statusData.world.recentEvents);
+  const currentMainEventId = statusData.world.currentMainEventId;
+  const currentMainEventStatus = currentMainEventId ? statusData.world.mainEvents?.[currentMainEventId] : '';
+  const mainEvents = Object.entries(statusData.world.mainEvents ?? {}).filter(
+    ([id, eventStatus]) => id === currentMainEventId || !['已结束', '跳过'].includes(eventStatus),
+  );
   const playerName = state.playerProfile.name.trim() || '主角';
   const playerClass = state.playerProfile.className || '未记录';
   const playerGender = state.playerProfile.gender || '未记录';
@@ -578,6 +582,30 @@ export function renderStatusPanel(state: AppState) {
         <section class="variable-sheet">
           <div class="variable-sheet__title">主角能力</div>
           <div class="radar-chart-container" id="status-radar"></div>
+        </section>
+
+        <section class="variable-sheet">
+          <div class="variable-sheet__title">主线事件</div>
+          <div class="chip-list">
+            <div class="chip-card">
+              <strong>当前事件</strong>
+              <p>${escapeHtml(currentMainEventId ? `${currentMainEventId}：${currentMainEventStatus || '状态未知'}` : '无')}</p>
+            </div>
+            ${
+              mainEvents.length
+                ? mainEvents
+                    .map(
+                      ([id, eventStatus]) => `
+                        <div class="chip-card">
+                          <strong>${escapeHtml(id)}</strong>
+                          <p>${escapeHtml(eventStatus)}${id === currentMainEventId ? ' · 当前' : ''}</p>
+                        </div>
+                      `,
+                    )
+                    .join('')
+                : '<div class="empty-card">还没有主线事件记录。</div>'
+            }
+          </div>
         </section>
       </div>
     </section>

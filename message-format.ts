@@ -139,11 +139,16 @@ function buildRecentEventsContext(statusData: StatusData) {
 }
 
 function buildMainEventsContext(statusData: StatusData) {
+  const currentId = statusData.world.currentMainEventId;
   const lines = Object.entries(statusData.world.mainEvents ?? {})
+    .filter(([id, status]) => id === currentId || !['已结束', '跳过'].includes(status))
     .slice(0, 8)
     .map(([id, status]) => `- ${id}：${status}`);
 
-  return lines.length ? ['主线事件状态：', ...lines].join('\n') : '';
+  return [
+    currentId ? `当前主线事件：${currentId}（${statusData.world.mainEvents?.[currentId] ?? '状态未知'}）` : '当前主线事件：无',
+    ...(lines.length ? ['主线事件状态：', ...lines] : []),
+  ].join('\n');
 }
 
 function statRank(value: number) {
@@ -197,7 +202,12 @@ export function buildPrompt(
   uiMessages: UiMessage[],
   userInput: string,
   summaryStore?: SummaryStore | null,
-  options?: { skipProgress?: boolean; playerProfile?: PlayerProfile | null },
+  options?: {
+    skipProgress?: boolean;
+    playerProfile?: PlayerProfile | null;
+    suppressPhoneMessageContent?: boolean;
+    phoneMessageTargetName?: string;
+  },
 ) {
   const target = getActiveTarget(statusData);
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
@@ -226,6 +236,18 @@ export function buildPrompt(
     ? Math.min(summaryStore.lastSummarizedIndex, Math.max(0, uiMessages.length - SUMMARY_KEEP_RECENT))
     : 0;
   const conversationHistory = buildConversationHistory(uiMessages, historyStartIndex);
+  const phoneMessageBoundary = options?.suppressPhoneMessageContent
+    ? [
+        'Phone message boundary:',
+        `The current user input includes an instruction to send a phone message${
+          options.phoneMessageTargetName ? ` to ${options.phoneMessageTargetName}` : ''
+        }.`,
+        'In the main visible scene, you may describe the player taking out the phone, opening the chat, typing, or preparing to send.',
+        'Do NOT write the exact phone message content in the main scene.',
+        'Do NOT write or imply the recipient already replied in the main scene.',
+        'The separate phone system will create the actual sent message and the recipient reply after this main scene finishes.',
+      ].join('\n')
+    : '';
 
   const parts = [
     `You are continuing the diary-style chat for ${targetName}.`,
@@ -240,6 +262,7 @@ export function buildPrompt(
     addressGuidance ? `Addressing guidance: ${addressGuidance}` : '',
     topEvent ? `Latest event: ${topEvent[0]} - ${topEvent[1]}` : '',
     playerProfileText,
+    phoneMessageBoundary,
     summaryContext,
     conversationHistory,
     userInput ? `Current user input: ${userInput}` : '',
@@ -258,16 +281,19 @@ export function buildPhoneChatPrompt(input: {
   target: TargetStatus;
   history: PhoneChatMessage[];
   userInput: string;
+  summaryStore?: SummaryStore | null;
   playerProfile?: PlayerProfile | null;
   skipProgress?: boolean;
   triggerEvent?: string;
 }) {
-  const { statusData, target, history, userInput, playerProfile, skipProgress = false, triggerEvent } = input;
+  const { statusData, target, history, userInput, summaryStore, playerProfile, skipProgress = false, triggerEvent } = input;
   const miniPersona = getRelationshipMiniPersona(target);
   const relationshipGuidance = getRelationshipGuidance(target);
   const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile });
   const recentEventsContext = buildRecentEventsContext(statusData);
   const mainEventsContext = buildMainEventsContext(statusData);
+  const hasSummary = summaryStore && (summaryStore.global || summaryStore.major.length || summaryStore.minor.length);
+  const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
   const playerProfileText = playerProfile?.name
     ? [
         `玩家姓名：${playerProfile.name}`,
@@ -294,6 +320,7 @@ export function buildPhoneChatPrompt(input: {
     relationshipGuidance ? `当前关系反应：${relationshipGuidance}` : '',
     addressGuidance ? `称呼规则：${addressGuidance}` : '',
     playerProfileText,
+    summaryContext ? `此前正文记忆与长期摘要：\n${summaryContext}` : '',
     recentEventsContext,
     buildPhoneChatHistory(history),
     triggerEvent ? `这条消息的触发事件：${triggerEvent}` : '',
@@ -332,6 +359,7 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     '  好感度:±N              — Affinity change (e.g. 好感度:+3 or 好感度:-5), range 0-100',
     '  五维.能力名:±N          — Player P5 stat change (能力名: 知识/魅力/灵巧/体贴/勇气；e.g. 五维.体贴:+1)',
     '  着装.部位:描述          — Update outfit for a body part (e.g. 着装.上装:换上了黑色卫衣)',
+    '  当前事件:事件ID          — Set the single current main plot event shown on the phone (e.g. 当前事件:SAE_01-2；clear with 当前事件:无)',
     '  主线事件.事件ID:状态     — Update main plot event status (未触发/进行中/已结束/跳过/延后)',
     '  事件名:event_description — Add/replace a notable recent event (can have multiple)',
     '  物品+物品名:数量:描述    — Item gained (e.g. 物品+匕首:1:从地上捡到的)',
@@ -346,12 +374,14 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     '着装.上装:私立丰之崎学园的制服衬衫',
     '早晨外出:两人决定去便利店买早餐。',
     '物品+塑料袋:1:装着零食的便利店袋子',
+    '当前事件:无',
     '主线事件.SAE_01-1:已结束',
     '</progress>',
     '',
     `Current state snapshot:`,
     `  时间: ${statusData.world.currentTime}`,
     `  地点: ${statusData.world.currentLocation}`,
+    `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
     `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
     `  好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
     `  着装: ${outfitList || '无'}`,
@@ -394,6 +424,7 @@ export function buildProgressPrompt(
         '当前状态：',
         `  时间: ${statusData.world.currentTime}`,
         `  地点: ${statusData.world.currentLocation}`,
+        `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
         `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
         `  当前攻略对象: ${target?.name ?? '无'}`,
         `  好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
@@ -412,6 +443,7 @@ export function buildProgressPrompt(
         '  好感度:±N（增减值，如 +3 或 -5）',
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
         '  着装.部位:描述',
+        '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
         '  主线事件.事件ID:状态（未触发/进行中/已结束/跳过/延后）',
         '  事件名:事件描述',
         '  物品+名称:数量:描述',
@@ -452,6 +484,7 @@ export function buildPhoneProgressPrompt(input: {
         '当前状态：',
         `  时间: ${statusData.world.currentTime}`,
         `  地点: ${statusData.world.currentLocation}`,
+        `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
         `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
         `  聊天对象: ${target.name}`,
         `  好感度: ${target.affinity} (${target.stage})`,
@@ -463,6 +496,7 @@ export function buildPhoneProgressPrompt(input: {
         '  好感度:±N',
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气）',
         '  着装.部位:描述',
+        '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
         '  主线事件.事件ID:状态（未触发/进行中/已结束/跳过/延后）',
         '  事件名:事件描述',
         '  物品+名称:数量:描述',
@@ -481,6 +515,7 @@ export function buildPhoneProgressPrompt(input: {
 export type ProgressUpdate = {
   time?: string;
   location?: string;
+  currentMainEventId?: string;
   affinityDelta?: number;
   statDeltas: Partial<Record<keyof PlayerStats, number>>;
   outfitChanges: Record<string, string>;
@@ -524,6 +559,15 @@ export function parseProgressUpdate(rawResponse: string): ProgressUpdate | null 
       continue;
     }
 
+    // 当前事件:SAE_01-2 / 当前主线事件:无
+    const currentEventMatch = trimmed.match(/^当前(?:主线)?事件[:：]\s*(.+)/);
+    if (currentEventMatch) {
+      const value = currentEventMatch[1].trim();
+      result.currentMainEventId = /^(无|none|null|clear|-)$/.test(value) ? '' : value;
+      hasAnyField = true;
+      continue;
+    }
+
     // 好感度:±N
     const affMatch = trimmed.match(/^好感度[:：]\s*([+\-]?\d+)/);
     if (affMatch) {
@@ -555,6 +599,9 @@ export function parseProgressUpdate(rawResponse: string): ProgressUpdate | null 
     const mainEventMatch = trimmed.match(/^主线事件[.．]\s*([^:：]+)[:：]\s*(.+)/);
     if (mainEventMatch) {
       result.mainEvents[mainEventMatch[1].trim()] = mainEventMatch[2].trim();
+      if (mainEventMatch[2].trim() === '进行中') {
+        result.currentMainEventId = mainEventMatch[1].trim();
+      }
       hasAnyField = true;
       continue;
     }

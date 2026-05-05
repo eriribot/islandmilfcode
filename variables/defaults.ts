@@ -23,6 +23,7 @@ export const defaultStatusData: StatusData = {
   world: {
     currentTime: '2012-03-31 08:30',
     currentLocation: '\u4fa6\u63a2\u5761',
+    currentMainEventId: '',
     mainEvents: {
       'SAE_01-1': '未触发',
       'SAE_01-2': '未触发',
