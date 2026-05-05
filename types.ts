@@ -82,7 +82,7 @@ export type PersistedMessage = {
   role: 'user' | 'assistant';
   speaker: string;
   text: string;
-  statusSnapshot?: StatusData;
+  statusSnapshot?: RollbackSnapshot;
 };
 
 export type PhoneChatMessage = {
@@ -91,7 +91,7 @@ export type PhoneChatMessage = {
   speaker: string;
   text: string;
   timestamp: string;
-  statusSnapshot?: StatusData;
+  statusSnapshot?: RollbackSnapshot;
 };
 
 export type PhoneChatThread = {
@@ -106,6 +106,12 @@ export type PhoneMessageStore = {
   draft: string;
   generating: boolean;
   threads: Record<string, PhoneChatThread>;
+};
+
+export type RollbackSnapshot = {
+  statusData: StatusData;
+  phoneMessages?: PhoneMessageStore;
+  summaryStore?: SummaryStore;
 };
 
 export type PhoneProactiveState = {
@@ -166,7 +172,7 @@ export type UiMessage = {
   text: string;
   streaming?: boolean;
   tavernMessageId?: number;
-  statusSnapshot?: StatusData;
+  statusSnapshot?: RollbackSnapshot;
 };
 
 export type NotificationState = {

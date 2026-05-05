@@ -7,7 +7,7 @@ import {
   type ProgressUpdate,
   parseProgressUpdate,
 } from '../message-format';
-import { pushMessage } from '../state/store';
+import { createRollbackSnapshot, pushMessage } from '../state/store';
 import { runSummary, type SummaryContext } from '../summary';
 import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import { getActiveTarget } from '../types';
@@ -127,7 +127,7 @@ export async function submitMessage(
     role: 'user',
     speaker: 'User',
     text: userInput,
-    statusSnapshot: JSON.parse(JSON.stringify(state.statusData)),
+    statusSnapshot: createRollbackSnapshot(state),
   });
   ctx.persistConversation();
   ctx.render();
@@ -235,7 +235,7 @@ export async function submitMessage(
     // 在最新助手消息上保存 statusData 快照，供回溯使用。
     const lastMsg = state.uiMessages[state.uiMessages.length - 1];
     if (lastMsg && lastMsg.role === 'assistant') {
-      lastMsg.statusSnapshot = JSON.parse(JSON.stringify(state.statusData));
+      lastMsg.statusSnapshot = createRollbackSnapshot(state);
       ctx.persistConversation();
     }
 
@@ -258,7 +258,7 @@ export async function submitMessage(
       // 流式正文已经写入时，把它当作成功楼层处理；不要再回填草稿或弹失败。
       const lastMsg = state.uiMessages[state.uiMessages.length - 1];
       if (lastMsg && lastMsg.role === 'assistant') {
-        lastMsg.statusSnapshot = JSON.parse(JSON.stringify(state.statusData));
+        lastMsg.statusSnapshot = createRollbackSnapshot(state);
         ctx.persistConversation();
       }
       if (options.clearDraftOnSuccess) {
@@ -423,7 +423,7 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
       speaker: target.alias ?? target.name,
       text: replyText,
       timestamp: formatTime(state.statusData.world.currentTime),
-      statusSnapshot: JSON.parse(JSON.stringify(state.statusData)),
+      statusSnapshot: createRollbackSnapshot(state),
     };
 
     thread.messages = [...thread.messages, assistantMessage];
@@ -461,7 +461,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
     speaker: state.playerProfile.name.trim() || '我',
     text: userInput,
     timestamp: now,
-    statusSnapshot: JSON.parse(JSON.stringify(state.statusData)),
+    statusSnapshot: createRollbackSnapshot(state),
   };
 
   thread.messages = [...thread.messages, userMessage];
@@ -586,7 +586,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
       }
     }
 
-    assistantMessage.statusSnapshot = JSON.parse(JSON.stringify(state.statusData));
+    assistantMessage.statusSnapshot = createRollbackSnapshot(state);
     ctx.persistConversation();
   } catch (error) {
     thread.messages = thread.messages.filter(message => message.id !== userMessage.id);

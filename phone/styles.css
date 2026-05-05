@@ -255,7 +255,8 @@ body.floating-phone-dragging {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
 }
 
-.phone-weather-icon img {
+.phone-weather-icon img,
+.phone-weather-icon svg {
   width: 34px;
   height: 34px;
   display: block;

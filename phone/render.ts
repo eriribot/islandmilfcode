@@ -56,15 +56,13 @@ function renderPhoneNotification(notification: NotificationState | null) {
   return `
     <button class="ios-notification" data-action="open-notification">
       <div class="ios-notification-app">
-        <span class="ios-notification-icon">通知</span>
-        <span>手帐记录</span>
+        <span class="ios-notification-icon">💬</span>
+        <span>${escapeHtml(notification.title)}</span>
         <span class="ios-notification-time">${escapeHtml(notification.timestamp)}</span>
       </div>
       <div class="ios-notification-title-row">
-        <strong>${escapeHtml(notification.title)}</strong>
-        <span class="ios-notification-pill">新记录</span>
+        <strong>${escapeHtml(notification.preview)}</strong>
       </div>
-      <div class="ios-notification-preview">${escapeHtml(notification.preview)}</div>
     </button>
   `;
 }
@@ -98,17 +96,108 @@ function formatWeatherNumber(value: number | null, digits = 0) {
   return value.toFixed(digits);
 }
 
+const WEATHER_ICON_SVGS: Record<string, string> = {
+  '100': `
+    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <circle cx="24" cy="24" r="10" fill="#f7c948" />
+      <g stroke="#f7c948" stroke-linecap="round" stroke-width="4">
+        <path d="M24 5v6" />
+        <path d="M24 37v6" />
+        <path d="M5 24h6" />
+        <path d="M37 24h6" />
+        <path d="m10.6 10.6 4.2 4.2" />
+        <path d="m33.2 33.2 4.2 4.2" />
+        <path d="m37.4 10.6-4.2 4.2" />
+        <path d="m14.8 33.2-4.2 4.2" />
+      </g>
+    </svg>
+  `,
+  '101': `
+    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <circle cx="17" cy="17" r="8" fill="#f7c948" />
+      <g stroke="#f7c948" stroke-linecap="round" stroke-width="3">
+        <path d="M17 4v4" />
+        <path d="M5 17h4" />
+        <path d="m8.5 8.5 2.8 2.8" />
+      </g>
+      <path fill="#dfe7ee" d="M18 38h20a8 8 0 0 0 .7-16A12 12 0 0 0 15.3 25 6.8 6.8 0 0 0 18 38z" />
+      <path fill="#c8d4dd" d="M18 38h20a8 8 0 0 0 7.5-5.3H13.2A6.8 6.8 0 0 0 18 38z" />
+    </svg>
+  `,
+  '104': `
+    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <path fill="#dfe7ee" d="M12 39h26a9 9 0 0 0 .9-18A14 14 0 0 0 11.6 24 7.6 7.6 0 0 0 12 39z" />
+      <path fill="#c2ced8" d="M12 39h26a9 9 0 0 0 8.5-6H7.6A7.6 7.6 0 0 0 12 39z" />
+    </svg>
+  `,
+  '302': `
+    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <path fill="#d5dde6" d="M13 31h24a8 8 0 0 0 .7-16A12.5 12.5 0 0 0 13 18.5 6.3 6.3 0 0 0 13 31z" />
+      <path fill="#f6b73c" d="m23 27-5 10h6l-2 8 9-12h-6l4-6z" />
+      <g stroke="#4aa3df" stroke-linecap="round" stroke-width="3">
+        <path d="M13 37v3" />
+        <path d="M34 36v3" />
+      </g>
+    </svg>
+  `,
+  '305': `
+    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <path fill="#d8e1e8" d="M12 31h25a8 8 0 0 0 .7-16A12.5 12.5 0 0 0 13 18.5 6.3 6.3 0 0 0 12 31z" />
+      <g stroke="#4aa3df" stroke-linecap="round" stroke-width="3">
+        <path d="M14 36v5" />
+        <path d="M24 35v6" />
+        <path d="M34 36v5" />
+      </g>
+    </svg>
+  `,
+  '309': `
+    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <path fill="#d8e1e8" d="M12 31h25a8 8 0 0 0 .7-16A12.5 12.5 0 0 0 13 18.5 6.3 6.3 0 0 0 12 31z" />
+      <g stroke="#66b9e8" stroke-linecap="round" stroke-width="2.5">
+        <path d="M16 36v2" />
+        <path d="M25 35v2" />
+        <path d="M34 36v2" />
+      </g>
+    </svg>
+  `,
+  '400': `
+    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <path fill="#d8e1e8" d="M12 31h25a8 8 0 0 0 .7-16A12.5 12.5 0 0 0 13 18.5 6.3 6.3 0 0 0 12 31z" />
+      <g stroke="#7dc9ee" stroke-linecap="round" stroke-width="2">
+        <path d="M18 36v7" />
+        <path d="M14.9 37.8 21.1 41" />
+        <path d="m14.9 41 6.2-3.2" />
+        <path d="M32 35v7" />
+        <path d="m28.9 36.8 6.2 3.2" />
+        <path d="m28.9 40 6.2-3.2" />
+      </g>
+    </svg>
+  `,
+  '501': `
+    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <path fill="#d8e1e8" d="M13 28h23a7.5 7.5 0 0 0 .6-15A11.5 11.5 0 0 0 14 16.2 6 6 0 0 0 13 28z" />
+      <g stroke="#9fb0bd" stroke-linecap="round" stroke-width="3">
+        <path d="M8 34h32" />
+        <path d="M13 40h26" />
+      </g>
+    </svg>
+  `,
+  '999': `
+    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+      <circle cx="24" cy="24" r="17" fill="#d8e1e8" />
+      <path fill="#7b8b96" d="M22 29c0-5 7-5.4 7-10 0-2.8-2.2-4.8-5.5-4.8-2.6 0-4.8 1.1-6.3 3l2.6 2.4c.9-1.1 2-1.7 3.3-1.7 1.4 0 2.3.7 2.3 1.8 0 2.8-7.2 3.8-7.2 9.3H22zm-2.2 6.6c0 1.6 1.3 2.8 3 2.8s3-1.2 3-2.8-1.3-2.8-3-2.8-3 1.2-3 2.8z" />
+    </svg>
+  `,
+};
+
 function renderWeatherIcon(iconCode: string, label: string) {
   const safeIconCode = /^[0-9]+$/.test(iconCode) ? iconCode : '999';
   const safeLabel = escapeHtml(label);
+  const iconSvg = WEATHER_ICON_SVGS[safeIconCode] ?? WEATHER_ICON_SVGS['999'];
+
   return `
-    <span class="phone-weather-icon">
-      <img
-        src="https://cdn.jsdelivr.net/npm/qweather-icons@1.6.0/icons/${safeIconCode}.svg"
-        alt="${safeLabel}"
-        loading="lazy"
-        decoding="async"
-      />
+    <span class="phone-weather-icon" role="img" aria-label="${safeLabel}">
+      ${iconSvg}
     </span>
   `;
 }

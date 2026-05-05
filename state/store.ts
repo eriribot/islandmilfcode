@@ -1,11 +1,15 @@
 import { getReaderMessages } from '../message-format';
-import { createDefaultSummaryStore } from '../summary/types';
+import { createDefaultSummaryStore, deserializeSummaryStore } from '../summary/types';
 import type { FloatingPhonePosition } from '../phone/types';
-import type { AppState, PersistedMessage, PhoneMessageStore, TavernWindow, UiMessage } from '../types';
+import type { AppState, PersistedMessage, PhoneMessageStore, RollbackSnapshot, TavernWindow, UiMessage } from '../types';
 import { clamp, defaultStatusData, normalizeStatusData } from '../variables/normalize';
 import { getDefaultWeatherState } from '../phone/weather';
 
 export const MESSAGE_MARKER = 'islandmilfcode';
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 function createSystemMessage(): UiMessage {
   return {
@@ -43,7 +47,9 @@ export function normalizePhoneMessageStore(input: unknown): PhoneMessageStore {
             speaker: String(message.speaker || (message.role === 'assistant' ? '角色' : '我')),
             text: String(message.text ?? ''),
             timestamp: String(message.timestamp || ''),
-            ...(message.statusSnapshot ? { statusSnapshot: normalizeStatusData(message.statusSnapshot) } : {}),
+            ...(message.statusSnapshot
+              ? { statusSnapshot: normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false }) }
+              : {}),
           }))
       : [];
 
@@ -64,6 +70,81 @@ export function normalizePhoneMessageStore(input: unknown): PhoneMessageStore {
     generating: Boolean(raw.generating),
     threads,
   };
+}
+
+function isStatusDataLike(input: unknown): input is Partial<RollbackSnapshot['statusData']> {
+  if (!input || typeof input !== 'object') return false;
+  const raw = input as Record<string, unknown>;
+  return Boolean(raw.world || raw.targets || raw.player);
+}
+
+function clonePhoneMessagesForSnapshot(input: unknown): PhoneMessageStore {
+  const store = normalizePhoneMessageStore(input);
+  const threads: PhoneMessageStore['threads'] = {};
+
+  for (const [targetId, thread] of Object.entries(store.threads)) {
+    threads[targetId] = {
+      ...thread,
+      messages: thread.messages.map(message => {
+        const { statusSnapshot: _statusSnapshot, ...plainMessage } = message;
+        return plainMessage;
+      }),
+    };
+  }
+
+  return {
+    ...store,
+    generating: false,
+    threads,
+  };
+}
+
+function normalizeRollbackSnapshot(
+  input: unknown,
+  options: { includeSideWindows?: boolean } = {},
+): RollbackSnapshot {
+  const { includeSideWindows = true } = options;
+
+  // 兼容旧存档：过去 statusSnapshot 直接就是 StatusData，没有包裹手机和总结窗口。
+  if (isStatusDataLike(input)) {
+    return {
+      statusData: normalizeStatusData(input),
+    };
+  }
+
+  const raw = typeof input === 'object' && input ? (input as Partial<RollbackSnapshot>) : {};
+  const snapshot: RollbackSnapshot = {
+    statusData: normalizeStatusData(raw.statusData ?? defaultStatusData),
+  };
+
+  if (includeSideWindows) {
+    if (raw.phoneMessages) {
+      snapshot.phoneMessages = clonePhoneMessagesForSnapshot(raw.phoneMessages);
+    }
+    if (raw.summaryStore) {
+      snapshot.summaryStore = deserializeSummaryStore(raw.summaryStore);
+    }
+  }
+
+  return snapshot;
+}
+
+export function createRollbackSnapshot(state: Pick<AppState, 'statusData' | 'phoneMessages' | 'summaryStore'>) {
+  return {
+    statusData: cloneJson(state.statusData),
+    phoneMessages: clonePhoneMessagesForSnapshot(state.phoneMessages),
+    summaryStore: deserializeSummaryStore(cloneJson(state.summaryStore)),
+  };
+}
+
+function restoreRollbackSnapshot(state: AppState, snapshot: RollbackSnapshot) {
+  state.statusData = cloneJson(snapshot.statusData);
+  if (snapshot.phoneMessages) {
+    state.phoneMessages = clonePhoneMessagesForSnapshot(snapshot.phoneMessages);
+  }
+  if (snapshot.summaryStore) {
+    state.summaryStore = deserializeSummaryStore(snapshot.summaryStore);
+  }
 }
 
 function mapChatMessageToUiMessage(
@@ -100,7 +181,7 @@ export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
         text: String(message.text ?? ''),
       };
       if (message.statusSnapshot) {
-        base.statusSnapshot = message.statusSnapshot;
+        base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot);
       }
       return base;
     });
@@ -119,7 +200,7 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
         text: String(msg.text ?? ''),
       };
       if (msg.statusSnapshot) {
-        ui.statusSnapshot = msg.statusSnapshot;
+        ui.statusSnapshot = normalizeRollbackSnapshot(msg.statusSnapshot);
       }
       return ui;
     });
@@ -280,7 +361,7 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   for (let i = target.sourceUserIndex; i >= 0; i--) {
     const msg = state.uiMessages[i];
     if (msg?.statusSnapshot) {
-      state.statusData = JSON.parse(JSON.stringify(msg.statusSnapshot));
+      restoreRollbackSnapshot(state, normalizeRollbackSnapshot(msg.statusSnapshot));
       break;
     }
   }
@@ -313,7 +394,7 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
   for (let i = targetUiIndex - 1; i >= 0; i -= 1) {
     const msg = state.uiMessages[i];
     if (msg?.statusSnapshot) {
-      state.statusData = JSON.parse(JSON.stringify(msg.statusSnapshot));
+      restoreRollbackSnapshot(state, normalizeRollbackSnapshot(msg.statusSnapshot));
       break;
     }
   }

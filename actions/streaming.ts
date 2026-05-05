@@ -150,10 +150,11 @@ export function finalizeStreamingText(
   if (current.text) {
     const target = getActiveTarget(state.statusData);
     const targetAlias = target?.alias ?? target?.name ?? '角色';
+    // 正文更新只显示简短提示
     ctx.showNotification({
       kind: 'message',
-      title: `${targetAlias}发来一条新记录`,
-      preview: current.text,
+      title: '新消息',
+      preview: '',
       targetTab: 'summary',
       timestamp: formatTime(state.statusData.world.currentTime),
     });

@@ -1,8 +1,13 @@
-import type { TargetStatus } from './types';
+import type { PlayerProfile, TargetStatus } from './types';
 
 type StageReaction = {
   maxAffinity: number;
   guidance: string;
+};
+
+type AddressGuidanceInput = {
+  target: TargetStatus;
+  playerProfile?: PlayerProfile | null;
 };
 
 const ERIRI_MINI_PERSONA = [
@@ -64,6 +69,34 @@ const ERIRI_STAGE_REACTIONS: StageReaction[] = [
   },
 ];
 
+const ERIRI_ADDRESS_REACTIONS: StageReaction[] = [
+  {
+    maxAffinity: 19,
+    guidance:
+      '称呼规则：公开和私下都保持疏离，优先称呼“玩家姓氏+君”。若无法可靠判断姓氏，用“玩家全名+君”，不要使用名字+君、昵称或亲密称呼。',
+  },
+  {
+    maxAffinity: 39,
+    guidance:
+      '称呼规则：默认仍用“玩家姓氏+君”。在私下急躁、吐槽或被玩家戳破时，可以偶尔省略称呼，但不要主动改用名字+君。',
+  },
+  {
+    maxAffinity: 59,
+    guidance:
+      '称呼规则：熟悉后可在私下开始使用“玩家名字+君”，但公开场合仍优先使用“玩家姓氏+君”维持大小姐距离。第一次改叫名字时要显得别扭，像是不小心说顺口后立刻嘴硬。',
+  },
+  {
+    maxAffinity: 79,
+    guidance:
+      '称呼规则：私下稳定使用“玩家名字+君”，公开场合视情况在“玩家姓氏+君”和“玩家名字+君”之间摇摆；吃醋、责备、担心时更容易叫名字+君。',
+  },
+  {
+    maxAffinity: 100,
+    guidance:
+      '称呼规则：私下可以自然使用“玩家名字+君”或更短的名字称呼，但仍保持傲娇语气；公开场合若需要维持体面，可临时切回“玩家姓氏+君”。',
+  },
+];
+
 function getStageReactions(target: TargetStatus) {
   const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
     .map(value => String(value ?? '').toLowerCase())
@@ -75,11 +108,61 @@ function getStageReactions(target: TargetStatus) {
   return DEFAULT_STAGE_REACTIONS;
 }
 
+function isEririTarget(target: TargetStatus) {
+  const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
+    .map(value => String(value ?? '').toLowerCase())
+    .join('\n');
+
+  return /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
+}
+
+function splitPlayerName(name: string) {
+  const normalized = name.trim().replace(/\s+/g, ' ');
+  if (!normalized) return null;
+
+  const parts = normalized.split(' ').filter(Boolean);
+  if (parts.length >= 2) {
+    return {
+      fullName: normalized,
+      familyName: parts[0],
+      givenName: parts.slice(1).join(' '),
+    };
+  }
+
+  const compact = normalized.replace(/[・·]/g, '');
+  if (/^[\u4e00-\u9fff]{2,4}$/.test(compact)) {
+    const familyLength = compact.length >= 4 ? 2 : 1;
+    return {
+      fullName: compact,
+      familyName: compact.slice(0, familyLength),
+      givenName: compact.slice(familyLength) || compact,
+    };
+  }
+
+  return {
+    fullName: normalized,
+    familyName: normalized,
+    givenName: normalized,
+  };
+}
+
 export function getRelationshipGuidance(target: TargetStatus | null) {
   if (!target) return '';
   const affinity = Math.max(0, Math.min(100, Math.round(Number(target.affinity ?? 0) || 0)));
   const reaction = getStageReactions(target).find(item => affinity <= item.maxAffinity);
   return reaction?.guidance ?? '';
+}
+
+export function getRelationshipAddressGuidance(input: AddressGuidanceInput | null) {
+  if (!input?.target || !isEririTarget(input.target)) return '';
+  const affinity = Math.max(0, Math.min(100, Math.round(Number(input.target.affinity ?? 0) || 0)));
+  const reaction = ERIRI_ADDRESS_REACTIONS.find(item => affinity <= item.maxAffinity);
+  const playerName = input.playerProfile?.name ? splitPlayerName(input.playerProfile.name) : null;
+  const examples = playerName
+    ? `当前玩家姓名拆分参考：姓氏="${playerName.familyName}"，名字="${playerName.givenName}"，全名="${playerName.fullName}"；示例称呼为“${playerName.familyName}君”或“${playerName.givenName}君”。`
+    : '当前玩家没有可靠姓名资料；不要凭空编造姓或名，暂用“你”或“玩家君”，直到玩家档案出现姓名。';
+
+  return [reaction?.guidance ?? '', examples].filter(Boolean).join(' ');
 }
 
 export function getRelationshipMiniPersona(target: TargetStatus | null) {
@@ -88,7 +171,7 @@ export function getRelationshipMiniPersona(target: TargetStatus | null) {
     .map(value => String(value ?? '').toLowerCase())
     .join('\n');
 
-  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) {
+  if (isEririTarget(target)) {
     return ERIRI_MINI_PERSONA;
   }
   return '';

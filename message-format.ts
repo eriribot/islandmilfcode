@@ -1,4 +1,4 @@
-import { getRelationshipGuidance, getRelationshipMiniPersona } from './relationship';
+import { getRelationshipAddressGuidance, getRelationshipGuidance, getRelationshipMiniPersona } from './relationship';
 import type { SummaryStore } from './summary/types';
 import type { PhoneChatMessage, PlayerProfile, PlayerStats, StatusData, TargetStatus, UiMessage } from './types';
 import { getActiveTarget } from './types';
@@ -204,6 +204,7 @@ export function buildPrompt(
   const targetName = target?.name ?? 'Target';
   const relationshipGuidance = getRelationshipGuidance(target);
   const playerProfile = options?.playerProfile;
+  const addressGuidance = target ? getRelationshipAddressGuidance({ target, playerProfile }) : '';
   const playerProfileText = playerProfile?.name
     ? [
         `Player name: ${playerProfile.name}`,
@@ -236,6 +237,7 @@ export function buildPrompt(
     mainEventsContext,
     `Current relationship stage: ${target?.stage ?? ''}`,
     relationshipGuidance ? `Relationship behavior guidance: ${relationshipGuidance}` : '',
+    addressGuidance ? `Addressing guidance: ${addressGuidance}` : '',
     topEvent ? `Latest event: ${topEvent[0]} - ${topEvent[1]}` : '',
     playerProfileText,
     summaryContext,
@@ -263,6 +265,7 @@ export function buildPhoneChatPrompt(input: {
   const { statusData, target, history, userInput, playerProfile, skipProgress = false, triggerEvent } = input;
   const miniPersona = getRelationshipMiniPersona(target);
   const relationshipGuidance = getRelationshipGuidance(target);
+  const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile });
   const recentEventsContext = buildRecentEventsContext(statusData);
   const mainEventsContext = buildMainEventsContext(statusData);
   const playerProfileText = playerProfile?.name
@@ -282,12 +285,14 @@ export function buildPhoneChatPrompt(input: {
     `可见回复必须写在 <message>...</message> 中，只输出 ${target.name} 发出的手机消息。`,
     '语气要像即时通讯，不要写旁白、舞台说明或第三人称叙述。',
     '可以短一些，自然一些；除非玩家要求，不要一次发长篇。',
+    '记住不在场的时候好感度是不会变化的，只有当玩家的消息让你产生了明确情绪反应时才评估好感度变化。',
     miniPersona,
     `当前时间：${statusData.world.currentTime}`,
     `当前位置：${statusData.world.currentLocation}`,
     mainEventsContext,
     `当前关系：${target.stage} · 好感度 ${target.affinity}`,
     relationshipGuidance ? `当前关系反应：${relationshipGuidance}` : '',
+    addressGuidance ? `称呼规则：${addressGuidance}` : '',
     playerProfileText,
     recentEventsContext,
     buildPhoneChatHistory(history),
