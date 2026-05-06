@@ -1,11 +1,45 @@
 import { getRelationshipAddressGuidance, getRelationshipGuidance, getRelationshipMiniPersona } from './relationship';
 import type { SummaryStore } from './summary/types';
-import type { PhoneChatMessage, PlayerProfile, PlayerStats, StatusData, TargetStatus, UiMessage } from './types';
+import type {
+  PhoneChatMessage,
+  PlayerProfile,
+  PlayerStats,
+  PlotEventCard,
+  PlotLibrary,
+  StatusData,
+  TargetStatus,
+  UiMessage,
+} from './types';
 import { getActiveTarget } from './types';
 
 export const PRIMARY_VISIBLE_TAG = 'content';
 // 兼容用户自定义预设里要求的中文正文标签，避免模型输出 <正文> 时被当成未知标签吞掉。
 export const FALLBACK_VISIBLE_TAGS = ['正文', 'context'];
+
+// 预设里常见的、会嵌在正文里的元标签。这些不是正文边界，只是吐槽 / 思考 / 指令块。
+// 抽正文时需要把它们整体剥掉，否则 <tucao> 包住正文会让可见正文变空。
+const META_SUBTAG_NAMES = [
+  'tucao',
+  'progress',
+  'current_event',
+  'roleplay_options',
+  'konatan_planning',
+  'thinking',
+  'think',
+];
+
+function stripMetaSubtags(text: string) {
+  if (!text) return text;
+  let result = text;
+  for (const tag of META_SUBTAG_NAMES) {
+    // 先剥闭合的 <tag>...</tag>，再清理孤立的开/闭标签（AI 截断时常见）。
+    const closed = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}\\b[^>]*>`, 'gi');
+    result = result.replace(closed, '');
+    const orphan = new RegExp(`<\\/?${tag}\\b[^>]*>`, 'gi');
+    result = result.replace(orphan, '');
+  }
+  return result;
+}
 
 export function sanitizeVisibleReply(text: string) {
   return text.replace(/^\s*(?:assistant|ai|reply|response)\s*[:：\-\s]*/i, '').trim();
@@ -31,14 +65,14 @@ export function extractTaggedReply(raw: string, tagName: string, streaming: bool
   const closedTag = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i');
   const closedMatch = raw.match(closedTag);
   if (closedMatch) {
-    return dedupeAdjacentReply(closedMatch[1] ?? '');
+    return dedupeAdjacentReply(stripMetaSubtags(closedMatch[1] ?? ''));
   }
 
   if (streaming) {
     const openedTag = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*)$`, 'i');
     const openedMatch = raw.match(openedTag);
     if (openedMatch) {
-      return dedupeAdjacentReply((openedMatch[1] ?? '').replace(/<[^>]*$/, ''));
+      return dedupeAdjacentReply(stripMetaSubtags((openedMatch[1] ?? '').replace(/<[^>]*$/, '')));
     }
   }
 
@@ -46,11 +80,12 @@ export function extractTaggedReply(raw: string, tagName: string, streaming: bool
   const openMatch = raw.match(openTag);
   if (openMatch?.index != null) {
     const afterOpen = raw.slice(openMatch.index + openMatch[0].length);
+    // tucao / progress 等是正文内部的元标签，不能当成章节边界截断正文。
     const nextSectionIndex = afterOpen.search(
-      /<\/?(?:think|content|正文|context|tucao|current_event|progress|roleplay_options)\b[^>]*>/i,
+      /<\/?(?:content|正文|context|progress|current_event|roleplay_options)\b[^>]*>/i,
     );
     const visible = nextSectionIndex >= 0 ? afterOpen.slice(0, nextSectionIndex) : afterOpen;
-    return dedupeAdjacentReply(visible);
+    return dedupeAdjacentReply(stripMetaSubtags(visible));
   }
 
   return '';
@@ -69,11 +104,14 @@ export function extractContextReply(text: string, { streaming = false }: { strea
     }
   }
 
-  if (/<\/?[a-zA-Z][^>]*>/i.test(raw)) {
+  // 标签完全丢失时的兜底：先剥掉元标签（tucao / progress / 思考块等），
+  // 再看看剩下的是不是可展示的纯文本。之前直接因为残留标签返回空会吞整层。
+  const stripped = stripMetaSubtags(raw);
+  if (/<\/?[a-zA-Z][^>]*>/i.test(stripped)) {
     return '';
   }
 
-  return dedupeAdjacentReply(raw);
+  return dedupeAdjacentReply(stripped);
 }
 
 export function extractPhoneChatReply(text: string) {
@@ -89,12 +127,12 @@ export function getVisibleMessageText(message: UiMessage) {
 }
 
 export function getReaderMessages(messages: UiMessage[]) {
-  return messages.filter(
-    message =>
-      message.role !== 'system' &&
-      (message.role !== 'assistant' || message.streaming || Boolean(getVisibleMessageText(message))) &&
-      Boolean(getVisibleMessageText(message) || message.streaming),
-  );
+  return messages.filter(message => {
+    if (message.role === 'system') return false;
+    if (message.role === 'user') return Boolean(message.text.trim());
+    // assistant: 流式中或有任何原文都保留，让掉标签的楼层也能被翻到并走编辑入口恢复。
+    return message.streaming || Boolean(message.text.trim());
+  });
 }
 
 // 摘要完成后至少保留最近几条原始消息，防止模型丢失近期对话细节。
@@ -151,6 +189,127 @@ function buildMainEventsContext(statusData: StatusData) {
   ].join('\n');
 }
 
+function buildPlotEventReference(event: PlotEventCard | undefined, label: string) {
+  if (!event) return '';
+  return `- ${label}: ${event.id} ${event.title}${event.summary ? `：${event.summary}` : ''}`;
+}
+
+function getDatePart(value: string) {
+  return value.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
+}
+
+function diffDays(fromIso: string, toIso: string): number | null {
+  const a = new Date(`${fromIso}T00:00:00`);
+  const b = new Date(`${toIso}T00:00:00`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+  return Math.round((b.getTime() - a.getTime()) / 86_400_000);
+}
+
+function formatEventIndexLine(event: PlotEventCard) {
+  const parts = [`- ${event.id}`];
+  if (event.schedule?.date) parts.push(event.schedule.date);
+  if (event.schedule?.timeSegments?.length) parts.push(event.schedule.timeSegments.join('/'));
+  if (event.schedule?.locations?.length) parts.push(event.schedule.locations.join('、'));
+  if (event.title) parts.push(event.title);
+  return parts.join(' · ');
+}
+
+function buildPlotWhitelist(plotLibrary: PlotLibrary) {
+  const all = Object.values(plotLibrary.events);
+  if (!all.length) return '';
+  const lines = all
+    .slice()
+    .sort((a, b) => {
+      const da = a.schedule?.date ?? '';
+      const db = b.schedule?.date ?? '';
+      return da.localeCompare(db) || a.id.localeCompare(b.id);
+    })
+    .map(formatEventIndexLine);
+  return [
+    '合法主线事件 ID 白名单（仅限下列 ID 可出现在 <progress> 的 当前事件 / 主线事件 字段里）：',
+    ...lines,
+    '硬约束：禁止在 <progress> 里使用白名单之外的任何事件 ID；禁止自造新的卷号/新的事件编号；不确定时把 当前事件 留空，不要发明 ID。',
+  ].join('\n');
+}
+
+function pickNextUpcomingEvent(statusData: StatusData, plotLibrary: PlotLibrary): PlotEventCard | null {
+  const mainEvents = statusData.world.mainEvents ?? {};
+  const currentDate = getDatePart(statusData.world.currentTime);
+  const candidates = Object.values(plotLibrary.events)
+    .filter(event => Boolean(event.schedule?.date))
+    .filter(event => (mainEvents[event.id] ?? '未触发') === '未触发')
+    .filter(event => !currentDate || event.schedule!.date >= currentDate)
+    .sort((a, b) => (a.schedule!.date.localeCompare(b.schedule!.date) || a.id.localeCompare(b.id)));
+  return candidates[0] ?? null;
+}
+
+function buildCurrentPlotContext(statusData: StatusData, plotLibrary?: PlotLibrary | null) {
+  if (!plotLibrary || !Object.keys(plotLibrary.events).length) return '';
+  const whitelist = buildPlotWhitelist(plotLibrary);
+  const currentId = statusData.world.currentMainEventId;
+  const currentEvent = currentId ? plotLibrary.events[currentId] : undefined;
+
+  // 空档期：当前没有进行中主线。直接告诉 AI 下一个主线在哪天哪里，空档期不要触发新主线、不要自造 ID。
+  if (!currentEvent) {
+    const upcoming = pickNextUpcomingEvent(statusData, plotLibrary);
+    const currentDate = getDatePart(statusData.world.currentTime);
+    const gapLines: string[] = ['当前没有进行中的主线事件：处于剧情空档期。'];
+
+    if (upcoming?.schedule?.date) {
+      const daysUntil = currentDate ? diffDays(currentDate, upcoming.schedule.date) : null;
+      gapLines.push(
+        `下一个主线事件：${upcoming.id} ${upcoming.title}`,
+        `触发日期：${upcoming.schedule.date}${
+          daysUntil != null ? `（距离当前日期约 ${daysUntil} 天）` : ''
+        }`,
+        upcoming.schedule.timeSegments?.length ? `触发时间片段：${upcoming.schedule.timeSegments.join('/')}` : '',
+        upcoming.schedule.locations?.length ? `触发地点：${upcoming.schedule.locations.join('、')}` : '',
+        upcoming.summary ? `阶段摘要：${upcoming.summary}` : '',
+      );
+    } else {
+      gapLines.push('下一个主线事件：暂无规划。');
+    }
+
+    gapLines.push(
+      '空档期叙事规则：',
+      '- 只写日常、校园、社团、手机等非主线情节；不要演出任何未来主线的关键节点。',
+      '- 不得在 <progress> 中把任何事件标记为 进行中，也不得把未到触发日期的事件设为 当前事件。',
+      '- 不得自造新的事件 ID、卷号或编号；白名单之外的 ID 都会被系统丢弃。',
+      '- 如果 User 的行动看起来要跳过下一个主线，用 <progress> 把该事件标记为 跳过 或 延后，而不是捏造新主线。',
+      '',
+      whitelist,
+    );
+
+    return gapLines.filter(Boolean).join('\n');
+  }
+
+  const previous = currentEvent.previousIds
+    .map((id, index) => buildPlotEventReference(plotLibrary.events[id], index === 0 ? '前置事件' : '其他前置'))
+    .filter(Boolean);
+  const next = currentEvent.nextIds
+    .map((id, index) => buildPlotEventReference(plotLibrary.events[id], index === 0 ? '后续路标' : '其他后续'))
+    .filter(Boolean);
+
+  return [
+    '当前主线剧情卡：',
+    `事件ID: ${currentEvent.id}`,
+    `标题: ${currentEvent.title}`,
+    currentEvent.volumeId ? `卷ID: ${currentEvent.volumeId}` : '',
+    currentEvent.summary ? `阶段摘要: ${currentEvent.summary}` : '',
+    previous.length ? previous.join('\n') : '',
+    next.length ? next.join('\n') : '',
+    '',
+    '剧情卡内容：',
+    currentEvent.content,
+    '',
+    '使用规则：只把当前剧情卡作为本轮场景参考；前置和后续只用于衔接判断，不要提前演出后续事件。若 User 行动使当前事件无法自然继续，请在 <progress> 中把当前事件标记为 跳过 或 延后，并给出可接回的近期事件记录。',
+    '',
+    whitelist,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 function statRank(value: number) {
   const score = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
   if (score >= 80) return 'Rank 5 极致';
@@ -205,6 +364,7 @@ export function buildPrompt(
   options?: {
     skipProgress?: boolean;
     playerProfile?: PlayerProfile | null;
+    plotLibrary?: PlotLibrary | null;
     suppressPhoneMessageContent?: boolean;
     phoneMessageTargetName?: string;
   },
@@ -230,6 +390,7 @@ export function buildPrompt(
   const hasSummary = summaryStore && (summaryStore.global || summaryStore.major.length || summaryStore.minor.length);
   const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
   const mainEventsContext = buildMainEventsContext(statusData);
+  const plotContext = buildCurrentPlotContext(statusData, options?.plotLibrary);
   // 取 lastSummarizedIndex 和「总消息数 - 保留窗口」中较小的那个，
   // 保证即使全部消息都已被摘要，最近几条原文仍会出现在 prompt 中。
   const historyStartIndex = hasSummary
@@ -263,6 +424,7 @@ export function buildPrompt(
     topEvent ? `Latest event: ${topEvent[0]} - ${topEvent[1]}` : '',
     playerProfileText,
     phoneMessageBoundary,
+    plotContext,
     summaryContext,
     conversationHistory,
     userInput ? `Current user input: ${userInput}` : '',
@@ -283,6 +445,7 @@ export function buildPhoneChatPrompt(input: {
   userInput: string;
   summaryStore?: SummaryStore | null;
   playerProfile?: PlayerProfile | null;
+  plotLibrary?: PlotLibrary | null;
   skipProgress?: boolean;
   triggerEvent?: string;
 }) {
@@ -294,6 +457,7 @@ export function buildPhoneChatPrompt(input: {
   const mainEventsContext = buildMainEventsContext(statusData);
   const hasSummary = summaryStore && (summaryStore.global || summaryStore.major.length || summaryStore.minor.length);
   const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
+  const plotContext = buildCurrentPlotContext(statusData, input.plotLibrary);
   const playerProfileText = playerProfile?.name
     ? [
         `玩家姓名：${playerProfile.name}`,
@@ -320,6 +484,7 @@ export function buildPhoneChatPrompt(input: {
     relationshipGuidance ? `当前关系反应：${relationshipGuidance}` : '',
     addressGuidance ? `称呼规则：${addressGuidance}` : '',
     playerProfileText,
+    plotContext ? `当前正文主线参考：\n${plotContext}` : '',
     summaryContext ? `此前正文记忆与长期摘要：\n${summaryContext}` : '',
     recentEventsContext,
     buildPhoneChatHistory(history),

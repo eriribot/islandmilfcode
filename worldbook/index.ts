@@ -1,7 +1,9 @@
-import type { StatusData, TargetStatus, TavernWindow, WorldbookEntry } from '../types';
+import type { PlotEventCard, PlotEventSchedule, PlotLibrary, StatusData, TargetStatus, TavernWindow, WorldbookEntry } from '../types';
 import { affinityStage, defaultTarget } from '../variables/normalize';
 
 const TARGET_KIND = 'islandmilfcode.target';
+const PLOT_KIND = 'islandmilfcode.plot_event';
+const PLOT_VOLUME_KIND = 'islandmilfcode.plot_volume';
 const TARGET_AVATAR_RULES: Array<{ patterns: string[]; avatarUrl: string }> = [
   {
     patterns: ['英梨梨', '泽村', '澤村', 'eriri', 'sawamura'],
@@ -47,6 +49,19 @@ function safeParseJson(text: string): Record<string, unknown> | null {
   }
 }
 
+function getStringArrayField(raw: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = raw[key];
+    if (Array.isArray(value)) {
+      return value.map(item => String(item ?? '').trim()).filter(Boolean);
+    }
+    if (typeof value === 'string' && value.trim()) {
+      return [value.trim()];
+    }
+  }
+  return [];
+}
+
 function getStringField(raw: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = raw[key];
@@ -60,6 +75,114 @@ function getStringField(raw: Record<string, unknown>, keys: string[]) {
 function getRecordField(raw: Record<string, unknown>, key: string) {
   const value = raw[key];
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function compactJson(value: unknown) {
+  return JSON.stringify(value, null, 2);
+}
+
+function splitLocationField(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .flatMap(item => String(item ?? '').split(/[,，、;；]/))
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+  if (typeof raw === 'string') {
+    return raw
+      .split(/[,，、;；]/)
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function parseEventSchedule(raw: Record<string, unknown>): PlotEventSchedule | undefined {
+  const triggerControl = getRecordField(raw, '触发控制');
+
+  const dateRaw =
+    getStringField(triggerControl, ['触发日期', 'triggerDate', 'date']) ||
+    getStringField(raw, ['日期', 'date', 'triggerDate']);
+  const date = (dateRaw.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '').trim();
+  if (!date) return undefined;
+
+  const timeSegments = (() => {
+    const fromTrigger = getStringArrayField(triggerControl, ['触发时间片段', 'triggerTimeSegments', 'timeSegments']);
+    if (fromTrigger.length) return fromTrigger;
+    return getStringArrayField(raw, ['时间片段', 'timeSegments']);
+  })();
+
+  const locations = (() => {
+    const fromTrigger = splitLocationField(triggerControl['触发地点'] ?? triggerControl['triggerLocations']);
+    if (fromTrigger.length) return fromTrigger;
+    return splitLocationField(raw['核心地点'] ?? raw['locations'] ?? raw['location']);
+  })();
+
+  return { date, timeSegments, locations };
+}
+
+function summarizeEvent(raw: Record<string, unknown>) {
+  return getStringField(raw, ['summary', '阶段摘要', '摘要', '简介']);
+}
+
+function getEventNextIds(raw: Record<string, unknown>) {
+  const explicit = getStringArrayField(raw, ['next', 'nextIds', '可接续事件', '后续事件']);
+  if (explicit.length) return explicit;
+
+  const endControl = getRecordField(raw, '结束控制');
+  return getStringArrayField(endControl, ['可接续事件', 'next', 'nextIds']);
+}
+
+function getEventPreviousIds(raw: Record<string, unknown>) {
+  const explicit = getStringArrayField(raw, ['prev', 'previous', 'previousIds', '前置事件']);
+  if (explicit.length) return explicit;
+
+  const triggerControl = getRecordField(raw, '触发控制');
+  return getStringArrayField(triggerControl, ['前置事件', 'prev', 'previousIds']);
+}
+
+function parsePlotEventRecord(
+  raw: Record<string, unknown>,
+  entry: WorldbookEntry,
+  fallbackVolumeId?: string,
+): PlotEventCard | null {
+  const kind = getStringField(raw, ['kind', 'type']);
+  const eventId = getStringField(raw, ['eventId', 'event_id', 'id']);
+  if (!eventId || (kind && kind !== PLOT_KIND && kind !== PLOT_VOLUME_KIND)) return null;
+
+  const title = getStringField(raw, ['title', '标题', 'name']) || eventId;
+  const contentValue = raw.content ?? raw['正文'] ?? raw['事件卡'] ?? raw;
+
+  return {
+    id: eventId,
+    title,
+    volumeId: getStringField(raw, ['volumeId', 'volume_id', '卷ID']) || fallbackVolumeId,
+    summary: summarizeEvent(raw),
+    previousIds: getEventPreviousIds(raw),
+    nextIds: getEventNextIds(raw),
+    content: typeof contentValue === 'string' ? contentValue.trim() : compactJson(contentValue),
+    schedule: parseEventSchedule(raw),
+    sourceEntryUid: entry.uid,
+    sourceEntryName: entry.name,
+  };
+}
+
+function parsePlotEventsFromJson(raw: Record<string, unknown>, entry: WorldbookEntry): PlotEventCard[] {
+  const kind = getStringField(raw, ['kind', 'type']);
+  const volumeId = getStringField(raw, ['volumeId', 'volume_id', 'id']);
+  const chain = raw['事件链'];
+  const events = raw.events ?? raw['events'];
+
+  const sourceEvents = Array.isArray(chain) ? chain : Array.isArray(events) ? events : null;
+  if (sourceEvents) {
+    return sourceEvents
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+      .map(item => parsePlotEventRecord(item, entry, volumeId))
+      .filter((event): event is PlotEventCard => Boolean(event));
+  }
+
+  const single = parsePlotEventRecord(raw, entry, kind === PLOT_VOLUME_KIND ? volumeId : undefined);
+  return single ? [single] : [];
 }
 
 function toTitleRecord(raw: Record<string, unknown>): TargetStatus['titles'] {
@@ -171,13 +294,46 @@ function parseTargetEntry(entry: WorldbookEntry): TargetStatus | null {
   return parseTextTarget(entry);
 }
 
-export async function loadCharacterWorldbookTargets(win: TavernWindow): Promise<TargetStatus[]> {
+function isPlotCandidateEntry(entry: WorldbookEntry) {
+  return /^\s*\[剧情]/.test(entry.name) || /^\s*\[plot]/i.test(entry.name) || entry.content.includes('"事件链"');
+}
+
+function parsePlotEntry(entry: WorldbookEntry): PlotEventCard[] {
+  if (!isPlotCandidateEntry(entry)) return [];
+
+  const extra = entry.extra && typeof entry.extra === 'object' ? parsePlotEventsFromJson(entry.extra, entry) : [];
+  const json = safeParseJson(entry.content);
+  const content = json ? parsePlotEventsFromJson(json, entry) : [];
+  return [...extra, ...content];
+}
+
+function createPlotLibrary(events: PlotEventCard[]): PlotLibrary {
+  const byId = new Map<string, PlotEventCard>();
+  for (const event of events) {
+    byId.set(event.id, event);
+  }
+
+  return {
+    events: Object.fromEntries(byId),
+    sourceEntryNames: Array.from(new Set(events.map(event => event.sourceEntryName))),
+    loadedAt: Date.now(),
+  };
+}
+
+export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
+  targets: TargetStatus[];
+  plotLibrary: PlotLibrary;
+}> {
   if (typeof win.getWorldbook !== 'function') {
-    return [];
+    return {
+      targets: [],
+      plotLibrary: createPlotLibrary([]),
+    };
   }
 
   const names = getCurrentCharacterWorldbookNames(win);
   const targets: TargetStatus[] = [];
+  const plotEvents: PlotEventCard[] = [];
 
   for (const name of names) {
     try {
@@ -187,6 +343,7 @@ export async function loadCharacterWorldbookTargets(win: TavernWindow): Promise<
         if (target) {
           targets.push(target);
         }
+        plotEvents.push(...parsePlotEntry(entry));
       }
     } catch {
       // 某个绑定世界书读取失败时，跳过它，不影响其他世界书。
@@ -197,7 +354,14 @@ export async function loadCharacterWorldbookTargets(win: TavernWindow): Promise<
   for (const target of targets) {
     byId.set(target.id, target);
   }
-  return Array.from(byId.values());
+  return {
+    targets: Array.from(byId.values()),
+    plotLibrary: createPlotLibrary(plotEvents),
+  };
+}
+
+export async function loadCharacterWorldbookTargets(win: TavernWindow): Promise<TargetStatus[]> {
+  return (await loadCharacterWorldbookData(win)).targets;
 }
 
 export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: TargetStatus[]): StatusData {

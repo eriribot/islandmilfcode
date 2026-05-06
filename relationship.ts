@@ -167,9 +167,6 @@ export function getRelationshipAddressGuidance(input: AddressGuidanceInput | nul
 
 export function getRelationshipMiniPersona(target: TargetStatus | null) {
   if (!target) return '';
-  const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
-    .map(value => String(value ?? '').toLowerCase())
-    .join('\n');
 
   if (isEririTarget(target)) {
     return ERIRI_MINI_PERSONA;

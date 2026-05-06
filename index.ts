@@ -62,7 +62,7 @@ import type { PhoneCharacterId, PhoneRoute } from './phone/types';
 import { getActiveTarget } from './types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp, syncMainEvents } from './variables/normalize';
-import { loadCharacterWorldbookTargets, mergeWorldbookTargets } from './worldbook';
+import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
 
 const win = window as TavernWindow;
 const root = document.querySelector<HTMLDivElement>('#app');
@@ -117,7 +117,7 @@ function getStatusCacheKey() {
 function cacheStatusData(data: StatusData) {
   const key = getStatusCacheKey();
   if (!key) return;
-  syncMainEvents(data);
+  syncMainEvents(data, state.plotLibrary);
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch {
@@ -125,19 +125,8 @@ function cacheStatusData(data: StatusData) {
   }
 }
 
-function loadCachedStatusData(): StatusData | null {
-  const key = getStatusCacheKey();
-  if (!key) return null;
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as StatusData) : null;
-  } catch {
-    return null;
-  }
-}
-
 function guardedAdapterSave(data: StatusData) {
-  syncMainEvents(data);
+  syncMainEvents(data, state.plotLibrary);
   adapter.save(data);
   cacheStatusData(data);
 }
@@ -271,12 +260,17 @@ function rebuildRuntimeAfterRestore() {
 }
 
 async function refreshCharacterWorldbookTargets(options: { persist?: boolean } = {}) {
-  const targets = await loadCharacterWorldbookTargets(win);
-  if (!targets.length) return;
+  const { targets, plotLibrary } = await loadCharacterWorldbookData(win);
+  const previousPlotEventCount = Object.keys(state.plotLibrary.events).length;
+  state.plotLibrary = plotLibrary;
 
   const previous = JSON.stringify(state.statusData.targets);
-  state.statusData = mergeWorldbookTargets(state.statusData, targets);
-  if (JSON.stringify(state.statusData.targets) === previous) return;
+  if (targets.length) {
+    state.statusData = mergeWorldbookTargets(state.statusData, targets);
+  }
+  const targetsChanged = JSON.stringify(state.statusData.targets) !== previous;
+  const plotChanged = Object.keys(plotLibrary.events).length !== previousPlotEventCount;
+  if (!targetsChanged && !plotChanged) return;
 
   guardedAdapterSave(state.statusData);
   if (options.persist) {
@@ -348,6 +342,64 @@ function openReaderContextMenu(readerIndex: number, clientX: number, clientY: nu
     x: clamp(clientX, READER_CONTEXT_MENU_GAP, maxX),
     y: clamp(clientY, READER_CONTEXT_MENU_GAP, maxY),
   };
+  render();
+}
+
+function openReaderEditor(readerIndex: number) {
+  const message = getReaderMessageByIndex(state, readerIndex);
+  if (!message) return;
+  state.readerEditing = {
+    readerIndex,
+    draft: String(message.text ?? ''),
+  };
+  ctx.closeReaderContextMenu(false);
+  render();
+  window.requestAnimationFrame(() => {
+    const textarea = root?.querySelector<HTMLTextAreaElement>('[data-field="reader-edit-draft"]');
+    textarea?.focus();
+    if (textarea) {
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    }
+  });
+}
+
+function cancelReaderEditor() {
+  if (!state.readerEditing) return;
+  state.readerEditing = null;
+  render();
+}
+
+async function saveReaderEditor() {
+  const editing = state.readerEditing;
+  if (!editing) return;
+  const textarea = root?.querySelector<HTMLTextAreaElement>('[data-field="reader-edit-draft"]');
+  const nextText = textarea?.value ?? editing.draft;
+
+  const readerMessages = getReaderMessages(state.uiMessages);
+  const message = readerMessages[editing.readerIndex];
+  if (!message) {
+    state.readerEditing = null;
+    render();
+    return;
+  }
+
+  message.text = nextText;
+
+  // 同步回酒馆楼层，防止刷新后又被酒馆侧的原文覆盖。
+  if (typeof message.tavernMessageId === 'number' && typeof win.setChatMessages === 'function') {
+    try {
+      await win.setChatMessages(
+        [{ message_id: message.tavernMessageId, message: nextText }],
+        { refresh: 'none' },
+      );
+    } catch (error) {
+      console.warn('[reader-edit] setChatMessages failed:', error);
+    }
+  }
+
+  state.readerEditing = null;
+  ctx.persistConversation();
   render();
 }
 
@@ -630,6 +682,7 @@ function bindReaderDragEvents() {
   reader.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest('[data-action="jump-message"]')) return;
+    if ((event.target as HTMLElement).closest('[data-action="reader-edit"]')) return;
     readerDragState = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -796,6 +849,27 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-message"]').forEach(button => {
     button.addEventListener('click', () => jumpMessage(Number(button.dataset.index ?? 0)));
   });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="reader-edit"]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      openReaderEditor(Number(button.dataset.readerIndex ?? state.focusedMessageIndex));
+    });
+  });
+  root?.querySelectorAll<HTMLElement>('[data-action="reader-edit-cancel"]').forEach(element => {
+    element.addEventListener('click', event => {
+      event.stopPropagation();
+      cancelReaderEditor();
+    });
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="reader-edit-save"]')?.addEventListener('click', () => {
+    void saveReaderEditor();
+  });
+  root?.querySelector<HTMLTextAreaElement>('[data-field="reader-edit-draft"]')?.addEventListener('input', event => {
+    if (state.readerEditing) {
+      state.readerEditing.draft = (event.target as HTMLTextAreaElement).value;
+    }
+  });
+
   root?.querySelector<HTMLButtonElement>('[data-action="reader-rollback"]')?.addEventListener('click', () => {
     if (!state.readerContextMenu) return;
     void rollbackToReaderInput(state.readerContextMenu.readerIndex);
@@ -984,7 +1058,7 @@ function render() {
   if (!root) return;
   if (state.activeRunId) {
     // 游戏界面。
-    if (syncMainEvents(state.statusData)) {
+    if (syncMainEvents(state.statusData, state.plotLibrary)) {
       guardedAdapterSave(state.statusData);
       persistToSave();
     }
@@ -1034,6 +1108,11 @@ window.addEventListener(
 );
 
 window.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && state.readerEditing) {
+    event.preventDefault();
+    cancelReaderEditor();
+    return;
+  }
   if (event.key === 'Escape' && state.readerContextMenu) {
     event.preventDefault();
     ctx.closeReaderContextMenu(true);
@@ -1083,6 +1162,13 @@ init();
     focusedMessageIndex: state.focusedMessageIndex,
     draft: state.draft,
     world: state.statusData.world,
+    plot: {
+      eventCount: Object.keys(state.plotLibrary.events).length,
+      currentEventLoaded: Boolean(
+        state.statusData.world.currentMainEventId && state.plotLibrary.events[state.statusData.world.currentMainEventId],
+      ),
+      sources: state.plotLibrary.sourceEntryNames,
+    },
     activeTarget: target ? { id: target.id, name: target.name, affinity: target.affinity, stage: target.stage } : null,
     messageCount: state.uiMessages.length,
   });

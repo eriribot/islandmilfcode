@@ -143,6 +143,31 @@ export type WorldbookEntry = {
   extra?: Record<string, unknown>;
 };
 
+export type PlotEventSchedule = {
+  date: string;
+  timeSegments: string[];
+  locations: string[];
+};
+
+export type PlotEventCard = {
+  id: string;
+  title: string;
+  volumeId?: string;
+  summary?: string;
+  previousIds: string[];
+  nextIds: string[];
+  content: string;
+  schedule?: PlotEventSchedule;
+  sourceEntryUid: number;
+  sourceEntryName: string;
+};
+
+export type PlotLibrary = {
+  events: Record<string, PlotEventCard>;
+  sourceEntryNames: string[];
+  loadedAt: number;
+};
+
 export type StatusData = {
   world: {
     currentTime: string;
@@ -194,6 +219,11 @@ export type ReaderContextMenuState = {
   canDeleteMessage: boolean;
 };
 
+export type ReaderEditingState = {
+  readerIndex: number;
+  draft: string;
+};
+
 export type AppState = {
   activeRunId: string | null;
   activeSaveId: string | null;
@@ -215,11 +245,13 @@ export type AppState = {
   currentGenerationId: string;
   finalizedGenerationId: string;
   runtimeFlags: Record<string, unknown>;
+  plotLibrary: PlotLibrary;
   uiMessages: UiMessage[];
   statusData: StatusData;
   weather: WeatherState;
   notification: NotificationState | null;
   readerContextMenu: ReaderContextMenuState | null;
+  readerEditing: ReaderEditingState | null;
   summaryStore: SummaryStore;
   summaryApiConfig: SummaryApiConfig | null;
   summaryModelFetch: SummaryModelFetchState;

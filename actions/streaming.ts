@@ -148,8 +148,6 @@ export function finalizeStreamingText(
   });
 
   if (current.text) {
-    const target = getActiveTarget(state.statusData);
-    const targetAlias = target?.alias ?? target?.name ?? '角色';
     // 正文更新只显示简短提示
     ctx.showNotification({
       kind: 'message',

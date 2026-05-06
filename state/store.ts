@@ -1,7 +1,15 @@
 import { getReaderMessages } from '../message-format';
 import { createDefaultSummaryStore, deserializeSummaryStore } from '../summary/types';
 import type { FloatingPhonePosition } from '../phone/types';
-import type { AppState, PersistedMessage, PhoneMessageStore, RollbackSnapshot, TavernWindow, UiMessage } from '../types';
+import type {
+  AppState,
+  PersistedMessage,
+  PhoneMessageStore,
+  PlotLibrary,
+  RollbackSnapshot,
+  TavernWindow,
+  UiMessage,
+} from '../types';
 import { clamp, defaultStatusData, normalizeStatusData } from '../variables/normalize';
 import { getDefaultWeatherState } from '../phone/weather';
 
@@ -17,6 +25,14 @@ function createSystemMessage(): UiMessage {
     role: 'system',
     speaker: 'system',
     text: '',
+  };
+}
+
+function createEmptyPlotLibrary(): PlotLibrary {
+  return {
+    events: {},
+    sourceEntryNames: [],
+    loadedAt: 0,
   };
 }
 
@@ -232,11 +248,13 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     currentGenerationId: '',
     finalizedGenerationId: '',
     runtimeFlags: {},
+    plotLibrary: createEmptyPlotLibrary(),
     uiMessages: [createSystemMessage()],
     statusData: normalizeStatusData(defaultStatusData),
     weather: getDefaultWeatherState(),
     notification: null,
     readerContextMenu: null,
+    readerEditing: null,
     summaryStore: createDefaultSummaryStore(),
     summaryApiConfig: null,
     summaryModelFetch: {

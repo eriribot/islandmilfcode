@@ -1,5 +1,5 @@
 import type { ProgressUpdate } from '../message-format';
-import type { StatusData } from '../types';
+import type { PlotEventCard, PlotLibrary, StatusData } from '../types';
 import { affinityStage, clamp } from './format';
 
 export { defaultStatusData, defaultTarget } from './defaults';
@@ -15,25 +15,33 @@ export { normalizeStatusData, serializeStatusData } from './legacy';
 
 const MAX_RECENT_EVENTS = 5;
 
-const MAIN_EVENT_SCHEDULE = [
-  {
-    id: 'SAE_01-1',
-    date: '2012-03-31',
-    timeSegments: ['早晨'],
-    locations: ['侦探坡'],
-  },
-  {
-    id: 'SAE_01-2',
-    date: '2012-04-05',
-    timeSegments: ['早晨'],
-    locations: ['丰之崎学园'],
-  },
-] as const;
+type ScheduledEvent = {
+  id: string;
+  date: string;
+  timeSegments: string[];
+  locations: string[];
+};
 
 const FINISHED_MAIN_EVENT_STATUSES = new Set(['已结束', '跳过', '延后']);
 
-function getMainEventOrder(id: string) {
-  return MAIN_EVENT_SCHEDULE.findIndex(event => event.id === id);
+function buildSchedule(plotLibrary: PlotLibrary | null | undefined): ScheduledEvent[] {
+  if (!plotLibrary) return [];
+  const events = Object.values(plotLibrary.events)
+    .filter((event): event is PlotEventCard & { schedule: NonNullable<PlotEventCard['schedule']> } =>
+      Boolean(event.schedule?.date),
+    )
+    .map(event => ({
+      id: event.id,
+      date: event.schedule.date,
+      timeSegments: event.schedule.timeSegments ?? [],
+      locations: event.schedule.locations ?? [],
+    }));
+  events.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  return events;
+}
+
+function getMainEventOrder(schedule: ScheduledEvent[], id: string) {
+  return schedule.findIndex(event => event.id === id);
 }
 
 function getDatePart(value: string) {
@@ -74,29 +82,29 @@ function compareDate(a: string, b: string) {
 }
 
 function eventMatchesCurrentState(
-  event: (typeof MAIN_EVENT_SCHEDULE)[number],
+  event: ScheduledEvent,
   currentDate: string,
   currentSegment: string,
   currentLocation: string,
 ) {
   if (currentDate !== event.date) return false;
-  const timeMatches = !event.timeSegments.length || (event.timeSegments as readonly string[]).includes(currentSegment);
+  const timeMatches = !event.timeSegments.length || event.timeSegments.includes(currentSegment);
   const locationMatches = !event.locations.length || event.locations.some(location => currentLocation.includes(location));
   return timeMatches && locationMatches;
 }
 
-function getScheduledCurrentMainEventId(statusData: StatusData) {
+function getScheduledCurrentMainEventId(statusData: StatusData, schedule: ScheduledEvent[]) {
   const currentDate = getDatePart(statusData.world.currentTime);
   const currentSegment = getTimeSegment(statusData.world.currentTime);
   const currentLocation = statusData.world.currentLocation;
   return (
-    MAIN_EVENT_SCHEDULE.find(event =>
+    schedule.find(event =>
       eventMatchesCurrentState(event, currentDate, currentSegment, currentLocation),
     )?.id ?? ''
   );
 }
 
-function syncCurrentMainEvent(statusData: StatusData): boolean {
+function syncCurrentMainEvent(statusData: StatusData, schedule: ScheduledEvent[]): boolean {
   const mainEvents = (statusData.world.mainEvents ??= {});
   let changed = false;
   if (statusData.world.currentMainEventId === undefined) {
@@ -105,13 +113,13 @@ function syncCurrentMainEvent(statusData: StatusData): boolean {
   }
   const currentId = statusData.world.currentMainEventId ?? '';
 
-  // 当前事件是手机和提示词使用的权威游标；历史状态允许保留多个“进行中”，但游标只能指向一个。
+  // 当前事件是手机和提示词使用的权威游标；历史状态允许保留多个"进行中"，但游标只能指向一个。
   if (currentId && mainEvents[currentId] !== '进行中') {
     statusData.world.currentMainEventId = '';
     changed = true;
   }
 
-  const scheduledId = getScheduledCurrentMainEventId(statusData);
+  const scheduledId = getScheduledCurrentMainEventId(statusData, schedule);
   if (scheduledId && !FINISHED_MAIN_EVENT_STATUSES.has(mainEvents[scheduledId] ?? '未触发')) {
     if (mainEvents[scheduledId] !== '进行中') {
       mainEvents[scheduledId] = '进行中';
@@ -127,7 +135,7 @@ function syncCurrentMainEvent(statusData: StatusData): boolean {
     const fallbackId =
       Object.entries(mainEvents)
         .filter(([, status]) => status === '进行中')
-        .sort(([a], [b]) => getMainEventOrder(b) - getMainEventOrder(a))[0]?.[0] ?? '';
+        .sort(([a], [b]) => getMainEventOrder(schedule, b) - getMainEventOrder(schedule, a))[0]?.[0] ?? '';
     if (fallbackId) {
       statusData.world.currentMainEventId = fallbackId;
       changed = true;
@@ -137,14 +145,18 @@ function syncCurrentMainEvent(statusData: StatusData): boolean {
   return changed;
 }
 
-function closeEarlierRunningMainEvents(statusData: StatusData, currentId: string): boolean {
-  const currentOrder = getMainEventOrder(currentId);
+function closeEarlierRunningMainEvents(
+  statusData: StatusData,
+  currentId: string,
+  schedule: ScheduledEvent[],
+): boolean {
+  const currentOrder = getMainEventOrder(schedule, currentId);
   if (currentOrder < 0) return false;
 
   let changed = false;
   const mainEvents = (statusData.world.mainEvents ??= {});
-  for (const event of MAIN_EVENT_SCHEDULE.slice(0, currentOrder)) {
-    // 主线按时间线强覆盖：后续事件进入进行中后，前序仍卡在“进行中”的旧事件自动结算。
+  for (const event of schedule.slice(0, currentOrder)) {
+    // 主线按时间线强覆盖：后续事件进入进行中后，前序仍卡在"进行中"的旧事件自动结算。
     if (mainEvents[event.id] === '进行中') {
       mainEvents[event.id] = '已结束';
       changed = true;
@@ -154,14 +166,15 @@ function closeEarlierRunningMainEvents(statusData: StatusData, currentId: string
   return changed;
 }
 
-export function syncMainEvents(statusData: StatusData): boolean {
+export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary | null): boolean {
+  const schedule = buildSchedule(plotLibrary);
   const mainEvents = (statusData.world.mainEvents ??= {});
   const currentDate = getDatePart(statusData.world.currentTime);
   const currentSegment = getTimeSegment(statusData.world.currentTime);
   const currentLocation = statusData.world.currentLocation;
   let changed = false;
 
-  for (const event of MAIN_EVENT_SCHEDULE) {
+  for (const event of schedule) {
     const status = mainEvents[event.id] ?? '未触发';
     if (status !== '未触发') continue;
 
@@ -178,17 +191,27 @@ export function syncMainEvents(statusData: StatusData): boolean {
     }
   }
 
-  if (syncCurrentMainEvent(statusData)) {
+  if (syncCurrentMainEvent(statusData, schedule)) {
     changed = true;
   }
-  if (statusData.world.currentMainEventId && closeEarlierRunningMainEvents(statusData, statusData.world.currentMainEventId)) {
+  if (
+    statusData.world.currentMainEventId &&
+    closeEarlierRunningMainEvents(statusData, statusData.world.currentMainEventId, schedule)
+  ) {
     changed = true;
   }
 
   return changed;
 }
 
-export function applyProgressUpdate(statusData: StatusData, update: ProgressUpdate, targetId = statusData.activeTargetId): void {
+export function applyProgressUpdate(
+  statusData: StatusData,
+  update: ProgressUpdate,
+  targetId = statusData.activeTargetId,
+  plotLibrary?: PlotLibrary | null,
+): void {
+  const schedule = buildSchedule(plotLibrary);
+
   if (update.time) {
     statusData.world.currentTime = update.time;
   }
@@ -227,7 +250,7 @@ export function applyProgressUpdate(statusData: StatusData, update: ProgressUpda
     for (const [id, eventStatus] of Object.entries(update.mainEvents)) {
       if (eventStatus === '进行中') {
         statusData.world.currentMainEventId = id;
-        closeEarlierRunningMainEvents(statusData, id);
+        closeEarlierRunningMainEvents(statusData, id, schedule);
       }
     }
   }
@@ -238,7 +261,7 @@ export function applyProgressUpdate(statusData: StatusData, update: ProgressUpda
       !FINISHED_MAIN_EVENT_STATUSES.has((statusData.world.mainEvents ??= {})[update.currentMainEventId] ?? '未触发')
     ) {
       statusData.world.mainEvents[update.currentMainEventId] = '进行中';
-      closeEarlierRunningMainEvents(statusData, update.currentMainEventId);
+      closeEarlierRunningMainEvents(statusData, update.currentMainEventId, schedule);
     }
   }
 
@@ -259,7 +282,7 @@ export function applyProgressUpdate(statusData: StatusData, update: ProgressUpda
     delete statusData.player.inventory[name];
   }
 
-  syncMainEvents(statusData);
+  syncMainEvents(statusData, plotLibrary);
   if (update.currentMainEventId === '') {
     statusData.world.currentMainEventId = '';
   }

@@ -163,11 +163,6 @@ const STAT_KEYS = ['knowledge', 'charm', 'proficiency', 'kindness', 'courage'] a
 const STAT_STEP = 10;
 type DifficultyConfig = (typeof DIFFICULTY_CONFIG)[Difficulty];
 
-function clampToStep(value: number, config: DifficultyConfig) {
-  const clamped = Math.min(config.max, Math.max(config.min, Number.isFinite(value) ? value : config.default));
-  return Math.round(clamped / STAT_STEP) * STAT_STEP;
-}
-
 function clampStatValue(value: number, config: DifficultyConfig) {
   return Math.min(config.max, Math.max(config.min, Number.isFinite(value) ? Math.floor(value) : config.default));
 }

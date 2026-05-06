@@ -5,7 +5,8 @@
       "Bash(cd \"E:/web/tavern_helper_template-main\" && npx tsc --noEmit --project tsconfig.json 2>&1 | head -30)",
       "Read(//d/card/tavern_helper_template-main/tavern_helper_template-main/**)",
       "Bash(npx tsc *)",
-      "PowerShell(Get-ChildItem -Path \"E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\" -Recurse -Directory | Select-Object -First 20 | ForEach-Object { $_.FullName })"
+      "PowerShell(Get-ChildItem -Path \"E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\" -Recurse -Directory | Select-Object -First 20 | ForEach-Object { $_.FullName })",
+      "Read(//d/card/tavern_helper_template-main/**)"
     ]
   }
 }

@@ -108,6 +108,41 @@ function renderReaderHint(direction: 'prev' | 'next', enabled: boolean) {
   `;
 }
 
+function renderReaderEditor(state: AppState) {
+  const editing = state.readerEditing;
+  if (!editing) return '';
+
+  const readerMessages = getReaderMessages(state.uiMessages);
+  const message = readerMessages[editing.readerIndex];
+  if (!message) return '';
+
+  const floorLabel = String(editing.readerIndex + 1).padStart(2, '0');
+  const roleLabel = message.role === 'assistant' ? '助手' : message.role === 'user' ? '玩家' : '系统';
+  const speakerLabel = escapeHtml(message.speaker || roleLabel);
+
+  return `
+    <div class="reader-editor" data-reader-editor="true">
+      <div class="reader-editor__backdrop" data-action="reader-edit-cancel"></div>
+      <div class="reader-editor__panel" role="dialog" aria-modal="true" aria-label="编辑楼层原文">
+        <header class="reader-editor__header">
+          <span class="reader-editor__meta">楼层 ${floorLabel} · ${speakerLabel}</span>
+          <button class="reader-editor__close" data-action="reader-edit-cancel" aria-label="关闭">×</button>
+        </header>
+        <p class="reader-editor__hint">显示的是楼层的原始文本（含 &lt;content&gt; 等标签）。修改后保存会同步回酒馆楼层。</p>
+        <textarea
+          class="reader-editor__textarea"
+          data-field="reader-edit-draft"
+          spellcheck="false"
+        >${escapeHtml(editing.draft)}</textarea>
+        <footer class="reader-editor__actions">
+          <button class="reader-editor__action" data-action="reader-edit-cancel">取消</button>
+          <button class="reader-editor__action reader-editor__action--primary" data-action="reader-edit-save">保存</button>
+        </footer>
+      </div>
+    </div>
+  `;
+}
+
 function renderReaderContextMenu(menu: ReaderContextMenuState | null, generating: boolean) {
   if (!menu) return '';
 
@@ -191,7 +226,33 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
   `;
 
   if (!visibleText && !message.streaming) {
-    return `<section class="paper-reader">${topLane}${bottomLane}</section>`;
+    return `
+      <section class="paper-reader">
+        ${topLane}
+
+        <article
+          class="reader-card reader-card--${message.role} reader-card--empty"
+          data-reader-index="${model.currentIndex}"
+          ${flipDir ? ` data-flip="${flipDir}"` : ''}
+        >
+          <div class="reader-card__chrome">
+            <div class="reader-card__hint-group reader-card__hint-group--left">
+              ${renderReaderHint('prev', Boolean(model.previousMessage))}
+            </div>
+            <span class="reader-card__index">${String(model.currentIndex + 1).padStart(2, '0')}</span>
+            <button class="reader-card__edit" data-action="reader-edit" data-reader-index="${model.currentIndex}" title="编辑原文" aria-label="编辑原文">✎</button>
+            <div class="reader-card__hint-group reader-card__hint-group--right">
+              ${renderReaderHint('next', Boolean(model.nextMessage))}
+            </div>
+          </div>
+          <div class="reader-card__body">
+            <p class="reader-card__text reader-card__text--empty">这条楼层没有可显示的正文，点右上角✎查看或修复原文。</p>
+          </div>
+        </article>
+
+        ${bottomLane}
+      </section>
+    `;
   }
 
   const pageText = escapeHtml(visibleText || '……');
@@ -211,6 +272,11 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
           </div>
           <span class="reader-card__index">${String(model.currentIndex + 1).padStart(2, '0')}</span>
           ${message.streaming ? '<span class="reader-card__streaming">记录中…</span>' : ''}
+          ${
+            message.streaming
+              ? ''
+              : `<button class="reader-card__edit" data-action="reader-edit" data-reader-index="${model.currentIndex}" title="编辑原文" aria-label="编辑原文">✎</button>`
+          }
           <div class="reader-card__hint-group reader-card__hint-group--right">
             ${renderReaderHint('next', Boolean(model.nextMessage))}
           </div>
@@ -660,8 +726,9 @@ export function renderApp(state: AppState, flipDir: string = '') {
     <main class="islandmilfcode-scene">
       ${renderPaperWorkspace(state, flipDir)}
       ${renderReaderContextMenu(state.readerContextMenu, state.generating)}
+      ${renderReaderEditor(state)}
       ${renderFloatingPhone(state)}
-      ${renderPhone(state, phoneRenderers, flipDir)}
+      ${renderPhone(state, phoneRenderers)}
     </main>
   `;
 }

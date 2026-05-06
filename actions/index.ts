@@ -12,7 +12,7 @@ import { createRollbackSnapshot, pushMessage } from '../state/store';
 import { runSummary, type SummaryContext } from '../summary';
 import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import { getActiveTarget } from '../types';
-import type { PhoneChatMessage, PhoneProactiveState, PlayerProfile, PlayerStats, TargetStatus } from '../types';
+import type { PhoneChatMessage, PhoneProactiveState, PlayerProfile, PlayerStats, PlotLibrary, TargetStatus } from '../types';
 import type { VariableAdapter } from '../variables/adapter';
 import { affinityStage, applyProgressUpdate, clamp, formatTime } from '../variables/normalize';
 import {
@@ -58,6 +58,38 @@ const DEFAULT_PLAYER_STATS: PlayerStats = {
   courage: 0,
 };
 
+// 把 AI 给的主线事件 id 跟剧情库（世界书里第一卷/第二卷/第三卷条目合并后的 plotLibrary.events）对一遍，
+// 不在白名单里的整条丢掉。这样即使模型在空档期自造 SAE_2-1 之类的野 id，也只会影响正文叙述，不会污染 statusData。
+function sanitizeProgressAgainstPlotLibrary(
+  update: ProgressUpdate,
+  plotLibrary: PlotLibrary | null | undefined,
+): ProgressUpdate {
+  const whitelist = plotLibrary ? new Set(Object.keys(plotLibrary.events)) : null;
+  // 没有加载到剧情库（初始化中 / 世界书未挂载）时放行，避免误伤正常流程。
+  if (!whitelist || whitelist.size === 0) return update;
+
+  const sanitizedMainEvents: Record<string, string> = {};
+  for (const [id, status] of Object.entries(update.mainEvents)) {
+    if (whitelist.has(id)) {
+      sanitizedMainEvents[id] = status;
+    } else {
+      console.warn('[progress-guard] drop unknown mainEvent id:', id);
+    }
+  }
+
+  let sanitizedCurrentId = update.currentMainEventId;
+  if (sanitizedCurrentId && !whitelist.has(sanitizedCurrentId)) {
+    console.warn('[progress-guard] drop unknown currentMainEventId:', sanitizedCurrentId);
+    sanitizedCurrentId = undefined;
+  }
+
+  return {
+    ...update,
+    mainEvents: sanitizedMainEvents,
+    currentMainEventId: sanitizedCurrentId,
+  };
+}
+
 function applyPlayerStatDeltas(playerProfile: PlayerProfile, update: ProgressUpdate | null) {
   if (!update || !Object.keys(update.statDeltas).length) return false;
   const current = { ...DEFAULT_PLAYER_STATS, ...(playerProfile.stats ?? {}) };
@@ -79,8 +111,14 @@ function applyPlayerStatDeltas(playerProfile: PlayerProfile, update: ProgressUpd
 
 function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | null, targetId?: string | null) {
   if (!update) return false;
-  applyProgressUpdate(ctx.state.statusData, update, targetId ?? ctx.state.statusData.activeTargetId);
-  const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, update);
+  const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary);
+  applyProgressUpdate(
+    ctx.state.statusData,
+    sanitized,
+    targetId ?? ctx.state.statusData.activeTargetId,
+    ctx.state.plotLibrary,
+  );
+  const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, sanitized);
   ctx.adapter.save(ctx.state.statusData);
   return statsChanged || true;
 }
@@ -199,6 +237,7 @@ export async function submitMessage(
                 role: 'system',
                 content: buildPrompt(state.statusData, promptHistory, '', ctx.summaryStore, {
                   playerProfile: state.playerProfile,
+                  plotLibrary: state.plotLibrary,
                   skipProgress: !!ctx.summaryApiConfig,
                   suppressPhoneMessageContent: Boolean(phoneDirective),
                   phoneMessageTargetName: phoneDirective?.target.name,
@@ -214,6 +253,7 @@ export async function submitMessage(
             ...baseConfig,
             user_input: buildPrompt(state.statusData, promptHistory, userInput, ctx.summaryStore, {
               playerProfile: state.playerProfile,
+              plotLibrary: state.plotLibrary,
               skipProgress: !!ctx.summaryApiConfig,
               suppressPhoneMessageContent: Boolean(phoneDirective),
               phoneMessageTargetName: phoneDirective?.target.name,
@@ -581,6 +621,7 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
       '根据刚刚正文发生的事件，判断你是否会主动发一条手机消息。如果事件与你有关、你有话想说、或者你有理由关心，就生成这条消息；如果事件和你无关、你没有理由主动联系、或者当前情境不适合发消息，就只输出 <message></message> 表示不发送。不要为了发消息而发消息。',
     summaryStore: ctx.summaryStore,
     playerProfile: state.playerProfile,
+    plotLibrary: state.plotLibrary,
     skipProgress: true,
     triggerEvent: latestEvent.text,
   });
@@ -675,6 +716,7 @@ async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: Phon
         userInput,
         summaryStore: ctx.summaryStore,
         playerProfile: state.playerProfile,
+        plotLibrary: state.plotLibrary,
         skipProgress: true,
       });
       const generationId = `phone-directive-${crypto.randomUUID()}`;
@@ -848,6 +890,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
         userInput,
         summaryStore: ctx.summaryStore,
         playerProfile: state.playerProfile,
+        plotLibrary: state.plotLibrary,
         skipProgress: true,
       });
 

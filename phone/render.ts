@@ -688,7 +688,7 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
   `;
 }
 
-function renderPhoneRoute(state: AppState, flipDir: string, renderers: PhoneRenderers) {
+function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:messages') return renderMessagesPhonePage(state);
   if (state.phoneRoute === 'app:chat') return renderPhoneChatPage(state);
   if (state.phoneRoute === 'app:calendar') return renderCalendarPhonePage(state);
@@ -700,7 +700,7 @@ function renderPhoneRoute(state: AppState, flipDir: string, renderers: PhoneRend
   return renderPhoneHome(state);
 }
 
-export function renderPhone(state: AppState, renderers: PhoneRenderers, flipDir: string = '') {
+export function renderPhone(state: AppState, renderers: PhoneRenderers) {
   const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
   return `
     <div class="phone-modal ${state.phoneOpen ? 'is-open' : ''}" aria-hidden="${state.phoneOpen ? 'false' : 'true'}">
@@ -721,7 +721,7 @@ export function renderPhone(state: AppState, renderers: PhoneRenderers, flipDir:
 
           ${renderPhoneNotification(state.notification)}
           <div class="phone-screen">
-            ${renderPhoneRoute(state, flipDir, renderers)}
+            ${renderPhoneRoute(state, renderers)}
           </div>
         </div>
       </section>
