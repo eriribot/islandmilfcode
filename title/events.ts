@@ -83,8 +83,8 @@ export function bindTitleHomeEvents(root: HTMLElement | null, cb: TitleCallbacks
   });
 
   root?.querySelector<HTMLButtonElement>('[data-action="show-saves"]')?.addEventListener('click', event => {
-    const button = event.currentTarget;
-    if (button.disabled) return;
+    const button = event.currentTarget as HTMLButtonElement | null;
+    if (!button || button.disabled) return;
     cb.showSaves();
   });
 
@@ -129,7 +129,7 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
     const characterName = (fd.get('characterName') as string)?.trim();
     if (!characterName) return;
 
-    const difficulty = (fd.get('difficulty') as Difficulty) || 'normal';
+    const difficulty = normalizeDifficulty(fd.get('difficulty'));
     const config = DIFFICULTY_CONFIG[difficulty] ?? DIFFICULTY_CONFIG.normal;
     const stats: PlayerStats = {
       knowledge: readStatValue(fd, 'knowledge'),
@@ -163,6 +163,10 @@ const STAT_KEYS = ['knowledge', 'charm', 'proficiency', 'kindness', 'courage'] a
 const STAT_STEP = 10;
 type DifficultyConfig = (typeof DIFFICULTY_CONFIG)[Difficulty];
 
+function normalizeDifficulty(value: FormDataEntryValue | null): Difficulty {
+  return value === 'easy' || value === 'hard' || value === 'normal' ? value : 'normal';
+}
+
 function clampStatValue(value: number, config: DifficultyConfig) {
   return Math.min(config.max, Math.max(config.min, Number.isFinite(value) ? Math.floor(value) : config.default));
 }
@@ -194,9 +198,9 @@ function bindStatAllocatorEvents(root: HTMLElement | null) {
   const container = root.querySelector<HTMLElement>('.gal-stat-allocator');
   if (!container) return;
 
-  function getConfig(): (typeof DIFFICULTY_CONFIG)['normal'] {
+  function getConfig(): DifficultyConfig {
     const selected = root!.querySelector<HTMLInputElement>('input[name="difficulty"]:checked');
-    const key = (selected?.value ?? 'normal') as Difficulty;
+    const key = normalizeDifficulty(selected?.value ?? null);
     return DIFFICULTY_CONFIG[key];
   }
 
