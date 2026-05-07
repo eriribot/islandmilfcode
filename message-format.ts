@@ -493,8 +493,10 @@ function buildSummaryContextInline(store: SummaryStore): string {
   return parts.join('\n\n');
 }
 
+// 只识别"明确要求跨时段/跨日推进"的强信号。
+// 模糊的时段词(下午/晚上/傍晚/清晨 等)和"N点"不再触发 intent,避免正文没推时间却被逼着输出一个时间字段。
 const TIME_ADVANCE_INTENT_REGEX =
-  /(推进到|跳到|快进到|时间推进|时间跳到|到了?\s*\d|次日|翌日|第二天|第二日|明天|后天|\d+\s*天后|\d+\s*天之后|\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}\s*点|清晨|早晨|早上|上午|中午|午休|下午|放学后|傍晚|夜晚|晚上|深夜|凌晨)/;
+  /(推进到|跳到|快进到|时间推进|时间跳到|次日|翌日|第二天|第二日|明天|后天|\d+\s*天后|\d+\s*天之后|\d+\s*小时后|\d+\s*小时之后|\d{1,2}\s*月\s*\d{1,2}\s*日)/;
 
 export function detectTimeAdvanceIntent(userInput: string): boolean {
   if (!userInput) return false;
@@ -585,7 +587,7 @@ export function buildPrompt(
     parts.push(buildProgressInstruction(statusData));
     if (detectTimeAdvanceIntent(userInput)) {
       parts.push(
-        '玩家当前输入明确要求推进时间。你必须在 <progress> 中输出完整的 `时间:YYYY-MM-DD HH:mm` 字段（HH:mm 由你根据剧情合理判断）。禁止使用 `4月16日` 或缺时分的格式。',
+        '玩家当前输入要求推进时间。如果你的正文确实描写了时间流逝或场景切换到新时段，请在 <progress> 中输出完整的 `时间:YYYY-MM-DD HH:mm`（HH:mm 由你根据剧情合理判断）。如果正文实际上没有推进时间（例如只是对话中提到了时间词），则不要输出时间字段。禁止使用 `4月16日` 或缺时分的格式。',
       );
     }
   } else {
@@ -659,7 +661,7 @@ export function buildPhoneChatPrompt(input: {
     parts.push(buildProgressInstruction(statusData, target));
     if (detectTimeAdvanceIntent(userInput)) {
       parts.push(
-        '玩家当前输入明确要求推进时间。你必须在 <progress> 中输出完整的 `时间:YYYY-MM-DD HH:mm`（HH:mm 由你根据剧情合理判断）。禁止使用 `4月16日` 或缺时分的格式。',
+        '玩家当前输入要求推进时间。如果手机聊天内容确实推进了时间，请在 <progress> 中输出完整的 `时间:YYYY-MM-DD HH:mm`（HH:mm 由你根据剧情合理判断）。如果只是聊天提及时间词、并未真的让剧情时间向前走，则不要输出时间字段。禁止使用 `4月16日` 或缺时分的格式。',
       );
     }
   }
@@ -688,7 +690,7 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     'Always evaluate affinity after a long scene. In multi-character scenes, evaluate every present character who clearly reacts to User.',
     '普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。只有角色不在场、完全无互动、或关系没有变化时才省略该角色好感度。',
     'Available fields:',
-    '  时间:YYYY-MM-DD HH:mm   — 当正文描写时间流逝、进入次日/深夜，或玩家要求推进时间时，必须输出完整 YYYY-MM-DD HH:mm。禁止使用 `4月16日`、`2012-04-16`（缺 HH:mm）、`明天` 这种非完整格式。',
+    '  时间:YYYY-MM-DD HH:mm   — 仅当正文确实描写了时间流逝（进入次日/深夜，或明确跨过一个时段）时才输出，必须完整 YYYY-MM-DD HH:mm。正文未真正推进时间时整行省略；禁止使用 `4月16日`、`2012-04-16`（缺 HH:mm）、`明天` 这种非完整格式，也禁止仅凭玩家输入里的时间词就自行补一个新时间。',
     '  地点:new_location      — Update if characters moved to a new location',
     '  好感度:±N              — Legacy affinity change for the current target only (single-target scene only)',
     '  好感度.角色名或id:±N    — Targeted affinity change (e.g. 好感度.霞之丘诗羽:+2；好感度.英梨梨:-1)',
@@ -767,7 +769,7 @@ export function buildProgressPrompt(
 
   const recentUserMessage = [...recentMessages].reverse().find(m => m.role === 'user');
   const timeIntentNote = recentUserMessage && detectTimeAdvanceIntent(recentUserMessage.text)
-    ? '玩家最近输入明确要求推进时间，必须输出完整 `时间:YYYY-MM-DD HH:mm` 字段。'
+    ? '玩家最近输入提到推进时间。以正文实际描写为准：只有当对话正文确实跨过了一个时段或日期时，才输出完整 `时间:YYYY-MM-DD HH:mm` 字段；正文没有真正推进时间时，整行省略，禁止凭玩家输入里的时间词自行补齐一个新时间。'
     : '';
 
   const formatted = recentMessages

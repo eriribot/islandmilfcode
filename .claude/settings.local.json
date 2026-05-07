@@ -8,7 +8,12 @@
       "PowerShell(Get-ChildItem -Path \"E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\" -Recurse -Directory | Select-Object -First 20 | ForEach-Object { $_.FullName })",
       "Read(//d/card/tavern_helper_template-main/**)",
       "Bash(xargs wc *)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(Get-ChildItem -Path \"E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\" -Recurse -File)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Read(//e/web/tavern_helper_template-main/**)",
+      "Bash(pnpm -s tsc --noEmit -p src/islandmilfcode)",
+      "Bash(pnpm -s tsc --noEmit)"
     ]
   }
 }
