@@ -15,7 +15,7 @@ import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import { getActiveTarget } from '../types';
 import type { PhoneChatMessage, PhoneProactiveState, PlayerProfile, PlayerStats, PlotLibrary, TargetStatus } from '../types';
 import type { VariableAdapter } from '../variables/adapter';
-import { affinityStage, applyProgressUpdate, clamp, formatTime } from '../variables/normalize';
+import { affinityStage, applyProgressUpdate, clamp, formatTime, syncMainEvents } from '../variables/normalize';
 import {
   discardStreamingMessage,
   ensureStreamingMessage,
@@ -390,6 +390,17 @@ export async function submitMessage(
     }
   }
   const eventBeforeGeneration = getLatestRecentEvent(ctx)?.key ?? null;
+
+  // 生成前基于当前时间/地点刷新事件状态。即使上一轮 AI 没输出状态增量,
+  // 只要时间/地点已经对齐某个未触发事件,这里也能自动标记进行中,
+  // 避免出现"日期已到但事件不触发"的问题。
+  if (syncMainEvents(state.statusData, state.plotLibrary)) {
+    ctx.adapter.save(state.statusData);
+    recordGenerationDebug(ctx, 'submit:pre-sync-main-events', {
+      currentMainEventId: state.statusData.world.currentMainEventId,
+    });
+  }
+
   if (!hasTavernGenerate) {
     await simulateGeneration(ctx, userInput);
     if (options.clearDraftOnSuccess) {

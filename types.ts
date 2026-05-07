@@ -162,10 +162,20 @@ export type PlotEventCard = {
   sourceEntryName: string;
 };
 
+export type VolumeWritingProtocol = {
+  作品调性?: string[];
+  叙事风格?: string[];
+  对白原则?: string[];
+  场景原则?: string[];
+};
+
 export type PlotLibrary = {
   events: Record<string, PlotEventCard>;
   sourceEntryNames: string[];
   loadedAt: number;
+  // 卷级写作协议:key 是卷 ID,value 是该卷的写作指导。
+  // 当 currentEvent.volumeId 命中时,会被注入到 prompt 里作为文风锚点。
+  writingProtocols?: Record<string, VolumeWritingProtocol>;
 };
 
 export type StatusData = {

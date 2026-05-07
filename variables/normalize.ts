@@ -192,6 +192,28 @@ function compareDate(a: string, b: string) {
   return a.localeCompare(b);
 }
 
+function locationMatchesEvent(currentLocation: string, eventLocation: string): boolean {
+  if (!eventLocation) return true;
+  const cur = currentLocation.trim();
+  const loc = eventLocation.trim();
+  if (!cur || !loc) return false;
+  // 双向 includes:覆盖 AI 把地点写得更详细或更笼统两种情况
+  if (cur.includes(loc) || loc.includes(cur)) return true;
+  // 分段匹配:按常见分隔符拆开,任一长度 >= 2 的段匹配上就算命中
+  // 例:事件 "丰之崎学园视听教室" 可命中 currentLocation "丰之崎学园"
+  // 例:事件 "美术教室 / 走廊" 可命中 currentLocation "走廊"
+  const splitter = /[\/·、，,；;\s]+/;
+  const locParts = loc.split(splitter).filter(p => p.length >= 2);
+  const curParts = cur.split(splitter).filter(p => p.length >= 2);
+  for (const lp of locParts) {
+    if (cur.includes(lp)) return true;
+    for (const cp of curParts) {
+      if (lp.includes(cp) || cp.includes(lp)) return true;
+    }
+  }
+  return false;
+}
+
 function eventMatchesCurrentState(
   event: ScheduledEvent,
   currentDate: string,
@@ -200,7 +222,8 @@ function eventMatchesCurrentState(
 ) {
   if (currentDate !== event.date) return false;
   const timeMatches = !event.timeSegments.length || event.timeSegments.includes(currentSegment);
-  const locationMatches = !event.locations.length || event.locations.some(location => currentLocation.includes(location));
+  const locationMatches =
+    !event.locations.length || event.locations.some(location => locationMatchesEvent(currentLocation, location));
   return timeMatches && locationMatches;
 }
 

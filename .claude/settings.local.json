@@ -6,7 +6,9 @@
       "Read(//d/card/tavern_helper_template-main/tavern_helper_template-main/**)",
       "Bash(npx tsc *)",
       "PowerShell(Get-ChildItem -Path \"E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\" -Recurse -Directory | Select-Object -First 20 | ForEach-Object { $_.FullName })",
-      "Read(//d/card/tavern_helper_template-main/**)"
+      "Read(//d/card/tavern_helper_template-main/**)",
+      "Bash(xargs wc *)",
+      "Bash(echo \"EXIT=$?\")"
     ]
   }
 }

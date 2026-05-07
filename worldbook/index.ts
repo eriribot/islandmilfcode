@@ -1,4 +1,4 @@
-import type { PlotEventCard, PlotEventSchedule, PlotLibrary, StatusData, TargetStatus, TavernWindow, WorldbookEntry } from '../types';
+import type { PlotEventCard, PlotEventSchedule, PlotLibrary, StatusData, TargetStatus, TavernWindow, VolumeWritingProtocol, WorldbookEntry } from '../types';
 import { affinityStage, defaultTarget } from '../variables/normalize';
 
 const TARGET_KIND = 'islandmilfcode.target';
@@ -189,6 +189,45 @@ function parsePlotEventsFromJson(raw: Record<string, unknown>, entry: WorldbookE
   return single ? [single] : [];
 }
 
+// 从一个 plot_volume 条目的 JSON 里提取写作协议。
+// 兼容两种写法:写作协议:{对白原则:[...]} 直接挂在顶层,或者嵌套在 metadata 子键下。
+function parseVolumeWritingProtocol(
+  raw: Record<string, unknown>,
+): { volumeId: string; protocol: VolumeWritingProtocol } | null {
+  const volumeId = getStringField(raw, ['volumeId', 'volume_id', 'id']);
+  if (!volumeId) return null;
+
+  const protoRaw =
+    (raw['写作协议'] && typeof raw['写作协议'] === 'object' ? (raw['写作协议'] as Record<string, unknown>) : null) ??
+    (raw['writingProtocol'] && typeof raw['writingProtocol'] === 'object'
+      ? (raw['writingProtocol'] as Record<string, unknown>)
+      : null);
+  if (!protoRaw) return null;
+
+  const pickArr = (key: string): string[] | undefined => {
+    const v = protoRaw[key];
+    if (Array.isArray(v)) {
+      const items = v.map(x => String(x ?? '').trim()).filter(Boolean);
+      return items.length ? items : undefined;
+    }
+    if (typeof v === 'string' && v.trim()) return [v.trim()];
+    return undefined;
+  };
+
+  const protocol: VolumeWritingProtocol = {
+    作品调性: pickArr('作品调性') ?? pickArr('tone'),
+    叙事风格: pickArr('叙事风格') ?? pickArr('narrativeStyle'),
+    对白原则: pickArr('对白原则') ?? pickArr('dialogueRules'),
+    场景原则: pickArr('场景原则') ?? pickArr('sceneRules'),
+  };
+
+  // 全部为空时不挂
+  if (!protocol.作品调性 && !protocol.叙事风格 && !protocol.对白原则 && !protocol.场景原则) {
+    return null;
+  }
+  return { volumeId, protocol };
+}
+
 function toTitleRecord(raw: Record<string, unknown>): TargetStatus['titles'] {
   return Object.fromEntries(
     Object.entries(raw).map(([name, value]) => {
@@ -237,6 +276,36 @@ function normalizeBuiltInTargetName(name: string, ...texts: string[]) {
   return name;
 }
 
+// 从文本里提取班级信息。优先匹配显式写法"X年Y班"/"X年级Y班",
+// 也支持"初中X年X班"这种前缀。返回规范化字符串如 "2年G班" / "3年F班"。
+function extractClassName(...texts: string[]): string {
+  const haystack = texts.filter(Boolean).join('\n');
+  if (!haystack) return '';
+  // 1. 直接模式:如"2年G班" / "二年级B班" / "3年级F班"
+  const direct = haystack.match(/([一二三四五六七八九十\d]+)\s*年(?:级)?\s*([A-Za-z\d一二三四五六七八九十]+)\s*班/);
+  if (direct) {
+    const year = normalizeChineseNumber(direct[1]);
+    const cls = direct[2].toUpperCase();
+    return `${year}年${cls}班`;
+  }
+  // 2. 早应大学文学系 / XX学部 这种大学/学部模式,直接作为身份保留
+  const dept = haystack.match(/([一-鿿]{2,6}大学[一-鿿]{1,10}(?:系|学部|学科))/);
+  if (dept) return dept[1];
+  return '';
+}
+
+function normalizeChineseNumber(raw: string): string {
+  const map: Record<string, string> = {
+    一: '1', 二: '2', 三: '3', 四: '4', 五: '5',
+    六: '6', 七: '7', 八: '8', 九: '9', 十: '10',
+  };
+  if (/^\d+$/.test(raw)) return raw;
+  if (map[raw]) return map[raw];
+  // 十一 / 十二 → 11 / 12
+  if (raw.startsWith('十') && raw.length === 2) return `1${map[raw[1]] ?? ''}`;
+  return raw;
+}
+
 function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): TargetStatus | null {
   const kind = getStringField(raw, ['kind', 'type']);
   const name = getStringField(raw, ['name', '姓名']);
@@ -247,6 +316,9 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
   const legacyTitles = toTitleRecord(getRecordField(raw, '称号'));
   const outfits = toStringRecord(getRecordField(raw, 'outfits'));
   const legacyOutfits = toStringRecord(getRecordField(raw, '着装'));
+  const explicitClass =
+    getStringField(raw, ['className', 'class', '班级']) ||
+    extractClassName(entry.content, getStringField(raw, ['年龄', 'age']), getStringField(raw, ['身份', 'identity']));
 
   return {
     id: getStringField(raw, ['id']) || createIdFromName(targetName),
@@ -264,6 +336,7 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
       source: 'character-worldbook',
       worldbookEntryUid: entry.uid,
       worldbookEntryName: entry.name,
+      ...(explicitClass ? { className: explicitClass } : {}),
       ...(getTargetAvatarUrl(targetName, entry)
         ? { avatarUrl: getTargetAvatarUrl(targetName, entry) }
         : {}),
@@ -281,6 +354,7 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
   const name = normalizeBuiltInTargetName(rawName, entry.name, entry.content);
   if (!name) return null;
   const alias = getTextField(entry.content, '别名');
+  const className = extractClassName(entry.content);
 
   return {
     id: createIdFromName(name),
@@ -294,6 +368,7 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
       source: 'character-worldbook',
       worldbookEntryUid: entry.uid,
       worldbookEntryName: entry.name,
+      ...(className ? { className } : {}),
       ...(getTargetAvatarUrl(name, entry) ? { avatarUrl: getTargetAvatarUrl(name, entry) } : {}),
     },
   };
@@ -321,25 +396,47 @@ function isPlotCandidateEntry(entry: WorldbookEntry) {
   return /^\s*\[剧情]/.test(entry.name) || /^\s*\[plot]/i.test(entry.name) || entry.content.includes('"事件链"');
 }
 
-function parsePlotEntry(entry: WorldbookEntry): PlotEventCard[] {
-  if (!isPlotCandidateEntry(entry)) return [];
+function parsePlotEntry(entry: WorldbookEntry): {
+  events: PlotEventCard[];
+  protocols: Array<{ volumeId: string; protocol: VolumeWritingProtocol }>;
+} {
+  if (!isPlotCandidateEntry(entry)) return { events: [], protocols: [] };
 
   const extra = entry.extra && typeof entry.extra === 'object' ? parsePlotEventsFromJson(entry.extra, entry) : [];
   const json = safeParseJson(entry.content);
   const content = json ? parsePlotEventsFromJson(json, entry) : [];
-  return [...extra, ...content];
+
+  const protocols: Array<{ volumeId: string; protocol: VolumeWritingProtocol }> = [];
+  if (entry.extra && typeof entry.extra === 'object') {
+    const proto = parseVolumeWritingProtocol(entry.extra as Record<string, unknown>);
+    if (proto) protocols.push(proto);
+  }
+  if (json) {
+    const proto = parseVolumeWritingProtocol(json);
+    if (proto) protocols.push(proto);
+  }
+  return { events: [...extra, ...content], protocols };
 }
 
-function createPlotLibrary(events: PlotEventCard[]): PlotLibrary {
+function createPlotLibrary(
+  events: PlotEventCard[],
+  protocols: Array<{ volumeId: string; protocol: VolumeWritingProtocol }> = [],
+): PlotLibrary {
   const byId = new Map<string, PlotEventCard>();
   for (const event of events) {
     byId.set(event.id, event);
+  }
+
+  const writingProtocols: Record<string, VolumeWritingProtocol> = {};
+  for (const { volumeId, protocol } of protocols) {
+    writingProtocols[volumeId] = protocol;
   }
 
   return {
     events: Object.fromEntries(byId),
     sourceEntryNames: Array.from(new Set(events.map(event => event.sourceEntryName))),
     loadedAt: Date.now(),
+    ...(Object.keys(writingProtocols).length ? { writingProtocols } : {}),
   };
 }
 
@@ -357,6 +454,7 @@ export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
   const names = getCurrentCharacterWorldbookNames(win);
   const targets: TargetStatus[] = [];
   const plotEvents: PlotEventCard[] = [];
+  const plotProtocols: Array<{ volumeId: string; protocol: VolumeWritingProtocol }> = [];
 
   for (const name of names) {
     try {
@@ -366,7 +464,9 @@ export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
         if (target) {
           targets.push(target);
         }
-        plotEvents.push(...parsePlotEntry(entry));
+        const plotResult = parsePlotEntry(entry);
+        plotEvents.push(...plotResult.events);
+        plotProtocols.push(...plotResult.protocols);
       }
     } catch {
       // 某个绑定世界书读取失败时，跳过它，不影响其他世界书。
@@ -379,7 +479,7 @@ export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
   }
   return {
     targets: Array.from(byId.values()),
-    plotLibrary: createPlotLibrary(plotEvents),
+    plotLibrary: createPlotLibrary(plotEvents, plotProtocols),
   };
 }
 

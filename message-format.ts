@@ -22,11 +22,15 @@ export const FALLBACK_VISIBLE_TAGS = ['正文', 'context'];
 const META_SUBTAG_NAMES = [
   'tucao',
   'progress',
+  'state_delta',
   'current_event',
   'roleplay_options',
   'konatan_planning',
+  'konatan_chat',
   'thinking',
   'think',
+  'options',
+  'story_progress',
 ];
 
 function stripMetaSubtags(text: string) {
@@ -244,6 +248,98 @@ function pickNextUpcomingEvent(statusData: StatusData, plotLibrary: PlotLibrary)
   return candidates[0] ?? null;
 }
 
+// 把事件卡 JSON 压缩成给 AI 写正文用的精简版本。
+// 砍掉:触发控制 / 结束控制 / 触发变量 / User介入参考 / 关键情节的 id 数组 — 这些是事件系统的元数据,AI 不需要。
+// 保留:标题 / 阶段摘要 / 阶段背景 / 关键人物 / 场景修饰(前2) / 人物状态(认知+心态+对白气质) / 叙事重点(前3)。
+function compressPlotCardContent(rawContent: string): string {
+  if (!rawContent) return '';
+  let parsed: Record<string, unknown> | null = null;
+  try {
+    const obj = JSON.parse(rawContent);
+    if (obj && typeof obj === 'object' && !Array.isArray(obj)) parsed = obj as Record<string, unknown>;
+  } catch {
+    // 不是 JSON,原样返回(可能是手写的纯文本剧情卡)
+    return rawContent;
+  }
+  if (!parsed) return rawContent;
+
+  const lines: string[] = [];
+  const pushIf = (label: string, value: unknown, max?: number) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      const items = value
+        .map(v => String(v ?? '').trim())
+        .filter(Boolean)
+        .slice(0, max ?? 999);
+      if (items.length) lines.push(`${label}:`, ...items.map(s => `  - ${s}`));
+    } else if (typeof value === 'string' && value.trim()) {
+      lines.push(`${label}: ${value.trim()}`);
+    }
+  };
+
+  pushIf('阶段摘要', parsed['阶段摘要'] ?? parsed['summary']);
+  pushIf('阶段背景', parsed['阶段背景'], 3);
+  pushIf('关键人物', parsed['关键人物']);
+  pushIf('关键地点', parsed['关键地点']);
+  pushIf('场景修饰', parsed['场景修饰'], 2);
+
+  // 人物状态:每个人保留 认知(前2) + 心态 + 对白气质
+  const charState = parsed['人物状态'];
+  if (charState && typeof charState === 'object' && !Array.isArray(charState)) {
+    lines.push('人物状态:');
+    for (const [name, raw] of Object.entries(charState as Record<string, unknown>)) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+      const detail = raw as Record<string, unknown>;
+      lines.push(`  ${name}:`);
+      const cog = detail['认知'];
+      if (Array.isArray(cog) && cog.length) {
+        const top = cog.slice(0, 2).map(c => String(c ?? '').trim()).filter(Boolean);
+        if (top.length) lines.push(`    认知: ${top.join('; ')}`);
+      }
+      if (detail['心态']) lines.push(`    心态: ${String(detail['心态']).trim()}`);
+      if (detail['对白气质']) lines.push(`    对白气质: ${String(detail['对白气质']).trim()}`);
+    }
+  }
+
+  // 关键情节:只取描述,不传 id 数组
+  const plot = parsed['关键情节'];
+  if (Array.isArray(plot) && plot.length) {
+    const descs = plot
+      .map(p => (p && typeof p === 'object' ? String((p as Record<string, unknown>)['描述'] ?? '').trim() : ''))
+      .filter(Boolean);
+    if (descs.length) {
+      lines.push('关键情节流向:');
+      for (const d of descs) lines.push(`  - ${d}`);
+    }
+  }
+
+  pushIf('叙事重点', parsed['叙事重点'], 3);
+
+  return lines.join('\n');
+}
+
+// 把卷级写作协议压缩成 prompt 友好的几行。每类只取前 2 条,避免重复堆叠。
+function buildVolumeWritingProtocol(
+  plotLibrary: PlotLibrary | null | undefined,
+  volumeId: string | undefined,
+): string {
+  if (!plotLibrary?.writingProtocols || !volumeId) return '';
+  const proto = plotLibrary.writingProtocols[volumeId];
+  if (!proto) return '';
+  const sections: string[] = [];
+  const pickTop = (label: string, items?: string[]) => {
+    if (!items?.length) return;
+    const top = items.slice(0, 2);
+    sections.push(`${label}: ${top.join(' / ')}`);
+  };
+  pickTop('作品调性', proto.作品调性);
+  pickTop('叙事风格', proto.叙事风格);
+  pickTop('对白原则', proto.对白原则);
+  pickTop('场景原则', proto.场景原则);
+  if (!sections.length) return '';
+  return ['本卷写作协议(优先级高于通用文风指令):', ...sections.map(s => `- ${s}`)].join('\n');
+}
+
 function buildCurrentPlotContext(statusData: StatusData, plotLibrary?: PlotLibrary | null) {
   if (!plotLibrary || !Object.keys(plotLibrary.events).length) return '';
   const whitelist = buildPlotWhitelist(plotLibrary);
@@ -300,10 +396,12 @@ function buildCurrentPlotContext(statusData: StatusData, plotLibrary?: PlotLibra
     previous.length ? previous.join('\n') : '',
     next.length ? next.join('\n') : '',
     '',
-    '剧情卡内容：',
-    currentEvent.content,
+    buildVolumeWritingProtocol(plotLibrary, currentEvent.volumeId),
     '',
-    '使用规则：只把当前剧情卡作为本轮场景参考；前置和后续只用于衔接判断，不要提前演出后续事件。若 User 行动使当前事件无法自然继续，请在 <progress> 中把当前事件标记为 跳过 或 延后，并给出可接回的近期事件记录。',
+    '剧情卡内容：',
+    compressPlotCardContent(currentEvent.content),
+    '',
+    '使用规则：只把当前剧情卡作为本轮场景参考；前置和后续只用于衔接判断，不要提前演出后续事件。若 User 行动使当前事件无法自然继续，请在 <state_delta> 中把当前事件标记为 跳过 或 延后，并给出可接回的近期事件记录。',
     '',
     whitelist,
   ]
@@ -357,7 +455,9 @@ function buildTargetStateList(statusData: StatusData) {
         .map(value => String(value ?? '').trim())
         .filter(Boolean)
         .join('、');
-      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}；好感度=${target.affinity}（${target.stage}）`;
+      const className = String(target.meta?.className ?? '').trim();
+      const classSegment = className ? `；班级/身份=${className}` : '';
+      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度=${target.affinity}（${target.stage}）`;
     })
     .join('\n');
 }
@@ -488,6 +588,9 @@ export function buildPrompt(
         '玩家当前输入明确要求推进时间。你必须在 <progress> 中输出完整的 `时间:YYYY-MM-DD HH:mm` 字段（HH:mm 由你根据剧情合理判断）。禁止使用 `4月16日` 或缺时分的格式。',
       );
     }
+  } else {
+    // 有副 API 时仍追加轻量 state_delta 请求,作为副 API 失败时的兜底
+    parts.push(buildStateDeltaInstruction(statusData));
   }
 
   return parts.filter(Boolean).join('\n');
@@ -620,6 +723,29 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     `  可更新角色列表:\n${targetList}`,
     `  着装: ${outfitList || '无'}`,
     `  物品: ${inventoryList}`,
+  ].join('\n');
+}
+
+function buildStateDeltaInstruction(statusData: StatusData): string {
+  const target = getActiveTarget(statusData);
+  const targetList = buildTargetStateList(statusData);
+  return [
+    '',
+    '在你按预设规则输出完所有内容后,在消息最末尾追加一个 <state_delta> 块(独立于预设要求的任何标签):',
+    '<state_delta>',
+    '时间:YYYY-MM-DD HH:mm',
+    '地点:当前所处具体地点',
+    '好感度.角色名:±N',
+    '五维.能力名:±N',
+    '主线事件.事件ID:状态',
+    '当前事件:事件ID',
+    '</state_delta>',
+    '只输出变化字段,未变化的整行省略。此块仅机器读取,与预设要求的任何标签互不影响。',
+    `当前时间: ${statusData.world.currentTime}`,
+    `当前地点: ${statusData.world.currentLocation}`,
+    `当前事件: ${statusData.world.currentMainEventId || '无'}`,
+    `当前目标好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+    `可更新角色:\n${targetList}`,
   ].join('\n');
 }
 
@@ -769,11 +895,8 @@ export type ProgressUpdate = {
   itemsLost: string[];
 };
 
-export function parseProgressUpdate(rawResponse: string): ProgressUpdate | null {
-  const tagged = extractTaggedReply(rawResponse, 'progress', false);
-  if (!tagged) return null;
-
-  const result: ProgressUpdate = {
+function createEmptyProgressUpdate(): ProgressUpdate {
+  return {
     affinityDeltas: [],
     events: {},
     mainEvents: {},
@@ -782,9 +905,72 @@ export function parseProgressUpdate(rawResponse: string): ProgressUpdate | null 
     itemsGained: [],
     itemsLost: [],
   };
+}
+
+// 小此预设输出的 <progress> 格式特征:PG.1 / 时间推进:A → B / 主线任务进度:xxx / 概括:xxx
+// 这种格式如果用我们原来的通用 parser 会把 PG.1 / 时间推进 / 概括 全部塞进 events,污染 recentEvents
+function isKonatanProgressFormat(body: string): boolean {
+  if (/^\s*PG\.?\s*\d/mi.test(body)) return true;
+  if (/时间推进\s*[:：][^\n]*[→>]/.test(body)) return true;
+  if (/主线任务进度\s*[:：]/.test(body)) return true;
+  return false;
+}
+
+// 从小此格式里抢救能提取的字段:时间、地点、事件ID、概括作为 recentEvent 描述
+function parseKonatanFallback(body: string): ProgressUpdate | null {
+  const result = createEmptyProgressUpdate();
   let hasAnyField = false;
 
-  for (const line of tagged.split('\n')) {
+  // 时间推进:A → B → 抽 B;退而求其次抽 A
+  const timeAdvance = body.match(/时间推进\s*[:：]\s*([^\n]+)/);
+  if (timeAdvance) {
+    const raw = timeAdvance[1].trim();
+    const arrowMatch = raw.match(/[→>]\s*(.+)$/);
+    const value = (arrowMatch ? arrowMatch[1] : raw).trim();
+    if (value) {
+      result.time = value;
+      hasAnyField = true;
+    }
+  }
+
+  // 地点:xxx
+  const loc = body.match(/(?:^|\n)\s*地点\s*[:：]\s*([^\n]+)/);
+  if (loc) {
+    result.location = loc[1].trim();
+    hasAnyField = true;
+  }
+
+  // 主线任务进度里抽事件 ID(SAE_01-4 这种)
+  const taskProg = body.match(/主线任务进度\s*[:：]\s*([^\n]+)/);
+  if (taskProg) {
+    const eventId = taskProg[1].match(/[A-Z]+_\d+[-_]?\d+[A-Za-z]*/)?.[0];
+    if (eventId) {
+      result.currentMainEventId = eventId;
+      result.mainEvents[eventId] = '进行中';
+      hasAnyField = true;
+    }
+  }
+
+  // 事件:xxx 和 概括:xxx → 作为 recentEvents 描述
+  const eventDesc = body.match(/(?:^|\n)\s*事件\s*[:：]\s*([^\n]+)/);
+  if (eventDesc) {
+    result.events['本轮事件'] = eventDesc[1].trim();
+    hasAnyField = true;
+  }
+  const summary = body.match(/概括\s*[:：]\s*([^\n]+)/);
+  if (summary) {
+    result.events['本轮剧情'] = summary[1].trim();
+    hasAnyField = true;
+  }
+
+  return hasAnyField ? result : null;
+}
+
+function parseStateBody(body: string): ProgressUpdate | null {
+  const result = createEmptyProgressUpdate();
+  let hasAnyField = false;
+
+  for (const line of body.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
@@ -902,4 +1088,26 @@ export function parseProgressUpdate(rawResponse: string): ProgressUpdate | null 
   }
 
   return hasAnyField ? result : null;
+}
+
+export function parseProgressUpdate(rawResponse: string): ProgressUpdate | null {
+  // 优先级 1:新格式 <state_delta>(我们自己的标签,不与任何预设冲突)
+  const stateDelta = extractTaggedReply(rawResponse, 'state_delta', false);
+  if (stateDelta) {
+    const parsed = parseStateBody(stateDelta);
+    if (parsed) return parsed;
+  }
+
+  // 优先级 2:传统 <progress> 标签,但要检测格式来源
+  const tagged = extractTaggedReply(rawResponse, 'progress', false);
+  if (!tagged) return null;
+
+  // 小此预设格式 → 走 fallback 只抢救时间/地点/事件,不做字段误映射
+  if (isKonatanProgressFormat(tagged)) {
+    console.warn('[progress] detected preset-specific progress format, using fallback parser');
+    return parseKonatanFallback(tagged);
+  }
+
+  // 标准格式 → 正常解析
+  return parseStateBody(tagged);
 }
