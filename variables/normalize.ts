@@ -54,6 +54,117 @@ function getMinutesPart(value: string) {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
+function getHHmmPart(value: string): string {
+  const match = value.match(/\b(\d{2}):(\d{2})\b/);
+  return match ? `${match[1]}:${match[2]}` : '';
+}
+
+function pad2(n: number) {
+  return String(n).padStart(2, '0');
+}
+
+function addDays(dateStr: string, days: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return dateStr;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+}
+
+function extractClockFromChinese(value: string): string {
+  const explicit = value.match(/(上午|下午|晚上|凌晨)?\s*(\d{1,2})\s*[:：点]\s*(\d{1,2})?/);
+  if (explicit) {
+    const ampm = explicit[1] ?? '';
+    let hour = Number(explicit[2]);
+    const minute = explicit[3] ? Number(explicit[3]) : 0;
+    if ((ampm === '下午' || ampm === '晚上') && hour < 12) hour += 12;
+    if (ampm === '凌晨' && hour === 12) hour = 0;
+    if (hour >= 0 && hour < 24 && minute >= 0 && minute < 60) {
+      return `${pad2(hour)}:${pad2(minute)}`;
+    }
+  }
+  if (/清晨|早晨|早上/.test(value)) return '07:00';
+  if (/上午/.test(value)) return '10:00';
+  if (/中午|午休/.test(value)) return '12:30';
+  if (/下午|放学后/.test(value)) return '15:30';
+  if (/傍晚/.test(value)) return '18:00';
+  if (/夜晚|晚上/.test(value)) return '20:30';
+  if (/深夜/.test(value)) return '23:30';
+  if (/凌晨/.test(value)) return '03:00';
+  return '';
+}
+
+/**
+ * 规范化 AI 输出的时间字段。支持多种非标格式的容错：
+ * - 完整 YYYY-MM-DD HH:mm → 直接返回
+ * - 仅日期 YYYY-MM-DD → 沿用 currentTime 的 HH:mm
+ * - 中文日期 "4月16日" / "2012年4月16日" → 取年份自 currentTime，尝试解析尾部时分描述
+ * - 相对描述 "次日 / 翌日 / 第二天" → 基于 currentTime +1 天
+ * - 全部失败 → 返回 currentTime 保底，不破坏下游 getDatePart 依赖
+ */
+export function normalizeIncomingTime(raw: string, currentTime: string): string {
+  const value = String(raw ?? '').trim();
+  if (!value) return currentTime;
+
+  // 完整格式
+  const fullMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})[\sT]+(\d{1,2}):(\d{2})$/);
+  if (fullMatch) {
+    const hh = pad2(Number(fullMatch[4]));
+    const mm = fullMatch[5];
+    return `${fullMatch[1]}-${fullMatch[2]}-${fullMatch[3]} ${hh}:${mm}`;
+  }
+
+  const currentDate = getDatePart(currentTime);
+  const currentHHmm = getHHmmPart(currentTime) || '09:00';
+  const currentYear = currentDate ? currentDate.slice(0, 4) : '';
+
+  // 仅 YYYY-MM-DD
+  const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    return `${dateOnly[1]}-${dateOnly[2]}-${dateOnly[3]} ${currentHHmm}`;
+  }
+
+  // 相对描述
+  if (/(次日|翌日|第二天|第二日|明天)/.test(value)) {
+    const nextDate = currentDate ? addDays(currentDate, 1) : currentDate;
+    const clock = extractClockFromChinese(value) || currentHHmm;
+    return nextDate ? `${nextDate} ${clock}` : currentTime;
+  }
+  if (/(后天)/.test(value)) {
+    const nextDate = currentDate ? addDays(currentDate, 2) : currentDate;
+    const clock = extractClockFromChinese(value) || currentHHmm;
+    return nextDate ? `${nextDate} ${clock}` : currentTime;
+  }
+  const daysLater = value.match(/(\d+)\s*天(?:后|之后|以后)/);
+  if (daysLater && currentDate) {
+    const nextDate = addDays(currentDate, Number(daysLater[1]));
+    const clock = extractClockFromChinese(value) || currentHHmm;
+    return `${nextDate} ${clock}`;
+  }
+
+  // 中文日期：YYYY年M月D日 或 M月D日
+  const cnFull = value.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  const cnShort = value.match(/(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+  let datePart = '';
+  if (cnFull) {
+    datePart = `${cnFull[1]}-${pad2(Number(cnFull[2]))}-${pad2(Number(cnFull[3]))}`;
+  } else if (cnShort && currentYear) {
+    datePart = `${currentYear}-${pad2(Number(cnShort[1]))}-${pad2(Number(cnShort[2]))}`;
+  }
+  if (datePart) {
+    const clock = extractClockFromChinese(value) || currentHHmm;
+    return `${datePart} ${clock}`;
+  }
+
+  // 纯时分描述，更新当天时间
+  const clockOnly = extractClockFromChinese(value);
+  if (clockOnly && currentDate) {
+    return `${currentDate} ${clockOnly}`;
+  }
+
+  return currentTime;
+}
+
 function getTimeSegment(value: string) {
   if (value.includes('清晨')) return '清晨';
   if (value.includes('早晨')) return '早晨';
@@ -213,7 +324,7 @@ export function applyProgressUpdate(
   const schedule = buildSchedule(plotLibrary);
 
   if (update.time) {
-    statusData.world.currentTime = update.time;
+    statusData.world.currentTime = normalizeIncomingTime(update.time, statusData.world.currentTime);
   }
   if (update.location) {
     statusData.world.currentLocation = update.location;

@@ -1,5 +1,6 @@
 import { getRelationshipAddressGuidance, getRelationshipGuidance, getRelationshipMiniPersona } from './relationship';
-import type { SummaryStore } from './summary/types';
+import type { KeyFact, KeyFactCategory, SummaryStore } from './summary/types';
+import { KEY_FACT_CATEGORY_LABEL } from './summary/types';
 import type {
   PhoneChatMessage,
   PlayerProfile,
@@ -348,12 +349,56 @@ function buildPlayerStatsText(playerProfile?: PlayerProfile | null) {
   ].join('\n');
 }
 
+function buildTargetStateList(statusData: StatusData) {
+  if (!statusData.targets.length) return '无';
+  return statusData.targets
+    .map(target => {
+      const aliases = [target.alias, target.meta?.worldbookEntryName]
+        .map(value => String(value ?? '').trim())
+        .filter(Boolean)
+        .join('、');
+      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}；好感度=${target.affinity}（${target.stage}）`;
+    })
+    .join('\n');
+}
+
+function buildPinnedKeyFactsInline(facts: KeyFact[] | undefined): string {
+  if (!facts || !facts.length) return '';
+  const active = facts.filter(f => !f.superseded);
+  if (!active.length) return '';
+  const grouped = new Map<KeyFactCategory, KeyFact[]>();
+  for (const fact of active) {
+    if (!grouped.has(fact.category)) grouped.set(fact.category, []);
+    grouped.get(fact.category)!.push(fact);
+  }
+  const lines: string[] = [
+    '[Pinned key facts — 权威事实层，优先级高于下方摘要。如与摘要冲突，以此为准。]',
+  ];
+  for (const [category, items] of grouped) {
+    const label = KEY_FACT_CATEGORY_LABEL[category] ?? category;
+    for (const f of items) {
+      lines.push(`- [${label}] ${f.subject}：${f.content}`);
+    }
+  }
+  return lines.join('\n');
+}
+
 function buildSummaryContextInline(store: SummaryStore): string {
   const parts: string[] = [];
+  const pinned = buildPinnedKeyFactsInline(store.keyFacts);
+  if (pinned) parts.push(pinned);
   if (store.global) parts.push(`[Story context so far]\n${store.global}`);
   if (store.major.length) parts.push(`[Recent period summaries]\n${store.major.map(e => e.text).join('\n\n')}`);
   if (store.minor.length) parts.push(`[Recent event summaries]\n${store.minor.map(e => e.text).join('\n\n')}`);
   return parts.join('\n\n');
+}
+
+const TIME_ADVANCE_INTENT_REGEX =
+  /(推进到|跳到|快进到|时间推进|时间跳到|到了?\s*\d|次日|翌日|第二天|第二日|明天|后天|\d+\s*天后|\d+\s*天之后|\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}\s*点|清晨|早晨|早上|上午|中午|午休|下午|放学后|傍晚|夜晚|晚上|深夜|凌晨)/;
+
+export function detectTimeAdvanceIntent(userInput: string): boolean {
+  if (!userInput) return false;
+  return TIME_ADVANCE_INTENT_REGEX.test(userInput);
 }
 
 export function buildPrompt(
@@ -387,7 +432,12 @@ export function buildPrompt(
         .join('\n')
     : '';
 
-  const hasSummary = summaryStore && (summaryStore.global || summaryStore.major.length || summaryStore.minor.length);
+  const hasSummary = summaryStore && (
+    summaryStore.global ||
+    summaryStore.major.length ||
+    summaryStore.minor.length ||
+    summaryStore.keyFacts.some(f => !f.superseded)
+  );
   const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
   const mainEventsContext = buildMainEventsContext(statusData);
   const plotContext = buildCurrentPlotContext(statusData, options?.plotLibrary);
@@ -433,6 +483,11 @@ export function buildPrompt(
   // 只有没有副 API 处理变量时，才要求主 API 输出 <progress>。
   if (!options?.skipProgress) {
     parts.push(buildProgressInstruction(statusData));
+    if (detectTimeAdvanceIntent(userInput)) {
+      parts.push(
+        '玩家当前输入明确要求推进时间。你必须在 <progress> 中输出完整的 `时间:YYYY-MM-DD HH:mm` 字段（HH:mm 由你根据剧情合理判断）。禁止使用 `4月16日` 或缺时分的格式。',
+      );
+    }
   }
 
   return parts.filter(Boolean).join('\n');
@@ -455,7 +510,12 @@ export function buildPhoneChatPrompt(input: {
   const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile });
   const recentEventsContext = buildRecentEventsContext(statusData);
   const mainEventsContext = buildMainEventsContext(statusData);
-  const hasSummary = summaryStore && (summaryStore.global || summaryStore.major.length || summaryStore.minor.length);
+  const hasSummary = summaryStore && (
+    summaryStore.global ||
+    summaryStore.major.length ||
+    summaryStore.minor.length ||
+    summaryStore.keyFacts.some(f => !f.superseded)
+  );
   const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
   const plotContext = buildCurrentPlotContext(statusData, input.plotLibrary);
   const playerProfileText = playerProfile?.name
@@ -494,6 +554,11 @@ export function buildPhoneChatPrompt(input: {
 
   if (!skipProgress) {
     parts.push(buildProgressInstruction(statusData, target));
+    if (detectTimeAdvanceIntent(userInput)) {
+      parts.push(
+        '玩家当前输入明确要求推进时间。你必须在 <progress> 中输出完整的 `时间:YYYY-MM-DD HH:mm`（HH:mm 由你根据剧情合理判断）。禁止使用 `4月16日` 或缺时分的格式。',
+      );
+    }
   }
 
   return parts.filter(Boolean).join('\n');
@@ -511,17 +576,19 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
         .map(([k, v]) => `${k}:${v}`)
         .join('；')
     : '';
+  const targetList = buildTargetStateList(statusData);
 
   return [
     '',
     'After your visible reply, you MUST output a <progress> block to record state changes.',
     'Use key:value format, one per line. Only include fields that changed; omit unchanged fields.',
-    'Always evaluate affinity after a long scene. If the active target has a clear emotional reaction to User, output 好感度 even when the change is small.',
-    '普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。只有完全无互动或关系没有变化时才省略好感度。',
+    'Always evaluate affinity after a long scene. In multi-character scenes, evaluate every present character who clearly reacts to User.',
+    '普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。只有角色不在场、完全无互动、或关系没有变化时才省略该角色好感度。',
     'Available fields:',
-    '  时间:new_time          — Update if time has advanced (format: YYYY-MM-DD HH:mm)',
+    '  时间:YYYY-MM-DD HH:mm   — 当正文描写时间流逝、进入次日/深夜，或玩家要求推进时间时，必须输出完整 YYYY-MM-DD HH:mm。禁止使用 `4月16日`、`2012-04-16`（缺 HH:mm）、`明天` 这种非完整格式。',
     '  地点:new_location      — Update if characters moved to a new location',
-    '  好感度:±N              — Affinity change (e.g. 好感度:+3 or 好感度:-5), range 0-100',
+    '  好感度:±N              — Legacy affinity change for the current target only (single-target scene only)',
+    '  好感度.角色名或id:±N    — Targeted affinity change (e.g. 好感度.霞之丘诗羽:+2；好感度.英梨梨:-1)',
     '  五维.能力名:±N          — Player P5 stat change (能力名: 知识/魅力/灵巧/体贴/勇气；e.g. 五维.体贴:+1)',
     '  着装.部位:描述          — Update outfit for a body part (e.g. 着装.上装:换上了黑色卫衣)',
     '  当前事件:事件ID          — Set the single current main plot event shown on the phone (e.g. 当前事件:SAE_01-2；clear with 当前事件:无)',
@@ -534,7 +601,8 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     '<progress>',
     '时间:2012-03-31 08:30',
     '地点:东京·侦探坡',
-    '好感度:+2',
+    '好感度.霞之丘诗羽:+2',
+    '好感度.英梨梨:-1',
     '五维.体贴:+1',
     '着装.上装:私立丰之崎学园的制服衬衫',
     '早晨外出:两人决定去便利店买早餐。',
@@ -548,7 +616,8 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     `  地点: ${statusData.world.currentLocation}`,
     `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
     `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
-    `  好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+    `  当前目标好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+    `  可更新角色列表:\n${targetList}`,
     `  着装: ${outfitList || '无'}`,
     `  物品: ${inventoryList}`,
   ].join('\n');
@@ -567,6 +636,12 @@ export function buildProgressPrompt(
     ? Object.entries(target.outfits)
         .map(([k, v]) => `${k}:${v}`)
         .join('；')
+    : '';
+  const targetList = buildTargetStateList(statusData);
+
+  const recentUserMessage = [...recentMessages].reverse().find(m => m.role === 'user');
+  const timeIntentNote = recentUserMessage && detectTimeAdvanceIntent(recentUserMessage.text)
+    ? '玩家最近输入明确要求推进时间，必须输出完整 `时间:YYYY-MM-DD HH:mm` 字段。'
     : '';
 
   const formatted = recentMessages
@@ -592,20 +667,23 @@ export function buildProgressPrompt(
         `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
         `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
         `  当前攻略对象: ${target?.name ?? '无'}`,
-        `  好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+        `  当前目标好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+        `  可更新角色列表:\n${targetList}`,
         `  着装: ${outfitList || '无'}`,
         `  物品: ${inventoryList}`,
         '',
         '好感度判断规则：',
-        '  阅读完整正文，不要只看最后一句。只要当前攻略对象对 User 产生明确情绪反应，就评估好感度。',
+        '  阅读完整正文，不要只看最后一句。多人在场时，分别判断每个明确在场且对 User 产生情绪反应的角色。',
         '  普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。',
-        '  不要因为变化很小就省略好感度；只有完全无互动、纯环境描写、或关系没有任何变化时，才不输出好感度。',
+        '  不要因为变化很小就省略好感度；只有角色不在场、完全无互动、纯环境描写、或关系没有任何变化时，才不输出该角色好感度。',
+        timeIntentNote ? `\n时间推进提醒：${timeIntentNote}` : '',
         '',
         '请用 <progress> 标签输出变化的字段，每行一个 key:value。如果没有任何变化，输出空的 <progress></progress>。',
         '可用字段：',
-        '  时间:YYYY-MM-DD HH:mm',
+        '  时间:YYYY-MM-DD HH:mm（必须完整；禁止使用 `4月16日`、`明天` 或缺 HH:mm 的格式）',
         '  地点:新地点',
-        '  好感度:±N（增减值，如 +3 或 -5）',
+        '  好感度:±N（旧格式，只用于当前攻略对象的单人场景）',
+        '  好感度.角色名或id:±N（多人场景必须用这个格式，例如 好感度.霞之丘诗羽:+2 / 好感度.英梨梨:-1）',
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
         '  着装.部位:描述',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
@@ -682,6 +760,7 @@ export type ProgressUpdate = {
   location?: string;
   currentMainEventId?: string;
   affinityDelta?: number;
+  affinityDeltas: Array<{ target: string; delta: number }>;
   statDeltas: Partial<Record<keyof PlayerStats, number>>;
   outfitChanges: Record<string, string>;
   events: Record<string, string>;
@@ -695,6 +774,7 @@ export function parseProgressUpdate(rawResponse: string): ProgressUpdate | null 
   if (!tagged) return null;
 
   const result: ProgressUpdate = {
+    affinityDeltas: [],
     events: {},
     mainEvents: {},
     statDeltas: {},
@@ -729,6 +809,28 @@ export function parseProgressUpdate(rawResponse: string): ProgressUpdate | null 
     if (currentEventMatch) {
       const value = currentEventMatch[1].trim();
       result.currentMainEventId = /^(无|none|null|clear|-)$/.test(value) ? '' : value;
+      hasAnyField = true;
+      continue;
+    }
+
+    // 好感度.角色名或id:±N
+    const targetedAffMatch = trimmed.match(/^好感度[.．]\s*([^:：]+)[:：]\s*([+\-]?\d+)/);
+    if (targetedAffMatch) {
+      result.affinityDeltas.push({
+        target: targetedAffMatch[1].trim(),
+        delta: parseInt(targetedAffMatch[2], 10) || 0,
+      });
+      hasAnyField = true;
+      continue;
+    }
+
+    // 角色名或id.好感度:±N
+    const prefixedAffMatch = trimmed.match(/^([^:：.．]+)[.．]\s*好感度[:：]\s*([+\-]?\d+)/);
+    if (prefixedAffMatch) {
+      result.affinityDeltas.push({
+        target: prefixedAffMatch[1].trim(),
+        delta: parseInt(prefixedAffMatch[2], 10) || 0,
+      });
       hasAnyField = true;
       continue;
     }

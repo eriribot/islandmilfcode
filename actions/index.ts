@@ -6,10 +6,11 @@ import {
   extractPhoneChatReply,
   extractTaggedReply,
   type ProgressUpdate,
+  getVisibleMessageText,
   parseProgressUpdate,
 } from '../message-format';
 import { createRollbackSnapshot, pushMessage } from '../state/store';
-import { runSummary, type SummaryContext } from '../summary';
+import { buildFactAnchorFromStatus, runSummary, type SummaryContext } from '../summary';
 import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import { getActiveTarget } from '../types';
 import type { PhoneChatMessage, PhoneProactiveState, PlayerProfile, PlayerStats, PlotLibrary, TargetStatus } from '../types';
@@ -42,12 +43,49 @@ type PhoneDirective = {
   text: string;
 };
 
-function mergeMissingAffinity(primary: ProgressUpdate | null, fallback: ProgressUpdate | null) {
-  if (!primary || primary.affinityDelta !== undefined || fallback?.affinityDelta === undefined) return primary;
-  return {
-    ...primary,
-    affinityDelta: fallback.affinityDelta,
-  };
+function mergeMissingAffinity(
+  primary: ProgressUpdate | null,
+  fallback: ProgressUpdate | null,
+  ctx?: ActionContext,
+) {
+  if (!primary) return fallback;
+  const primaryHasAffinity = primary.affinityDelta !== undefined || primary.affinityDeltas.length > 0;
+  const fallbackHasAffinity = fallback?.affinityDelta !== undefined || Boolean(fallback?.affinityDeltas.length);
+  if (!fallbackHasAffinity) return primary;
+  if (!primaryHasAffinity) {
+    return {
+      ...primary,
+      affinityDelta: fallback!.affinityDelta,
+      affinityDeltas: fallback!.affinityDeltas,
+    };
+  }
+
+  // 预检：如果 primary 的好感度变化在当前正文语境中全部会被判为 'absent'，允许 fallback 接管。
+  if (ctx) {
+    const allPrimaryAbsent =
+      primary.affinityDeltas.length > 0 &&
+      primary.affinityDeltas.every(item => {
+        const target = findProgressTarget(ctx, item.target);
+        return target ? classifyAffinityVerdict(ctx, target) === 'absent' : true;
+      });
+    const legacyAbsent =
+      primary.affinityDelta !== undefined && primary.affinityDelta !== 0
+        ? (() => {
+            const active = getActiveTarget(ctx.state.statusData);
+            return active ? classifyAffinityVerdict(ctx, active) === 'absent' : true;
+          })()
+        : true;
+    if (allPrimaryAbsent && legacyAbsent) {
+      console.warn('[progress] primary affinity fully absent — fallback to secondary affinity');
+      return {
+        ...primary,
+        affinityDelta: fallback!.affinityDelta,
+        affinityDeltas: fallback!.affinityDeltas,
+      };
+    }
+  }
+
+  return primary;
 }
 
 const DEFAULT_PLAYER_STATS: PlayerStats = {
@@ -109,18 +147,175 @@ function applyPlayerStatDeltas(playerProfile: PlayerProfile, update: ProgressUpd
   return changed;
 }
 
+function findProgressTarget(ctx: ActionContext, targetHint: string): TargetStatus | null {
+  const normalizedHint = normalizeForDirectiveMatch(targetHint);
+  if (!normalizedHint) return null;
+
+  return (
+    ctx.state.statusData.targets.find(target => target.id === targetHint) ??
+    ctx.state.statusData.targets.find(target =>
+      getPhoneTargetSearchTerms(target)
+        .map(term => normalizeForDirectiveMatch(term))
+        .filter(Boolean)
+        .some(term => term === normalizedHint),
+    ) ??
+    ctx.state.statusData.targets.find(target =>
+      getPhoneTargetSearchTerms(target)
+        .map(term => normalizeForDirectiveMatch(term))
+        .filter(term => term.length >= 2)
+        .some(term => term.includes(normalizedHint) || normalizedHint.includes(term)),
+    ) ??
+    null
+  );
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getLatestAssistantSceneText(ctx: ActionContext) {
+  for (let index = ctx.state.uiMessages.length - 1; index >= 0; index -= 1) {
+    const message = ctx.state.uiMessages[index];
+    if (message?.role !== 'assistant' || message.streaming) continue;
+    return (getVisibleMessageText(message) || message.text || '').trim();
+  }
+  return '';
+}
+
+function targetTermsForPresence(target: TargetStatus) {
+  return getPhoneTargetSearchTerms(target)
+    .map(term => term.trim())
+    .filter(term => term.length >= 2);
+}
+
+function textMentionsTarget(text: string, target: TargetStatus) {
+  const normalizedText = normalizeForDirectiveMatch(text);
+  if (!normalizedText) return false;
+
+  return targetTermsForPresence(target)
+    .map(term => normalizeForDirectiveMatch(term))
+    .filter(Boolean)
+    .some(term => normalizedText.includes(term));
+}
+
+function textMarksTargetFirmlyAbsent(text: string, target: TargetStatus) {
+  // 只保留强不在场信号，且要求与目标名紧邻（4 字内），降低误判。
+  // 移除了 "不在 / 没在 / 未在 / 离开 / 走开" — 这些常出现在正文末端位移或无关否定，不应当作绝对不在场。
+  const strongAbsentWords = '不在场|不在这里|不在身边|缺席|没有出现|没有来|请假|今天没来';
+  return targetTermsForPresence(target).some(term => {
+    const escaped = escapeRegExp(term);
+    const targetThenAbsent = new RegExp(`${escaped}.{0,4}(?:${strongAbsentWords})`);
+    const absentThenTarget = new RegExp(`(?:${strongAbsentWords}).{0,4}${escaped}`);
+    return targetThenAbsent.test(text) || absentThenTarget.test(text);
+  });
+}
+
+function textContainsTargetActiveSignals(text: string, target: TargetStatus) {
+  // 发声/动作反证：目标名紧跟发言动词或直接引用，即视为在场。
+  const activeVerbs = '说|道|问|答|笑|叹|看|回头|点头|摇头|转身|开口|应道|回应|沉默|叹气|冷哼|哼|嘀咕|低声|喊|叫|皱眉';
+  const quoteStarters = '[:：「『"“【]';
+  return targetTermsForPresence(target).some(term => {
+    const escaped = escapeRegExp(term);
+    const verbPattern = new RegExp(`${escaped}\\s*(?:${activeVerbs})`);
+    const quotePattern = new RegExp(`${escaped}\\s*${quoteStarters}`);
+    return verbPattern.test(text) || quotePattern.test(text);
+  });
+}
+
+type AffinityVerdict = 'forced' | 'mention' | 'unmentioned' | 'absent';
+
+function classifyAffinityVerdict(
+  ctx: ActionContext,
+  target: TargetStatus,
+  forcedTargetId?: string | null,
+): AffinityVerdict {
+  if (forcedTargetId) return target.id === forcedTargetId ? 'forced' : 'absent';
+
+  const latestSceneText = getLatestAssistantSceneText(ctx);
+  if (!latestSceneText) return 'unmentioned';
+
+  // 发声反证优先级最高：哪怕后半段写了"离开"，只要目标前半段有发声，依然判在场。
+  if (textContainsTargetActiveSignals(latestSceneText, target)) return 'mention';
+  if (textMarksTargetFirmlyAbsent(latestSceneText, target)) return 'absent';
+  if (textMentionsTarget(latestSceneText, target)) return 'mention';
+  return 'unmentioned';
+}
+
+function clampAffinityByVerdict(delta: number, verdict: AffinityVerdict): number {
+  if (!delta) return 0;
+  if (verdict === 'absent') return 0;
+  if (verdict === 'unmentioned') {
+    return Math.sign(delta) * Math.min(Math.abs(delta), 1);
+  }
+  return delta;
+}
+
+function clampLegacyAffinityDelta(ctx: ActionContext, update: ProgressUpdate, targetId?: string | null): number | undefined {
+  if (update.affinityDelta === undefined || update.affinityDelta === 0) return update.affinityDelta;
+  if (targetId) return update.affinityDelta;
+
+  const target = getActiveTarget(ctx.state.statusData);
+  if (!target) return undefined;
+
+  const verdict = classifyAffinityVerdict(ctx, target);
+  const clamped = clampAffinityByVerdict(update.affinityDelta, verdict);
+  if (verdict === 'unmentioned' && clamped !== update.affinityDelta) {
+    console.warn('[progress] clamp legacy affinity for unmentioned target:', target.name, update.affinityDelta, '→', clamped);
+  }
+  if (verdict === 'absent') {
+    console.warn('[progress] drop legacy affinity for absent target:', target.name);
+    return undefined;
+  }
+  return clamped || undefined;
+}
+
+function applyTargetedAffinityDeltas(ctx: ActionContext, update: ProgressUpdate, forcedTargetId?: string | null) {
+  let changed = false;
+
+  for (const item of update.affinityDeltas) {
+    if (!item.delta) continue;
+    const target = findProgressTarget(ctx, item.target);
+    if (!target) {
+      console.warn('[progress] unknown affinity target:', item.target);
+      continue;
+    }
+
+    const verdict = classifyAffinityVerdict(ctx, target, forcedTargetId);
+    const effectiveDelta = clampAffinityByVerdict(item.delta, verdict);
+    if (verdict === 'absent') {
+      console.warn('[progress] drop affinity for absent target:', item.target);
+      continue;
+    }
+    if (verdict === 'unmentioned' && effectiveDelta !== item.delta) {
+      console.warn('[progress] clamp affinity for unmentioned target:', item.target, item.delta, '→', effectiveDelta);
+    }
+    if (!effectiveDelta) continue;
+
+    const nextAffinity = clamp((target.affinity ?? 0) + effectiveDelta, 0, 100);
+    if (nextAffinity === target.affinity) continue;
+    target.affinity = nextAffinity;
+    target.stage = affinityStage(nextAffinity);
+    changed = true;
+  }
+
+  return changed;
+}
+
 function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | null, targetId?: string | null) {
   if (!update) return false;
   const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary);
+  const legacyDelta = clampLegacyAffinityDelta(ctx, sanitized, targetId);
+  const contextualized: ProgressUpdate = { ...sanitized, affinityDelta: legacyDelta };
   applyProgressUpdate(
     ctx.state.statusData,
-    sanitized,
+    contextualized,
     targetId ?? ctx.state.statusData.activeTargetId,
     ctx.state.plotLibrary,
   );
-  const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, sanitized);
+  const targetedAffinityChanged = applyTargetedAffinityDeltas(ctx, contextualized, targetId);
+  const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, contextualized);
   ctx.adapter.save(ctx.state.statusData);
-  return statsChanged || true;
+  return targetedAffinityChanged || statsChanged || true;
 }
 
 async function simulateGeneration(ctx: ActionContext, userInput: string) {
@@ -181,7 +376,7 @@ export async function submitMessage(
   ctx.render();
 
   const hasTavernGenerate = typeof win.generate === 'function' || typeof win.generateRaw === 'function';
-  if (hasTavernGenerate) {
+  if (hasTavernGenerate && !phoneDirective && hasExplicitPhoneSendIntent(userInput)) {
     const llmDirective = await detectPhoneDirectiveWithLlm(ctx, userInput).catch(error => {
       console.warn('[phone-directive] detector failed:', error);
       return null;
@@ -287,7 +482,7 @@ export async function submitMessage(
         };
         const progressResult = await win.generateRaw?.(progressConfig);
         const progressRaw = String(progressResult ?? '');
-        const progressUpdate = mergeMissingAffinity(parseProgressUpdate(progressRaw), mainProgressUpdate);
+        const progressUpdate = mergeMissingAffinity(parseProgressUpdate(progressRaw), mainProgressUpdate, ctx);
         if (progressUpdate) {
           applyFullProgressUpdate(ctx, progressUpdate);
         }
@@ -375,6 +570,7 @@ export async function submitMessage(
           ctx.onSummaryStoreUpdated();
           ctx.render();
         },
+        getFactAnchor: () => buildFactAnchorFromStatus(ctx.state.statusData),
       };
       await runSummary(summaryCtx).catch(() => {
         /* 摘要错误在内部处理 */
@@ -395,6 +591,11 @@ function normalizeForDirectiveMatch(text: string) {
     .replace(/[・·.\s　]+/g, '');
 }
 
+function hasExplicitPhoneSendIntent(text: string) {
+  const normalizedInput = normalizeForDirectiveMatch(text);
+  return /(发消息|发送消息|发短信|发送短信|手机联系|短信|私聊|微信|打开手机|用手机)/.test(normalizedInput);
+}
+
 function stripDirectiveQuotes(text: string) {
   return text
     .trim()
@@ -404,9 +605,23 @@ function stripDirectiveQuotes(text: string) {
 }
 
 function getPhoneTargetSearchTerms(target: TargetStatus) {
-  return [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
+  const baseTerms = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
     .map(value => String(value ?? '').trim())
     .filter(Boolean);
+  const haystack = baseTerms.join('\n').toLowerCase();
+  const builtInTerms: string[] = [];
+
+  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) {
+    builtInTerms.push('英梨梨', '泽村', '澤村', 'eriri', 'sawamura');
+  }
+  if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) {
+    builtInTerms.push('霞之丘', '霞之丘诗羽', '霞之诗羽', '霞ヶ丘', '诗羽', '詩羽', '霞诗子', '霞詩子', 'utaha', 'kasumigaoka');
+  }
+  if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) {
+    builtInTerms.push('加藤', '加藤惠', '加藤恵', '惠', '恵', 'megumi', 'katou', 'kato');
+  }
+
+  return Array.from(new Set([...baseTerms, ...builtInTerms]));
 }
 
 function findPhoneDirectiveTarget(ctx: ActionContext, rawName: string) {
@@ -421,6 +636,16 @@ function findPhoneDirectiveTarget(ctx: ActionContext, rawName: string) {
       }),
     ) ?? null
   );
+}
+
+function isExplicitPhoneTargetMention(target: TargetStatus, text: string) {
+  const normalizedText = normalizeForDirectiveMatch(text);
+  if (!normalizedText) return false;
+
+  return getPhoneTargetSearchTerms(target)
+    .map(term => normalizeForDirectiveMatch(term))
+    .filter(term => term.length >= 2)
+    .some(term => normalizedText.includes(term));
 }
 
 function buildPhoneActionDetectorPrompt(ctx: ActionContext, userInput: string) {
@@ -444,11 +669,11 @@ function buildPhoneActionDetectorPrompt(ctx: ActionContext, userInput: string) {
     '',
     '判定规则：',
     '1. 只有玩家明确想用手机、短信、私聊、微信、聊天软件联系某人时，才输出 send。',
-    '2. “问英梨梨今天吃什么”“打开手机发送消息询问英梨梨今天吃什么”“给诗羽学姐发个短信说我晚点到”都属于 send。',
-    '3. 如果只是正文里提到手机、提到某人，或角色主动发消息，不算玩家发送。',
+    '2. “打开手机发送消息询问英梨梨今天吃什么”“给诗羽学姐发个短信说我晚点到”属于 send。',
+    '3. “怎么和英梨梨对话”“问英梨梨这件事该怎么办”这类没有明确手机/短信/私聊动作的输入，不属于 send。',
     '4. target_id 必须从联系人列表选择，不能编造。无法确定联系人时输出 none。',
     '5. message 要改写成真正发给对方的手机文本，不要包含“打开手机/发消息/询问某某”等动作描述。',
-    '6. 如果玩家没有明确写消息内容，但能从“问/询问/告诉/说”后面的语义推出，就提炼成自然短消息。',
+    '6. 如果只是正文里提到手机、提到某人，或角色主动发消息，不算玩家发送。',
     '',
     '只输出以下 XML 之一：',
     '<phone_action>',
@@ -466,7 +691,7 @@ function buildPhoneActionDetectorPrompt(ctx: ActionContext, userInput: string) {
   ].join('\n');
 }
 
-function parsePhoneActionDetectorResult(ctx: ActionContext, rawResult: string): PhoneDirective | null {
+function parsePhoneActionDetectorResult(ctx: ActionContext, rawResult: string, userInput: string): PhoneDirective | null {
   const tagged = extractTaggedReply(rawResult, 'phone_action', false);
   if (!tagged) return null;
 
@@ -479,6 +704,8 @@ function parsePhoneActionDetectorResult(ctx: ActionContext, rawResult: string): 
   if (!targetId || !message || !PHONE_ACTION_DETECTOR_CONFIDENCE.has(confidence)) return null;
 
   const target = getPhoneThreadTarget(ctx, targetId) ?? findPhoneDirectiveTarget(ctx, targetId);
+  // 中文注释：LLM 检测器只能确认明确点名的联系人，不能凭当前攻略对象或剧情联想代替玩家选择。
+  if (target && !isExplicitPhoneTargetMention(target, userInput)) return null;
   return target ? { target, text: message } : null;
 }
 
@@ -508,18 +735,17 @@ async function detectPhoneDirectiveWithLlm(ctx: ActionContext, userInput: string
           user_input: prompt,
         });
 
-  return parsePhoneActionDetectorResult(ctx, String(rawResult ?? ''));
+  return parsePhoneActionDetectorResult(ctx, String(rawResult ?? ''), userInput);
 }
 
 function extractPhoneMessageDirective(ctx: ActionContext, userInput: string): PhoneDirective | null {
-  const normalizedInput = normalizeForDirectiveMatch(userInput);
-  if (!/(发消息|发送消息|发短信|发送短信|手机联系|短信|私聊|微信|问|询问|告诉)/.test(normalizedInput)) return null;
+  if (!hasExplicitPhoneSendIntent(userInput)) return null;
 
   const patterns = [
     /(?:给|向|对)\s*([^，。！？\n,!?]{1,32})\s*(?:发消息|发送消息|发短信|发送短信|发个消息|发条消息|手机联系|私聊|微信)\s*[：:，,]?\s*([\s\S]*)/i,
     /(?:发消息|发送消息|发短信|发送短信|发个消息|发条消息|短信|私聊|微信)\s*(?:给|向|对)\s*([^，。！？\n,!?]{1,32})\s*[：:，,]?\s*([\s\S]*)/i,
     /(?:用手机|打开手机)\s*(?:给|向|对)\s*([^，。！？\n,!?]{1,32})\s*(?:说|发送|发)\s*[：:，,]?\s*([\s\S]*)/i,
-    /(?:用手机|打开手机)?\s*(?:发送消息|发消息|发短信|发送短信|私聊|微信)?\s*(?:问|询问|告诉)\s*([^，。！？\n,!?]{1,32})\s*([\s\S]*)/i,
+    /(?:用手机|打开手机)\s*(?:发送消息|发消息|发短信|发送短信|私聊|微信)?\s*(?:问|询问|告诉)\s*([^，。！？\n,!?]{1,32})\s*([\s\S]*)/i,
   ];
 
   for (const pattern of patterns) {
@@ -606,6 +832,7 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
   const latestEvent = getLatestRecentEvent(ctx);
   const hasTavernGenerate = typeof win.generateRaw === 'function' || typeof win.generate === 'function';
   if (!target || !latestEvent || !hasTavernGenerate) return;
+  if (!isExplicitPhoneTargetMention(target, latestEvent.text)) return;
   if (!shouldQueueProactivePhoneMessage(ctx, target, latestEvent.key, previousEventKey)) return;
 
   const proactiveState = getPhoneProactiveState(ctx);

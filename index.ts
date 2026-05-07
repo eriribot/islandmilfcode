@@ -42,6 +42,7 @@ import {
   syncFocusedMessage,
 } from './state/store';
 import {
+  buildFactAnchorFromStatus,
   loadSummaryApiConfig,
   rerollSummaryEntry,
   resumeAutoSummary,
@@ -933,6 +934,7 @@ function bindEvents() {
           state.summarizing = false;
           render();
         },
+        getFactAnchor: () => buildFactAnchorFromStatus(state.statusData),
       },
       mode,
     ).catch(() => {
@@ -970,6 +972,7 @@ function bindEvents() {
             state.summarizing = false;
             render();
           },
+          getFactAnchor: () => buildFactAnchorFromStatus(state.statusData),
         },
         level,
         index,

@@ -143,13 +143,14 @@ function getTargetAvatarUrl(target: TargetStatus | null) {
 }
 
 function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
+  // 中文注释：兼容世界书里常见的中日文、笔名和罗马音写法，避免手机档案误显示“未载入变量”。
   const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
     .map(value => String(value ?? '').toLowerCase())
     .join('\n');
 
   if (archive.id === 'eriri') return /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
   if (archive.id === 'megumi') return /加藤|惠|恵|megumi|katou|kato/.test(haystack);
-  if (archive.id === 'utaha') return /霞之丘|霞ヶ丘|诗羽|詩羽|utaha|kasumigaoka/.test(haystack);
+  if (archive.id === 'utaha') return /霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack);
   return false;
 }
 

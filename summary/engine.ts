@@ -1,6 +1,7 @@
 import { extractTaggedReply, getVisibleMessageText } from '../message-format';
 import type { UiMessage } from '../types';
-import type { SummaryEntry, SummaryStore } from './types';
+import type { FactAnchor, KeyFact, KeyFactCategory, SummaryEntry, SummaryStore } from './types';
+import { KEY_FACT_CATEGORY_LABEL, KEY_FACT_CATEGORY_MAP } from './types';
 
 // 小摘要：每累积 5 条新消息触发一次。
 const MINOR_THRESHOLD = 5;
@@ -44,29 +45,81 @@ function formatMessagesForSummary(messages: UiMessage[]): string {
     .join('\n\n');
 }
 
-/** 构建小摘要 prompt：对一段对话片段做约 100 字的剧情记录。 */
-export function buildMinorSummaryPrompt(messages: UiMessage[]): OrderedPrompt[] {
+/** 把 factAnchor 渲染成 prompt 可读的状态快照文本。 */
+function renderFactAnchor(anchor: FactAnchor | null | undefined): string {
+  if (!anchor) return '';
+  const affinities = anchor.affinities.length
+    ? anchor.affinities.map(a => `${a.name}: ${a.value}（${a.stage}）`).join('、')
+    : '无';
+  const mainEvents = anchor.mainEvents.length
+    ? anchor.mainEvents.map(e => `${e.id}:${e.status}`).join('；')
+    : '无';
+  return [
+    '【状态快照（绝对事实，不得改写）】',
+    `- 当前时间：${anchor.time || '未知'}`,
+    `- 当前地点：${anchor.location || '未知'}`,
+    `- 当前主线事件：${anchor.currentMainEventId || '无'}`,
+    `- 主线事件进度：${mainEvents}`,
+    `- 角色好感度：${affinities}`,
+  ].join('\n');
+}
+
+/** 把 pinnedFacts 渲染成 prompt 可读的事实清单。 */
+function renderPinnedFacts(facts: KeyFact[]): string {
+  const active = facts.filter(f => !f.superseded);
+  if (!active.length) return '';
+  const grouped = new Map<KeyFactCategory, KeyFact[]>();
+  for (const fact of active) {
+    if (!grouped.has(fact.category)) grouped.set(fact.category, []);
+    grouped.get(fact.category)!.push(fact);
+  }
+  const lines: string[] = ['【关键事实清单（必须保留，不得省略或改写）】'];
+  for (const [category, items] of grouped) {
+    const label = KEY_FACT_CATEGORY_LABEL[category] ?? category;
+    for (const f of items) {
+      lines.push(`- [${label}] ${f.subject}：${f.content}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/** 构建小摘要 prompt：对一段对话片段做约 100 字的剧情记录，同时抽取结构化关键事实。 */
+export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnchor | null): OrderedPrompt[] {
   const formatted = formatMessagesForSummary(messages);
+  const anchorBlock = renderFactAnchor(anchor);
   return [
     {
       role: 'system',
       content: [
-        '你是一个精确的剧情记录员。请对以下对话片段进行摘要。',
-        '要求：',
-        '- 用约100字概括本段对话的剧情',
-        '- 禁止不必要的总结和升华，忠实记录角色的言行举止和情感变化',
-        '- 纯中文输出',
-        '- 使用 <summary> 标签包裹结果',
+        '你是一个精确的剧情记录员。请对以下对话片段进行摘要并抽取关键事实。',
         '',
-        '格式示例：',
+        '严格规则：',
+        '- 禁止推断、臆测、心理补完；只记录正文明确出现的言行与状态变化。',
+        '- 每条摘要和关键事实必须能在正文里找到直接依据，不准添加原文没有的角色、动作或情绪。',
+        '- 禁止不必要的总结和升华，忠实记录角色的言行举止和情感变化。',
+        '- 纯中文输出。',
+        '',
+        '输出两部分：',
+        '1. <summary> 标签：用约 100 字概括本段对话的剧情，附上时间和地点。',
+        '2. <key_facts> 标签：按下方格式逐行列出新产生的关键事实。没有则输出空标签。',
+        '',
+        '<key_facts> 行格式：`[类别] 主体 | 内容`（类别限定：承诺、秘密、关系、物品、事件、地点、设定）。',
+        '示例：',
         '<summary>',
-        '用约100字概括本段对话的剧情，禁止不必要的总结和升华，忠实记录角色的言行举止和情感变化',
+        '4月15日 放学后 / 美术室：User 请英梨梨帮忙检查稿子，她勉强答应但要求下周一请吃蛋包饭作为交换……',
         '',
-        '时间：年月日 星期X 开始时分 ~ 结束时分',
-        '',
-        '地点：大地点/中地点/小地点',
+        '时间：2012-04-15 16:30 ~ 17:40',
+        '地点：私立丰之崎学园/美术室',
         '</summary>',
-      ].join('\n'),
+        '<key_facts>',
+        '[承诺] User → 英梨梨 | 下周一请她吃蛋包饭',
+        '[关系] User 与 英梨梨 | 两人首次单独在美术室交流，氛围缓和',
+        '[地点] 美术室 | 有英梨梨的专用画架与未完成的色稿',
+        '</key_facts>',
+        anchorBlock,
+      ]
+        .filter(Boolean)
+        .join('\n'),
     },
     {
       role: 'user',
@@ -76,10 +129,16 @@ export function buildMinorSummaryPrompt(messages: UiMessage[]): OrderedPrompt[] 
 }
 
 /** 构建大摘要 prompt：将多条小摘要合并为按时间线组织的总结。 */
-export function buildMajorSummaryPrompt(minors: SummaryEntry[]): OrderedPrompt[] {
+export function buildMajorSummaryPrompt(
+  minors: SummaryEntry[],
+  anchor?: FactAnchor | null,
+  pinnedFacts: KeyFact[] = [],
+): OrderedPrompt[] {
   const formatted = minors
     .map((entry, i) => `[片段${i + 1} | 消息 ${entry.range[0]}-${entry.range[1]}]\n${entry.text}`)
     .join('\n\n');
+  const anchorBlock = renderFactAnchor(anchor);
+  const pinnedBlock = renderPinnedFacts(pinnedFacts);
 
   return [
     {
@@ -95,6 +154,7 @@ export function buildMajorSummaryPrompt(minors: SummaryEntry[]): OrderedPrompt[]
         '- 突出事件发展脉络和关键转折点',
         '- 不回避任何敏感内容，保证记录完全还原前文',
         '- 事件及时间线必须精确记录时间推进',
+        '- 严禁引入小摘要和关键事实清单中没有的新内容',
         '',
         '总结必须使用 <summary> 标签包裹，格式：',
         '<summary>',
@@ -107,7 +167,11 @@ export function buildMajorSummaryPrompt(minors: SummaryEntry[]): OrderedPrompt[]
         '【成长线】',
         '• {人物名}: {性格变化、关系进展}',
         '</summary>',
-      ].join('\n'),
+        anchorBlock,
+        pinnedBlock,
+      ]
+        .filter(Boolean)
+        .join('\n'),
     },
     {
       role: 'user',
@@ -116,13 +180,20 @@ export function buildMajorSummaryPrompt(minors: SummaryEntry[]): OrderedPrompt[]
   ];
 }
 
-/** 构建全局压缩 prompt：将已有全局摘要与新增大摘要合并，控制在 400 字以内。 */
-export function buildGlobalCompressionPrompt(oldGlobal: string | null, majors: SummaryEntry[]): OrderedPrompt[] {
+/** 构建全局压缩 prompt：将已有全局摘要与新增大摘要合并，控制在 600 字以内。 */
+export function buildGlobalCompressionPrompt(
+  oldGlobal: string | null,
+  majors: SummaryEntry[],
+  anchor?: FactAnchor | null,
+  pinnedFacts: KeyFact[] = [],
+): OrderedPrompt[] {
   const majorFormatted = majors
     .map((entry, i) => `[总结${i + 1} | 消息 ${entry.range[0]}-${entry.range[1]}]\n${entry.text}`)
     .join('\n\n');
 
   const contextBlock = oldGlobal ? `已有全局摘要：\n${oldGlobal}\n\n新增总结：\n${majorFormatted}` : majorFormatted;
+  const anchorBlock = renderFactAnchor(anchor);
+  const pinnedBlock = renderPinnedFacts(pinnedFacts);
 
   return [
     {
@@ -136,7 +207,9 @@ export function buildGlobalCompressionPrompt(oldGlobal: string | null, majors: S
         '- 直接陈述事实，避免主观评价',
         '- 使用简洁清晰的语言，避免过度修饰',
         '- 不回避任何敏感内容，保证记录完全还原前文',
-        '- 全局摘要应控制在400字以内',
+        '- 全局摘要应控制在 600 字以内',
+        '- 关键事实已另行存储在事实清单中，你只需给出时间线叙事，不要重复列举事实，但叙事中要提及它们的影响',
+        '- 严禁引入原摘要和事实清单中没有的新内容',
         '',
         '总结必须使用 <summary> 标签包裹，格式：',
         '<summary>',
@@ -146,7 +219,11 @@ export function buildGlobalCompressionPrompt(oldGlobal: string | null, majors: S
         '【成长线】',
         '• {人物名}: {性格变化、关系进展}',
         '</summary>',
-      ].join('\n'),
+        anchorBlock,
+        pinnedBlock,
+      ]
+        .filter(Boolean)
+        .join('\n'),
     },
     {
       role: 'user',
@@ -163,6 +240,27 @@ export function parseSummaryResult(text: string): string {
   if (tagged) return tagged;
   // 后备逻辑：找不到标签时返回裁剪后的原文，小模型有时会漏掉标签。
   return text.trim();
+}
+
+/** 从 AI 回复中提取 <key_facts> 块，解析每行 `[类别] 主体 | 内容` 格式。 */
+export function parseKeyFactsFromSummary(raw: string): Array<Pick<KeyFact, 'category' | 'subject' | 'content'>> {
+  const tagged = extractTaggedReply(raw, 'key_facts', false);
+  if (!tagged) return [];
+  const facts: Array<Pick<KeyFact, 'category' | 'subject' | 'content'>> = [];
+  for (const rawLine of tagged.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const match = line.match(/^[-•*]?\s*[\[【]\s*([^\]】]+?)\s*[\]】]\s*(.+?)\s*[|｜]\s*(.+)$/);
+    if (!match) continue;
+    const categoryKey = match[1].trim();
+    const subject = match[2].trim();
+    const content = match[3].trim();
+    if (!subject || !content) continue;
+    const category = KEY_FACT_CATEGORY_MAP[categoryKey] ?? KEY_FACT_CATEGORY_MAP[categoryKey.toLowerCase()];
+    if (!category) continue;
+    facts.push({ category, subject, content });
+  }
+  return facts;
 }
 
 // ── 摘要上下文构建器位于 message-format.ts，避免循环依赖 ──

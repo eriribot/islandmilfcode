@@ -4,13 +4,14 @@ import {
   buildGlobalCompressionPrompt,
   buildMajorSummaryPrompt,
   buildMinorSummaryPrompt,
+  parseKeyFactsFromSummary,
   parseSummaryResult,
   shouldRunGlobalCompression,
   shouldRunMajorSummary,
   shouldRunMinorSummary,
 } from './engine';
 import { saveSummaryStore } from './store';
-import type { SummaryApiConfig, SummaryStore } from './types';
+import type { FactAnchor, KeyFact, SummaryApiConfig, SummaryStore } from './types';
 
 /** 摘要运行所需的上下文。 */
 export type SummaryContext = {
@@ -19,7 +20,52 @@ export type SummaryContext = {
   summaryApiConfig: SummaryApiConfig | null;
   uiMessages: UiMessage[];
   onStoreUpdated: () => void;
+  /** 当前结构化状态快照，用作摘要 prompt 的事实锚点。缺省时不注入。 */
+  getFactAnchor?: () => FactAnchor | null;
 };
+
+function normalizeFactKey(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+/** 按 category + 主体 + 内容 去重；同主体新事实会让旧事实 superseded=true。 */
+function dedupeKeyFacts(store: SummaryStore): void {
+  const active = store.keyFacts.filter(f => !f.superseded);
+  const byIdentity = new Map<string, KeyFact>();
+  const bySubjectCategory = new Map<string, KeyFact>();
+  for (const fact of active) {
+    const identityKey = `${fact.category}|${normalizeFactKey(fact.subject)}|${normalizeFactKey(fact.content)}`;
+    const subjectKey = `${fact.category}|${normalizeFactKey(fact.subject)}`;
+    const existing = byIdentity.get(identityKey);
+    if (existing) {
+      // 完全重复：保留更早的，新的标 superseded。
+      fact.superseded = true;
+      continue;
+    }
+    byIdentity.set(identityKey, fact);
+    const prev = bySubjectCategory.get(subjectKey);
+    if (prev && prev.id !== fact.id) {
+      // 同主体同类别但内容不同：旧的标 superseded。
+      prev.superseded = true;
+    }
+    bySubjectCategory.set(subjectKey, fact);
+  }
+}
+
+function createKeyFacts(
+  parsed: Array<Pick<KeyFact, 'category' | 'subject' | 'content'>>,
+  sourceRange: [number, number],
+): KeyFact[] {
+  const now = new Date().toISOString();
+  return parsed.map(p => ({
+    id: crypto.randomUUID(),
+    category: p.category,
+    subject: p.subject,
+    content: p.content,
+    sourceRange,
+    createdAt: now,
+  }));
+}
 
 /** 调用酒馆的 generateRaw 接口发送摘要请求。 */
 async function callGenerateRaw(
@@ -98,6 +144,8 @@ function formatMessagesAsText(messages: UiMessage[]): string {
 export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | 'major' = 'auto'): Promise<void> {
   const { win, summaryStore: store, summaryApiConfig, uiMessages } = ctx;
   const messageCount = countConversationMessages(uiMessages);
+  const anchor = ctx.getFactAnchor?.() ?? null;
+  const pinnedFacts = () => store.keyFacts.filter(f => !f.superseded);
 
   // 小摘要：自动模式达到阈值时运行，或 mode=minor 时强制运行。
   const runMinor = mode === 'minor' || (mode === 'auto' && shouldRunMinorSummary(store, messageCount));
@@ -105,15 +153,23 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
     const unsummarized = getUnsummarizedMessages(uiMessages, store.lastSummarizedIndex);
     if (unsummarized.length > 0) {
       try {
-        const prompts = buildMinorSummaryPrompt(unsummarized);
+        const prompts = buildMinorSummaryPrompt(unsummarized, anchor);
         const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
         const text = parseSummaryResult(raw);
         if (text) {
+          const range: [number, number] = [store.lastSummarizedIndex, messageCount - 1];
+          const parsedFacts = parseKeyFactsFromSummary(raw);
+          const newFacts = createKeyFacts(parsedFacts, range);
           store.minor.push({
-            range: [store.lastSummarizedIndex, messageCount - 1],
+            range,
             text,
             createdAt: new Date().toISOString(),
+            keyFacts: newFacts.length ? newFacts : undefined,
           });
+          if (newFacts.length) {
+            store.keyFacts.push(...newFacts);
+            dedupeKeyFacts(store);
+          }
           store.lastSummarizedIndex = messageCount;
           clearFailureState(store);
         }
@@ -143,7 +199,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
     }
     const consumed = store.minor.splice(0, store.minor.length);
     try {
-      const prompts = buildMajorSummaryPrompt(consumed);
+      const prompts = buildMajorSummaryPrompt(consumed, anchor, pinnedFacts());
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
       const text = parseSummaryResult(raw);
       if (text) {
@@ -178,7 +234,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
   if (shouldRunGlobalCompression(store)) {
     const consumed = store.major.splice(0, store.major.length);
     try {
-      const prompts = buildGlobalCompressionPrompt(store.global, consumed);
+      const prompts = buildGlobalCompressionPrompt(store.global, consumed, anchor, pinnedFacts());
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
       const text = parseSummaryResult(raw);
       if (text) {
@@ -218,11 +274,23 @@ export async function rerollSummaryEntry(
     if (!selected.length) return;
 
     try {
-      const prompts = buildMinorSummaryPrompt(selected);
+      const anchor = ctx.getFactAnchor?.() ?? null;
+      const prompts = buildMinorSummaryPrompt(selected, anchor);
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
       const text = parseSummaryResult(raw);
       if (text) {
-        store.minor[entryIndex] = { ...entry, text, createdAt: new Date().toISOString() };
+        const parsedFacts = parseKeyFactsFromSummary(raw);
+        const newFacts = createKeyFacts(parsedFacts, entry.range);
+        store.minor[entryIndex] = {
+          ...entry,
+          text,
+          createdAt: new Date().toISOString(),
+          keyFacts: newFacts.length ? newFacts : entry.keyFacts,
+        };
+        if (newFacts.length) {
+          store.keyFacts.push(...newFacts);
+          dedupeKeyFacts(store);
+        }
         clearFailureState(store);
       }
     } catch (error) {
@@ -239,11 +307,13 @@ export async function rerollSummaryEntry(
     if (!messagesInRange.length) return;
 
     try {
-      // 将范围内原始消息当作“小摘要式条目”来构建大摘要 prompt。
+      const anchor = ctx.getFactAnchor?.() ?? null;
+      const pinned = store.keyFacts.filter(f => !f.superseded);
+      // 将范围内原始消息当作"小摘要式条目"来构建大摘要 prompt。
       const pseudoMinors: import('./types').SummaryEntry[] = [
         { range: entry.range, text: formatMessagesAsText(messagesInRange), createdAt: '' },
       ];
-      const prompts = buildMajorSummaryPrompt(pseudoMinors);
+      const prompts = buildMajorSummaryPrompt(pseudoMinors, anchor, pinned);
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
       const text = parseSummaryResult(raw);
       if (text) {

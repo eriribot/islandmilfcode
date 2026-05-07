@@ -14,7 +14,7 @@ const TARGET_AVATAR_RULES: Array<{ patterns: string[]; avatarUrl: string }> = [
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/megumi_phone.jpg',
   },
   {
-    patterns: ['霞之丘诗羽', '霞ヶ丘詩羽', '诗羽', 'utaha', 'kasumigaoka'],
+    patterns: ['霞之丘诗羽', '霞之诗羽', '霞ヶ丘詩羽', '霞ヶ丘 詩羽', '诗羽', '詩羽', '霞诗子', '霞詩子', 'utaha', 'kasumigaoka'],
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/utaha_phone.jpg',
   },
 ];
@@ -70,6 +70,10 @@ function getStringField(raw: Record<string, unknown>, keys: string[]) {
     }
   }
   return '';
+}
+
+function getTextField(text: string, label: string) {
+  return text.match(new RegExp(`${label}[:：]\\s*([^\\n]+)`))?.[1]?.trim() ?? '';
 }
 
 function getRecordField(raw: Record<string, unknown>, key: string) {
@@ -219,12 +223,26 @@ function getBuiltInAvatarUrl(...texts: string[]) {
     ?.avatarUrl;
 }
 
+function getTargetAvatarUrl(targetName: string, entry: WorldbookEntry) {
+  // 中文注释：头像先按目标名和条目名判断；正文里会出现其他角色关系描述，不能用来抢优先级。
+  return getBuiltInAvatarUrl(targetName, entry.name) ?? getBuiltInAvatarUrl(entry.content);
+}
+
+function normalizeBuiltInTargetName(name: string, ...texts: string[]) {
+  const haystack = [name, ...texts].join('\n').toLowerCase();
+  // 中文注释：诗羽在世界书里可能写成“霞之诗羽”“霞诗子”或罗马音，这里统一回手机档案使用的标准名。
+  if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) {
+    return '霞之丘诗羽';
+  }
+  return name;
+}
+
 function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): TargetStatus | null {
   const kind = getStringField(raw, ['kind', 'type']);
   const name = getStringField(raw, ['name', '姓名']);
   if (kind !== TARGET_KIND && !name) return null;
 
-  const targetName = name || entry.name || defaultTarget.name;
+  const targetName = normalizeBuiltInTargetName(name || entry.name || defaultTarget.name, entry.name, entry.content);
   const titles = toTitleRecord(getRecordField(raw, 'titles'));
   const legacyTitles = toTitleRecord(getRecordField(raw, '称号'));
   const outfits = toStringRecord(getRecordField(raw, 'outfits'));
@@ -246,8 +264,8 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
       source: 'character-worldbook',
       worldbookEntryUid: entry.uid,
       worldbookEntryName: entry.name,
-      ...(getBuiltInAvatarUrl(targetName, entry.name, entry.content)
-        ? { avatarUrl: getBuiltInAvatarUrl(targetName, entry.name, entry.content) }
+      ...(getTargetAvatarUrl(targetName, entry)
+        ? { avatarUrl: getTargetAvatarUrl(targetName, entry) }
         : {}),
       ...(getRecordField(raw, 'meta')),
     },
@@ -259,12 +277,15 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
     return null;
   }
 
-  const name = entry.content.match(/姓名[:：]\s*([^\n]+)/)?.[1]?.trim();
+  const rawName = getTextField(entry.content, '姓名');
+  const name = normalizeBuiltInTargetName(rawName, entry.name, entry.content);
   if (!name) return null;
+  const alias = getTextField(entry.content, '别名');
 
   return {
     id: createIdFromName(name),
     name,
+    ...(alias ? { alias } : {}),
     affinity: defaultTarget.affinity,
     stage: affinityStage(defaultTarget.affinity),
     titles: {},
@@ -273,13 +294,15 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
       source: 'character-worldbook',
       worldbookEntryUid: entry.uid,
       worldbookEntryName: entry.name,
-      ...(getBuiltInAvatarUrl(name, entry.name, entry.content) ? { avatarUrl: getBuiltInAvatarUrl(name, entry.name, entry.content) } : {}),
+      ...(getTargetAvatarUrl(name, entry) ? { avatarUrl: getTargetAvatarUrl(name, entry) } : {}),
     },
   };
 }
 
 function parseTargetEntry(entry: WorldbookEntry): TargetStatus | null {
-  if (!entry.enabled) return null;
+  const rawEntry = entry as WorldbookEntry & { disable?: boolean };
+  // 中文注释：不同酒馆 API 可能返回 enabled 或 disable；缺省时按启用处理，避免正常条目被误判为关闭。
+  if (rawEntry.enabled === false || rawEntry.disable === true) return null;
 
   const extraTarget =
     entry.extra && typeof entry.extra === 'object' ? parseJsonTarget(entry.extra as Record<string, unknown>, entry) : null;
@@ -369,8 +392,20 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
 
   const existingById = new Map(statusData.targets.map(target => [target.id, target]));
   const existingByName = new Map(statusData.targets.map(target => [target.name, target]));
+  const existingByAlias = new Map(statusData.targets.filter(target => target.alias).map(target => [target.alias, target]));
+  const existingByWorldbookUid = new Map(
+    statusData.targets
+      .filter(target => target.meta?.worldbookEntryUid !== undefined)
+      .map(target => [String(target.meta?.worldbookEntryUid), target]),
+  );
   const mergedTargets = worldbookTargets.map(worldbookTarget => {
-    const existing = existingById.get(worldbookTarget.id) ?? existingByName.get(worldbookTarget.name);
+    const existing =
+      existingById.get(worldbookTarget.id) ??
+      existingByName.get(worldbookTarget.name) ??
+      (worldbookTarget.alias ? existingByAlias.get(worldbookTarget.alias) : undefined) ??
+      (worldbookTarget.meta?.worldbookEntryUid !== undefined
+        ? existingByWorldbookUid.get(String(worldbookTarget.meta.worldbookEntryUid))
+        : undefined);
     if (!existing) return worldbookTarget;
 
     return {
@@ -386,8 +421,9 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
         ...existing.outfits,
       },
       meta: {
-        ...(worldbookTarget.meta ?? {}),
         ...(existing.meta ?? {}),
+        // 中文注释：世界书目标信息是头像和来源的权威；否则旧存档里误判过的头像会一直覆盖新解析结果。
+        ...(worldbookTarget.meta ?? {}),
       },
     };
   });
