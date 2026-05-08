@@ -11,6 +11,7 @@ const TITLE_FILM_IMAGES = [
   'https://eriribot.github.io/islandmilfcode/picresource/megumi_film.jpg',
   'https://eriribot.github.io/islandmilfcode/picresource/michiru_film.jpg',
   'https://eriribot.github.io/islandmilfcode/picresource/utha_film.jpg',
+  
 ];
 
 function escapeHtml(str: string): string {
@@ -80,16 +81,20 @@ function renderSakuraField(count = 36) {
 }
 
 function renderFilmStrip() {
-  const frames = [...TITLE_FILM_IMAGES, ...TITLE_FILM_IMAGES];
+  const frames = Array.from({ length: 4 }, () => TITLE_FILM_IMAGES).flat();
   return `
-    <div class="gal-filmstrip-container" aria-hidden="true">
-      <div class="gal-filmstrip-track">
-        ${frames.map(src => `
-          <figure class="gal-filmstrip-frame">
-            <img src="${escapeHtml(src)}" loading="lazy" alt="" />
-          </figure>
-        `).join('')}
-      </div>
+    <div class="gal-film-ribbon" aria-hidden="true">
+      ${['top', 'middle', 'bottom'].map((segment, index) => `
+        <div class="gal-film-ribbon__segment gal-film-ribbon__segment--${segment}">
+          <div class="gal-film-ribbon__track" style="--film-offset:${index * -112}px">
+            ${frames.map(src => `
+              <figure class="gal-film-ribbon__frame">
+                <img src="${escapeHtml(src)}" loading="lazy" alt="" />
+              </figure>
+            `).join('')}
+          </div>
+        </div>
+      `).join('')}
     </div>
   `;
 }
@@ -107,6 +112,7 @@ export function renderTitleHome(options: TitleHomeOptions = {}) {
     <div class="gal-title">
       ${renderSakuraField(42)}
       ${renderTitleMusicControl()}
+      ${renderFilmStrip()}
 
       <div class="gal-title__particles" aria-hidden="true">
         <span class="gal-particle gal-particle--1"></span>
@@ -123,8 +129,6 @@ export function renderTitleHome(options: TitleHomeOptions = {}) {
           <img src ="https://eriribot.github.io/islandmilfcode/picresource/logo.png" alt="S冴えない彼女の育てかた" class="gal-title__logo" />
           </h1>
         </header>
-
-        ${renderFilmStrip()}
 
         <div class="gal-info-cards">
           <div class="gal-info-card">

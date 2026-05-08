@@ -286,6 +286,8 @@
 
 /* ── 标题头部 ── */
 .gal-title__header {
+  position: relative;
+  z-index: 10;
   text-align: center;
 }
 
@@ -318,6 +320,8 @@
 
 /* ── 信息卡片三栏 ── */
 .gal-info-cards {
+  position: relative;
+  z-index: 4;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
@@ -335,7 +339,7 @@
   overflow: hidden;
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 249, 250, 0.62)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 249, 250, 0.88)),
     linear-gradient(135deg, rgba(244, 178, 196, 0.12), rgba(187, 219, 247, 0.1));
   border: 1px solid rgba(224, 199, 203, 0.54);
   box-shadow:
@@ -511,6 +515,8 @@
 
 /* ── 按钮容器 ── */
 .gal-title__actions {
+  position: relative;
+  z-index: 4;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -1302,59 +1308,214 @@
 }
 
 /* ── 胶卷滚动组件 ── */
-.gal-filmstrip-container {
-  width: min(800px, 92vw);
-  margin: 1.5rem auto;
-  overflow: hidden;
-  transform: rotate(-1.5deg);
-  -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
-  mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+/* S-shaped film ribbon */
+.gal-film-ribbon {
+  position: absolute;
+  left: 50%;
+  top: 16%;
+  z-index: 1;
+  width: min(1180px, 132vw);
+  height: min(540px, 64vh);
+  pointer-events: none;
+  transform: translateX(-50%);
 }
 
-.gal-filmstrip-track {
+.gal-film-ribbon::before {
+  content: '';
+  position: absolute;
+  inset: 5% 10% 12%;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(255, 255, 255, 0.32), transparent 58%),
+    linear-gradient(105deg, transparent 7%, rgba(207, 116, 142, 0.13) 34%, transparent 62%);
+  filter: blur(16px);
+  opacity: 0.72;
+}
+
+.gal-film-ribbon__segment {
+  position: absolute;
+  left: 50%;
+  width: 840px;
+  max-width: 86vw;
+  height: 116px;
+  overflow: hidden;
+  border-radius: 999px / 42px;
+  background-color: #171315;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.9) 0 34%, transparent 36%),
+    radial-gradient(circle, rgba(255, 255, 255, 0.86) 0 34%, transparent 36%),
+    linear-gradient(180deg, #241d20 0 14px, #171315 14px calc(100% - 14px), #241d20 calc(100% - 14px));
+  background-position:
+    left 7px top 3px,
+    left 7px bottom 3px,
+    0 0;
+  background-repeat: repeat-x, repeat-x, no-repeat;
+  background-size: 22px 11px, 22px 11px, 100% 100%;
+  box-shadow:
+    0 18px 38px rgba(85, 60, 62, 0.16),
+    0 2px 0 rgba(255, 255, 255, 0.24) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.28) inset;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+
+.gal-film-ribbon__segment::before,
+.gal-film-ribbon__segment::after {
+  content: '';
+  position: absolute;
+  z-index: 2;
+  inset: 14px auto 14px;
+  width: 52px;
+  pointer-events: none;
+}
+
+.gal-film-ribbon__segment::before {
+  left: 0;
+  background: linear-gradient(90deg, rgba(255, 252, 248, 0.92), transparent);
+}
+
+.gal-film-ribbon__segment::after {
+  right: 0;
+  background: linear-gradient(270deg, rgba(255, 252, 248, 0.86), transparent);
+}
+
+.gal-film-ribbon__segment--top {
+  top: 54px;
+  transform: translateX(-46%) rotate(-7deg);
+}
+
+.gal-film-ribbon__segment--middle {
+  top: 182px;
+  transform: translateX(-50%) rotate(8deg);
+}
+
+.gal-film-ribbon__segment--bottom {
+  top: 308px;
+  transform: translateX(-54%) rotate(-6deg);
+}
+
+.gal-film-ribbon__track {
   display: flex;
   align-items: center;
   width: max-content;
-  padding: 14px 0;
-  background-color: #1a1618;
-  background-image:
-    radial-gradient(circle, rgba(255,255,255,0.85) 30%, transparent 32%),
-    radial-gradient(circle, rgba(255,255,255,0.85) 30%, transparent 32%);
-  background-size: 20px 20px;
-  background-position: top 2px center, bottom 2px center;
-  background-repeat: repeat-x;
-  animation: gal-film-roll 30s linear infinite;
-}
-
-.gal-filmstrip-container:hover .gal-filmstrip-track {
-  animation-play-state: paused;
-}
-
-.gal-filmstrip-frame {
-  flex-shrink: 0;
-  height: 120px;
-  margin: 0 6px;
-  overflow: hidden;
-  border-radius: 2px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-}
-
-.gal-filmstrip-frame img {
   height: 100%;
-  width: auto;
+  padding: 17px 0;
+  transform: translateX(var(--film-offset));
+  animation: gal-film-ribbon-roll 34s linear infinite;
+  will-change: transform;
+}
+
+.gal-film-ribbon__segment--middle .gal-film-ribbon__track {
+  animation-direction: reverse;
+  animation-duration: 38s;
+}
+
+.gal-film-ribbon__frame {
+  flex: 0 0 auto;
+  width: 92px;
+  height: 82px;
+  margin: 0 7px;
+  padding: 4px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.32),
+    0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.gal-film-ribbon__frame img {
   display: block;
-  object-fit: contain;
-  transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
-  filter: saturate(1.1) contrast(1.05);
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  object-fit: cover;
+  filter: saturate(1.08) contrast(1.04);
 }
 
-.gal-filmstrip-frame:hover img {
-  transform: scale(1.1);
-}
-
-@keyframes gal-film-roll {
+@keyframes gal-film-ribbon-roll {
   to {
-    transform: translateX(-50%);
+    transform: translateX(calc(var(--film-offset) - 50%));
+  }
+}
+
+@media (max-width: 760px) {
+  .gal-film-ribbon {
+    top: 17%;
+    width: 150vw;
+    height: 500px;
+    opacity: 0.9;
+  }
+
+  .gal-film-ribbon__segment {
+    width: 720px;
+    max-width: 132vw;
+    height: 96px;
+  }
+
+  .gal-film-ribbon__segment--top {
+    top: 40px;
+    transform: translateX(-48%) rotate(-9deg);
+  }
+
+  .gal-film-ribbon__segment--middle {
+    top: 156px;
+    transform: translateX(-50%) rotate(8deg);
+  }
+
+  .gal-film-ribbon__segment--bottom {
+    top: 270px;
+    transform: translateX(-54%) rotate(-7deg);
+  }
+
+  .gal-film-ribbon__track {
+    padding: 15px 0;
+  }
+
+  .gal-film-ribbon__frame {
+    width: 76px;
+    height: 66px;
+    margin: 0 5px;
+  }
+}
+
+@media (max-width: 520px) {
+  .gal-film-ribbon {
+    top: 12%;
+    width: 180vw;
+    height: 430px;
+    opacity: 0.72;
+  }
+
+  .gal-film-ribbon__segment {
+    height: 80px;
+    max-width: 160vw;
+  }
+
+  .gal-film-ribbon__segment--top {
+    top: 48px;
+    transform: translateX(-48%) rotate(-10deg);
+  }
+
+  .gal-film-ribbon__segment--middle {
+    top: 154px;
+    transform: translateX(-51%) rotate(9deg);
+  }
+
+  .gal-film-ribbon__segment--bottom {
+    top: 260px;
+    transform: translateX(-54%) rotate(-8deg);
+  }
+
+  .gal-film-ribbon__track {
+    padding: 13px 0;
+  }
+
+  .gal-film-ribbon__frame {
+    width: 62px;
+    height: 54px;
+    margin: 0 4px;
+    padding: 3px;
   }
 }
 
@@ -1371,7 +1532,7 @@
     transform: translate3d(0, 24vh, 0);
   }
 
-  .gal-filmstrip-track {
+  .gal-film-ribbon__track {
     animation: none;
   }
 }
