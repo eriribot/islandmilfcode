@@ -5,7 +5,7 @@ import { renderCharacterArchivePanel } from './archive';
 import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute } from './types';
 import { resolveWeatherRequest } from './weather';
 
-type PhoneCharacterThemeId = PhoneCharacterId | 'michiru';
+type PhoneCharacterThemeId = PhoneCharacterId;
 
 const PHONE_CHARACTER_THEMES: Record<
   PhoneCharacterThemeId,
@@ -44,7 +44,8 @@ const PHONE_CHARACTER_THEMES: Record<
   },
 };
 
-const PHONE_CHARACTER_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha'];
+// 手机首页头像切换按钮的显示顺序；新增女主时需要把 id 放进这里。
+const PHONE_CHARACTER_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha', 'michiru'];
 
 function getPhoneCharacterTheme(characterId: PhoneCharacterId) {
   return PHONE_CHARACTER_THEMES[characterId] ?? PHONE_CHARACTER_THEMES.megumi;

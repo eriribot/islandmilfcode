@@ -126,9 +126,37 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
     note: '开局为 2012 年 3 月 31 日，高二后升入私立丰之崎学园三年级 C 班。隐藏身份“霞诗子”与《恋爱节拍器》是她关系推进的核心变量。',
   },
+  michiru: {
+    id: 'michiru',
+    archiveLabel: '女主档案',
+    name: '冰堂 美智留',
+    romanName: 'Hyodo Michiru',
+    panelMark: '美智留',
+    imageUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Michiru_phone.jpg',
+    imageAlt: '冰堂美智留头像',
+    portraitCode: 'band vocalist cousin',
+    foot: [
+      { label: '定位', value: '表姐 / 乐队主唱' },
+      { label: '类型', value: '开朗 / 直球 / 音乐系' },
+      { label: '档案', value: '美术占位' },
+    ],
+    tags: ['音乐', '表姐', '行动派'],
+    intro:
+      '暂时作为美智留的美术占位档案。后续接入世界书变量后，可以在这里替换为完整人物资料、关系阶段和专属事件记录。',
+    quote: '“先把气氛炒起来吧！”',
+    details: [
+      { label: '生日', value: '12月18日' },
+      { label: '身份', value: 'icy tail 乐队主唱 / 吉他手' },
+      { label: '状态', value: '占位资源已接入' },
+      { label: '后续', value: '等待世界书变量绑定' },
+    ],
+    meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
+    note: '该角色当前是美术占位；绑定酒馆世界书目标后会显示存档变量。',
+  },
 };
 
-const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha'];
+// 档案页顶部角色标签的显示顺序；这里也要包含美智留，档案页才会出现她。
+const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha', 'michiru'];
 
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -152,6 +180,7 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
   if (archive.id === 'eriri') return /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
   if (archive.id === 'megumi') return /加藤|惠|恵|megumi|katou|kato/.test(haystack);
   if (archive.id === 'utaha') return /霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack);
+  if (archive.id === 'michiru') return /冰堂|冰堂美智留|美智留|michiru|hyodo|hyoudou/.test(haystack);
   return false;
 }
 
