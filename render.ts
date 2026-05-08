@@ -570,8 +570,9 @@ export function renderStatusPanel(state: AppState) {
   const statusData = state.statusData;
   const currentMainEventId = statusData.world.currentMainEventId;
   const currentMainEventStatus = currentMainEventId ? statusData.world.mainEvents?.[currentMainEventId] : '';
+  // 中文注释：状态面板只展示正在进行的主线，未进行和已结束都不占界面。
   const mainEvents = Object.entries(statusData.world.mainEvents ?? {}).filter(
-    ([id, eventStatus]) => id === currentMainEventId || !['已结束', '跳过'].includes(eventStatus),
+    ([, eventStatus]) => eventStatus === '进行中',
   );
   const playerName = state.playerProfile.name.trim() || '主角';
   const playerClass = state.playerProfile.className || '未记录';

@@ -16,6 +16,9 @@ import { getActiveTarget } from './types';
 export const PRIMARY_VISIBLE_TAG = 'content';
 // 兼容用户自定义预设里要求的中文正文标签，避免模型输出 <正文> 时被当成未知标签吞掉。
 export const FALLBACK_VISIBLE_TAGS = ['正文', 'context'];
+const MAIN_EVENT_NOT_STARTED = '未进行';
+const MAIN_EVENT_RUNNING = '进行中';
+const MAIN_EVENT_FINISHED = '已结束';
 
 // 预设里常见的、会嵌在正文里的元标签。这些不是正文边界，只是吐槽 / 思考 / 指令块。
 // 抽正文时需要把它们整体剥掉，否则 <tucao> 包住正文会让可见正文变空。
@@ -183,8 +186,9 @@ function buildRecentEventsContext(statusData: StatusData) {
 
 function buildMainEventsContext(statusData: StatusData) {
   const currentId = statusData.world.currentMainEventId;
+  // 中文注释：提示词只列正在进行的主线，避免未进行事件把上下文刷屏。
   const lines = Object.entries(statusData.world.mainEvents ?? {})
-    .filter(([id, status]) => id === currentId || !['已结束', '跳过'].includes(status))
+    .filter(([, status]) => normalizeMainEventStatus(status) === MAIN_EVENT_RUNNING)
     .slice(0, 8)
     .map(([id, status]) => `- ${id}：${status}`);
 
@@ -192,6 +196,15 @@ function buildMainEventsContext(statusData: StatusData) {
     currentId ? `当前主线事件：${currentId}（${statusData.world.mainEvents?.[currentId] ?? '状态未知'}）` : '当前主线事件：无',
     ...(lines.length ? ['主线事件状态：', ...lines] : []),
   ].join('\n');
+}
+
+function normalizeMainEventStatus(status: string | undefined): string {
+  const value = String(status ?? '').trim();
+  if (value === MAIN_EVENT_RUNNING) return MAIN_EVENT_RUNNING;
+  if (value === MAIN_EVENT_FINISHED || value === '跳过' || value === '延后' || value === '已完成') {
+    return MAIN_EVENT_FINISHED;
+  }
+  return MAIN_EVENT_NOT_STARTED;
 }
 
 function buildPlotEventReference(event: PlotEventCard | undefined, label: string) {
@@ -242,7 +255,7 @@ function pickNextUpcomingEvent(statusData: StatusData, plotLibrary: PlotLibrary)
   const currentDate = getDatePart(statusData.world.currentTime);
   const candidates = Object.values(plotLibrary.events)
     .filter(event => Boolean(event.schedule?.date))
-    .filter(event => (mainEvents[event.id] ?? '未触发') === '未触发')
+    .filter(event => normalizeMainEventStatus(mainEvents[event.id]) === MAIN_EVENT_NOT_STARTED)
     .filter(event => !currentDate || event.schedule!.date >= currentDate)
     .sort((a, b) => (a.schedule!.date.localeCompare(b.schedule!.date) || a.id.localeCompare(b.id)));
   return candidates[0] ?? null;
@@ -457,9 +470,18 @@ function buildTargetStateList(statusData: StatusData) {
         .join('、');
       const className = String(target.meta?.className ?? '').trim();
       const classSegment = className ? `；班级/身份=${className}` : '';
-      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度=${target.affinity}（${target.stage}）`;
+      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度=${target.affinity}（${target.stage}）；更新键=好感度.${target.name}:±N`;
     })
     .join('\n');
+}
+
+function buildAffinityUpdateExamples(statusData: StatusData) {
+  const examples = statusData.targets
+    .map(target => target.name || target.id)
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((name, index) => `好感度.${name}:${index === 1 ? '+2' : '+1'}`);
+  return examples.length ? examples.join(' / ') : '好感度.角色名:+1';
 }
 
 function buildPinnedKeyFactsInline(facts: KeyFact[] | undefined): string {
@@ -682,6 +704,7 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
         .join('；')
     : '';
   const targetList = buildTargetStateList(statusData);
+  const affinityExamples = buildAffinityUpdateExamples(statusData);
 
   return [
     '',
@@ -693,7 +716,7 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     '  时间:YYYY-MM-DD HH:mm   — 仅当正文确实描写了时间流逝（进入次日/深夜，或明确跨过一个时段）时才输出，必须完整 YYYY-MM-DD HH:mm。正文未真正推进时间时整行省略；禁止使用 `4月16日`、`2012-04-16`（缺 HH:mm）、`明天` 这种非完整格式，也禁止仅凭玩家输入里的时间词就自行补一个新时间。',
     '  地点:new_location      — Update if characters moved to a new location',
     '  好感度:±N              — Legacy affinity change for the current target only (single-target scene only)',
-    '  好感度.角色名或id:±N    — Targeted affinity change (e.g. 好感度.霞之丘诗羽:+2；好感度.英梨梨:-1)',
+    `  好感度.角色名或id:±N    — Targeted affinity change；多人场景必须从下方“可更新角色列表”的更新键复制角色名或 id（e.g. ${affinityExamples}）`,
     '  五维.能力名:±N          — Player P5 stat change (能力名: 知识/魅力/灵巧/体贴/勇气；e.g. 五维.体贴:+1)',
     '  着装.部位:描述          — Update outfit for a body part (e.g. 着装.上装:换上了黑色卫衣)',
     '  当前事件:事件ID          — Set the single current main plot event shown on the phone (e.g. 当前事件:SAE_01-2；clear with 当前事件:无)',
@@ -706,8 +729,7 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     '<progress>',
     '时间:2012-03-31 08:30',
     '地点:东京·侦探坡',
-    '好感度.霞之丘诗羽:+2',
-    '好感度.英梨梨:-1',
+    affinityExamples.split(' / ')[0] ?? '好感度.角色名:+1',
     '五维.体贴:+1',
     '着装.上装:私立丰之崎学园的制服衬衫',
     '早晨外出:两人决定去便利店买早餐。',
@@ -731,13 +753,14 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
 function buildStateDeltaInstruction(statusData: StatusData): string {
   const target = getActiveTarget(statusData);
   const targetList = buildTargetStateList(statusData);
+  const affinityExamples = buildAffinityUpdateExamples(statusData);
   return [
     '',
     '在你按预设规则输出完所有内容后,在消息最末尾追加一个 <state_delta> 块(独立于预设要求的任何标签):',
     '<state_delta>',
     '时间:YYYY-MM-DD HH:mm',
     '地点:当前所处具体地点',
-    '好感度.角色名:±N',
+    `好感度.角色名:±N（必须从下方“可更新角色”的更新键复制角色名；例如 ${affinityExamples}）`,
     '五维.能力名:±N',
     '主线事件.事件ID:状态',
     '当前事件:事件ID',
@@ -766,6 +789,7 @@ export function buildProgressPrompt(
         .join('；')
     : '';
   const targetList = buildTargetStateList(statusData);
+  const affinityExamples = buildAffinityUpdateExamples(statusData);
 
   const recentUserMessage = [...recentMessages].reverse().find(m => m.role === 'user');
   const timeIntentNote = recentUserMessage && detectTimeAdvanceIntent(recentUserMessage.text)
@@ -811,7 +835,7 @@ export function buildProgressPrompt(
         '  时间:YYYY-MM-DD HH:mm（必须完整；禁止使用 `4月16日`、`明天` 或缺 HH:mm 的格式）',
         '  地点:新地点',
         '  好感度:±N（旧格式，只用于当前攻略对象的单人场景）',
-        '  好感度.角色名或id:±N（多人场景必须用这个格式，例如 好感度.霞之丘诗羽:+2 / 好感度.英梨梨:-1）',
+        `  好感度.角色名或id:±N（多人场景必须用这个格式，并从“可更新角色列表”的更新键复制角色名；例如 ${affinityExamples}）`,
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
         '  着装.部位:描述',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
@@ -864,7 +888,8 @@ export function buildPhoneProgressPrompt(input: {
         '可用字段：',
         '  时间:YYYY-MM-DD HH:mm',
         '  地点:新地点',
-        '  好感度:±N',
+        `  好感度:±N（只更新当前聊天对象：${target.name}）`,
+        `  好感度.${target.name}:±N（也可显式写当前聊天对象；例如 好感度.${target.name}:+1）`,
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气）',
         '  着装.部位:描述',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',

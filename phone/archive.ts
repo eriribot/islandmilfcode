@@ -44,6 +44,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
   megumi: {
     id: 'megumi',
     archiveLabel: '女主档案',
+    // 中文注释：加藤惠按开局变量档案处理，和英梨梨、诗羽一样从一开始就是可加载的角色变量。
     name: '加藤 惠',
     romanName: '安静可靠型',
     panelMark: '加藤恵',
@@ -65,8 +66,8 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
       { label: '喜欢', value: '安静的谈话、散步、整理记录' },
       { label: '不擅长', value: '被强行推到台前' },
     ],
-    meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
-    note: '该角色当前是档案占位；绑定酒馆世界书目标后会显示存档变量。',
+    meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
+    note: '该角色当前是开局变量档案；绑定酒馆世界书目标后会显示存档变量。',
   },
   eriri: {
     id: 'eriri',

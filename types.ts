@@ -137,8 +137,11 @@ export type CharWorldbooks = {
 
 export type WorldbookEntry = {
   uid: number;
-  name: string;
-  enabled: boolean;
+  name?: string;
+  comment?: string;
+  key?: string[];
+  enabled?: boolean;
+  disable?: boolean;
   content: string;
   extra?: Record<string, unknown>;
 };

@@ -1,5 +1,5 @@
 import type { StatusData, TargetStatus } from '../types';
-import { defaultStatusData, defaultTarget } from './defaults';
+import { builtInTargetSeeds, defaultStatusData, defaultTarget } from './defaults';
 import { affinityStage, clamp } from './format';
 
 function normalizeTarget(raw: Record<string, any>, fallback: TargetStatus): TargetStatus {
@@ -71,16 +71,48 @@ function normalizePlayer(raw: Record<string, any>) {
   };
 }
 
+function getBuiltInTargetKey(target: TargetStatus) {
+  const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
+    .map(value => String(value ?? '').toLowerCase())
+    .join('\n');
+  if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
+  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
+  if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
+  return '';
+}
+
+function mergeBuiltInTargetSeeds(targets: TargetStatus[]) {
+  // 中文注释：旧存档可能只有英梨梨/诗羽；这里补齐开局角色变量，但绝不覆盖已有好感和阶段。
+  const nextTargets = targets.filter(target => target.id !== defaultTarget.id || targets.length === 1);
+  const existingKeys = new Set(nextTargets.map(getBuiltInTargetKey).filter(Boolean));
+  const existingIds = new Set(nextTargets.map(target => target.id));
+
+  for (const seed of builtInTargetSeeds) {
+    const seedKey = getBuiltInTargetKey(seed);
+    if ((seedKey && existingKeys.has(seedKey)) || existingIds.has(seed.id)) continue;
+    nextTargets.push(normalizeTarget(seed, defaultTarget));
+    if (seedKey) existingKeys.add(seedKey);
+    existingIds.add(seed.id);
+  }
+
+  return nextTargets.filter(target => target.id !== defaultTarget.id || nextTargets.length === 1);
+}
+
 export function normalizeStatusData(input: unknown): StatusData {
   const raw = typeof input === 'object' && input ? (input as Record<string, any>) : {};
-  const targets: TargetStatus[] = Array.isArray(raw.targets)
+  const rawTargets: TargetStatus[] = Array.isArray(raw.targets)
     ? raw.targets.map((t: any) => normalizeTarget(t, defaultTarget))
     : [];
+  const targets = mergeBuiltInTargetSeeds(rawTargets.length ? rawTargets : builtInTargetSeeds);
+  const activeTargetId =
+    raw.activeTargetId && targets.some(target => target.id === raw.activeTargetId)
+      ? raw.activeTargetId
+      : targets[0]?.id ?? defaultTarget.id;
 
   return {
     world: normalizeWorld(raw),
     targets: targets.length ? targets : [{ ...defaultTarget }],
-    activeTargetId: raw.activeTargetId ?? targets[0]?.id ?? defaultTarget.id,
+    activeTargetId,
     player: normalizePlayer(raw),
   };
 }

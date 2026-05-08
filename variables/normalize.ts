@@ -14,6 +14,9 @@ export {
 export { normalizeStatusData, serializeStatusData } from './legacy';
 
 const MAX_RECENT_EVENTS = 5;
+const MAIN_EVENT_NOT_STARTED = '未进行';
+const MAIN_EVENT_RUNNING = '进行中';
+const MAIN_EVENT_FINISHED = '已结束';
 
 type ScheduledEvent = {
   id: string;
@@ -22,7 +25,14 @@ type ScheduledEvent = {
   locations: string[];
 };
 
-const FINISHED_MAIN_EVENT_STATUSES = new Set(['已结束', '跳过', '延后']);
+function normalizeMainEventStatus(status: string | undefined): string {
+  const value = String(status ?? '').trim();
+  if (value === MAIN_EVENT_RUNNING) return MAIN_EVENT_RUNNING;
+  if (value === MAIN_EVENT_FINISHED || value === '跳过' || value === '延后' || value === '已完成') {
+    return MAIN_EVENT_FINISHED;
+  }
+  return MAIN_EVENT_NOT_STARTED;
+}
 
 function buildSchedule(plotLibrary: PlotLibrary | null | undefined): ScheduledEvent[] {
   if (!plotLibrary) return [];
@@ -221,7 +231,9 @@ function eventMatchesCurrentState(
   currentLocation: string,
 ) {
   if (currentDate !== event.date) return false;
-  const timeMatches = !event.timeSegments.length || event.timeSegments.includes(currentSegment);
+  const timeMatches =
+    !event.timeSegments.length ||
+    event.timeSegments.some(segment => segment === currentSegment || segment.includes(currentSegment));
   const locationMatches =
     !event.locations.length || event.locations.some(location => locationMatchesEvent(currentLocation, location));
   return timeMatches && locationMatches;
@@ -248,15 +260,15 @@ function syncCurrentMainEvent(statusData: StatusData, schedule: ScheduledEvent[]
   const currentId = statusData.world.currentMainEventId ?? '';
 
   // 当前事件是手机和提示词使用的权威游标；历史状态允许保留多个"进行中"，但游标只能指向一个。
-  if (currentId && mainEvents[currentId] !== '进行中') {
+  if (currentId && normalizeMainEventStatus(mainEvents[currentId]) !== MAIN_EVENT_RUNNING) {
     statusData.world.currentMainEventId = '';
     changed = true;
   }
 
   const scheduledId = getScheduledCurrentMainEventId(statusData, schedule);
-  if (scheduledId && !FINISHED_MAIN_EVENT_STATUSES.has(mainEvents[scheduledId] ?? '未触发')) {
-    if (mainEvents[scheduledId] !== '进行中') {
-      mainEvents[scheduledId] = '进行中';
+  if (scheduledId && normalizeMainEventStatus(mainEvents[scheduledId]) !== MAIN_EVENT_FINISHED) {
+    if (normalizeMainEventStatus(mainEvents[scheduledId]) !== MAIN_EVENT_RUNNING) {
+      mainEvents[scheduledId] = MAIN_EVENT_RUNNING;
       changed = true;
     }
     if (statusData.world.currentMainEventId !== scheduledId) {
@@ -268,7 +280,7 @@ function syncCurrentMainEvent(statusData: StatusData, schedule: ScheduledEvent[]
   if (!statusData.world.currentMainEventId) {
     const fallbackId =
       Object.entries(mainEvents)
-        .filter(([, status]) => status === '进行中')
+        .filter(([, status]) => normalizeMainEventStatus(status) === MAIN_EVENT_RUNNING)
         .sort(([a], [b]) => getMainEventOrder(schedule, b) - getMainEventOrder(schedule, a))[0]?.[0] ?? '';
     if (fallbackId) {
       statusData.world.currentMainEventId = fallbackId;
@@ -291,8 +303,8 @@ function closeEarlierRunningMainEvents(
   const mainEvents = (statusData.world.mainEvents ??= {});
   for (const event of schedule.slice(0, currentOrder)) {
     // 主线按时间线强覆盖：后续事件进入进行中后，前序仍卡在"进行中"的旧事件自动结算。
-    if (mainEvents[event.id] === '进行中') {
-      mainEvents[event.id] = '已结束';
+    if (normalizeMainEventStatus(mainEvents[event.id]) === MAIN_EVENT_RUNNING) {
+      mainEvents[event.id] = MAIN_EVENT_FINISHED;
       changed = true;
     }
   }
@@ -309,18 +321,29 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
   let changed = false;
 
   for (const event of schedule) {
-    const status = mainEvents[event.id] ?? '未触发';
-    if (status !== '未触发') continue;
-
-    if (eventMatchesCurrentState(event, currentDate, currentSegment, currentLocation)) {
-      mainEvents[event.id] = '进行中';
-      statusData.world.currentMainEventId = event.id;
+    const normalizedStatus = normalizeMainEventStatus(mainEvents[event.id]);
+    if (mainEvents[event.id] !== normalizedStatus) {
+      mainEvents[event.id] = normalizedStatus;
       changed = true;
+    }
+
+    // 中文注释：过了事件日期就直接结算，不再保留“延后/跳过”等中间态。
+    if (currentDate && compareDate(currentDate, event.date) > 0) {
+      if (normalizedStatus !== MAIN_EVENT_FINISHED) {
+        mainEvents[event.id] = MAIN_EVENT_FINISHED;
+        if (statusData.world.currentMainEventId === event.id) {
+          statusData.world.currentMainEventId = '';
+        }
+        changed = true;
+      }
       continue;
     }
 
-    if (currentDate && compareDate(currentDate, event.date) > 0) {
-      mainEvents[event.id] = '延后';
+    if (normalizedStatus !== MAIN_EVENT_NOT_STARTED) continue;
+
+    if (eventMatchesCurrentState(event, currentDate, currentSegment, currentLocation)) {
+      mainEvents[event.id] = MAIN_EVENT_RUNNING;
+      statusData.world.currentMainEventId = event.id;
       changed = true;
     }
   }
@@ -377,12 +400,15 @@ export function applyProgressUpdate(
   }
 
   if (Object.keys(update.mainEvents ?? {}).length) {
+    const normalizedUpdates = Object.fromEntries(
+      Object.entries(update.mainEvents).map(([id, eventStatus]) => [id, normalizeMainEventStatus(eventStatus)]),
+    );
     statusData.world.mainEvents = {
       ...(statusData.world.mainEvents ?? {}),
-      ...update.mainEvents,
+      ...normalizedUpdates,
     };
-    for (const [id, eventStatus] of Object.entries(update.mainEvents)) {
-      if (eventStatus === '进行中') {
+    for (const [id, eventStatus] of Object.entries(normalizedUpdates)) {
+      if (eventStatus === MAIN_EVENT_RUNNING) {
         statusData.world.currentMainEventId = id;
         closeEarlierRunningMainEvents(statusData, id, schedule);
       }
@@ -392,9 +418,9 @@ export function applyProgressUpdate(
   if (update.currentMainEventId) {
     statusData.world.currentMainEventId = update.currentMainEventId;
     if (
-      !FINISHED_MAIN_EVENT_STATUSES.has((statusData.world.mainEvents ??= {})[update.currentMainEventId] ?? '未触发')
+      normalizeMainEventStatus((statusData.world.mainEvents ??= {})[update.currentMainEventId]) !== MAIN_EVENT_FINISHED
     ) {
-      statusData.world.mainEvents[update.currentMainEventId] = '进行中';
+      statusData.world.mainEvents[update.currentMainEventId] = MAIN_EVENT_RUNNING;
       closeEarlierRunningMainEvents(statusData, update.currentMainEventId, schedule);
     }
   }

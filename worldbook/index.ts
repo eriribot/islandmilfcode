@@ -167,7 +167,7 @@ function parsePlotEventRecord(
     content: typeof contentValue === 'string' ? contentValue.trim() : compactJson(contentValue),
     schedule: parseEventSchedule(raw),
     sourceEntryUid: entry.uid,
-    sourceEntryName: entry.name,
+    sourceEntryName: getWorldbookEntryName(entry),
   };
 }
 
@@ -256,6 +256,10 @@ function createIdFromName(name: string) {
     .replace(/^-+|-+$/g, '') || defaultTarget.id;
 }
 
+function getWorldbookEntryName(entry: WorldbookEntry) {
+  return String(entry.name || entry.comment || entry.key?.[0] || '').trim();
+}
+
 function getBuiltInAvatarUrl(...texts: string[]) {
   const haystack = texts.join('\n').toLowerCase();
   return TARGET_AVATAR_RULES.find(rule => rule.patterns.some(pattern => haystack.includes(pattern.toLowerCase())))
@@ -263,12 +267,19 @@ function getBuiltInAvatarUrl(...texts: string[]) {
 }
 
 function getTargetAvatarUrl(targetName: string, entry: WorldbookEntry) {
-  // 中文注释：头像先按目标名和条目名判断；正文里会出现其他角色关系描述，不能用来抢优先级。
-  return getBuiltInAvatarUrl(targetName, entry.name) ?? getBuiltInAvatarUrl(entry.content);
+  // 中文注释：头像只按目标名和条目名判断；角色正文里会互相提到对方，不能拿正文抢头像优先级。
+  return getBuiltInAvatarUrl(targetName, getWorldbookEntryName(entry));
 }
 
 function normalizeBuiltInTargetName(name: string, ...texts: string[]) {
   const haystack = [name, ...texts].join('\n').toLowerCase();
+  // 中文注释：只用姓名、别名、条目名等身份字段归一化，避免正文里的“关系描述”把角色串成别人。
+  if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) {
+    return '加藤惠';
+  }
+  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) {
+    return '泽村·斯宾塞·英梨梨';
+  }
   // 中文注释：诗羽在世界书里可能写成“霞之诗羽”“霞诗子”或罗马音，这里统一回手机档案使用的标准名。
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) {
     return '霞之丘诗羽';
@@ -311,7 +322,9 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
   const name = getStringField(raw, ['name', '姓名']);
   if (kind !== TARGET_KIND && !name) return null;
 
-  const targetName = normalizeBuiltInTargetName(name || entry.name || defaultTarget.name, entry.name, entry.content);
+  const alias = getStringField(raw, ['alias', '别名']);
+  const entryName = getWorldbookEntryName(entry);
+  const targetName = normalizeBuiltInTargetName(name || entryName || defaultTarget.name, alias, entryName);
   const titles = toTitleRecord(getRecordField(raw, 'titles'));
   const legacyTitles = toTitleRecord(getRecordField(raw, '称号'));
   const outfits = toStringRecord(getRecordField(raw, 'outfits'));
@@ -323,7 +336,7 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
   return {
     id: getStringField(raw, ['id']) || createIdFromName(targetName),
     name: targetName,
-    alias: getStringField(raw, ['alias', '别名']) || undefined,
+    alias: alias || undefined,
     affinity: defaultTarget.affinity,
     stage: affinityStage(defaultTarget.affinity),
     titles: Object.keys(titles).length ? titles : legacyTitles,
@@ -335,7 +348,7 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
     meta: {
       source: 'character-worldbook',
       worldbookEntryUid: entry.uid,
-      worldbookEntryName: entry.name,
+      worldbookEntryName: entryName,
       ...(explicitClass ? { className: explicitClass } : {}),
       ...(getTargetAvatarUrl(targetName, entry)
         ? { avatarUrl: getTargetAvatarUrl(targetName, entry) }
@@ -346,14 +359,15 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
 }
 
 function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
-  if (/^\s*\[剧情]/.test(entry.name) || !/姓名[:：]/.test(entry.content)) {
+  const entryName = getWorldbookEntryName(entry);
+  if (/^\s*\[剧情]/.test(entryName) || !/姓名[:：]/.test(entry.content)) {
     return null;
   }
 
   const rawName = getTextField(entry.content, '姓名');
-  const name = normalizeBuiltInTargetName(rawName, entry.name, entry.content);
-  if (!name) return null;
   const alias = getTextField(entry.content, '别名');
+  const name = normalizeBuiltInTargetName(rawName, alias, entryName);
+  if (!name) return null;
   const className = extractClassName(entry.content);
 
   return {
@@ -367,7 +381,7 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
     meta: {
       source: 'character-worldbook',
       worldbookEntryUid: entry.uid,
-      worldbookEntryName: entry.name,
+      worldbookEntryName: entryName,
       ...(className ? { className } : {}),
       ...(getTargetAvatarUrl(name, entry) ? { avatarUrl: getTargetAvatarUrl(name, entry) } : {}),
     },
@@ -375,9 +389,8 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
 }
 
 function parseTargetEntry(entry: WorldbookEntry): TargetStatus | null {
-  const rawEntry = entry as WorldbookEntry & { disable?: boolean };
-  // 中文注释：不同酒馆 API 可能返回 enabled 或 disable；缺省时按启用处理，避免正常条目被误判为关闭。
-  if (rawEntry.enabled === false || rawEntry.disable === true) return null;
+  // 中文注释：disable 才是硬关闭；enabled=false 常只是选择性世界书当前未激活，角色档案仍要进入 targets 才能在空档期更新好感。
+  if (entry.disable === true) return null;
 
   const extraTarget =
     entry.extra && typeof entry.extra === 'object' ? parseJsonTarget(entry.extra as Record<string, unknown>, entry) : null;
@@ -392,8 +405,50 @@ function parseTargetEntry(entry: WorldbookEntry): TargetStatus | null {
   return parseTextTarget(entry);
 }
 
+function getBuiltInTargetKeyFromIdentity(target: TargetStatus) {
+  // 中文注释：修复旧存档串位时，只看 target 自身身份字段；不要看 worldbookEntryName，否则旧的错误来源会继续污染变量合并。
+  const haystack = [target.id, target.name, target.alias].map(value => String(value ?? '').toLowerCase()).join('\n');
+  if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
+  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
+  if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
+  return '';
+}
+
+function canReuseExistingTargetVariables(worldbookTarget: TargetStatus, existing: TargetStatus) {
+  const worldbookKey = getBuiltInTargetKeyFromIdentity(worldbookTarget);
+  const existingKey = getBuiltInTargetKeyFromIdentity(existing);
+  return !worldbookKey || !existingKey || worldbookKey === existingKey;
+}
+
+function repairKnownBuiltInTargetBleed(targets: TargetStatus[]) {
+  const byKey = new Map<string, TargetStatus>();
+  for (const target of targets) {
+    const key = getBuiltInTargetKeyFromIdentity(target);
+    if (key && !byKey.has(key)) byKey.set(key, target);
+  }
+
+  const megumi = byKey.get('megumi');
+  const utaha = byKey.get('utaha');
+  if (!megumi || !utaha) return targets;
+  if (megumi.meta?.variableRepairVersion === 'megumi-utaha-bleed-v1') return targets;
+
+  const sameAffinity = Number(megumi.affinity ?? 0) === Number(utaha.affinity ?? 0);
+  const sameStage = String(megumi.stage ?? '') === String(utaha.stage ?? '');
+  if (!sameAffinity || !sameStage || Number(megumi.affinity ?? 0) === 0) return targets;
+
+  // 中文注释：旧版本曾把加藤惠条目归一成诗羽，导致诗羽好感被写进加藤惠；这里做一次性窄迁移。
+  megumi.affinity = defaultTarget.affinity;
+  megumi.stage = affinityStage(defaultTarget.affinity);
+  megumi.meta = {
+    ...(megumi.meta ?? {}),
+    variableRepairVersion: 'megumi-utaha-bleed-v1',
+  };
+  return targets;
+}
+
 function isPlotCandidateEntry(entry: WorldbookEntry) {
-  return /^\s*\[剧情]/.test(entry.name) || /^\s*\[plot]/i.test(entry.name) || entry.content.includes('"事件链"');
+  const entryName = getWorldbookEntryName(entry);
+  return /^\s*\[剧情]/.test(entryName) || /^\s*\[plot]/i.test(entryName) || entry.content.includes('"事件链"');
 }
 
 function parsePlotEntry(entry: WorldbookEntry): {
@@ -507,6 +562,7 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
         ? existingByWorldbookUid.get(String(worldbookTarget.meta.worldbookEntryUid))
         : undefined);
     if (!existing) return worldbookTarget;
+    if (!canReuseExistingTargetVariables(worldbookTarget, existing)) return worldbookTarget;
 
     return {
       ...worldbookTarget,
@@ -530,7 +586,7 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
 
   const worldbookIds = new Set(mergedTargets.map(target => target.id));
   const customTargets = statusData.targets.filter(target => !worldbookIds.has(target.id) && target.id !== defaultTarget.id);
-  const targets = [...mergedTargets, ...customTargets];
+  const targets = repairKnownBuiltInTargetBleed([...mergedTargets, ...customTargets]);
 
   return {
     ...statusData,
