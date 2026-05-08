@@ -5,8 +5,10 @@ import { renderCharacterArchivePanel } from './archive';
 import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute } from './types';
 import { resolveWeatherRequest } from './weather';
 
+type PhoneCharacterThemeId = PhoneCharacterId | 'michiru';
+
 const PHONE_CHARACTER_THEMES: Record<
-  PhoneCharacterId,
+  PhoneCharacterThemeId,
   {
     label: string;
     avatarUrl: string;
@@ -33,6 +35,12 @@ const PHONE_CHARACTER_THEMES: Record<
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/utaha_phone.jpg',
     wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_utaha.png',
     bgmUrl: 'https://eriribot.github.io/islandmilfcode/music/utaha.mp3',
+  },
+  michiru: {
+    label: '美智留',
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Michiru_phone.jpg',
+    wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_michiru.jpg',
+    bgmUrl: 'https://eriribot.github.io/islandmilfcode/music/michiru.mp3',
   },
 };
 
