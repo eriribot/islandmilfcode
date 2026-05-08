@@ -4,6 +4,15 @@ import { renderLoadSaveModal } from './loadsave';
 // 发布角色卡前，把这里替换为可直接访问的远程音频 URL。
 const TITLE_MUSIC_URL = 'https://eriribot.github.io/islandmilfcode/Aimer_星屑ビーナス.mp3';
 
+const TITLE_FILM_IMAGES = [
+  'https://eriribot.github.io/islandmilfcode/picresource/all_film.jpg',
+  'https://eriribot.github.io/islandmilfcode/picresource/eriri_film.jpg',
+  'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg',
+  'https://eriribot.github.io/islandmilfcode/picresource/megumi_film.jpg',
+  'https://eriribot.github.io/islandmilfcode/picresource/michiru_film.jpg',
+  'https://eriribot.github.io/islandmilfcode/picresource/utha_film.jpg',
+];
+
 function escapeHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -70,6 +79,21 @@ function renderSakuraField(count = 36) {
   `;
 }
 
+function renderFilmStrip() {
+  const frames = [...TITLE_FILM_IMAGES, ...TITLE_FILM_IMAGES];
+  return `
+    <div class="gal-filmstrip-container" aria-hidden="true">
+      <div class="gal-filmstrip-track">
+        ${frames.map(src => `
+          <figure class="gal-filmstrip-frame">
+            <img src="${escapeHtml(src)}" loading="lazy" alt="" />
+          </figure>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
 type TitleHomeOptions = {
   showSaves?: boolean;
 };
@@ -99,6 +123,8 @@ export function renderTitleHome(options: TitleHomeOptions = {}) {
           <img src ="https://eriribot.github.io/islandmilfcode/picresource/logo.png" alt="S冴えない彼女の育てかた" class="gal-title__logo" />
           </h1>
         </header>
+
+        ${renderFilmStrip()}
 
         <div class="gal-info-cards">
           <div class="gal-info-card">

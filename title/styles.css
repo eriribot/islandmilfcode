@@ -1301,6 +1301,63 @@
   }
 }
 
+/* ── 胶卷滚动组件 ── */
+.gal-filmstrip-container {
+  width: min(800px, 92vw);
+  margin: 1.5rem auto;
+  overflow: hidden;
+  transform: rotate(-1.5deg);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+  mask-image: linear-gradient(to right, transparent, black 10%, black 90%, transparent);
+}
+
+.gal-filmstrip-track {
+  display: flex;
+  align-items: center;
+  width: max-content;
+  padding: 14px 0;
+  background-color: #1a1618;
+  background-image:
+    radial-gradient(circle, rgba(255,255,255,0.85) 30%, transparent 32%),
+    radial-gradient(circle, rgba(255,255,255,0.85) 30%, transparent 32%);
+  background-size: 20px 20px;
+  background-position: top 2px center, bottom 2px center;
+  background-repeat: repeat-x;
+  animation: gal-film-roll 30s linear infinite;
+}
+
+.gal-filmstrip-container:hover .gal-filmstrip-track {
+  animation-play-state: paused;
+}
+
+.gal-filmstrip-frame {
+  flex-shrink: 0;
+  height: 120px;
+  margin: 0 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+.gal-filmstrip-frame img {
+  height: 100%;
+  width: auto;
+  display: block;
+  object-fit: contain;
+  transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+  filter: saturate(1.1) contrast(1.05);
+}
+
+.gal-filmstrip-frame:hover img {
+  transform: scale(1.1);
+}
+
+@keyframes gal-film-roll {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .gal-sakura-petal,
   .gal-sakura-petal > span,
@@ -1312,5 +1369,9 @@
   .gal-sakura-petal {
     opacity: 0.26;
     transform: translate3d(0, 24vh, 0);
+  }
+
+  .gal-filmstrip-track {
+    animation: none;
   }
 }
