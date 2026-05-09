@@ -171,6 +171,7 @@ function mapChatMessageToUiMessage(
     role: message.role,
     speaker: message.name || message.role,
     text: String(message.message ?? ''),
+    rawText: String(message.message ?? ''),
     tavernMessageId: message.message_id,
   };
 }
@@ -196,6 +197,9 @@ export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
         speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
         text: String(message.text ?? ''),
       };
+      if (message.rawText) {
+        base.rawText = String(message.rawText);
+      }
       if (message.statusSnapshot) {
         base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot);
       }
@@ -214,6 +218,7 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
         role: msg.role,
         speaker: String(msg.speaker || (msg.role === 'assistant' ? 'Assistant' : 'User')),
         text: String(msg.text ?? ''),
+        rawText: msg.rawText ? String(msg.rawText) : undefined,
       };
       if (msg.statusSnapshot) {
         ui.statusSnapshot = normalizeRollbackSnapshot(msg.statusSnapshot);

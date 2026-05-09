@@ -164,6 +164,7 @@ function normalizePersistedMessages(messages: PersistedMessage[] | undefined): P
       role: message.role,
       speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
       text: String(message.text ?? ''),
+      ...(message.rawText ? { rawText: String(message.rawText) } : {}),
       ...(message.statusSnapshot ? { statusSnapshot: cloneJson(message.statusSnapshot) } : {}),
     }));
 }

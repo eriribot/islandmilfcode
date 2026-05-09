@@ -99,6 +99,35 @@ export function extractTaggedReply(raw: string, tagName: string, streaming: bool
   return '';
 }
 
+export function extractTucaoBlocks(text: string, { streaming = false }: { streaming?: boolean } = {}) {
+  const raw = String(text ?? '');
+  if (!raw) return [];
+
+  const blocks: string[] = [];
+  const closedTag = /<tucao\b[^>]*>([\s\S]*?)<\/tucao>/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = closedTag.exec(raw))) {
+    const body = sanitizeVisibleReply((match[1] ?? '').trim());
+    if (body) blocks.push(body);
+  }
+
+  if (streaming) {
+    const opens = Array.from(raw.matchAll(/<tucao\b[^>]*>/gi));
+    const closes = Array.from(raw.matchAll(/<\/tucao>/gi));
+    const lastOpen = opens[opens.length - 1];
+    const lastClose = closes[closes.length - 1];
+
+    if (lastOpen?.index != null && (!lastClose?.index || lastOpen.index > lastClose.index)) {
+      const start = lastOpen.index + lastOpen[0].length;
+      const body = sanitizeVisibleReply(raw.slice(start).replace(/<[^>]*$/, '').trim());
+      if (body && blocks[blocks.length - 1] !== body) blocks.push(body);
+    }
+  }
+
+  return blocks;
+}
+
 export function extractContextReply(text: string, { streaming = false }: { streaming?: boolean } = {}) {
   const raw = String(text ?? '');
   if (!raw) {

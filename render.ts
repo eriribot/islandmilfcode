@@ -1,5 +1,5 @@
 import { escapeHtml } from './html';
-import { getReaderMessages, getVisibleMessageText } from './message-format';
+import { extractTucaoBlocks, getReaderMessages, getVisibleMessageText } from './message-format';
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
 import type { SummaryStore } from './summary/types';
 import type { AppState, ReaderContextMenuState, StatusData, UiMessage } from './types';
@@ -105,6 +105,27 @@ function renderReaderHint(direction: 'prev' | 'next', enabled: boolean) {
       <span class="reader-card__hint-icon">${icon}</span>
       <span class="reader-card__hint-label">${label}</span>
     </span>
+  `;
+}
+
+function renderTucaoPanel(message: UiMessage) {
+  if (message.role !== 'assistant') return '';
+
+  const blocks = extractTucaoBlocks(message.rawText || message.text, { streaming: message.streaming });
+  if (!blocks.length) return '';
+
+  return `
+    <aside class="reader-tucao" aria-label="此方的脑内剧场">
+      <div class="reader-tucao__list">
+        ${blocks
+          .map(
+            block => `
+              <div class="reader-tucao__item">${escapeHtml(block)}</div>
+            `,
+          )
+          .join('')}
+      </div>
+    </aside>
   `;
 }
 
@@ -359,6 +380,54 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
         </div>
       </div>
     </section>
+  `;
+}
+
+function getTucaoFloatState(state: AppState) {
+  const raw = typeof state.runtimeFlags.tucaoFloat === 'object' && state.runtimeFlags.tucaoFloat
+    ? (state.runtimeFlags.tucaoFloat as Record<string, unknown>)
+    : {};
+  return {
+    x: Math.max(8, Number(raw.x ?? 28) || 28),
+    y: Math.max(8, Number(raw.y ?? 92) || 92),
+    collapsed: Boolean(raw.collapsed),
+  };
+}
+
+function renderTucaoFloatingPanel(state: AppState) {
+  const readerMessages = getReaderMessages(state.uiMessages);
+  const safeIndex = Math.min(Math.max(state.focusedMessageIndex, 0), Math.max(readerMessages.length - 1, 0));
+  const message = readerMessages[safeIndex];
+  if (!message || message.role !== 'assistant') return '';
+
+  const blocks = extractTucaoBlocks(message.rawText || message.text, { streaming: message.streaming });
+  if (!blocks.length) return '';
+
+  const floatState = getTucaoFloatState(state);
+  const collapsedClass = floatState.collapsed ? ' is-collapsed' : '';
+
+  return `
+    <aside
+      class="reader-tucao-float${collapsedClass}"
+      style="left:${floatState.x}px;top:${floatState.y}px"
+      data-tucao-float="true"
+      aria-label="此方的脑内剧场"
+    >
+      <header class="reader-tucao-float__header" data-tucao-drag-handle="true">
+        <span class="reader-tucao-float__title">此方的脑内剧场</span>
+        <button
+          class="reader-tucao-float__toggle"
+          data-action="toggle-tucao-float"
+          aria-label="${floatState.collapsed ? '展开吐槽浮窗' : '折叠吐槽浮窗'}"
+          title="${floatState.collapsed ? '展开' : '折叠'}"
+        >
+          ${floatState.collapsed ? '💬' : '-'}
+        </button>
+      </header>
+      <div class="reader-tucao-float__body">
+        ${renderTucaoPanel(message)}
+      </div>
+    </aside>
   `;
 }
 
@@ -726,6 +795,7 @@ export function renderApp(state: AppState, flipDir: string = '') {
   return `
     <main class="islandmilfcode-scene">
       ${renderPaperWorkspace(state, flipDir)}
+      ${renderTucaoFloatingPanel(state)}
       ${renderReaderContextMenu(state.readerContextMenu, state.generating)}
       ${renderReaderEditor(state)}
       ${renderFloatingPhone(state)}

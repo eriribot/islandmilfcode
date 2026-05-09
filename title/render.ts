@@ -11,7 +11,10 @@ const TITLE_FILM_IMAGES = [
   'https://eriribot.github.io/islandmilfcode/picresource/megumi_film.jpg',
   'https://eriribot.github.io/islandmilfcode/picresource/michiru_film.jpg',
   'https://eriribot.github.io/islandmilfcode/picresource/utha_film.jpg',
-  
+  'https://eriribot.github.io/islandmilfcode/picresource/Akane_film.jpg',
+  'https://eriribot.github.io/islandmilfcode/picresource/all_film2.jpg',
+  'https://eriribot.github.io/islandmilfcode/picresource/eriri_film2.jpg',
+  'https://eriribot.github.io/islandmilfcode/picresource/utaha_film2.jpg',
 ];
 
 function escapeHtml(str: string): string {

@@ -4,7 +4,7 @@ import './title/styles.css';
 
 import { submitMessage, submitPhoneMessage, type ActionContext } from './actions';
 import { setupStreamingHooks } from './actions/streaming';
-import { getReaderMessages } from './message-format';
+import { extractContextReply, getReaderMessages } from './message-format';
 import { bindFloatingPhoneEvents, loadFloatingPhonePosition, syncFloatingPhoneAfterResize } from './phone/floating';
 import {
   closePhoneRoute,
@@ -86,6 +86,16 @@ let readerDragState: {
   scrolling: boolean;
   moved: boolean;
 } | null = null;
+
+let tucaoDragState: {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startLeft: number;
+  startTop: number;
+  moved: boolean;
+} | null = null;
+let tucaoSuppressNextToggleClick = false;
 
 function canFlipReader(direction: 'prev' | 'next') {
   const readerMessages = getReaderMessages(state.uiMessages);
@@ -351,7 +361,7 @@ function openReaderEditor(readerIndex: number) {
   if (!message) return;
   state.readerEditing = {
     readerIndex,
-    draft: String(message.text ?? ''),
+    draft: String(message.rawText || message.text || ''),
   };
   ctx.closeReaderContextMenu(false);
   render();
@@ -385,7 +395,8 @@ async function saveReaderEditor() {
     return;
   }
 
-  message.text = nextText;
+  message.rawText = nextText;
+  message.text = message.role === 'assistant' ? extractContextReply(nextText) || nextText : nextText;
 
   // 同步回酒馆楼层，防止刷新后又被酒馆侧的原文覆盖。
   if (typeof message.tavernMessageId === 'number' && typeof win.setChatMessages === 'function') {
@@ -764,6 +775,104 @@ function bindReaderDragEvents() {
   });
 }
 
+function getTucaoFloatFlag() {
+  const raw = typeof state.runtimeFlags.tucaoFloat === 'object' && state.runtimeFlags.tucaoFloat
+    ? (state.runtimeFlags.tucaoFloat as Record<string, unknown>)
+    : {};
+  return {
+    x: Math.max(8, Number(raw.x ?? 28) || 28),
+    y: Math.max(8, Number(raw.y ?? 92) || 92),
+    collapsed: Boolean(raw.collapsed),
+  };
+}
+
+function setTucaoFloatFlag(next: { x?: number; y?: number; collapsed?: boolean }) {
+  const current = getTucaoFloatFlag();
+  state.runtimeFlags.tucaoFloat = { ...current, ...next };
+}
+
+function bindTucaoFloatEvents() {
+  const panel = root?.querySelector<HTMLElement>('[data-tucao-float="true"]');
+  if (!panel) return;
+
+  root
+    ?.querySelector<HTMLButtonElement>('[data-action="toggle-tucao-float"]')
+    ?.addEventListener('click', event => {
+      event.stopPropagation();
+      if (tucaoSuppressNextToggleClick) {
+        tucaoSuppressNextToggleClick = false;
+        return;
+      }
+      const current = getTucaoFloatFlag();
+      setTucaoFloatFlag({ collapsed: !current.collapsed });
+      persistToSave();
+      render();
+    });
+
+  const handle = panel.querySelector<HTMLElement>('[data-tucao-drag-handle="true"]');
+  handle?.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('[data-action="toggle-tucao-float"]') && !panel.classList.contains('is-collapsed')) {
+      return;
+    }
+    const current = getTucaoFloatFlag();
+    tucaoDragState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: current.x,
+      startTop: current.y,
+      moved: false,
+    };
+    handle.setPointerCapture(event.pointerId);
+  });
+
+  handle?.addEventListener('pointermove', event => {
+    if (!tucaoDragState || event.pointerId !== tucaoDragState.pointerId) return;
+    const dx = event.clientX - tucaoDragState.startX;
+    const dy = event.clientY - tucaoDragState.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 4) tucaoDragState.moved = true;
+    const width = panel.offsetWidth || 300;
+    const height = panel.offsetHeight || 44;
+    const nextX = clamp(tucaoDragState.startLeft + dx, 8, Math.max(8, window.innerWidth - width - 8));
+    const nextY = clamp(tucaoDragState.startTop + dy, 8, Math.max(8, window.innerHeight - height - 8));
+    panel.style.left = `${nextX}px`;
+    panel.style.top = `${nextY}px`;
+  });
+
+  const finishDrag = (event: PointerEvent) => {
+    if (!tucaoDragState || event.pointerId !== tucaoDragState.pointerId) return;
+    if (handle?.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    const width = panel.offsetWidth || 300;
+    const height = panel.offsetHeight || 44;
+    const nextX = clamp(
+      tucaoDragState.startLeft + event.clientX - tucaoDragState.startX,
+      8,
+      Math.max(8, window.innerWidth - width - 8),
+    );
+    const nextY = clamp(
+      tucaoDragState.startTop + event.clientY - tucaoDragState.startY,
+      8,
+      Math.max(8, window.innerHeight - height - 8),
+    );
+    if (!tucaoDragState.moved && panel.classList.contains('is-collapsed')) {
+      tucaoSuppressNextToggleClick = true;
+      setTucaoFloatFlag({ collapsed: false });
+      tucaoDragState = null;
+      persistToSave();
+      render();
+      return;
+    }
+    tucaoSuppressNextToggleClick = tucaoDragState.moved;
+    setTucaoFloatFlag({ x: nextX, y: nextY });
+    tucaoDragState = null;
+    persistToSave();
+  };
+
+  handle?.addEventListener('pointerup', finishDrag);
+  handle?.addEventListener('pointercancel', finishDrag);
+}
+
 // ── Context menu ──
 
 function bindReaderContextMenuEvents() {
@@ -1020,6 +1129,7 @@ function bindEvents() {
 
   bindFloatingPhoneEvents(root, state, openPhone);
   bindReaderDragEvents();
+  bindTucaoFloatEvents();
   bindReaderContextMenuEvents();
 }
 
@@ -1097,6 +1207,11 @@ function render() {
 window.addEventListener('resize', () => {
   ctx.closeReaderContextMenu(false);
   syncFloatingPhoneAfterResize(state);
+  const tucao = getTucaoFloatFlag();
+  setTucaoFloatFlag({
+    x: clamp(tucao.x, 8, Math.max(8, window.innerWidth - 260)),
+    y: clamp(tucao.y, 8, Math.max(8, window.innerHeight - 44)),
+  });
   render();
 });
 

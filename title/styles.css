@@ -287,8 +287,16 @@
 /* ── 标题头部 ── */
 .gal-title__header {
   position: relative;
-  z-index: 10;
+  z-index: 20 !important;
   text-align: center;
+  transform: translateZ(0);
+}
+
+.gal-title__name,
+.gal-title__logo {
+  position: relative !important;
+  z-index: 20 !important;
+  transform: translateZ(0);
 }
 
 .gal-title__ornament {
@@ -1401,13 +1409,13 @@
   height: 100%;
   padding: 17px 0;
   transform: translateX(var(--film-offset));
-  animation: gal-film-ribbon-roll 34s linear infinite;
+  animation: gal-film-ribbon-roll 52s linear infinite;
   will-change: transform;
 }
 
 .gal-film-ribbon__segment--middle .gal-film-ribbon__track {
   animation-direction: reverse;
-  animation-duration: 38s;
+  animation-duration: 58s;
 }
 
 .gal-film-ribbon__frame {

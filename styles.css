@@ -572,6 +572,123 @@ button {
   color: var(--ink-dark);
 }
 
+.reader-tucao {
+  margin: 0;
+}
+
+.reader-tucao__list {
+  display: grid;
+  gap: 10px;
+}
+
+.reader-tucao__item {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.92rem;
+  line-height: 1.75;
+  color: #8a3f88;
+}
+
+.reader-tucao__item + .reader-tucao__item {
+  padding-top: 10px;
+  border-top: 1px dotted rgba(255, 148, 188, 0.34);
+}
+
+.reader-tucao-float {
+  position: fixed;
+  z-index: 42;
+  width: min(420px, calc(100vw - 16px));
+  max-height: min(56vh, 520px);
+  border: 2px solid rgba(255, 148, 188, 0.45);
+  border-radius: 14px;
+  background: rgba(255, 247, 251, 0.94);
+  box-shadow:
+    0 18px 46px rgba(80, 38, 70, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+}
+
+.reader-tucao-float__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+  padding: 10px 12px 9px 14px;
+  border-bottom: 1px dashed rgba(255, 148, 188, 0.45);
+  cursor: grab;
+  user-select: none;
+}
+
+.reader-tucao-float__header:active {
+  cursor: grabbing;
+}
+
+.reader-tucao-float__title {
+  font-family: 'Zen Maru Gothic', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 900;
+  color: #ee5f9a;
+}
+
+.reader-tucao-float__title::before {
+  content: '◆';
+  margin-right: 8px;
+  color: #6b4e9e;
+  font-size: 0.82rem;
+}
+
+.reader-tucao-float__toggle {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(238, 95, 154, 0.12);
+  color: #8a3f88;
+  font-weight: 900;
+  line-height: 26px;
+  cursor: pointer;
+}
+
+.reader-tucao-float__body {
+  max-height: calc(min(56vh, 520px) - 44px);
+  padding: 14px 16px 16px;
+  overflow-y: auto;
+}
+
+.reader-tucao-float.is-collapsed {
+  width: 44px;
+  height: 44px;
+  max-height: 44px;
+  border-radius: 50%;
+}
+
+.reader-tucao-float.is-collapsed .reader-tucao-float__header {
+  justify-content: center;
+  width: 100%;
+  min-height: 40px;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.reader-tucao-float.is-collapsed .reader-tucao-float__title {
+  display: none;
+}
+
+.reader-tucao-float.is-collapsed .reader-tucao-float__toggle {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: transparent;
+  font-size: 1.08rem;
+  line-height: 1;
+}
+
+.reader-tucao-float.is-collapsed .reader-tucao-float__body {
+  display: none;
+}
+
 /* ╔═══════════════════════════════════════╗
    ║         续写区                         ║
    ╚═══════════════════════════════════════╝ */

@@ -74,6 +74,7 @@ export function updateStreamingText(ctx: StreamingContext, text: string) {
   if (visibleText || !current.text) {
     current.text = visibleText;
   }
+  current.rawText = String(text ?? '');
   syncFocusedMessage(ctx.state, { keepLatest: true });
   ctx.render();
 }
@@ -138,6 +139,10 @@ export function finalizeStreamingText(
   }
 
   current.text = visibleText || current.text;
+  const rawFinalText = String(text ?? '');
+  if (rawFinalText.trim() && (/<tucao\b/i.test(rawFinalText) || !/<tucao\b/i.test(current.rawText ?? ''))) {
+    current.rawText = rawFinalText;
+  }
   current.streaming = false;
   state.currentGenerationId = '';
   syncFocusedMessage(state, { keepLatest: true });

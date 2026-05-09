@@ -82,6 +82,7 @@ export type PersistedMessage = {
   role: 'user' | 'assistant';
   speaker: string;
   text: string;
+  rawText?: string;
   statusSnapshot?: RollbackSnapshot;
 };
 
@@ -209,6 +210,7 @@ export type UiMessage = {
   role: 'user' | 'assistant' | 'system';
   speaker: string;
   text: string;
+  rawText?: string;
   streaming?: boolean;
   tavernMessageId?: number;
   statusSnapshot?: RollbackSnapshot;
