@@ -749,7 +749,14 @@ export function renderPhone(state: AppState, renderers: PhoneRenderers) {
           <header class="system-bar">
             <span class="system-time">${escapeHtml(formatTime(state.statusData.world.currentTime))}</span>
             <div class="system-icons">
+              <span class="system-signal" aria-label="信号强度">
+                <i></i><i></i><i></i><i></i>
+              </span>
               <span>LTE</span>
+              <span class="system-wifi" aria-label="Wi-Fi"></span>
+              <span class="system-battery" aria-label="电量 76%">
+                <span class="system-battery__level"></span>
+              </span>
               <span>${escapeHtml(formatDate(state.statusData.world.currentTime))}</span>
             </div>
           </header>

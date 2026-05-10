@@ -149,9 +149,102 @@ body.floating-phone-dragging {
 
 .system-icons {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   font-size: 10px;
+}
+
+.system-signal {
+  display: inline-flex;
+  height: 11px;
+  align-items: end;
+  gap: 2px;
+}
+
+.system-signal i {
+  width: 3px;
+  border-radius: 2px 2px 1px 1px;
+  background: currentColor;
+  opacity: 0.58;
+}
+
+.system-signal i:nth-child(1) {
+  height: 4px;
+}
+
+.system-signal i:nth-child(2) {
+  height: 6px;
+}
+
+.system-signal i:nth-child(3) {
+  height: 8px;
+}
+
+.system-signal i:nth-child(4) {
+  height: 10px;
+  opacity: 0.34;
+}
+
+.system-wifi {
+  position: relative;
+  width: 14px;
+  height: 11px;
+  overflow: hidden;
+}
+
+.system-wifi::before,
+.system-wifi::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 1px;
+  border: 2px solid currentColor;
+  border-color: currentColor transparent transparent transparent;
+  border-radius: 999px 999px 0 0;
+  transform: translateX(-50%);
+}
+
+.system-wifi::before {
+  width: 13px;
+  height: 10px;
+  opacity: 0.5;
+}
+
+.system-wifi::after {
+  width: 8px;
+  height: 6px;
+  opacity: 0.72;
+}
+
+.system-battery {
+  position: relative;
+  width: 22px;
+  height: 11px;
+  box-sizing: border-box;
+  padding: 2px;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+}
+
+.system-battery::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  right: -3px;
+  width: 2px;
+  height: 5px;
+  border-radius: 0 2px 2px 0;
+  background: currentColor;
+  opacity: 0.7;
+}
+
+.system-battery__level {
+  display: block;
+  width: 76%;
+  height: 100%;
+  border-radius: 1.5px;
+  background: currentColor;
+  opacity: 0.68;
 }
 
 .same-layer-card {
