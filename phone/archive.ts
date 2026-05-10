@@ -126,6 +126,33 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
     note: '开局为 2012 年 3 月 31 日，高二后升入私立丰之崎学园三年级 C 班。隐藏身份“霞诗子”与《恋爱节拍器》是她关系推进的核心变量。',
   },
+  izumi: {
+    id: 'izumi',
+    archiveLabel: '女主档案',
+    name: '波岛出海',
+    romanName: 'Hashima Izumi',
+    panelMark: '出海',
+    imageUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg',
+    imageAlt: '波岛出海头像',
+    portraitCode: 'junior illustrator',
+    foot: [
+      { label: '定位', value: '后辈创作者' },
+      { label: '类型', value: '活力 / 努力 / 竞争心' },
+      { label: '档案', value: '人物档案' },
+    ],
+    tags: ['后辈', '创作者', '行动派'],
+    intro:
+      '带着后辈式的明亮和不服输，认真追赶前辈们的创作者。出海的档案重点适合记录创作成长、竞争心、被认可的瞬间和对玩家评价的在意程度。',
+    quote: '“我也会画出让人心动的作品的！”',
+    details: [
+      { label: '身份', value: '创作者后辈 / 社团相关竞争者' },
+      { label: '特质', value: '热情、努力、憧憬前辈但不愿只停在憧憬' },
+      { label: '状态', value: '变量档案已接入' },
+      { label: '关系核心', value: '评价、认可、竞争与共同创作' },
+    ],
+    meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
+    note: '该角色当前是内置变量档案；绑定酒馆世界书目标后会显示存档变量。',
+  },
   michiru: {
     id: 'michiru',
     archiveLabel: '女主档案',
@@ -138,25 +165,25 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     foot: [
       { label: '定位', value: '表姐 / 乐队主唱' },
       { label: '类型', value: '开朗 / 直球 / 音乐系' },
-      { label: '档案', value: '美术占位' },
+      { label: '档案', value: '人物档案' },
     ],
     tags: ['音乐', '表姐', '行动派'],
     intro:
-      '暂时作为美智留的美术占位档案。后续接入世界书变量后，可以在这里替换为完整人物资料、关系阶段和专属事件记录。',
+      '外向、直觉敏锐、讨厌沉闷气氛的乐队少女。美智留的档案重点适合记录音乐状态、同伴意识、直球关心和她把玩家纳入行动半径的瞬间。',
     quote: '“先把气氛炒起来吧！”',
     details: [
-      { label: '生日', value: '12月18日' },
+      { label: '生日', value: '1995年12月18日' },
       { label: '身份', value: 'icy tail 乐队主唱 / 吉他手' },
-      { label: '状态', value: '占位资源已接入' },
-      { label: '后续', value: '等待世界书变量绑定' },
+      { label: '身高', value: '173cm' },
+      { label: '特质', value: '开朗直球、同伴至上、凭直觉行动' },
     ],
-    meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
-    note: '该角色当前是美术占位；绑定酒馆世界书目标后会显示存档变量。',
+    meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
+    note: '该角色当前是内置变量档案；绑定酒馆世界书目标后会显示存档变量。',
   },
 };
 
-// 档案页顶部角色标签的显示顺序；这里也要包含美智留，档案页才会出现她。
-const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha', 'michiru'];
+// 中文注释：档案页顶部角色标签的显示顺序；新增角色必须同步到这里，档案页才会出现。
+const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru'];
 
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -180,7 +207,8 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
   if (archive.id === 'eriri') return /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
   if (archive.id === 'megumi') return /加藤|惠|恵|megumi|katou|kato/.test(haystack);
   if (archive.id === 'utaha') return /霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack);
-  if (archive.id === 'michiru') return /冰堂|冰堂美智留|美智留|michiru|hyodo|hyoudou/.test(haystack);
+  if (archive.id === 'izumi') return /波岛|波島|出海|izumi|hashima/.test(haystack);
+  if (archive.id === 'michiru') return /冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack);
   return false;
 }
 

@@ -310,18 +310,29 @@ body.floating-phone-dragging {
 }
 
 .phone-character-switcher {
+  width: 116px;
   display: grid;
-  grid-template-columns: repeat(3, 24px);
-  gap: 5px;
-  padding: 4px;
-  border-radius: 999px;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 28px;
   background: rgba(255, 252, 245, 0.22);
   backdrop-filter: blur(8px);
 }
 
+.phone-character-switcher__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.phone-character-switcher__row:nth-child(2) {
+  padding: 0 18px;
+}
+
 .phone-character-option {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
   padding: 0;
   overflow: hidden;
   border-radius: 999px;

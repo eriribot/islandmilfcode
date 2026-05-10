@@ -78,11 +78,13 @@ function getBuiltInTargetKey(target: TargetStatus) {
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
   if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
+  if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
+  if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
   return '';
 }
 
 function mergeBuiltInTargetSeeds(targets: TargetStatus[]) {
-  // 中文注释：旧存档可能只有英梨梨/诗羽；这里补齐开局角色变量，但绝不覆盖已有好感和阶段。
+  // 中文注释：旧存档可能只有部分角色；这里补齐内置角色变量，但绝不覆盖已有好感和阶段。
   const nextTargets = targets.filter(target => target.id !== defaultTarget.id || targets.length === 1);
   const existingKeys = new Set(nextTargets.map(getBuiltInTargetKey).filter(Boolean));
   const existingIds = new Set(nextTargets.map(target => target.id));

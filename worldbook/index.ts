@@ -17,6 +17,14 @@ const TARGET_AVATAR_RULES: Array<{ patterns: string[]; avatarUrl: string }> = [
     patterns: ['霞之丘诗羽', '霞之诗羽', '霞ヶ丘詩羽', '霞ヶ丘 詩羽', '诗羽', '詩羽', '霞诗子', '霞詩子', 'utaha', 'kasumigaoka'],
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/utaha_phone.jpg',
   },
+  {
+    patterns: ['波岛出海', '波島出海', '波岛', '波島', '出海', 'izumi', 'hashima'],
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg',
+  },
+  {
+    patterns: ['冰堂美智留', '氷堂美智留', '冰堂', '氷堂', '美智留', 'michiru', 'hyodo', 'hyoudou'],
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Michiru_phone.jpg',
+  },
 ];
 
 // 从世界书条目中提取目标信息的逻辑：
@@ -284,6 +292,13 @@ function normalizeBuiltInTargetName(name: string, ...texts: string[]) {
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) {
     return '霞之丘诗羽';
   }
+  // 中文注释：新增角色也必须在世界书身份字段阶段归一化，避免“联系人有了但变量键不稳”。
+  if (/波岛|波島|出海|izumi|hashima/.test(haystack)) {
+    return '波岛出海';
+  }
+  if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) {
+    return '冰堂美智留';
+  }
   return name;
 }
 
@@ -411,6 +426,8 @@ function getBuiltInTargetKeyFromIdentity(target: TargetStatus) {
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
   if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
+  if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
+  if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
   return '';
 }
 

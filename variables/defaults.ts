@@ -66,6 +66,34 @@ export const builtInTargetSeeds: TargetStatus[] = [
       avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/utaha_phone.jpg',
     },
   },
+  {
+    id: '波岛出海',
+    name: '波岛出海',
+    alias: '波岛 / 出海 / Hashima Izumi / Izumi Hashima',
+    affinity: 0,
+    stage: '疏离戒备',
+    titles: {},
+    outfits: { ...DEFAULT_TARGET_OUTFITS },
+    meta: {
+      source: 'built-in-startup',
+      worldbookEntryName: '波岛出海',
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg',
+    },
+  },
+  {
+    id: '冰堂美智留',
+    name: '冰堂美智留',
+    alias: '冰堂 / 美智留 / 氷堂 / Hyodo Michiru / Hyoudou Michiru',
+    affinity: 0,
+    stage: '疏离戒备',
+    titles: {},
+    outfits: { ...DEFAULT_TARGET_OUTFITS },
+    meta: {
+      source: 'built-in-startup',
+      worldbookEntryName: '冰堂美智留',
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Michiru_phone.jpg',
+    },
+  },
 ];
 
 export const defaultStatusData: StatusData = {
@@ -81,7 +109,7 @@ export const defaultStatusData: StatusData = {
       初始记录: '新的记录已经建立，等待攻略对象资料载入。',
     },
   },
-  // 中文注释：三名开局可攻略角色先作为变量种子存在；世界书载入后会按姓名合并并保留好感。
+  // 中文注释：内置可攻略角色先作为变量种子存在；世界书载入后会按姓名合并并保留好感。
   targets: builtInTargetSeeds,
   activeTargetId: builtInTargetSeeds[0].id,
   player: {

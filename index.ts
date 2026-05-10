@@ -506,7 +506,12 @@ function closePhone() {
 
 function playPhoneCharacterBgm(bgmUrl: string | undefined) {
   const nextUrl = bgmUrl?.trim();
-  if (!nextUrl) return;
+  if (!nextUrl) {
+    // 中文注释：没有专属 BGM 的角色切换时要停止上一首，避免主题已经换了但音乐还停留在前一个角色。
+    phoneBgmAudio?.pause();
+    phoneBgmResolvedUrl = '';
+    return;
+  }
 
   // 音频播放必须从用户点击事件里触发，不能放进 render() 这类自动渲染流程里。
   // 这里复用一个 Audio 实例，切换女主时先停掉上一首，避免多首 BGM 同时叠在一起。

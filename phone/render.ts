@@ -36,6 +36,12 @@ const PHONE_CHARACTER_THEMES: Record<
     wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_utaha.png',
     bgmUrl: 'https://eriribot.github.io/islandmilfcode/music/utaha.mp3',
   },
+  izumi: {
+    label: '波岛出海',
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg',
+    wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/all_film2.jpg',
+    bgmUrl: '',
+  },
   michiru: {
     label: '美智留',
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Michiru_phone.jpg',
@@ -45,7 +51,7 @@ const PHONE_CHARACTER_THEMES: Record<
 };
 
 // 手机首页头像切换按钮的显示顺序；新增女主时需要把 id 放进这里。
-const PHONE_CHARACTER_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha', 'michiru'];
+const PHONE_CHARACTER_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru'];
 
 function getPhoneCharacterTheme(characterId: PhoneCharacterId) {
   return PHONE_CHARACTER_THEMES[characterId] ?? PHONE_CHARACTER_THEMES.megumi;
@@ -249,6 +255,7 @@ function renderWeatherHero(state: AppState) {
 function renderPhoneHome(state: AppState) {
   const playerMeta = state.playerProfile.className || state.playerProfile.gender || '主角档案';
   const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
+  const characterRows = [PHONE_CHARACTER_ORDER.slice(0, 3), PHONE_CHARACTER_ORDER.slice(3)];
   const phoneThreadCount = Object.values(state.phoneMessages.threads).filter(thread => thread.messages.length).length;
   const summaryCount =
     state.summaryStore.minor.length + state.summaryStore.major.length + (state.summaryStore.global ? 1 : 0);
@@ -330,22 +337,33 @@ function renderPhoneHome(state: AppState) {
             />
           </div>
           <div class="phone-character-switcher">
-            ${PHONE_CHARACTER_ORDER.map(characterId => {
-              const theme = getPhoneCharacterTheme(characterId);
-              const selected = characterId === state.phoneCharacterId;
-              return `
-                <button
-                  class="phone-character-option ${selected ? 'is-active' : ''}"
-                  data-action="switch-phone-character"
-                  data-character-id="${characterId}"
-                  data-bgm-url="${escapeHtml(theme.bgmUrl)}"
-                  aria-label="切换到${escapeHtml(theme.label)}"
-                  aria-pressed="${selected ? 'true' : 'false'}"
-                >
-                  <img src="${escapeHtml(theme.avatarUrl)}" alt="${escapeHtml(theme.label)}" loading="lazy" decoding="async" />
-                </button>
-              `;
-            }).join('')}
+            ${characterRows
+              .filter(row => row.length)
+              .map(
+                row => `
+                  <div class="phone-character-switcher__row" style="--phone-character-row-count:${row.length}">
+                    ${row
+                      .map(characterId => {
+                        const theme = getPhoneCharacterTheme(characterId);
+                        const selected = characterId === state.phoneCharacterId;
+                        return `
+                          <button
+                            class="phone-character-option ${selected ? 'is-active' : ''}"
+                            data-action="switch-phone-character"
+                            data-character-id="${characterId}"
+                            data-bgm-url="${escapeHtml(theme.bgmUrl)}"
+                            aria-label="切换到${escapeHtml(theme.label)}"
+                            aria-pressed="${selected ? 'true' : 'false'}"
+                          >
+                            <img src="${escapeHtml(theme.avatarUrl)}" alt="${escapeHtml(theme.label)}" loading="lazy" decoding="async" />
+                          </button>
+                        `;
+                      })
+                      .join('')}
+                  </div>
+                `,
+              )
+              .join('')}
           </div>
         </div>
       </div>

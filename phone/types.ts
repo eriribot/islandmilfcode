@@ -9,7 +9,7 @@ export type PhoneRoute =
   | 'app:inventory'
   | 'app:settings';
 
-export type PhoneCharacterId = 'megumi' | 'eriri' | 'utaha' | 'michiru';
+export type PhoneCharacterId = 'megumi' | 'eriri' | 'utaha' | 'izumi' | 'michiru';
 
 export type FloatingPhonePosition = {
   x: number;
