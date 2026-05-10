@@ -2,6 +2,19 @@ import type { StatusData, TargetStatus } from '../types';
 import { builtInTargetSeeds, defaultStatusData, defaultTarget } from './defaults';
 import { affinityStage, clamp } from './format';
 
+const LEGACY_IZUMI_FILM_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg';
+const IZUMI_PHONE_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg';
+
+function normalizeTargetMeta(rawMeta: unknown) {
+  if (!rawMeta || typeof rawMeta !== 'object' || Array.isArray(rawMeta)) return rawMeta;
+
+  const meta = { ...(rawMeta as Record<string, unknown>) };
+  if (meta.avatarUrl === LEGACY_IZUMI_FILM_AVATAR_URL) {
+    meta.avatarUrl = IZUMI_PHONE_AVATAR_URL;
+  }
+  return meta;
+}
+
 function normalizeTarget(raw: Record<string, any>, fallback: TargetStatus): TargetStatus {
   const affinity = clamp(Number(raw?.affinity ?? fallback.affinity) || 0, 0, 100);
   const titlesInput = raw?.titles ?? {};
@@ -27,7 +40,7 @@ function normalizeTarget(raw: Record<string, any>, fallback: TargetStatus): Targ
     outfits: Object.fromEntries(
       Object.entries({ ...fallback.outfits, ...outfitsInput }).map(([key, value]) => [key, String(value)]),
     ),
-    meta: raw?.meta,
+    meta: normalizeTargetMeta(raw?.meta),
   };
 }
 

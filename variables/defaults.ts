@@ -77,7 +77,7 @@ export const builtInTargetSeeds: TargetStatus[] = [
     meta: {
       source: 'built-in-startup',
       worldbookEntryName: '波岛出海',
-      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg',
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg',
     },
   },
   {

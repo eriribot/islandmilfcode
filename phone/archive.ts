@@ -3,6 +3,9 @@ import type { TargetStatus } from '../types';
 import { affinityStage } from '../variables/normalize';
 import type { PhoneCharacterId } from './types';
 
+const LEGACY_IZUMI_FILM_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg';
+const IZUMI_PHONE_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg';
+
 type ArchiveMeterTone = 'affection';
 
 type ArchiveMeter = {
@@ -132,7 +135,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     name: '波岛出海',
     romanName: 'Hashima Izumi',
     panelMark: '出海',
-    imageUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg',
+    imageUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg',
     imageAlt: '波岛出海头像',
     portraitCode: 'junior illustrator',
     foot: [
@@ -195,7 +198,8 @@ function getArchive(characterId: PhoneCharacterId) {
 
 function getTargetAvatarUrl(target: TargetStatus | null) {
   const avatarUrl = target?.meta?.avatarUrl;
-  return typeof avatarUrl === 'string' && avatarUrl.trim() ? avatarUrl.trim() : '';
+  const normalized = typeof avatarUrl === 'string' && avatarUrl.trim() ? avatarUrl.trim() : '';
+  return normalized === LEGACY_IZUMI_FILM_AVATAR_URL ? IZUMI_PHONE_AVATAR_URL : normalized;
 }
 
 function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {

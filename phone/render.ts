@@ -38,9 +38,9 @@ const PHONE_CHARACTER_THEMES: Record<
   },
   izumi: {
     label: '波岛出海',
-    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg',
-    wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/all_film2.jpg',
-    bgmUrl: '',
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg',
+    wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_izumi.jpg',
+    bgmUrl: 'https://eriribot.github.io/islandmilfcode/music/izumi.mp3',
   },
   michiru: {
     label: '美智留',
@@ -414,7 +414,9 @@ function parseGameDate(timeStr: string): { year: number; month: number; day: num
   try {
     const d = new Date(timeStr.replace(/\s.*$/, ''));
     if (!isNaN(d.getTime())) return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate() };
-  } catch { /* fallback */ }
+  } catch {
+    /* fallback */
+  }
   return { year: 2012, month: 2, day: 31 };
 }
 
@@ -425,7 +427,9 @@ function collectEventDates(state: AppState): Set<string> {
     try {
       const d = new Date(key.replace(/\s.*$/, ''));
       if (!isNaN(d.getTime())) dates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
-    } catch { /* skip */ }
+    } catch {
+      /* skip */
+    }
   }
   return dates;
 }
@@ -508,7 +512,11 @@ function getTargetName(target: TargetStatus) {
 
 function getTargetAvatarUrl(target: TargetStatus) {
   const avatarUrl = target.meta?.avatarUrl;
-  return typeof avatarUrl === 'string' && avatarUrl.trim() ? avatarUrl.trim() : '';
+  const normalized = typeof avatarUrl === 'string' && avatarUrl.trim() ? avatarUrl.trim() : '';
+  if (normalized === 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg') {
+    return 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg';
+  }
+  return normalized;
 }
 
 function renderTargetAvatar(target: TargetStatus) {

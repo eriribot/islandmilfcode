@@ -15,11 +15,7 @@ function formatSaveTime(updatedAt: number) {
 function renderSaveSlot(save: SaveMeta, index: number) {
   const kindLabel = save.kind === 'autosave' ? '自动存档' : '手动存档';
   const playerName = save.playerProfile?.name?.trim() || save.characterName?.trim() || '未命名主角';
-  const target = save.activeTarget;
-  const targetName = target?.alias || target?.name || '未知攻略对象';
-  const targetDetail = target
-    ? [`攻略对象：${targetName}`, target.stage, `好感 ${target.affinity}`].filter(Boolean).join(' · ')
-    : '攻略对象：未知';
+  const gameTime = save.gameTime?.trim() || formatSaveTime(save.updatedAt);
   const detail = save.preview?.trim() || save.location || save.label;
 
   return `
@@ -29,10 +25,11 @@ function renderSaveSlot(save: SaveMeta, index: number) {
           <span class="gal-save-name">${escapeHtml(playerName)}</span>
           <span class="gal-save-kind">${escapeHtml(kindLabel)}</span>
         </span>
-        <span class="gal-save-detail">${escapeHtml(targetDetail)}</span>
+        <span class="gal-save-detail">时间：${escapeHtml(gameTime)}</span>
         <span class="gal-save-detail">${escapeHtml(detail)}</span>
         <span class="gal-save-meta">${formatSaveTime(save.updatedAt)} · ${save.messageCount} 条记录</span>
       </button>
+      <span class="gal-save-pointer" aria-hidden="true">☜</span>
       <button class="gal-save-delete" data-action="delete-save" data-save-id="${escapeHtml(save.saveId)}" title="删除存档">×</button>
     </article>
   `;

@@ -19,7 +19,7 @@ const TARGET_AVATAR_RULES: Array<{ patterns: string[]; avatarUrl: string }> = [
   },
   {
     patterns: ['波岛出海', '波島出海', '波岛', '波島', '出海', 'izumi', 'hashima'],
-    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg',
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg',
   },
   {
     patterns: ['冰堂美智留', '氷堂美智留', '冰堂', '氷堂', '美智留', 'michiru', 'hyodo', 'hyoudou'],
