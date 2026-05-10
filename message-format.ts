@@ -659,8 +659,19 @@ export function buildPhoneChatPrompt(input: {
   plotLibrary?: PlotLibrary | null;
   skipProgress?: boolean;
   triggerEvent?: string;
+  forceMessage?: boolean;
 }) {
-  const { statusData, target, history, userInput, summaryStore, playerProfile, skipProgress = false, triggerEvent } = input;
+  const {
+    statusData,
+    target,
+    history,
+    userInput,
+    summaryStore,
+    playerProfile,
+    skipProgress = false,
+    triggerEvent,
+    forceMessage = false,
+  } = input;
   const miniPersona = getRelationshipMiniPersona(target);
   const relationshipGuidance = getRelationshipGuidance(target);
   const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile });
@@ -705,7 +716,14 @@ export function buildPhoneChatPrompt(input: {
     recentEventsContext,
     buildPhoneChatHistory(history),
     triggerEvent ? `这条消息的触发事件：${triggerEvent}` : '',
-    triggerEvent ? `请基于触发事件主动发一条手机消息：${userInput}` : `玩家刚发来的消息：${userInput}`,
+    forceMessage
+      ? '正文已经明确写到玩家收到了你发来的手机消息。必须补全这条消息，输出非空的 <message>...</message>；不要输出空 message。'
+      : '',
+    triggerEvent
+      ? forceMessage
+        ? `请根据触发事件补全这条已经发出的手机消息：${userInput}`
+        : `请基于触发事件判断主动发一条手机消息：${userInput}`
+      : `玩家刚发来的消息：${userInput}`,
   ];
 
   if (!skipProgress) {
@@ -805,7 +823,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
 
 export function buildProgressPrompt(
   statusData: StatusData,
-  recentMessages: UiMessage[],
+  turnMessages: UiMessage[],
 ): Array<{ role: 'system' | 'user'; content: string }> {
   const target = getActiveTarget(statusData);
   const inventoryList =
@@ -820,14 +838,13 @@ export function buildProgressPrompt(
   const targetList = buildTargetStateList(statusData);
   const affinityExamples = buildAffinityUpdateExamples(statusData);
 
-  const recentUserMessage = [...recentMessages].reverse().find(m => m.role === 'user');
+  const recentUserMessage = [...turnMessages].reverse().find(m => m.role === 'user');
   const timeIntentNote = recentUserMessage && detectTimeAdvanceIntent(recentUserMessage.text)
     ? '玩家最近输入提到推进时间。以正文实际描写为准：只有当对话正文确实跨过了一个时段或日期时，才输出完整 `时间:YYYY-MM-DD HH:mm` 字段；正文没有真正推进时间时，整行省略，禁止凭玩家输入里的时间词自行补齐一个新时间。'
     : '';
 
-  const formatted = recentMessages
+  const formatted = turnMessages
     .filter(m => m.role === 'user' || m.role === 'assistant')
-    .slice(-6)
     .map(m => {
       const text = m.role === 'assistant' ? getVisibleMessageText(m) || m.text : m.text;
       const speaker = m.speaker || (m.role === 'assistant' ? 'Assistant' : 'User');
@@ -835,6 +852,10 @@ export function buildProgressPrompt(
     })
     .filter(Boolean)
     .join('\n\n');
+  const latestAssistantMessage = [...turnMessages].reverse().find(m => m.role === 'assistant' && !m.streaming);
+  const latestSceneText = latestAssistantMessage
+    ? (getVisibleMessageText(latestAssistantMessage) || latestAssistantMessage.text).trim()
+    : '';
 
   return [
     {
@@ -852,9 +873,12 @@ export function buildProgressPrompt(
         `  可更新角色列表:\n${targetList}`,
         `  着装: ${outfitList || '无'}`,
         `  物品: ${inventoryList}`,
+        latestSceneText ? `\n本轮最新正文（好感度只能依据这段正文中的在场与反应判断）：\n${latestSceneText}` : '',
         '',
         '好感度判断规则：',
-        '  阅读完整正文，不要只看最后一句。多人在场时，分别判断每个明确在场且对 User 产生情绪反应的角色。',
+        '  变量更新只能依据本轮最新正文；不要沿用更早对话里的互动、在场或反应。',
+        '  好感度只能看本轮最新正文中明确在场并对 User 产生情绪反应的角色；旧消息里出现过的角色，本轮正文没出现就不更新。',
+        '  阅读本轮完整正文，不要只看最后一句。多人在场时，分别判断每个明确在场且对 User 产生情绪反应的角色。',
         '  普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。',
         '  不要因为变化很小就省略好感度；只有角色不在场、完全无互动、纯环境描写、或关系没有任何变化时，才不输出该角色好感度。',
         timeIntentNote ? `\n时间推进提醒：${timeIntentNote}` : '',
@@ -878,7 +902,7 @@ export function buildProgressPrompt(
     },
     {
       role: 'user' as const,
-      content: `请分析以下对话并输出变量更新：\n\n${formatted}`,
+      content: `请分析以下本轮对话并输出变量更新：\n\n${formatted}`,
     },
   ];
 }
