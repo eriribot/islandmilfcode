@@ -1,4 +1,5 @@
-import { getVisibleMessageText } from '../message-format';
+import { getVisibleMessageText, parseProgressUpdate, type ProgressUpdate } from '../message-format';
+import { generateSecondaryRaw } from '../secondary-api';
 import type { TavernWindow, UiMessage } from '../types';
 import {
   buildGlobalCompressionPrompt,
@@ -20,6 +21,7 @@ export type SummaryContext = {
   summaryApiConfig: SummaryApiConfig | null;
   uiMessages: UiMessage[];
   onStoreUpdated: () => void;
+  onProgressUpdate?: (update: ProgressUpdate) => void;
   /** 当前结构化状态快照，用作摘要 prompt 的事实锚点。缺省时不注入。 */
   getFactAnchor?: () => FactAnchor | null;
 };
@@ -67,34 +69,25 @@ function createKeyFacts(
   }));
 }
 
-/** 调用酒馆的 generateRaw 接口发送摘要请求。 */
+/** 通过统一后台入口发送摘要请求：优先副 API，未配置时回落到主接口。 */
 async function callGenerateRaw(
   win: TavernWindow,
   prompts: Array<{ role: string; content: string }>,
   apiConfig: SummaryApiConfig | null,
 ): Promise<string> {
-  if (typeof win.generateRaw !== 'function') {
-    throw new Error('generateRaw not available');
-  }
+  return generateSecondaryRaw({
+    win,
+    generationId: `summary-${crypto.randomUUID()}`,
+    prompts,
+    apiConfig,
+  });
+}
 
-  const config: Record<string, unknown> = {
-    should_silence: true,
-    should_stream: false,
-    generation_id: `summary-${crypto.randomUUID()}`,
-    ordered_prompts: prompts,
-  };
-
-  if (apiConfig) {
-    config.custom_api = {
-      apiurl: apiConfig.apiurl,
-      key: apiConfig.key,
-      model: apiConfig.model,
-      source: apiConfig.source,
-    };
-  }
-
-  const result = await win.generateRaw(config);
-  return String(result ?? '');
+function applyProgressFromMinorSummary(ctx: SummaryContext, raw: string): boolean {
+  const update = parseProgressUpdate(raw);
+  if (!update) return false;
+  ctx.onProgressUpdate?.(update);
+  return true;
 }
 
 /** 记录摘要失败；连续失败 3 次后自动暂停。 */
@@ -172,6 +165,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
           }
           store.lastSummarizedIndex = messageCount;
           clearFailureState(store);
+          applyProgressFromMinorSummary(ctx, raw);
         }
       } catch (error) {
         recordFailure(store, 'minor', error);

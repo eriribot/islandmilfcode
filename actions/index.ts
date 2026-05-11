@@ -9,8 +9,9 @@ import {
   getVisibleMessageText,
   parseProgressUpdate,
 } from '../message-format';
+import { generateSecondaryRaw } from '../secondary-api';
 import { createRollbackSnapshot, pushMessage } from '../state/store';
-import { buildFactAnchorFromStatus, runSummary, type SummaryContext } from '../summary';
+import { buildFactAnchorFromStatus, runSummary, shouldRunMinorSummary, type SummaryContext } from '../summary';
 import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import { getActiveTarget } from '../types';
 import type {
@@ -61,51 +62,6 @@ type RawPrompt = {
   role: 'system' | 'user' | 'assistant';
   content: string;
 };
-
-function mergeMissingAffinity(
-  primary: ProgressUpdate | null,
-  fallback: ProgressUpdate | null,
-  ctx?: ActionContext,
-) {
-  if (!primary) return fallback;
-  const primaryHasAffinity = primary.affinityDelta !== undefined || primary.affinityDeltas.length > 0;
-  const fallbackHasAffinity = fallback?.affinityDelta !== undefined || Boolean(fallback?.affinityDeltas.length);
-  if (!fallbackHasAffinity) return primary;
-  if (!primaryHasAffinity) {
-    return {
-      ...primary,
-      affinityDelta: fallback!.affinityDelta,
-      affinityDeltas: fallback!.affinityDeltas,
-    };
-  }
-
-  // 预检：如果 primary 的好感度变化在当前正文语境中全部会被判为 'absent'，允许 fallback 接管。
-  if (ctx) {
-    const allPrimaryAbsent =
-      primary.affinityDeltas.length > 0 &&
-      primary.affinityDeltas.every(item => {
-        const target = findProgressTarget(ctx, item.target);
-        return target ? classifyAffinityVerdict(ctx, target) === 'absent' : true;
-      });
-    const legacyAbsent =
-      primary.affinityDelta !== undefined && primary.affinityDelta !== 0
-        ? (() => {
-            const active = getActiveTarget(ctx.state.statusData);
-            return active ? classifyAffinityVerdict(ctx, active) === 'absent' : true;
-          })()
-        : true;
-    if (allPrimaryAbsent && legacyAbsent) {
-      console.warn('[progress] primary affinity fully absent — fallback to secondary affinity');
-      return {
-        ...primary,
-        affinityDelta: fallback!.affinityDelta,
-        affinityDeltas: fallback!.affinityDeltas,
-      };
-    }
-  }
-
-  return primary;
-}
 
 const DEFAULT_PLAYER_STATS: PlayerStats = {
   knowledge: 0,
@@ -458,6 +414,8 @@ export async function submitMessage(
   }
 
   let generationSucceeded = false;
+  let deferProgressToMinorSummary = false;
+  let summaryAppliedProgress = false;
   try {
     ensureStreamingMessage(ctx);
     ctx.render();
@@ -514,32 +472,18 @@ export async function submitMessage(
     });
     finalizeStreamingText(ctx, String(result ?? ''), requestGenerationId);
 
-    // 解析 <progress> 并应用变量更新。
+    // 解析并应用变量更新。配置了副 API 时，变量只走后台入口；小摘要触发时由摘要顺手输出 state_delta。
     if (ctx.summaryApiConfig) {
-      // 副 API 负责变量提取。
-      try {
-        const mainProgressUpdate = parseProgressUpdate(String(result ?? ''));
-        const progressPrompts = buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages));
-        const progressConfig: Record<string, unknown> = {
-          should_silence: true,
-          should_stream: false,
-          generation_id: `progress-${crypto.randomUUID()}`,
-          ordered_prompts: progressPrompts,
-          custom_api: {
-            apiurl: ctx.summaryApiConfig.apiurl,
-            key: ctx.summaryApiConfig.key,
-            model: ctx.summaryApiConfig.model,
-            source: ctx.summaryApiConfig.source,
-          },
-        };
-        const progressResult = await win.generateRaw?.(progressConfig);
-        const progressRaw = String(progressResult ?? '');
-        const progressUpdate = mergeMissingAffinity(parseProgressUpdate(progressRaw), mainProgressUpdate, ctx);
-        if (progressUpdate) {
-          applyFullProgressUpdate(ctx, progressUpdate);
-        }
-      } catch (e) {
-        console.warn('[progress] secondary API failed:', e);
+      deferProgressToMinorSummary = shouldRunMinorSummary(
+        ctx.summaryStore,
+        countCompletedConversationMessages(state.uiMessages),
+      );
+      if (!deferProgressToMinorSummary) {
+        await runSecondaryProgressUpdate(
+          ctx,
+          `progress-${crypto.randomUUID()}`,
+          buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages)),
+        );
       }
     } else {
       // 主 API 的回复中已经包含 <progress>。
@@ -583,6 +527,24 @@ export async function submitMessage(
         lastMsg.statusSnapshot = createRollbackSnapshot(state);
         ctx.persistConversation();
       }
+      if (ctx.summaryApiConfig) {
+        deferProgressToMinorSummary = shouldRunMinorSummary(
+          ctx.summaryStore,
+          countCompletedConversationMessages(state.uiMessages),
+        );
+        if (!deferProgressToMinorSummary) {
+          await runSecondaryProgressUpdate(
+            ctx,
+            `progress-${crypto.randomUUID()}`,
+            buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages)),
+          );
+        }
+      } else if (lastMsg?.role === 'assistant') {
+        const progressUpdate = parseProgressUpdate(lastMsg.text);
+        if (progressUpdate) {
+          applyFullProgressUpdate(ctx, progressUpdate);
+        }
+      }
       if (options.clearDraftOnSuccess) {
         state.draft = '';
       }
@@ -611,7 +573,7 @@ export async function submitMessage(
     ctx.render();
 
     // 正文和主动小手机都结束后再顺序执行摘要，避免后台 generateRaw 抢占正文流。
-    if (generationSucceeded && typeof win.generateRaw === 'function') {
+    if (generationSucceeded && (typeof win.generateRaw === 'function' || typeof win.generate === 'function')) {
       recordGenerationDebug(ctx, 'submit:summary-start');
       const summaryCtx: SummaryContext = {
         win,
@@ -623,10 +585,22 @@ export async function submitMessage(
           ctx.render();
         },
         getFactAnchor: () => buildFactAnchorFromStatus(ctx.state.statusData),
+        onProgressUpdate: update => {
+          if (!deferProgressToMinorSummary) return;
+          applyFullProgressUpdate(ctx, update);
+          summaryAppliedProgress = true;
+        },
       };
       await runSummary(summaryCtx).catch(() => {
         /* 摘要错误在内部处理 */
       });
+      if (deferProgressToMinorSummary && !summaryAppliedProgress) {
+        await runSecondaryProgressUpdate(
+          ctx,
+          `progress-fallback-${crypto.randomUUID()}`,
+          buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages)),
+        );
+      }
       recordGenerationDebug(ctx, 'submit:summary-finished');
     }
   }
@@ -646,6 +620,11 @@ function normalizeForDirectiveMatch(text: string) {
 function hasExplicitPhoneSendIntent(text: string) {
   const normalizedInput = normalizeForDirectiveMatch(text);
   return /(发消息|发送消息|发短信|发送短信|手机联系|短信|私聊|微信|打开手机|用手机)/.test(normalizedInput);
+}
+
+function debugPhoneFlow(ctx: ActionContext, event: string, detail: Record<string, unknown> = {}) {
+  recordGenerationDebug(ctx, `phone:${event}`, detail);
+  console.log(`[islandmilfcode:phone] ${event}`, detail);
 }
 
 function stripDirectiveQuotes(text: string) {
@@ -750,6 +729,12 @@ function sceneTextMentionsIncomingPhoneFromTarget(target: TargetStatus, sceneTex
   return hasPhoneSignal && hasIncomingSignal && isExplicitPhoneTargetMention(target, sceneText);
 }
 
+function hasScenePhoneMessageHint(sceneText: string) {
+  const normalizedText = normalizeForDirectiveMatch(sceneText);
+  if (!normalizedText) return false;
+  return /(手机|line|短信|私聊|消息|通知|未读|发来|发给|回复|屏幕亮起|弹出)/i.test(normalizedText);
+}
+
 function findScenePhoneMessage(ctx: ActionContext, text: string): ScenePhoneMessage | null {
   const target =
     ctx.state.statusData.targets.find(item => sceneExplicitlyReceivedPhoneMessage(item, text)) ??
@@ -824,64 +809,67 @@ function parsePhoneActionDetectorResult(ctx: ActionContext, rawResult: string, u
   if (!targetId || !message || !PHONE_ACTION_DETECTOR_CONFIDENCE.has(confidence)) return null;
 
   const target = getPhoneThreadTarget(ctx, targetId) ?? findPhoneDirectiveTarget(ctx, targetId);
-  // 中文注释：LLM 检测器只能确认明确点名的联系人，不能凭当前攻略对象或剧情联想代替玩家选择。
+  // 中文注释：LLM 检测器只能确认明确点名的联系人，不能凭默认变量目标或剧情联想代替玩家选择。
   if (target && !isExplicitPhoneTargetMention(target, userInput)) return null;
   return target ? { target, text: message } : null;
 }
 
 async function generateSilentAnalysis(ctx: ActionContext, generationId: string, prompts: RawPrompt[]): Promise<string> {
-  const { win } = ctx;
+  return generateSecondaryRaw({
+    win: ctx.win,
+    generationId,
+    prompts,
+    apiConfig: ctx.summaryApiConfig,
+  }).catch(() => '');
+}
 
-  if (ctx.summaryApiConfig && typeof win.generateRaw === 'function') {
-    return String(
-      (await win.generateRaw({
-        should_silence: true,
-        should_stream: false,
-        generation_id: generationId,
-        ordered_prompts: prompts,
-        custom_api: {
-          apiurl: ctx.summaryApiConfig.apiurl,
-          key: ctx.summaryApiConfig.key,
-          model: ctx.summaryApiConfig.model,
-          source: ctx.summaryApiConfig.source,
-        },
-      })) ?? '',
-    );
+function countCompletedConversationMessages(messages: UiMessage[]): number {
+  return messages.filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant')).length;
+}
+
+async function runSecondaryProgressUpdate(
+  ctx: ActionContext,
+  generationId: string,
+  prompts: RawPrompt[],
+  targetId?: string | null,
+): Promise<boolean> {
+  try {
+    const raw = await generateSecondaryRaw({
+      win: ctx.win,
+      generationId,
+      prompts,
+      apiConfig: ctx.summaryApiConfig,
+    });
+    const update = parseProgressUpdate(raw);
+    if (update) {
+      applyFullProgressUpdate(ctx, update, targetId);
+      return true;
+    }
+  } catch (error) {
+    console.warn('[progress] secondary analysis failed:', error);
   }
-
-  if (typeof win.generateRaw === 'function') {
-    return String(
-      (await win.generateRaw({
-        should_silence: true,
-        should_stream: false,
-        generation_id: generationId,
-        ordered_prompts: prompts,
-      })) ?? '',
-    );
-  }
-
-  if (typeof win.generate === 'function') {
-    return String(
-      (await win.generate({
-        should_silence: true,
-        should_stream: false,
-        generation_id: generationId,
-        user_input: prompts.map(prompt => prompt.content).join('\n\n'),
-      })) ?? '',
-    );
-  }
-
-  return '';
+  return false;
 }
 
 async function detectPhoneDirectiveWithLlm(ctx: ActionContext, userInput: string): Promise<PhoneDirective | null> {
-  if (!ctx.state.statusData.targets.length) return null;
+  if (!ctx.state.statusData.targets.length) {
+    debugPhoneFlow(ctx, 'directive-llm:skip-no-targets');
+    return null;
+  }
 
   const prompts = buildPhoneActionDetectorPrompts(ctx, userInput);
   const generationId = `phone-directive-detect-${crypto.randomUUID()}`;
+  debugPhoneFlow(ctx, 'directive-llm:start', { generationId, inputLength: userInput.length });
   const rawResult = await generateSilentAnalysis(ctx, generationId, prompts);
 
-  return parsePhoneActionDetectorResult(ctx, String(rawResult ?? ''), userInput);
+  const parsed = parsePhoneActionDetectorResult(ctx, String(rawResult ?? ''), userInput);
+  debugPhoneFlow(ctx, parsed ? 'directive-llm:matched' : 'directive-llm:no-match', {
+    generationId,
+    rawLength: String(rawResult ?? '').length,
+    targetId: parsed?.target.id ?? null,
+    textLength: parsed?.text.length ?? 0,
+  });
+  return parsed;
 }
 
 function buildScenePhoneMessageExtractorPrompts(ctx: ActionContext, sceneText: string): RawPrompt[] {
@@ -955,17 +943,34 @@ function parseScenePhoneMessageExtractorResult(ctx: ActionContext, rawResult: st
 }
 
 async function extractScenePhoneMessagesWithLlm(ctx: ActionContext, sceneText: string): Promise<ScenePhoneMessage[]> {
-  if (!sceneText.trim() || !ctx.state.statusData.targets.length) return [];
+  if (!sceneText.trim()) {
+    debugPhoneFlow(ctx, 'scene-extract-llm:skip-empty-scene');
+    return [];
+  }
+  if (!ctx.state.statusData.targets.length) {
+    debugPhoneFlow(ctx, 'scene-extract-llm:skip-no-targets');
+    return [];
+  }
 
   const prompts = buildScenePhoneMessageExtractorPrompts(ctx, sceneText);
   const generationId = `phone-scene-extract-${crypto.randomUUID()}`;
+  debugPhoneFlow(ctx, 'scene-extract-llm:start', { generationId, sceneLength: sceneText.length });
   const rawResult = await generateSilentAnalysis(ctx, generationId, prompts);
 
-  return parseScenePhoneMessageExtractorResult(ctx, String(rawResult ?? ''));
+  const parsed = parseScenePhoneMessageExtractorResult(ctx, String(rawResult ?? ''));
+  debugPhoneFlow(ctx, parsed.length ? 'scene-extract-llm:matched' : 'scene-extract-llm:no-match', {
+    generationId,
+    rawLength: String(rawResult ?? '').length,
+    count: parsed.length,
+  });
+  return parsed;
 }
 
 function extractPhoneMessageDirective(ctx: ActionContext, userInput: string): PhoneDirective | null {
-  if (!hasExplicitPhoneSendIntent(userInput)) return null;
+  if (!hasExplicitPhoneSendIntent(userInput)) {
+    debugPhoneFlow(ctx, 'directive-regex:skip-no-intent', { inputLength: userInput.length });
+    return null;
+  }
 
   const patterns = [
     /(?:给|向|对)\s*([^，。！？\n,!?]{1,32})\s*(?:发消息|发送消息|发短信|发送短信|发个消息|发条消息|手机联系|私聊|微信)\s*[：:，,]?\s*([\s\S]*)/i,
@@ -974,21 +979,35 @@ function extractPhoneMessageDirective(ctx: ActionContext, userInput: string): Ph
     /(?:用手机|打开手机)\s*(?:发送消息|发消息|发短信|发送短信|私聊|微信)?\s*(?:问|询问|告诉)\s*([^，。！？\n,!?]{1,32})\s*([\s\S]*)/i,
   ];
 
-  for (const pattern of patterns) {
+  for (const [index, pattern] of patterns.entries()) {
     const match = userInput.match(pattern);
     if (!match) continue;
 
     const target = findPhoneDirectiveTarget(ctx, match[1] ?? '');
-    if (!target) continue;
+    if (!target) {
+      debugPhoneFlow(ctx, 'directive-regex:target-not-found', {
+        patternIndex: index,
+        rawTarget: match[1] ?? '',
+      });
+      continue;
+    }
 
     const explicitText = stripDirectiveQuotes(match[2] ?? '');
     const fallbackText = stripDirectiveQuotes(userInput);
+    debugPhoneFlow(ctx, 'directive-regex:matched', {
+      patternIndex: index,
+      targetId: target.id,
+      targetName: target.name,
+      explicitTextLength: explicitText.length,
+      fallbackUsed: !explicitText,
+    });
     return {
       target,
       text: explicitText || fallbackText,
     };
   }
 
+  debugPhoneFlow(ctx, 'directive-regex:no-pattern-match', { inputLength: userInput.length });
   return null;
 }
 
@@ -1118,7 +1137,14 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
   const latestEvent = getLatestRecentEvent(ctx);
   const latestSceneText = getLatestAssistantSceneText(ctx);
   const hasTavernGenerate = typeof win.generateRaw === 'function' || typeof win.generate === 'function';
-  const extractedMessages = hasTavernGenerate
+  const shouldRunPhoneExtractor = hasTavernGenerate && hasScenePhoneMessageHint(latestSceneText);
+  debugPhoneFlow(ctx, 'scene-extract:gate', {
+    hasTavernGenerate,
+    hasPhoneHint: hasScenePhoneMessageHint(latestSceneText),
+    willRun: shouldRunPhoneExtractor,
+    sceneLength: latestSceneText.length,
+  });
+  const extractedMessages = shouldRunPhoneExtractor
     ? await extractScenePhoneMessagesWithLlm(ctx, latestSceneText).catch(error => {
         console.warn('[phone-scene-extract] detector failed:', error);
         return [] as ScenePhoneMessage[];
@@ -1143,23 +1169,35 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
     return;
   }
 
-  if (!hasTavernGenerate) return;
+  if (!hasTavernGenerate) {
+    debugPhoneFlow(ctx, 'proactive:skip-no-generate');
+    return;
+  }
 
-  const target =
-    scenePhoneMessage?.target ??
-    (latestEvent ? state.statusData.targets.find(candidate => isExplicitPhoneTargetMention(candidate, latestEvent.text)) : null) ??
-    null;
-  if (!target) return;
+  if (!latestEvent) {
+    debugPhoneFlow(ctx, 'proactive:skip-no-latest-event');
+    return;
+  }
 
-  const forceMessage = scenePhoneMessage?.role === 'assistant';
-  const triggerText = forceMessage
-    ? `正文明确写到玩家收到了${target.alias ?? target.name}发来的手机消息：${latestSceneText.slice(-800)}`
-    : latestEvent?.text;
-  const eventKey = forceMessage ? `received-phone:${target.id}:${latestSceneText.slice(-180)}` : latestEvent?.key;
+  const target = state.statusData.targets.find(candidate => isExplicitPhoneTargetMention(candidate, latestEvent.text)) ?? null;
+  if (!target) {
+    debugPhoneFlow(ctx, 'proactive:skip-no-target-in-event', {
+      eventKey: latestEvent.key,
+      eventText: latestEvent.text.slice(0, 160),
+    });
+    return;
+  }
 
-  if (!triggerText || !eventKey) return;
-  if (!forceMessage && !isExplicitPhoneTargetMention(target, triggerText)) return;
-  if (!shouldQueueProactivePhoneMessage(ctx, target, eventKey, previousEventKey, forceMessage)) return;
+  const triggerText = latestEvent.text;
+  const eventKey = latestEvent.key;
+  if (!shouldQueueProactivePhoneMessage(ctx, target, eventKey, previousEventKey, false)) {
+    debugPhoneFlow(ctx, 'proactive:skip-queue-guard', {
+      targetId: target.id,
+      eventKey,
+      previousEventKey: previousEventKey ?? null,
+    });
+    return;
+  }
 
   const proactiveState = getPhoneProactiveState(ctx);
   proactiveState.lastEventKey = eventKey;
@@ -1170,19 +1208,19 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
     statusData: state.statusData,
     target,
     history: thread.messages,
-    userInput: forceMessage
-      ? '根据刚刚正文中已经出现的手机通知，补全你发给玩家的那条手机消息。'
-      : '根据刚刚正文发生的事件，判断你是否会主动发一条手机消息。如果事件与你有关、你有话想说、或者你有理由关心，就生成这条消息；如果事件和你无关、你没有理由主动联系、或者当前情境不适合发消息，就只输出 <message></message> 表示不发送。不要为了发消息而发消息。',
+    userInput:
+      '根据刚刚正文发生的事件，判断你是否会主动发一条手机消息。如果事件与你有关、你有话想说、或者你有理由关心，就生成这条消息；如果事件和你无关、你没有理由主动联系、或者当前情境不适合发消息，就只输出 <message></message> 表示不发送。不要为了发消息而发消息。',
     summaryStore: ctx.summaryStore,
     playerProfile: state.playerProfile,
     plotLibrary: state.plotLibrary,
     skipProgress: true,
     triggerEvent: triggerText,
-    forceMessage,
+    forceMessage: false,
   });
 
   try {
     const generationId = `phone-proactive-${crypto.randomUUID()}`;
+    debugPhoneFlow(ctx, 'proactive:start', { generationId, targetId: target.id, eventKey });
     const rawResult =
       typeof win.generateRaw === 'function'
         ? await win.generateRaw({
@@ -1202,9 +1240,13 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
             generation_id: generationId,
             user_input: prompt,
           });
-    const replyText =
-      extractPhoneChatReply(String(rawResult ?? '')).trim() ||
-      (forceMessage ? '……刚才那件事，等见面再说。我只是先发消息跟你说一声。' : '');
+    const replyText = extractPhoneChatReply(String(rawResult ?? '')).trim();
+    debugPhoneFlow(ctx, replyText ? 'proactive:message' : 'proactive:empty', {
+      generationId,
+      targetId: target.id,
+      rawLength: String(rawResult ?? '').length,
+      replyLength: replyText.length,
+    });
     if (!replyText) return;
 
     appendAssistantPhoneMessage(ctx, target, thread, replyText);
@@ -1294,64 +1336,16 @@ async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: Phon
     thread.messages = [...thread.messages, assistantMessage];
     thread.updatedAt = Date.now();
 
-    // 正文触发的手机发送也走手机变量分析，保证好感度和近期事件会生效。
-    if (hasTavernGenerate) {
-      try {
-        const progressPrompts = buildPhoneProgressPrompt({
-          statusData: state.statusData,
-          target,
-          messages: thread.messages,
-        });
-        let progressRaw = '';
-
-        if (ctx.summaryApiConfig && typeof win.generateRaw === 'function') {
-          progressRaw = String(
-            (await win.generateRaw({
-              should_silence: true,
-              should_stream: false,
-              generation_id: `phone-progress-${crypto.randomUUID()}`,
-              ordered_prompts: progressPrompts,
-              custom_api: {
-                apiurl: ctx.summaryApiConfig.apiurl,
-                key: ctx.summaryApiConfig.key,
-                model: ctx.summaryApiConfig.model,
-                source: ctx.summaryApiConfig.source,
-              },
-            })) ?? '',
-          );
-        } else if (typeof win.generateRaw === 'function') {
-          progressRaw = String(
-            (await win.generateRaw({
-              should_silence: true,
-              should_stream: false,
-              generation_id: `phone-progress-${crypto.randomUUID()}`,
-              ordered_prompts: progressPrompts,
-            })) ?? '',
-          );
-        } else if (typeof win.generate === 'function') {
-          progressRaw = String(
-            (await win.generate({
-              should_silence: true,
-              should_stream: false,
-              generation_id: `phone-progress-${crypto.randomUUID()}`,
-              user_input: progressPrompts.map(prompt => prompt.content).join('\n\n'),
-            })) ?? '',
-          );
-        }
-
-        const progressUpdate = parseProgressUpdate(progressRaw);
-        if (progressUpdate) {
-          applyFullProgressUpdate(ctx, progressUpdate, target.id);
-        }
-      } catch (e) {
-        console.warn('[phone-progress] directive analysis failed:', e);
-      }
-    } else {
-      const progressUpdate = parseProgressUpdate(rawResult);
-      if (progressUpdate) {
-        applyFullProgressUpdate(ctx, progressUpdate, target.id);
-      }
-    }
+    await runSecondaryProgressUpdate(
+      ctx,
+      `phone-progress-${crypto.randomUUID()}`,
+      buildPhoneProgressPrompt({
+        statusData: state.statusData,
+        target,
+        messages: thread.messages,
+      }),
+      target.id,
+    );
 
     assistantMessage.statusSnapshot = createRollbackSnapshot(state);
     if (!(state.phoneOpen && state.phoneRoute === 'app:chat' && state.phoneMessages.activeThreadId === target.id)) {
@@ -1468,63 +1462,16 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
     thread.messages = [...thread.messages, assistantMessage];
     thread.updatedAt = Date.now();
 
-    if (hasTavernGenerate) {
-      try {
-        const progressPrompts = buildPhoneProgressPrompt({
-          statusData: state.statusData,
-          target,
-          messages: thread.messages,
-        });
-        let progressRaw = '';
-
-        if (ctx.summaryApiConfig && typeof win.generateRaw === 'function') {
-          progressRaw = String(
-            (await win.generateRaw({
-              should_silence: true,
-              should_stream: false,
-              generation_id: `phone-progress-${crypto.randomUUID()}`,
-              ordered_prompts: progressPrompts,
-              custom_api: {
-                apiurl: ctx.summaryApiConfig.apiurl,
-                key: ctx.summaryApiConfig.key,
-                model: ctx.summaryApiConfig.model,
-                source: ctx.summaryApiConfig.source,
-              },
-            })) ?? '',
-          );
-        } else if (typeof win.generateRaw === 'function') {
-          progressRaw = String(
-            (await win.generateRaw({
-              should_silence: true,
-              should_stream: false,
-              generation_id: `phone-progress-${crypto.randomUUID()}`,
-              ordered_prompts: progressPrompts,
-            })) ?? '',
-          );
-        } else if (typeof win.generate === 'function') {
-          progressRaw = String(
-            (await win.generate({
-              should_silence: true,
-              should_stream: false,
-              generation_id: `phone-progress-${crypto.randomUUID()}`,
-              user_input: progressPrompts.map(prompt => prompt.content).join('\n\n'),
-            })) ?? '',
-          );
-        }
-
-        const progressUpdate = parseProgressUpdate(progressRaw);
-        if (progressUpdate) {
-          applyFullProgressUpdate(ctx, progressUpdate, target.id);
-        }
-      } catch (e) {
-        console.warn('[phone-progress] analysis failed:', e);
-      }
-    } else {
-      const progressUpdate = parseProgressUpdate(rawResult);
-      if (progressUpdate) {
-        applyFullProgressUpdate(ctx, progressUpdate, target.id);
-      }
-    }
+    await runSecondaryProgressUpdate(
+      ctx,
+      `phone-progress-${crypto.randomUUID()}`,
+      buildPhoneProgressPrompt({
+        statusData: state.statusData,
+        target,
+        messages: thread.messages,
+      }),
+      target.id,
+    );
 
     assistantMessage.statusSnapshot = createRollbackSnapshot(state);
     ctx.persistConversation();

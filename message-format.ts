@@ -518,6 +518,53 @@ function buildAffinityUpdateExamples(statusData: StatusData) {
   return examples.length ? examples.join(' / ') : '好感度.角色名:+1';
 }
 
+function normalizeForMentionMatch(value: unknown) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function getTargetMentionTerms(target: TargetStatus) {
+  return [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
+    .flatMap(value => String(value ?? '').split(/[、,，/／\s]+/))
+    .map(value => value.trim())
+    .filter(value => value.length >= 2);
+}
+
+function isTargetMentioned(target: TargetStatus, text: string) {
+  const normalized = normalizeForMentionMatch(text);
+  if (!normalized) return false;
+  return getTargetMentionTerms(target).some(term => normalized.includes(term.toLowerCase()));
+}
+
+function buildRelationshipGuidanceList(statusData: StatusData, playerProfile?: PlayerProfile | null) {
+  const lines = statusData.targets
+    .map(target => {
+      const guidance = getRelationshipGuidance(target);
+      const address = getRelationshipAddressGuidance({ target, playerProfile });
+      if (!guidance && !address) return '';
+      return [`[${target.name}]`, guidance ? `关系反应：${guidance}` : '', address ? `称呼：${address}` : '']
+        .filter(Boolean)
+        .join('\n');
+    })
+    .filter(Boolean);
+  return lines.length ? lines.join('\n\n') : '';
+}
+
+function buildLocalCharacterAuditList(statusData: StatusData, contextText: string) {
+  const lines = statusData.targets
+    .filter(target => isTargetMentioned(target, contextText))
+    .map(target => {
+      const audit = getRelationshipAuditGuidance(target);
+      if (!audit) return '';
+      return [
+        `[${target.name}]`,
+        '仅当本轮场景实际描写该角色的台词、动作、沉默或即时反应时应用；不得改变当前场景焦点，不得影响其他角色。',
+        audit,
+      ].join('\n');
+    })
+    .filter(Boolean);
+  return lines.length ? lines.join('\n\n') : '';
+}
+
 function buildPinnedKeyFactsInline(facts: KeyFact[] | undefined): string {
   if (!facts || !facts.length) return '';
   const active = facts.filter(f => !f.superseded);
@@ -543,9 +590,9 @@ function buildSummaryContextInline(store: SummaryStore): string {
   const parts: string[] = [];
   const pinned = buildPinnedKeyFactsInline(store.keyFacts);
   if (pinned) parts.push(pinned);
-  if (store.global) parts.push(`[Story context so far]\n${store.global}`);
-  if (store.major.length) parts.push(`[Recent period summaries]\n${store.major.map(e => e.text).join('\n\n')}`);
-  if (store.minor.length) parts.push(`[Recent event summaries]\n${store.minor.map(e => e.text).join('\n\n')}`);
+  if (store.global) parts.push(`【至今剧情背景】\n${store.global}`);
+  if (store.major.length) parts.push(`【近期阶段总结】\n${store.major.map(e => e.text).join('\n\n')}`);
+  if (store.minor.length) parts.push(`【近期事件总结】\n${store.minor.map(e => e.text).join('\n\n')}`);
   return parts.join('\n\n');
 }
 
@@ -574,17 +621,13 @@ export function buildPrompt(
 ) {
   const target = getActiveTarget(statusData);
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
-  const targetName = target?.name ?? 'Target';
-  const relationshipGuidance = getRelationshipGuidance(target);
-  const auditGuidance = getRelationshipAuditGuidance(target);
   const playerProfile = options?.playerProfile;
-  const addressGuidance = target ? getRelationshipAddressGuidance({ target, playerProfile }) : '';
   const playerProfileText = playerProfile?.name
     ? [
-        `Player name: ${playerProfile.name}`,
-        playerProfile.className ? `Player class: ${playerProfile.className}` : '',
-        playerProfile.personality ? `Player personality: ${playerProfile.personality}` : '',
-        playerProfile.appearance ? `Player appearance: ${playerProfile.appearance}` : '',
+        `玩家姓名：${playerProfile.name}`,
+        playerProfile.className ? `玩家班级：${playerProfile.className}` : '',
+        playerProfile.personality ? `玩家性格：${playerProfile.personality}` : '',
+        playerProfile.appearance ? `玩家外貌：${playerProfile.appearance}` : '',
         buildPlayerStatsText(playerProfile),
       ]
         .filter(Boolean)
@@ -606,39 +649,49 @@ export function buildPrompt(
     ? Math.min(summaryStore.lastSummarizedIndex, Math.max(0, uiMessages.length - SUMMARY_KEEP_RECENT))
     : 0;
   const conversationHistory = buildConversationHistory(uiMessages, historyStartIndex);
+  const relationshipGuidanceList = buildRelationshipGuidanceList(statusData, playerProfile);
+  const recentSceneContext = uiMessages
+    .slice(-4)
+    .filter(message => message.role === 'user' || message.role === 'assistant')
+    .map(message => (message.role === 'assistant' ? getVisibleMessageText(message) || message.text : message.text))
+    .join('\n');
+  const localAuditContext = [statusData.world.currentLocation, topEvent?.[0], topEvent?.[1], recentSceneContext, userInput]
+    .filter(Boolean)
+    .join('\n');
+  const localAuditGuidance = buildLocalCharacterAuditList(statusData, localAuditContext);
   const phoneMessageBoundary = options?.suppressPhoneMessageContent
     ? [
-        'Phone message boundary:',
-        `The current user input includes an instruction to send a phone message${
-          options.phoneMessageTargetName ? ` to ${options.phoneMessageTargetName}` : ''
-        }.`,
-        'In the main visible scene, you may describe the player taking out the phone, opening the chat, typing, or preparing to send.',
-        'Do NOT write the exact phone message content in the main scene.',
-        'Do NOT write or imply the recipient already replied in the main scene.',
-        'The separate phone system will create the actual sent message and the recipient reply after this main scene finishes.',
+        '手机消息边界：',
+        `玩家当前输入包含发送手机消息的指令${options.phoneMessageTargetName ? `，对象是${options.phoneMessageTargetName}` : ''}。`,
+        '在正文可见场景中，可以描写玩家拿出手机、打开聊天、打字或准备发送。',
+        '不要在正文里写出手机消息的具体内容。',
+        '不要在正文里写出或暗示收信人已经回复。',
+        '独立的手机系统会在正文结束后生成实际发送内容和收信人回复。',
       ].join('\n')
     : '';
 
   const parts = [
-    `You are continuing the diary-style chat for ${targetName}.`,
-    `Visible reply text must be wrapped in <${PRIMARY_VISIBLE_TAG}>...</${PRIMARY_VISIBLE_TAG}>.`,
-    'You may use <context>...</context> for hidden reasoning/context, but keep the visible reply only inside the visible tag.',
-    'Avoid markdown tables unless the user explicitly asks for them.',
-    'Keep the response focused, natural, and consistent with the current scene.',
-    `Current location: ${statusData.world.currentLocation}`,
+    '你正在续写当前的日记式场景。',
+    `可见正文必须包在 <${PRIMARY_VISIBLE_TAG}>...</${PRIMARY_VISIBLE_TAG}> 中。`,
+    '可以使用 <context>...</context> 保存隐藏上下文，但可见正文只能放在可见标签里。',
+    '除非用户明确要求，否则不要使用 Markdown 表格。',
+    '保持回复聚焦、自然，并与当前场景一致。',
+    '这是多角色场景系统。旧默认目标只用于变量兜底，不是镜头焦点，不能强行切镜头或插入离场角色独白。',
+    `当前位置：${statusData.world.currentLocation}`,
+    `旧默认变量目标：${target?.name ?? '无'}${target ? ` (${target.affinity}, ${target.stage})` : ''}`,
     mainEventsContext,
-    `Current relationship stage: ${target?.stage ?? ''}`,
-    relationshipGuidance ? `Relationship behavior guidance: ${relationshipGuidance}` : '',
-    addressGuidance ? `Addressing guidance: ${addressGuidance}` : '',
-    topEvent ? `Latest event: ${topEvent[0]} - ${topEvent[1]}` : '',
+    relationshipGuidanceList
+      ? `角色局部关系指导：每一块只在描写对应角色时生效，禁止把某个角色的指导当成全局思考方式。\n${relationshipGuidanceList}`
+      : '',
+    topEvent ? `最新事件：${topEvent[0]} - ${topEvent[1]}` : '',
     playerProfileText,
     phoneMessageBoundary,
     plotContext,
     summaryContext,
     conversationHistory,
-    userInput ? `Current user input: ${userInput}` : '',
-    auditGuidance
-      ? `Before writing the visible reply, silently apply this character audit. Do not output the audit process:\n${auditGuidance}`
+    userInput ? `玩家当前输入：${userInput}` : '',
+    localAuditGuidance
+      ? `角色局部条件审计：只在指定角色实际在场、发言、行动或立刻反应时应用。不要输出审计过程。\n${localAuditGuidance}`
       : '',
   ];
 
@@ -650,9 +703,6 @@ export function buildPrompt(
         '玩家当前输入要求推进时间。如果你的正文确实描写了时间流逝或场景切换到新时段，请在 <progress> 中输出完整的 `时间:YYYY-MM-DD HH:mm`（HH:mm 由你根据剧情合理判断）。如果正文实际上没有推进时间（例如只是对话中提到了时间词），则不要输出时间字段。禁止使用 `4月16日` 或缺时分的格式。',
       );
     }
-  } else {
-    // 有副 API 时仍追加轻量 state_delta 请求,作为副 API 失败时的兜底
-    parts.push(buildStateDeltaInstruction(statusData));
   }
 
   return parts.filter(Boolean).join('\n');
@@ -764,24 +814,24 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
 
   return [
     '',
-    'After your visible reply, you MUST output a <progress> block to record state changes.',
-    'Use key:value format, one per line. Only include fields that changed; omit unchanged fields.',
-    'Always evaluate affinity after a long scene. In multi-character scenes, evaluate every present character who clearly reacts to User.',
+    '在可见正文之后，必须输出一个 <progress> 块记录变量变化。',
+    '使用 key:value 格式，每行一个字段。只写发生变化的字段，未变化字段省略。',
+    '长场景结束后必须评估好感度。多人场景中，所有在场并明确对 User 有反应的角色都要分别评估。',
     '普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。只有角色不在场、完全无互动、或关系没有变化时才省略该角色好感度。',
-    'Available fields:',
+    '可用字段：',
     '  时间:YYYY-MM-DD HH:mm   — 仅当正文确实描写了时间流逝（进入次日/深夜，或明确跨过一个时段）时才输出，必须完整 YYYY-MM-DD HH:mm。正文未真正推进时间时整行省略；禁止使用 `4月16日`、`2012-04-16`（缺 HH:mm）、`明天` 这种非完整格式，也禁止仅凭玩家输入里的时间词就自行补一个新时间。',
-    '  地点:new_location      — Update if characters moved to a new location',
-    '  好感度:±N              — Legacy affinity change for the current target only (single-target scene only)',
-    `  好感度.角色名或id:±N    — Targeted affinity change；多人场景必须从下方“可更新角色列表”的更新键复制角色名或 id（e.g. ${affinityExamples}）`,
-    '  五维.能力名:±N          — Player P5 stat change (能力名: 知识/魅力/灵巧/体贴/勇气；e.g. 五维.体贴:+1)',
-    '  着装.部位:描述          — Update outfit for a body part (e.g. 着装.上装:换上了黑色卫衣)',
-    '  当前事件:事件ID          — Set the single current main plot event shown on the phone (e.g. 当前事件:SAE_01-2；clear with 当前事件:无)',
-    '  主线事件.事件ID:状态     — Update main plot event status (未触发/进行中/已结束/跳过/延后)',
-    '  事件名:event_description — Add/replace a notable recent event (can have multiple)',
-    '  物品+物品名:数量:描述    — Item gained (e.g. 物品+匕首:1:从地上捡到的)',
-    '  物品-物品名              — Item lost/used',
+    '  地点:新地点            — 角色实际移动到新地点时更新',
+    '  好感度:±N              — 旧格式好感变化，只能用于单对象场景的默认目标',
+    `  好感度.角色名或id:±N    — 指定角色好感变化；多人场景必须从下方“可更新角色列表”的更新键复制角色名或 id（例：${affinityExamples}）`,
+    '  五维.能力名:±N          — 玩家五维变化（能力名: 知识/魅力/灵巧/体贴/勇气；例：五维.体贴:+1）',
+    '  着装.部位:描述          — 更新某个部位的着装（例：着装.上装:换上了黑色卫衣）',
+    '  当前事件:事件ID          — 设置手机状态页显示的唯一当前主线事件（例：当前事件:SAE_01-2；清空用 当前事件:无）',
+    '  主线事件.事件ID:状态     — 更新主线事件状态（未触发/进行中/已结束/跳过/延后）',
+    '  事件名:事件描述         — 添加或替换近期重要事件，可有多条',
+    '  物品+物品名:数量:描述    — 获得物品（例：物品+匕首:1:从地上捡到的）',
+    '  物品-物品名              — 失去或使用物品',
     '',
-    'Example:',
+    '示例：',
     '<progress>',
     '时间:2012-03-31 08:30',
     '地点:东京·侦探坡',
@@ -794,12 +844,12 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     '主线事件.SAE_01-1:已结束',
     '</progress>',
     '',
-    `Current state snapshot:`,
+    `当前状态快照：`,
     `  时间: ${statusData.world.currentTime}`,
     `  地点: ${statusData.world.currentLocation}`,
     `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
     `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
-    `  当前目标好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+    `  默认变量目标: ${target?.name ?? '无'}；默认目标好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
     `  可更新角色列表:\n${targetList}`,
     `  着装: ${outfitList || '无'}`,
     `  物品: ${inventoryList}`,
@@ -813,6 +863,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
   return [
     '',
     '在你按预设规则输出完所有内容后,在消息最末尾追加一个 <state_delta> 块(独立于预设要求的任何标签):',
+    '只记录本轮正文明确发生的变量变化；默认变量目标不是当前镜头焦点，也不代表必须更新该角色。',
     '<state_delta>',
     '时间:YYYY-MM-DD HH:mm',
     '地点:当前所处具体地点',
@@ -825,7 +876,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
     `当前时间: ${statusData.world.currentTime}`,
     `当前地点: ${statusData.world.currentLocation}`,
     `当前事件: ${statusData.world.currentMainEventId || '无'}`,
-    `当前目标好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+    `默认变量目标: ${target?.name ?? '无'}；好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
     `可更新角色:\n${targetList}`,
   ].join('\n');
 }
@@ -861,11 +912,6 @@ export function buildProgressPrompt(
     })
     .filter(Boolean)
     .join('\n\n');
-  const latestAssistantMessage = [...turnMessages].reverse().find(m => m.role === 'assistant' && !m.streaming);
-  const latestSceneText = latestAssistantMessage
-    ? (getVisibleMessageText(latestAssistantMessage) || latestAssistantMessage.text).trim()
-    : '';
-
   return [
     {
       role: 'system' as const,
@@ -877,18 +923,18 @@ export function buildProgressPrompt(
         `  地点: ${statusData.world.currentLocation}`,
         `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
         `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
-        `  当前攻略对象: ${target?.name ?? '无'}`,
-        `  当前目标好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+        `  默认变量目标: ${target?.name ?? '无'}（旧单目标兜底；不是当前镜头焦点）`,
+        `  默认目标好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
         `  可更新角色列表:\n${targetList}`,
         `  着装: ${outfitList || '无'}`,
         `  物品: ${inventoryList}`,
-        latestSceneText ? `\n本轮最新正文（好感度只能依据这段正文中的在场与反应判断）：\n${latestSceneText}` : '',
         '',
         '好感度判断规则：',
         '  变量更新只能依据本轮最新正文；不要沿用更早对话里的互动、在场或反应。',
         '  好感度只能看本轮最新正文中明确在场并对 User 产生情绪反应的角色；旧消息里出现过的角色，本轮正文没出现就不更新。',
         '  阅读本轮完整正文，不要只看最后一句。多人在场时，分别判断每个明确在场且对 User 产生情绪反应的角色。',
         '  普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。',
+        '  加藤惠低好感特性：她对普通、礼貌、尊重边界、持续陪伴、记住日常细节的互动更容易小幅加好感；不需要戏剧性事件。',
         '  不要因为变化很小就省略好感度；只有角色不在场、完全无互动、纯环境描写、或关系没有任何变化时，才不输出该角色好感度。',
         timeIntentNote ? `\n时间推进提醒：${timeIntentNote}` : '',
         '',
@@ -896,7 +942,7 @@ export function buildProgressPrompt(
         '可用字段：',
         '  时间:YYYY-MM-DD HH:mm（必须完整；禁止使用 `4月16日`、`明天` 或缺 HH:mm 的格式）',
         '  地点:新地点',
-        '  好感度:±N（旧格式，只用于当前攻略对象的单人场景）',
+        '  好感度:±N（旧格式，只用于默认变量目标的单人场景；多人或不确定时用 好感度.角色名:±N）',
         `  好感度.角色名或id:±N（多人场景必须用这个格式，并从“可更新角色列表”的更新键复制角色名；例如 ${affinityExamples}）`,
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
         '  着装.部位:描述',
@@ -1088,8 +1134,10 @@ function parseStateBody(body: string): ProgressUpdate | null {
       continue;
     }
 
-    // 好感度.角色名或id:±N
-    const targetedAffMatch = trimmed.match(/^好感度[.．]\s*([^:：]+)[:：]\s*([+\-]?\d+)/);
+    // 好感度.角色名或id:±N / 好感度变化:角色名或id:±N
+    const targetedAffMatch =
+      trimmed.match(/^好感度[.．]\s*([^:：]+)[:：]\s*([+\-]?\d+)/) ??
+      trimmed.match(/^好感度变化[:：]\s*([^:：]+)[:：]\s*([+\-]?\d+)/);
     if (targetedAffMatch) {
       result.affinityDeltas.push({
         target: targetedAffMatch[1].trim(),
@@ -1137,8 +1185,20 @@ function parseStateBody(body: string): ProgressUpdate | null {
       continue;
     }
 
-    // 主线事件.SAE_01-1:已结束
-    const mainEventMatch = trimmed.match(/^主线事件[.．]\s*([^:：]+)[:：]\s*(.+)/);
+    // 事件:本轮剧情=描述 / 事件.本轮剧情:描述
+    const namedEventMatch =
+      trimmed.match(/^事件[.．]\s*([^:：=＝]+)[:：=＝]\s*(.+)/) ??
+      trimmed.match(/^事件[:：]\s*([^=＝]+)[=＝]\s*(.+)/);
+    if (namedEventMatch) {
+      result.events[namedEventMatch[1].trim()] = namedEventMatch[2].trim();
+      hasAnyField = true;
+      continue;
+    }
+
+    // 主线事件.SAE_01-1:已结束 / 主线事件:SAE_01-1=已结束
+    const mainEventMatch =
+      trimmed.match(/^主线事件[.．]\s*([^:：=＝]+)[:：=＝]\s*(.+)/) ??
+      trimmed.match(/^主线事件[:：]\s*([^=＝]+)[=＝]\s*(.+)/);
     if (mainEventMatch) {
       result.mainEvents[mainEventMatch[1].trim()] = mainEventMatch[2].trim();
       if (mainEventMatch[2].trim() === '进行中') {
