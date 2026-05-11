@@ -13,7 +13,9 @@
       "Bash(Select-Object -ExpandProperty FullName)",
       "Read(//e/web/tavern_helper_template-main/**)",
       "Bash(pnpm -s tsc --noEmit -p src/islandmilfcode)",
-      "Bash(pnpm -s tsc --noEmit)"
+      "Bash(pnpm -s tsc --noEmit)",
+      "Bash(python3 -m json.tool)",
+      "Bash(python -c ' *)"
     ]
   }
 }

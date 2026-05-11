@@ -1,4 +1,9 @@
-import { getRelationshipAddressGuidance, getRelationshipGuidance, getRelationshipMiniPersona } from './relationship';
+import {
+  getRelationshipAddressGuidance,
+  getRelationshipAuditGuidance,
+  getRelationshipGuidance,
+  getRelationshipMiniPersona,
+} from './relationship';
 import type { KeyFact, KeyFactCategory, SummaryStore } from './summary/types';
 import { KEY_FACT_CATEGORY_LABEL } from './summary/types';
 import type {
@@ -571,6 +576,7 @@ export function buildPrompt(
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
   const targetName = target?.name ?? 'Target';
   const relationshipGuidance = getRelationshipGuidance(target);
+  const auditGuidance = getRelationshipAuditGuidance(target);
   const playerProfile = options?.playerProfile;
   const addressGuidance = target ? getRelationshipAddressGuidance({ target, playerProfile }) : '';
   const playerProfileText = playerProfile?.name
@@ -631,6 +637,9 @@ export function buildPrompt(
     summaryContext,
     conversationHistory,
     userInput ? `Current user input: ${userInput}` : '',
+    auditGuidance
+      ? `Before writing the visible reply, silently apply this character audit. Do not output the audit process:\n${auditGuidance}`
+      : '',
   ];
 
   // 只有没有副 API 处理变量时，才要求主 API 输出 <progress>。
