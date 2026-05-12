@@ -115,10 +115,7 @@ function clonePhoneMessagesForSnapshot(input: unknown): PhoneMessageStore {
   };
 }
 
-function normalizeRollbackSnapshot(
-  input: unknown,
-  options: { includeSideWindows?: boolean } = {},
-): RollbackSnapshot {
+function normalizeRollbackSnapshot(input: unknown, options: { includeSideWindows?: boolean } = {}): RollbackSnapshot {
   const { includeSideWindows = true } = options;
 
   // 兼容旧存档：过去 statusSnapshot 直接就是 StatusData，没有包裹手机和总结窗口。
@@ -258,6 +255,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     statusData: normalizeStatusData(defaultStatusData),
     weather: getDefaultWeatherState(),
     notification: null,
+    backgroundTasks: [],
     readerContextMenu: null,
     readerEditing: null,
     summaryStore: createDefaultSummaryStore(),

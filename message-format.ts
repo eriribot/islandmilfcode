@@ -405,8 +405,8 @@ function buildCurrentPlotContext(statusData: StatusData, plotLibrary?: PlotLibra
         `触发日期：${upcoming.schedule.date}${
           daysUntil != null ? `（距离当前日期约 ${daysUntil} 天）` : ''
         }`,
-        upcoming.schedule.timeSegments?.length ? `触发时间片段：${upcoming.schedule.timeSegments.join('/')}` : '',
-        upcoming.schedule.locations?.length ? `触发地点：${upcoming.schedule.locations.join('、')}` : '',
+        upcoming.schedule.timeSegments?.length ? `建议时间片段：${upcoming.schedule.timeSegments.join('/')}（仅供叙事参考）` : '',
+        upcoming.schedule.locations?.length ? `建议地点：${upcoming.schedule.locations.join('、')}（仅供叙事参考）` : '',
         upcoming.summary ? `阶段摘要：${upcoming.summary}` : '',
       );
     } else {
@@ -416,7 +416,8 @@ function buildCurrentPlotContext(statusData: StatusData, plotLibrary?: PlotLibra
     gapLines.push(
       '空档期叙事规则：',
       '- 只写日常、校园、社团、手机等非主线情节；不要演出任何未来主线的关键节点。',
-      '- 不得在 <progress> 中把任何事件标记为 进行中，也不得把未到触发日期的事件设为 当前事件。',
+      '- 事件触发只看日期：当前日期等于触发日期当天即可在 <progress> 中把该事件标记为 进行中；时间片段和地点只是建议场景，不是硬性触发条件。',
+      '- 不得在 <progress> 中把未到触发日期的事件标记为 进行中，也不得设为 当前事件。',
       '- 不得自造新的事件 ID、卷号或编号；白名单之外的 ID 都会被系统丢弃。',
       '- 如果 User 的行动看起来要跳过下一个主线，用 <progress> 把该事件标记为 跳过 或 延后，而不是捏造新主线。',
       '',
@@ -941,7 +942,7 @@ export function buildProgressPrompt(
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
         '  着装.部位:描述（主场景禁用旧单目标着装格式；没有明确对象时不要输出）',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
-        '  主线事件.事件ID:状态（未触发/进行中/已结束/跳过/延后）',
+        '  主线事件.事件ID:状态（未触发/进行中/已结束）',
         '  事件名:事件描述',
         '  物品+名称:数量:描述',
         '  物品-名称',

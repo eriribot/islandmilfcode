@@ -32,6 +32,9 @@ export function shouldRunGlobalCompression(store: SummaryStore): boolean {
 
 type OrderedPrompt = { role: 'system' | 'user' | 'assistant'; content: string };
 
+const CHINESE_AUDIT_LANGUAGE_RULE =
+  '- 全程使用中文：最终标签内容、审计说明、思考标题、reasoning_content 或任何可见/可记录的推理过程都必须用中文，不要输出英文段落。';
+
 /** 将消息列表格式化为 [说话人]\n内容 的文本块，供摘要 prompt 使用。 */
 function formatMessagesForSummary(messages: UiMessage[]): string {
   return messages
@@ -98,6 +101,7 @@ export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnch
         '- 每条摘要和关键事实必须能在正文里找到直接依据，不准添加原文没有的角色、动作或情绪。',
         '- 禁止不必要的总结和升华，忠实记录角色的言行举止和情感变化。',
         '- 纯中文输出。',
+        CHINESE_AUDIT_LANGUAGE_RULE,
         '',
         '输出三部分：',
         '1. <summary> 标签：用约 100 字概括本段对话的剧情，附上时间和地点。',
@@ -175,6 +179,7 @@ export function buildMajorSummaryPrompt(
         '- 不回避任何敏感内容，保证记录完全还原前文',
         '- 事件及时间线必须精确记录时间推进',
         '- 严禁引入小摘要和关键事实清单中没有的新内容',
+        CHINESE_AUDIT_LANGUAGE_RULE,
         '',
         '总结必须使用 <summary> 标签包裹，格式：',
         '<summary>',
@@ -230,6 +235,7 @@ export function buildGlobalCompressionPrompt(
         '- 全局摘要应控制在 600 字以内',
         '- 关键事实已另行存储在事实清单中，你只需给出时间线叙事，不要重复列举事实，但叙事中要提及它们的影响',
         '- 严禁引入原摘要和事实清单中没有的新内容',
+        CHINESE_AUDIT_LANGUAGE_RULE,
         '',
         '总结必须使用 <summary> 标签包裹，格式：',
         '<summary>',

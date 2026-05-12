@@ -2,7 +2,8 @@ import './styles.css';
 import './phone/styles.css';
 import './title/styles.css';
 
-import { submitMessage, submitPhoneMessage, type ActionContext } from './actions';
+import { retryBackgroundProgressUpdate, submitMessage, submitPhoneMessage, type ActionContext } from './actions';
+import { clearBackgroundTask } from './background-tasks';
 import { setupStreamingHooks } from './actions/streaming';
 import { extractContextReply, getReaderMessages } from './message-format';
 import { bindFloatingPhoneEvents, loadFloatingPhonePosition, syncFloatingPhoneAfterResize } from './phone/floating';
@@ -52,13 +53,7 @@ import {
 import type { SummaryApiConfig, SummaryModelOption } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
-import type {
-  GameState,
-  NotificationState,
-  StatusData,
-  TabKey,
-  TavernWindow,
-} from './types';
+import type { GameState, NotificationState, StatusData, TabKey, TavernWindow } from './types';
 import type { PhoneCharacterId, PhoneRoute } from './phone/types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp, syncMainEvents } from './variables/normalize';
@@ -301,14 +296,15 @@ function enterSave(saveId: string) {
   const msgs = deserializeMessages(save.payload.chatLog);
   replaceConversationMessages(state, msgs);
   state.statusData = save.payload.gameState.statusData;
-  state.playerProfile =
-    ((save.payload.gameState.runtimeFlags?.playerProfile as typeof state.playerProfile | undefined) ?? {
-      name: save.meta.playerProfile?.name ?? save.meta.characterName ?? '',
-      gender: save.meta.playerProfile?.gender ?? '男',
-      personality: save.meta.playerProfile?.personality ?? save.meta.personality ?? '',
-      appearance: save.meta.playerProfile?.appearance ?? save.meta.appearance ?? '',
-      className: save.meta.playerProfile?.className ?? '2年A班',
-    });
+  state.playerProfile = (save.payload.gameState.runtimeFlags?.playerProfile as
+    | typeof state.playerProfile
+    | undefined) ?? {
+    name: save.meta.playerProfile?.name ?? save.meta.characterName ?? '',
+    gender: save.meta.playerProfile?.gender ?? '男',
+    personality: save.meta.playerProfile?.personality ?? save.meta.personality ?? '',
+    appearance: save.meta.playerProfile?.appearance ?? save.meta.appearance ?? '',
+    className: save.meta.playerProfile?.className ?? '2年A班',
+  };
   state.runtimeFlags = JSON.parse(JSON.stringify(save.payload.gameState.runtimeFlags ?? {}));
   state.summaryStore = save.payload.summaryStore;
   state.phoneMessages = normalizePhoneMessageStore(state.runtimeFlags.phoneMessages);
@@ -400,10 +396,7 @@ async function saveReaderEditor() {
   // 同步回酒馆楼层，防止刷新后又被酒馆侧的原文覆盖。
   if (typeof message.tavernMessageId === 'number' && typeof win.setChatMessages === 'function') {
     try {
-      await win.setChatMessages(
-        [{ message_id: message.tavernMessageId, message: nextText }],
-        { refresh: 'none' },
-      );
+      await win.setChatMessages([{ message_id: message.tavernMessageId, message: nextText }], { refresh: 'none' });
     } catch (error) {
       console.warn('[reader-edit] setChatMessages failed:', error);
     }
@@ -628,11 +621,7 @@ function parseSummaryModelsResponse(payload: unknown): SummaryModelOption[] {
     const id = typeof item.id === 'string' ? item.id : typeof item.name === 'string' ? item.name : '';
     if (!id) continue;
     const ownedBy =
-      typeof item.owned_by === 'string'
-        ? item.owned_by
-        : typeof item.ownedBy === 'string'
-          ? item.ownedBy
-          : undefined;
+      typeof item.owned_by === 'string' ? item.owned_by : typeof item.ownedBy === 'string' ? item.ownedBy : undefined;
     byId.set(id, { id, ...(ownedBy ? { ownedBy } : {}) });
   }
 
@@ -694,95 +683,95 @@ async function fetchSummaryModels() {
 
 function bindReaderDragEvents() {
   root?.querySelectorAll<HTMLElement>('.paper-reader').forEach(reader => {
-
-  reader.addEventListener('pointerdown', event => {
-    if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest('[data-action="jump-message"]')) return;
-    if ((event.target as HTMLElement).closest('[data-action="reader-edit"]')) return;
-    readerDragState = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      startedInBody: Boolean((event.target as HTMLElement).closest('.reader-card__body')),
-      intentLocked: false,
-      scrolling: false,
-      moved: false,
-    };
-    if (!readerDragState.startedInBody) {
-      reader.setPointerCapture(event.pointerId);
-      readerDragState.intentLocked = true;
-    }
-  });
-
-  reader.addEventListener('pointermove', event => {
-    if (!readerDragState || event.pointerId !== readerDragState.pointerId) return;
-    const dx = event.clientX - readerDragState.startX;
-    const dy = event.clientY - readerDragState.startY;
-    if (readerDragState.scrolling) return;
-    if (!readerDragState.intentLocked && readerDragState.startedInBody) {
-      if (Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) {
-        readerDragState.scrolling = true;
-        return;
-      }
-      if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
-        readerDragState.intentLocked = true;
+    reader.addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+      if ((event.target as HTMLElement).closest('[data-action="jump-message"]')) return;
+      if ((event.target as HTMLElement).closest('[data-action="reader-edit"]')) return;
+      readerDragState = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startedInBody: Boolean((event.target as HTMLElement).closest('.reader-card__body')),
+        intentLocked: false,
+        scrolling: false,
+        moved: false,
+      };
+      if (!readerDragState.startedInBody) {
         reader.setPointerCapture(event.pointerId);
-      } else {
-        return;
+        readerDragState.intentLocked = true;
       }
-    }
-    if (Math.abs(dx) > 6) readerDragState.moved = true;
-    if (!readerDragState.moved) return;
-    const card = reader.querySelector<HTMLElement>('.reader-card');
-    if (!card) return;
-    const tryingDirection = dx < 0 ? 'next' : 'prev';
-    const canFlip = canFlipReader(tryingDirection);
-    if (!canFlip) {
-      const resistedOffset = Math.sign(dx) * Math.min(Math.abs(dx), 18) * 0.18;
-      card.style.transition = 'none';
-      card.style.transform = `perspective(1200px) translateX(${resistedOffset}px)`;
-      card.style.opacity = '1';
-      return;
-    }
-    const progress = Math.min(Math.abs(dx) / 160, 1);
-    const tilt = dx > 0 ? -6 * progress : 6 * progress;
-    card.style.transition = 'none';
-    card.style.transform = `perspective(1200px) translateX(${dx * 0.28}px) rotateY(${tilt}deg)`;
-    card.style.opacity = String(Math.max(1 - progress * 0.32, 0.6));
-  });
+    });
 
-  const finishReaderDrag = (event: PointerEvent) => {
-    if (!readerDragState || event.pointerId !== readerDragState.pointerId) return;
-    if (reader.hasPointerCapture(event.pointerId)) reader.releasePointerCapture(event.pointerId);
-    const dx = event.clientX - readerDragState.startX;
-    const moved = readerDragState.moved;
-    const scrolling = readerDragState.scrolling;
-    readerDragState = null;
-    if (scrolling) return;
-    const THRESHOLD = 60;
-    if (moved && Math.abs(dx) >= THRESHOLD) {
-      if (dx < 0 && canFlipReader('next')) {
-        focusMessage(1);
+    reader.addEventListener('pointermove', event => {
+      if (!readerDragState || event.pointerId !== readerDragState.pointerId) return;
+      const dx = event.clientX - readerDragState.startX;
+      const dy = event.clientY - readerDragState.startY;
+      if (readerDragState.scrolling) return;
+      if (!readerDragState.intentLocked && readerDragState.startedInBody) {
+        if (Math.abs(dy) > 8 && Math.abs(dy) > Math.abs(dx)) {
+          readerDragState.scrolling = true;
+          return;
+        }
+        if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) {
+          readerDragState.intentLocked = true;
+          reader.setPointerCapture(event.pointerId);
+        } else {
+          return;
+        }
+      }
+      if (Math.abs(dx) > 6) readerDragState.moved = true;
+      if (!readerDragState.moved) return;
+      const card = reader.querySelector<HTMLElement>('.reader-card');
+      if (!card) return;
+      const tryingDirection = dx < 0 ? 'next' : 'prev';
+      const canFlip = canFlipReader(tryingDirection);
+      if (!canFlip) {
+        const resistedOffset = Math.sign(dx) * Math.min(Math.abs(dx), 18) * 0.18;
+        card.style.transition = 'none';
+        card.style.transform = `perspective(1200px) translateX(${resistedOffset}px)`;
+        card.style.opacity = '1';
         return;
       }
-      if (dx > 0 && canFlipReader('prev')) {
-        focusMessage(-1);
-        return;
+      const progress = Math.min(Math.abs(dx) / 160, 1);
+      const tilt = dx > 0 ? -6 * progress : 6 * progress;
+      card.style.transition = 'none';
+      card.style.transform = `perspective(1200px) translateX(${dx * 0.28}px) rotateY(${tilt}deg)`;
+      card.style.opacity = String(Math.max(1 - progress * 0.32, 0.6));
+    });
+
+    const finishReaderDrag = (event: PointerEvent) => {
+      if (!readerDragState || event.pointerId !== readerDragState.pointerId) return;
+      if (reader.hasPointerCapture(event.pointerId)) reader.releasePointerCapture(event.pointerId);
+      const dx = event.clientX - readerDragState.startX;
+      const moved = readerDragState.moved;
+      const scrolling = readerDragState.scrolling;
+      readerDragState = null;
+      if (scrolling) return;
+      const THRESHOLD = 60;
+      if (moved && Math.abs(dx) >= THRESHOLD) {
+        if (dx < 0 && canFlipReader('next')) {
+          focusMessage(1);
+          return;
+        }
+        if (dx > 0 && canFlipReader('prev')) {
+          focusMessage(-1);
+          return;
+        }
+        resetReaderCardTransform(reader);
+      } else {
+        resetReaderCardTransform(reader);
       }
-      resetReaderCardTransform(reader);
-    } else {
-      resetReaderCardTransform(reader);
-    }
-  };
-  reader.addEventListener('pointerup', finishReaderDrag);
-  reader.addEventListener('pointercancel', finishReaderDrag);
+    };
+    reader.addEventListener('pointerup', finishReaderDrag);
+    reader.addEventListener('pointercancel', finishReaderDrag);
   });
 }
 
 function getTucaoFloatFlag() {
-  const raw = typeof state.runtimeFlags.tucaoFloat === 'object' && state.runtimeFlags.tucaoFloat
-    ? (state.runtimeFlags.tucaoFloat as Record<string, unknown>)
-    : {};
+  const raw =
+    typeof state.runtimeFlags.tucaoFloat === 'object' && state.runtimeFlags.tucaoFloat
+      ? (state.runtimeFlags.tucaoFloat as Record<string, unknown>)
+      : {};
   return {
     x: Math.max(8, Number(raw.x ?? 28) || 28),
     y: Math.max(8, Number(raw.y ?? 92) || 92),
@@ -799,24 +788,25 @@ function bindTucaoFloatEvents() {
   const panel = root?.querySelector<HTMLElement>('[data-tucao-float="true"]');
   if (!panel) return;
 
-  root
-    ?.querySelector<HTMLButtonElement>('[data-action="toggle-tucao-float"]')
-    ?.addEventListener('click', event => {
-      event.stopPropagation();
-      if (tucaoSuppressNextToggleClick) {
-        tucaoSuppressNextToggleClick = false;
-        return;
-      }
-      const current = getTucaoFloatFlag();
-      setTucaoFloatFlag({ collapsed: !current.collapsed });
-      persistToSave();
-      render();
-    });
+  root?.querySelector<HTMLButtonElement>('[data-action="toggle-tucao-float"]')?.addEventListener('click', event => {
+    event.stopPropagation();
+    if (tucaoSuppressNextToggleClick) {
+      tucaoSuppressNextToggleClick = false;
+      return;
+    }
+    const current = getTucaoFloatFlag();
+    setTucaoFloatFlag({ collapsed: !current.collapsed });
+    persistToSave();
+    render();
+  });
 
   const handle = panel.querySelector<HTMLElement>('[data-tucao-drag-handle="true"]');
   handle?.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest('[data-action="toggle-tucao-float"]') && !panel.classList.contains('is-collapsed')) {
+    if (
+      (event.target as HTMLElement).closest('[data-action="toggle-tucao-float"]') &&
+      !panel.classList.contains('is-collapsed')
+    ) {
       return;
     }
     const current = getTucaoFloatFlag();
@@ -882,14 +872,14 @@ function bindTucaoFloatEvents() {
 function bindReaderContextMenuEvents() {
   root?.querySelectorAll<HTMLElement>('.reader-card').forEach(card => {
     card.addEventListener('contextmenu', event => {
-    event.preventDefault();
-    const readerCard = event.currentTarget as HTMLElement;
-    openReaderContextMenu(
-      Number(readerCard.dataset.readerIndex ?? state.focusedMessageIndex),
-      event.clientX,
-      event.clientY,
-    );
-  });
+      event.preventDefault();
+      const readerCard = event.currentTarget as HTMLElement;
+      openReaderContextMenu(
+        Number(readerCard.dataset.readerIndex ?? state.focusedMessageIndex),
+        event.clientX,
+        event.clientY,
+      );
+    });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-message"]').forEach(button => {
     button.addEventListener('contextmenu', event => {
@@ -903,31 +893,31 @@ function bindReaderContextMenuEvents() {
 
 function bindEvents() {
   root?.querySelectorAll<HTMLTextAreaElement>('.composer-input').forEach(textarea => {
-  textarea.addEventListener('input', event => {
-    state.draft = (event.target as HTMLTextAreaElement).value;
-    root?.querySelectorAll<HTMLTextAreaElement>('.composer-input').forEach(other => {
-      if (other !== event.target) other.value = state.draft;
-    });
-  });
-
-  root?.querySelectorAll<HTMLTextAreaElement>('.phone-chat-input').forEach(textarea => {
     textarea.addEventListener('input', event => {
-      state.phoneMessages.draft = (event.target as HTMLTextAreaElement).value;
+      state.draft = (event.target as HTMLTextAreaElement).value;
+      root?.querySelectorAll<HTMLTextAreaElement>('.composer-input').forEach(other => {
+        if (other !== event.target) other.value = state.draft;
+      });
+    });
+
+    root?.querySelectorAll<HTMLTextAreaElement>('.phone-chat-input').forEach(textarea => {
+      textarea.addEventListener('input', event => {
+        state.phoneMessages.draft = (event.target as HTMLTextAreaElement).value;
+      });
+      textarea.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+          event.preventDefault();
+          const targetId = state.phoneMessages.activeThreadId;
+          if (targetId) void submitPhoneMessage(ctx, targetId);
+        }
+      });
     });
     textarea.addEventListener('keydown', event => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault();
-        const targetId = state.phoneMessages.activeThreadId;
-        if (targetId) void submitPhoneMessage(ctx, targetId);
+        void submitMessage(ctx);
       }
     });
-  });
-  textarea.addEventListener('keydown', event => {
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-      event.preventDefault();
-      void submitMessage(ctx);
-    }
-  });
   });
 
   root?.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(button => {
@@ -1021,15 +1011,32 @@ function bindEvents() {
   root?.querySelector<HTMLButtonElement>('[data-action="edit-player-profile"]')?.addEventListener('click', () => {
     setPlayerProfileEditing(true);
   });
-  root?.querySelector<HTMLButtonElement>('[data-action="cancel-player-profile-edit"]')?.addEventListener('click', () => {
-    setPlayerProfileEditing(false);
-  });
-  root?.querySelectorAll<HTMLButtonElement>('[data-action="send"]').forEach(button => button.addEventListener('click', () => {
-    void submitMessage(ctx);
-  }));
+  root
+    ?.querySelector<HTMLButtonElement>('[data-action="cancel-player-profile-edit"]')
+    ?.addEventListener('click', () => {
+      setPlayerProfileEditing(false);
+    });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="send"]').forEach(button =>
+    button.addEventListener('click', () => {
+      void submitMessage(ctx);
+    }),
+  );
   root
     ?.querySelector<HTMLButtonElement>('[data-action="open-notification"]')
     ?.addEventListener('click', () => openNotification());
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="retry-background-task"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const kind = button.dataset.taskKind;
+      if (kind === 'progress') {
+        void retryBackgroundProgressUpdate(ctx);
+      } else if (kind === 'summary') {
+        clearBackgroundTask(state, 'summary');
+        state.summaryStore.lastError = null;
+        state.summaryStore.consecutiveFailures = 0;
+        triggerSummary('auto');
+      }
+    });
+  });
 
   // 摘要操作。
   function triggerSummary(mode: 'auto' | 'minor' | 'major') {
@@ -1039,9 +1046,11 @@ function bindEvents() {
     runSummary(
       {
         win,
+        state,
         summaryStore: state.summaryStore,
         summaryApiConfig: state.summaryApiConfig,
         uiMessages: state.uiMessages,
+        onTaskUpdated: () => render(),
         onStoreUpdated: () => {
           persistToSave();
           state.summarizing = false;
@@ -1077,9 +1086,11 @@ function bindEvents() {
       rerollSummaryEntry(
         {
           win,
+          state,
           summaryStore: state.summaryStore,
           summaryApiConfig: state.summaryApiConfig,
           uiMessages: state.uiMessages,
+          onTaskUpdated: () => render(),
           onStoreUpdated: () => {
             persistToSave();
             state.summarizing = false;
@@ -1286,7 +1297,8 @@ init();
     plot: {
       eventCount: Object.keys(state.plotLibrary.events).length,
       currentEventLoaded: Boolean(
-        state.statusData.world.currentMainEventId && state.plotLibrary.events[state.statusData.world.currentMainEventId],
+        state.statusData.world.currentMainEventId &&
+        state.plotLibrary.events[state.statusData.world.currentMainEventId],
       ),
       sources: state.plotLibrary.sourceEntryNames,
     },

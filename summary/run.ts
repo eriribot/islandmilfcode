@@ -1,6 +1,7 @@
 import { getVisibleMessageText, parseProgressUpdate, type ProgressUpdate } from '../message-format';
+import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
 import { generateSecondaryRaw } from '../secondary-api';
-import type { TavernWindow, UiMessage } from '../types';
+import type { AppState, TavernWindow, UiMessage } from '../types';
 import {
   buildGlobalCompressionPrompt,
   buildMajorSummaryPrompt,
@@ -18,10 +19,12 @@ import type { FactAnchor, KeyFact, SummaryApiConfig, SummaryStore } from './type
 /** 摘要运行所需的上下文。 */
 export type SummaryContext = {
   win: TavernWindow;
+  state?: AppState;
   summaryStore: SummaryStore;
   summaryApiConfig: SummaryApiConfig | null;
   uiMessages: UiMessage[];
   onStoreUpdated: () => void;
+  onTaskUpdated?: () => void;
   onProgressUpdate?: (update: ProgressUpdate) => void;
   /** 当前结构化状态快照，用作摘要 prompt 的事实锚点。缺省时不注入。 */
   getFactAnchor?: () => FactAnchor | null;
@@ -145,6 +148,24 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
   const messageCount = countConversationMessages(uiMessages);
   const anchor = ctx.getFactAnchor?.() ?? null;
   const pinnedFacts = () => store.keyFacts.filter(f => !f.superseded);
+  let taskStarted = false;
+
+  const startTask = (detail: string) => {
+    if (!ctx.state) return;
+    taskStarted = true;
+    setBackgroundTaskRunning(ctx.state, 'summary', detail);
+    ctx.onTaskUpdated?.();
+  };
+  const failTask = (error: unknown) => {
+    if (!ctx.state || !taskStarted) return;
+    setBackgroundTaskFailed(ctx.state, 'summary', error);
+    ctx.onTaskUpdated?.();
+  };
+  const finishTask = () => {
+    if (!ctx.state || !taskStarted) return;
+    clearBackgroundTask(ctx.state, 'summary');
+    ctx.onTaskUpdated?.();
+  };
 
   // 小摘要：自动模式达到阈值时运行，或 mode=minor 时强制运行。
   const runMinor = mode === 'minor' || (mode === 'auto' && shouldRunMinorSummary(store, messageCount));
@@ -153,6 +174,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
     const unsummarized = getNextMinorSummaryChunk(uiMessages, startIndex);
     if (unsummarized.length > 0) {
       try {
+        startTask('小摘要生成中');
         const prompts = buildMinorSummaryPrompt(unsummarized, anchor);
         const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
         const text = parseSummaryResult(raw);
@@ -176,6 +198,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
           applyProgressFromMinorSummary(ctx, raw);
         }
       } catch (error) {
+        failTask(error);
         recordFailure(store, 'minor', error);
         saveSummaryStore(win, store);
         ctx.onStoreUpdated();
@@ -184,6 +207,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
     }
     // 小摘要模式到此为止，不继续级联。
     if (mode === 'minor') {
+      finishTask();
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();
       return;
@@ -201,6 +225,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
     }
     const consumed = store.minor.splice(0, store.minor.length);
     try {
+      startTask('大摘要生成中');
       const prompts = buildMajorSummaryPrompt(consumed, anchor, pinnedFacts());
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
       const text = parseSummaryResult(raw);
@@ -218,6 +243,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
         store.minor.unshift(...consumed);
       }
     } catch (error) {
+      failTask(error);
       store.minor.unshift(...consumed);
       recordFailure(store, 'major', error);
       saveSummaryStore(win, store);
@@ -226,6 +252,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
     }
     // 大摘要模式在大摘要后停止，不做全局压缩。
     if (mode === 'major') {
+      finishTask();
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();
       return;
@@ -236,6 +263,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
   if (shouldRunGlobalCompression(store)) {
     const consumed = store.major.splice(0, store.major.length);
     try {
+      startTask('全局记忆压缩中');
       const prompts = buildGlobalCompressionPrompt(store.global, consumed, anchor, pinnedFacts());
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
       const text = parseSummaryResult(raw);
@@ -246,6 +274,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
         store.major.unshift(...consumed);
       }
     } catch (error) {
+      failTask(error);
       store.major.unshift(...consumed);
       recordFailure(store, 'global', error);
       saveSummaryStore(win, store);
@@ -254,6 +283,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
     }
   }
 
+  finishTask();
   saveSummaryStore(win, store);
   ctx.onStoreUpdated();
 }
@@ -274,6 +304,8 @@ export async function rerollSummaryEntry(
     if (!selected.length) return;
 
     try {
+      if (ctx.state) setBackgroundTaskRunning(ctx.state, 'summary', '摘要重写中');
+      ctx.onTaskUpdated?.();
       const anchor = ctx.getFactAnchor?.() ?? null;
       const prompts = buildMinorSummaryPrompt(selected, anchor);
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
@@ -294,6 +326,10 @@ export async function rerollSummaryEntry(
         clearFailureState(store);
       }
     } catch (error) {
+      if (ctx.state) {
+        setBackgroundTaskFailed(ctx.state, 'summary', error);
+        ctx.onTaskUpdated?.();
+      }
       recordFailure(store, 'minor', error);
     }
   } else {
@@ -305,6 +341,8 @@ export async function rerollSummaryEntry(
     if (!messagesInRange.length) return;
 
     try {
+      if (ctx.state) setBackgroundTaskRunning(ctx.state, 'summary', '摘要重写中');
+      ctx.onTaskUpdated?.();
       const anchor = ctx.getFactAnchor?.() ?? null;
       const pinned = store.keyFacts.filter(f => !f.superseded);
       // 将范围内原始消息当作"小摘要式条目"来构建大摘要 prompt。
@@ -319,10 +357,18 @@ export async function rerollSummaryEntry(
         clearFailureState(store);
       }
     } catch (error) {
+      if (ctx.state) {
+        setBackgroundTaskFailed(ctx.state, 'summary', error);
+        ctx.onTaskUpdated?.();
+      }
       recordFailure(store, 'major', error);
     }
   }
 
+  if (!store.lastError && ctx.state) {
+    clearBackgroundTask(ctx.state, 'summary');
+    ctx.onTaskUpdated?.();
+  }
   saveSummaryStore(win, store);
   ctx.onStoreUpdated();
 }

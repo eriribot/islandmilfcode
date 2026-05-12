@@ -21,8 +21,6 @@ const MAIN_EVENT_FINISHED = '已结束';
 type ScheduledEvent = {
   id: string;
   date: string;
-  timeSegments: string[];
-  locations: string[];
 };
 
 function normalizeMainEventStatus(status: string | undefined): string {
@@ -43,8 +41,6 @@ function buildSchedule(plotLibrary: PlotLibrary | null | undefined): ScheduledEv
     .map(event => ({
       id: event.id,
       date: event.schedule.date,
-      timeSegments: event.schedule.timeSegments ?? [],
-      locations: event.schedule.locations ?? [],
     }));
   events.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
   return events;
@@ -202,52 +198,13 @@ function compareDate(a: string, b: string) {
   return a.localeCompare(b);
 }
 
-function locationMatchesEvent(currentLocation: string, eventLocation: string): boolean {
-  if (!eventLocation) return true;
-  const cur = currentLocation.trim();
-  const loc = eventLocation.trim();
-  if (!cur || !loc) return false;
-  // 双向 includes:覆盖 AI 把地点写得更详细或更笼统两种情况
-  if (cur.includes(loc) || loc.includes(cur)) return true;
-  // 分段匹配:按常见分隔符拆开,任一长度 >= 2 的段匹配上就算命中
-  // 例:事件 "丰之崎学园视听教室" 可命中 currentLocation "丰之崎学园"
-  // 例:事件 "美术教室 / 走廊" 可命中 currentLocation "走廊"
-  const splitter = /[\/·、，,；;\s]+/;
-  const locParts = loc.split(splitter).filter(p => p.length >= 2);
-  const curParts = cur.split(splitter).filter(p => p.length >= 2);
-  for (const lp of locParts) {
-    if (cur.includes(lp)) return true;
-    for (const cp of curParts) {
-      if (lp.includes(cp) || cp.includes(lp)) return true;
-    }
-  }
-  return false;
-}
-
-function eventMatchesCurrentState(
-  event: ScheduledEvent,
-  currentDate: string,
-  currentSegment: string,
-  currentLocation: string,
-) {
-  if (currentDate !== event.date) return false;
-  const timeMatches =
-    !event.timeSegments.length ||
-    event.timeSegments.some(segment => segment === currentSegment || segment.includes(currentSegment));
-  const locationMatches =
-    !event.locations.length || event.locations.some(location => locationMatchesEvent(currentLocation, location));
-  return timeMatches && locationMatches;
+function eventMatchesCurrentDate(event: ScheduledEvent, currentDate: string) {
+  return currentDate === event.date;
 }
 
 function getScheduledCurrentMainEventId(statusData: StatusData, schedule: ScheduledEvent[]) {
   const currentDate = getDatePart(statusData.world.currentTime);
-  const currentSegment = getTimeSegment(statusData.world.currentTime);
-  const currentLocation = statusData.world.currentLocation;
-  return (
-    schedule.find(event =>
-      eventMatchesCurrentState(event, currentDate, currentSegment, currentLocation),
-    )?.id ?? ''
-  );
+  return schedule.find(event => eventMatchesCurrentDate(event, currentDate))?.id ?? '';
 }
 
 function syncCurrentMainEvent(statusData: StatusData, schedule: ScheduledEvent[]): boolean {
@@ -316,8 +273,6 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
   const schedule = buildSchedule(plotLibrary);
   const mainEvents = (statusData.world.mainEvents ??= {});
   const currentDate = getDatePart(statusData.world.currentTime);
-  const currentSegment = getTimeSegment(statusData.world.currentTime);
-  const currentLocation = statusData.world.currentLocation;
   let changed = false;
 
   for (const event of schedule) {
@@ -341,7 +296,7 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
 
     if (normalizedStatus !== MAIN_EVENT_NOT_STARTED) continue;
 
-    if (eventMatchesCurrentState(event, currentDate, currentSegment, currentLocation)) {
+    if (eventMatchesCurrentDate(event, currentDate)) {
       mainEvents[event.id] = MAIN_EVENT_RUNNING;
       statusData.world.currentMainEventId = event.id;
       changed = true;

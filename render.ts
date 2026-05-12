@@ -2,7 +2,7 @@ import { escapeHtml } from './html';
 import { extractTucaoBlocks, getReaderMessages, getVisibleMessageText } from './message-format';
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
 import type { SummaryStore } from './summary/types';
-import type { AppState, ReaderContextMenuState, StatusData, UiMessage } from './types';
+import type { AppState, BackgroundTaskState, ReaderContextMenuState, StatusData, UiMessage } from './types';
 import { formatDate, formatTime, getInventoryIcon } from './variables/normalize';
 
 export function paginateMessage(text: string, role: UiMessage['role']) {
@@ -384,9 +384,10 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
 }
 
 function getTucaoFloatState(state: AppState) {
-  const raw = typeof state.runtimeFlags.tucaoFloat === 'object' && state.runtimeFlags.tucaoFloat
-    ? (state.runtimeFlags.tucaoFloat as Record<string, unknown>)
-    : {};
+  const raw =
+    typeof state.runtimeFlags.tucaoFloat === 'object' && state.runtimeFlags.tucaoFloat
+      ? (state.runtimeFlags.tucaoFloat as Record<string, unknown>)
+      : {};
   return {
     x: Math.max(8, Number(raw.x ?? 28) || 28),
     y: Math.max(8, Number(raw.y ?? 92) || 92),
@@ -427,6 +428,39 @@ function renderTucaoFloatingPanel(state: AppState) {
       <div class="reader-tucao-float__body">
         ${renderTucaoPanel(message)}
       </div>
+    </aside>
+  `;
+}
+
+function renderBackgroundTaskToast(task: BackgroundTaskState) {
+  const isFailed = task.status === 'failed';
+  return `
+    <section class="background-task background-task--${task.status}">
+      <div class="background-task__status">
+        <span class="background-task__spinner" aria-hidden="true"></span>
+        <div class="background-task__copy">
+          <strong>${escapeHtml(task.label)}</strong>
+          ${task.detail ? `<span>${escapeHtml(task.detail)}</span>` : ''}
+        </div>
+      </div>
+      ${
+        isFailed
+          ? `<button class="background-task__retry" data-action="retry-background-task" data-task-kind="${escapeHtml(task.kind)}">重试</button>`
+          : '<div class="background-task__bar" aria-hidden="true"><span></span></div>'
+      }
+    </section>
+  `;
+}
+
+function renderBackgroundTasks(tasks: BackgroundTaskState[]) {
+  if (!tasks.length) return '';
+  const orderedTasks = [...tasks].sort((a, b) => {
+    if (a.kind === b.kind) return b.updatedAt - a.updatedAt;
+    return a.kind === 'progress' ? -1 : 1;
+  });
+  return `
+    <aside class="background-task-stack" aria-live="polite">
+      ${orderedTasks.map(renderBackgroundTaskToast).join('')}
     </aside>
   `;
 }
@@ -796,6 +830,7 @@ export function renderApp(state: AppState, flipDir: string = '') {
     <main class="islandmilfcode-scene">
       ${renderPaperWorkspace(state, flipDir)}
       ${renderTucaoFloatingPanel(state)}
+      ${renderBackgroundTasks(state.backgroundTasks)}
       ${renderReaderContextMenu(state.readerContextMenu, state.generating)}
       ${renderReaderEditor(state)}
       ${renderFloatingPhone(state)}

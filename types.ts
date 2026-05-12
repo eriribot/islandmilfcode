@@ -227,6 +227,17 @@ export type NotificationState = {
   targetId?: string;
 };
 
+export type BackgroundTaskKind = 'progress' | 'summary';
+
+export type BackgroundTaskState = {
+  kind: BackgroundTaskKind;
+  label: string;
+  status: 'running' | 'failed';
+  detail?: string;
+  startedAt: number;
+  updatedAt: number;
+};
+
 export type ReaderContextMenuState = {
   x: number;
   y: number;
@@ -266,6 +277,7 @@ export type AppState = {
   statusData: StatusData;
   weather: WeatherState;
   notification: NotificationState | null;
+  backgroundTasks: BackgroundTaskState[];
   readerContextMenu: ReaderContextMenuState | null;
   readerEditing: ReaderEditingState | null;
   summaryStore: SummaryStore;
