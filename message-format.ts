@@ -16,7 +16,6 @@ import type {
   TargetStatus,
   UiMessage,
 } from './types';
-import { getActiveTarget } from './types';
 
 export const PRIMARY_VISIBLE_TAG = 'content';
 // 兼容用户自定义预设里要求的中文正文标签，避免模型输出 <正文> 时被当成未知标签吞掉。
@@ -619,7 +618,6 @@ export function buildPrompt(
     phoneMessageTargetName?: string;
   },
 ) {
-  const target = getActiveTarget(statusData);
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
   const playerProfile = options?.playerProfile;
   const playerProfileText = playerProfile?.name
@@ -676,9 +674,8 @@ export function buildPrompt(
     '可以使用 <context>...</context> 保存隐藏上下文，但可见正文只能放在可见标签里。',
     '除非用户明确要求，否则不要使用 Markdown 表格。',
     '保持回复聚焦、自然，并与当前场景一致。',
-    '这是多角色场景系统。旧默认目标只用于变量兜底，不是镜头焦点，不能强行切镜头或插入离场角色独白。',
+    '这是多角色场景系统。没有全局默认变量目标；镜头焦点只由当前正文、玩家输入、剧情卡和明确在场角色决定。',
     `当前位置：${statusData.world.currentLocation}`,
-    `旧默认变量目标：${target?.name ?? '无'}${target ? ` (${target.affinity}, ${target.stage})` : ''}`,
     mainEventsContext,
     relationshipGuidanceList
       ? `角色局部关系指导：每一块只在描写对应角色时生效，禁止把某个角色的指导当成全局思考方式。\n${relationshipGuidanceList}`
@@ -799,7 +796,7 @@ export function buildPhoneChatPrompt(input: {
 
 // ── Progress instruction & prompt builders ──
 
-function buildProgressInstruction(statusData: StatusData, target = getActiveTarget(statusData)): string {
+function buildProgressInstruction(statusData: StatusData, target?: TargetStatus | null): string {
   const inventoryList =
     Object.entries(statusData.player.inventory)
       .map(([name, d]) => `${name}(${d.count})`)
@@ -821,10 +818,14 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     '可用字段：',
     '  时间:YYYY-MM-DD HH:mm   — 仅当正文确实描写了时间流逝（进入次日/深夜，或明确跨过一个时段）时才输出，必须完整 YYYY-MM-DD HH:mm。正文未真正推进时间时整行省略；禁止使用 `4月16日`、`2012-04-16`（缺 HH:mm）、`明天` 这种非完整格式，也禁止仅凭玩家输入里的时间词就自行补一个新时间。',
     '  地点:新地点            — 角色实际移动到新地点时更新',
-    '  好感度:±N              — 旧格式好感变化，只能用于单对象场景的默认目标',
+    target
+      ? `  好感度:±N              — 旧格式好感变化，仅用于当前明确单对象：${target.name}`
+      : '  好感度:±N              — 主场景禁用旧格式；必须改用 好感度.角色名或id:±N',
     `  好感度.角色名或id:±N    — 指定角色好感变化；多人场景必须从下方“可更新角色列表”的更新键复制角色名或 id（例：${affinityExamples}）`,
     '  五维.能力名:±N          — 玩家五维变化（能力名: 知识/魅力/灵巧/体贴/勇气；例：五维.体贴:+1）',
-    '  着装.部位:描述          — 更新某个部位的着装（例：着装.上装:换上了黑色卫衣）',
+    target
+      ? `  着装.部位:描述          — 更新当前明确对象 ${target.name} 的某个部位着装（例：着装.上装:换上了黑色卫衣）`
+      : '  着装.部位:描述          — 主场景禁用旧单目标着装格式；没有明确对象时不要输出',
     '  当前事件:事件ID          — 设置手机状态页显示的唯一当前主线事件（例：当前事件:SAE_01-2；清空用 当前事件:无）',
     '  主线事件.事件ID:状态     — 更新主线事件状态（未触发/进行中/已结束/跳过/延后）',
     '  事件名:事件描述         — 添加或替换近期重要事件，可有多条',
@@ -840,8 +841,8 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     '着装.上装:私立丰之崎学园的制服衬衫',
     '早晨外出:两人决定去便利店买早餐。',
     '物品+塑料袋:1:装着零食的便利店袋子',
-    '当前事件:无',
-    '主线事件.SAE_01-1:已结束',
+    '当前事件:SAE_01-1',
+    '主线事件.SAE_01-1:进行中',
     '</progress>',
     '',
     `当前状态快照：`,
@@ -849,7 +850,9 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
     `  地点: ${statusData.world.currentLocation}`,
     `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
     `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
-    `  默认变量目标: ${target?.name ?? '无'}；默认目标好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+    target
+      ? `  当前明确变量对象: ${target.name}；好感度: ${target.affinity} (${target.stage})`
+      : '  全局默认变量目标: 无；好感度更新必须显式写角色名或 id',
     `  可更新角色列表:\n${targetList}`,
     `  着装: ${outfitList || '无'}`,
     `  物品: ${inventoryList}`,
@@ -857,13 +860,12 @@ function buildProgressInstruction(statusData: StatusData, target = getActiveTarg
 }
 
 function buildStateDeltaInstruction(statusData: StatusData): string {
-  const target = getActiveTarget(statusData);
   const targetList = buildTargetStateList(statusData);
   const affinityExamples = buildAffinityUpdateExamples(statusData);
   return [
     '',
     '在你按预设规则输出完所有内容后,在消息最末尾追加一个 <state_delta> 块(独立于预设要求的任何标签):',
-    '只记录本轮正文明确发生的变量变化；默认变量目标不是当前镜头焦点，也不代表必须更新该角色。',
+    '只记录本轮正文明确发生的变量变化；没有全局默认变量目标，角色变量必须显式指定角色名或 id。',
     '<state_delta>',
     '时间:YYYY-MM-DD HH:mm',
     '地点:当前所处具体地点',
@@ -876,7 +878,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
     `当前时间: ${statusData.world.currentTime}`,
     `当前地点: ${statusData.world.currentLocation}`,
     `当前事件: ${statusData.world.currentMainEventId || '无'}`,
-    `默认变量目标: ${target?.name ?? '无'}；好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+    '全局默认变量目标: 无；好感度更新必须显式写角色名或 id',
     `可更新角色:\n${targetList}`,
   ].join('\n');
 }
@@ -885,22 +887,16 @@ export function buildProgressPrompt(
   statusData: StatusData,
   turnMessages: UiMessage[],
 ): Array<{ role: 'system' | 'user'; content: string }> {
-  const target = getActiveTarget(statusData);
   const inventoryList =
     Object.entries(statusData.player.inventory)
       .map(([name, d]) => `${name}(${d.count})`)
       .join('、') || '无';
-  const outfitList = target
-    ? Object.entries(target.outfits)
-        .map(([k, v]) => `${k}:${v}`)
-        .join('；')
-    : '';
   const targetList = buildTargetStateList(statusData);
   const affinityExamples = buildAffinityUpdateExamples(statusData);
 
   const recentUserMessage = [...turnMessages].reverse().find(m => m.role === 'user');
   const timeIntentNote = recentUserMessage && detectTimeAdvanceIntent(recentUserMessage.text)
-    ? '玩家最近输入提到推进时间。以正文实际描写为准：只有当对话正文确实跨过了一个时段或日期时，才输出完整 `时间:YYYY-MM-DD HH:mm` 字段；正文没有真正推进时间时，整行省略，禁止凭玩家输入里的时间词自行补齐一个新时间。'
+    ? '玩家最近输入提到推进时间。以正文实际描写为准：只有当对话正文确实跨过了一个时段或日期时或玩家提到今天,明天加时间段这里需要思考具时间，才输出完整 `时间:YYYY-MM-DD HH:mm` 字段；正文没有真正推进时间时，整行省略，禁止凭玩家输入里的时间词自行补齐一个新时间。'
     : '';
 
   const formatted = turnMessages
@@ -923,18 +919,16 @@ export function buildProgressPrompt(
         `  地点: ${statusData.world.currentLocation}`,
         `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
         `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
-        `  默认变量目标: ${target?.name ?? '无'}（旧单目标兜底；不是当前镜头焦点）`,
-        `  默认目标好感度: ${target?.affinity ?? 0} (${target?.stage ?? ''})`,
+        '  全局默认变量目标: 无（主场景不再使用旧单目标兜底）',
         `  可更新角色列表:\n${targetList}`,
-        `  着装: ${outfitList || '无'}`,
+        '  着装: 主场景不使用默认对象；只有正文明确涉及某角色服装时才记录',
         `  物品: ${inventoryList}`,
         '',
         '好感度判断规则：',
         '  变量更新只能依据本轮最新正文；不要沿用更早对话里的互动、在场或反应。',
         '  好感度只能看本轮最新正文中明确在场并对 User 产生情绪反应的角色；旧消息里出现过的角色，本轮正文没出现就不更新。',
         '  阅读本轮完整正文，不要只看最后一句。多人在场时，分别判断每个明确在场且对 User 产生情绪反应的角色。',
-        '  普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。',
-        '  加藤惠低好感特性：她对普通、礼貌、尊重边界、持续陪伴、记住日常细节的互动更容易小幅加好感；不需要戏剧性事件。',
+        '  普通友好互动或者逗乐大家的行动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4,重大事件的可靠+8；冒犯、越界、揭短、冷落通常 -1 到 -6。',
         '  不要因为变化很小就省略好感度；只有角色不在场、完全无互动、纯环境描写、或关系没有任何变化时，才不输出该角色好感度。',
         timeIntentNote ? `\n时间推进提醒：${timeIntentNote}` : '',
         '',
@@ -942,10 +936,10 @@ export function buildProgressPrompt(
         '可用字段：',
         '  时间:YYYY-MM-DD HH:mm（必须完整；禁止使用 `4月16日`、`明天` 或缺 HH:mm 的格式）',
         '  地点:新地点',
-        '  好感度:±N（旧格式，只用于默认变量目标的单人场景；多人或不确定时用 好感度.角色名:±N）',
+        '  好感度:±N（主场景禁用旧格式；必须使用 好感度.角色名:±N）',
         `  好感度.角色名或id:±N（多人场景必须用这个格式，并从“可更新角色列表”的更新键复制角色名；例如 ${affinityExamples}）`,
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
-        '  着装.部位:描述',
+        '  着装.部位:描述（主场景禁用旧单目标着装格式；没有明确对象时不要输出）',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
         '  主线事件.事件ID:状态（未触发/进行中/已结束/跳过/延后）',
         '  事件名:事件描述',

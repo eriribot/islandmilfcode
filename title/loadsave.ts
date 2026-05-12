@@ -38,11 +38,13 @@ function renderSaveSlot(save: SaveMeta, index: number) {
 export function renderLoadSaveModal() {
   const saves = listSaves();
   const saveSlots = saves.map((save, index) => renderSaveSlot(save, index)).join('');
+  // 有存档时给面板加固定高度类，让列表区域可以独立滚动。
+  const panelClass = saves.length ? 'gal-loadsave__panel gal-loadsave__panel--scrollable' : 'gal-loadsave__panel';
 
   return `
     <div class="gal-loadsave" role="dialog" aria-modal="true" aria-labelledby="gal-loadsave-title">
       <button class="gal-loadsave__backdrop" data-action="hide-saves" type="button" aria-label="关闭读档窗口"></button>
-      <section class="gal-loadsave__panel">
+      <section class="${panelClass}">
         <header class="gal-loadsave__header">
           <div>
             <p class="gal-loadsave__eyebrow">Load Game</p>

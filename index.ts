@@ -60,7 +60,6 @@ import type {
   TavernWindow,
 } from './types';
 import type { PhoneCharacterId, PhoneRoute } from './phone/types';
-import { getActiveTarget } from './types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp, syncMainEvents } from './variables/normalize';
 import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
@@ -1272,7 +1271,6 @@ init();
 // ── Debug interfaces ──
 
 (window as any).render_game_to_text = () => {
-  const target = getActiveTarget(state.statusData);
   return JSON.stringify({
     screen: state.activeRunId ? 'game' : 'title',
     activeRunId: state.activeRunId,
@@ -1292,7 +1290,13 @@ init();
       ),
       sources: state.plotLibrary.sourceEntryNames,
     },
-    activeTarget: target ? { id: target.id, name: target.name, affinity: target.affinity, stage: target.stage } : null,
+    activeTargetId: state.statusData.activeTargetId,
+    targets: state.statusData.targets.map(target => ({
+      id: target.id,
+      name: target.name,
+      affinity: target.affinity,
+      stage: target.stage,
+    })),
     messageCount: state.uiMessages.length,
   });
 };

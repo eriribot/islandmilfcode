@@ -608,9 +608,7 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
   return {
     ...statusData,
     targets,
-    activeTargetId:
-      statusData.activeTargetId && targets.some(target => target.id === statusData.activeTargetId)
-        ? statusData.activeTargetId
-        : targets[0]?.id ?? null,
+    // 中文注释：世界书只刷新目标数组，不把数组首项提升成默认变量目标。
+    activeTargetId: null,
   };
 }

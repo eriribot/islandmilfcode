@@ -111,7 +111,8 @@ export const defaultStatusData: StatusData = {
   },
   // 中文注释：内置可攻略角色先作为变量种子存在；世界书载入后会按姓名合并并保留好感。
   targets: builtInTargetSeeds,
-  activeTargetId: builtInTargetSeeds[0].id,
+  // 中文注释：变量目标只作为数组保存，不默认选中任何角色，避免首位角色污染变量更新。
+  activeTargetId: null,
   player: {
     inventory: {
       私立丰之崎学园学生证: { description: '身为丰之崎学园的学生的证明。', count: 1 },

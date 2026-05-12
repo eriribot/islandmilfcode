@@ -1,7 +1,6 @@
 import { extractContextReply } from '../message-format';
 import { syncFocusedMessage } from '../state/store';
 import type { AppState, NotificationState, TavernWindow, UiMessage } from '../types';
-import { getActiveTarget } from '../types';
 import { formatTime } from '../variables/normalize';
 
 export type StreamingContext = {
@@ -49,11 +48,11 @@ export function ensureStreamingMessage(ctx: StreamingContext) {
     return current;
   }
 
-  const target = getActiveTarget(state.statusData);
   const message: UiMessage = {
     id: crypto.randomUUID(),
     role: 'assistant',
-    speaker: target?.name ?? '助手',
+    // 中文注释：主线生成不再绑定默认角色，说话人保持中性。
+    speaker: '助手',
     text: '',
     streaming: true,
   };

@@ -202,7 +202,8 @@ export function getActiveTarget(data: StatusData): TargetStatus | null {
     const found = data.targets.find(t => t.id === data.activeTargetId);
     if (found) return found;
   }
-  return data.targets[0] ?? null;
+  // 中文注释：变量目标没有数组首项兜底；只有明确设置 activeTargetId 时才返回对象。
+  return null;
 }
 
 export type UiMessage = {

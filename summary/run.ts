@@ -5,6 +5,7 @@ import {
   buildGlobalCompressionPrompt,
   buildMajorSummaryPrompt,
   buildMinorSummaryPrompt,
+  MINOR_THRESHOLD,
   parseKeyFactsFromSummary,
   parseSummaryResult,
   shouldRunGlobalCompression,
@@ -110,14 +111,19 @@ function clearFailureState(store: SummaryStore): void {
   store.lastError = null;
 }
 
-/** 获取 lastIndex 之后尚未被摘要覆盖的用户/助手消息。 */
-function getUnsummarizedMessages(messages: UiMessage[], lastIndex: number): UiMessage[] {
-  return messages.slice(lastIndex).filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant'));
+/** 获取可参与摘要的会话消息；摘要 range 和游标都以这个数组的序号为准。 */
+function getConversationMessages(messages: UiMessage[]): UiMessage[] {
+  return messages.filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant'));
+}
+
+/** 获取一个固定大小的小摘要块，避免游标落后时一次吞掉全部历史。 */
+function getNextMinorSummaryChunk(messages: UiMessage[], lastIndex: number): UiMessage[] {
+  return getConversationMessages(messages).slice(lastIndex, lastIndex + MINOR_THRESHOLD);
 }
 
 /** 统计非流式的用户/助手消息总数（用作 lastSummarizedIndex 的基准）。 */
 function countConversationMessages(messages: UiMessage[]): number {
-  return messages.filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant')).length;
+  return getConversationMessages(messages).length;
 }
 
 /** 将消息列表格式化为 [说话人]\n内容 的纯文本，用于重roll大摘要。 */
@@ -143,14 +149,16 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
   // 小摘要：自动模式达到阈值时运行，或 mode=minor 时强制运行。
   const runMinor = mode === 'minor' || (mode === 'auto' && shouldRunMinorSummary(store, messageCount));
   if (runMinor) {
-    const unsummarized = getUnsummarizedMessages(uiMessages, store.lastSummarizedIndex);
+    const startIndex = Math.max(0, Math.min(store.lastSummarizedIndex, messageCount));
+    const unsummarized = getNextMinorSummaryChunk(uiMessages, startIndex);
     if (unsummarized.length > 0) {
       try {
         const prompts = buildMinorSummaryPrompt(unsummarized, anchor);
         const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
         const text = parseSummaryResult(raw);
         if (text) {
-          const range: [number, number] = [store.lastSummarizedIndex, messageCount - 1];
+          const nextIndex = startIndex + unsummarized.length;
+          const range: [number, number] = [startIndex, nextIndex - 1];
           const parsedFacts = parseKeyFactsFromSummary(raw);
           const newFacts = createKeyFacts(parsedFacts, range);
           store.minor.push({
@@ -163,7 +171,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
             store.keyFacts.push(...newFacts);
             dedupeKeyFacts(store);
           }
-          store.lastSummarizedIndex = messageCount;
+          store.lastSummarizedIndex = nextIndex;
           clearFailureState(store);
           applyProgressFromMinorSummary(ctx, raw);
         }
@@ -262,9 +270,7 @@ export async function rerollSummaryEntry(
   if (level === 'minor') {
     const entry = store.minor[entryIndex];
     if (!entry) return;
-    const selected = uiMessages
-      .slice(entry.range[0], entry.range[1] + 1)
-      .filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant'));
+    const selected = getConversationMessages(uiMessages).slice(entry.range[0], entry.range[1] + 1);
     if (!selected.length) return;
 
     try {
@@ -295,9 +301,7 @@ export async function rerollSummaryEntry(
     if (!entry) return;
     // 收集范围落在该大摘要内的小摘要来重建 prompt。
     // 如果没有可用小摘要，就直接使用原始消息。
-    const messagesInRange = uiMessages
-      .slice(entry.range[0], entry.range[1] + 1)
-      .filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant'));
+    const messagesInRange = getConversationMessages(uiMessages).slice(entry.range[0], entry.range[1] + 1);
     if (!messagesInRange.length) return;
 
     try {

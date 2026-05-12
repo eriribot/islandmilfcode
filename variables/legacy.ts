@@ -5,8 +5,9 @@ import { affinityStage, clamp } from './format';
 const LEGACY_IZUMI_FILM_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg';
 const IZUMI_PHONE_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg';
 
-function normalizeTargetMeta(rawMeta: unknown) {
-  if (!rawMeta || typeof rawMeta !== 'object' || Array.isArray(rawMeta)) return rawMeta;
+function normalizeTargetMeta(rawMeta: unknown): Record<string, unknown> | undefined {
+  // 中文注释：meta 只接受普通对象，旧数据里的空值或非对象不再原样塞回 TargetStatus。
+  if (!rawMeta || typeof rawMeta !== 'object' || Array.isArray(rawMeta)) return undefined;
 
   const meta = { ...(rawMeta as Record<string, unknown>) };
   if (meta.avatarUrl === LEGACY_IZUMI_FILM_AVATAR_URL) {
@@ -119,14 +120,12 @@ export function normalizeStatusData(input: unknown): StatusData {
     ? raw.targets.map((t: any) => normalizeTarget(t, defaultTarget))
     : [];
   const targets = mergeBuiltInTargetSeeds(rawTargets.length ? rawTargets : builtInTargetSeeds);
-  const activeTargetId =
-    raw.activeTargetId && targets.some(target => target.id === raw.activeTargetId)
-      ? raw.activeTargetId
-      : targets[0]?.id ?? defaultTarget.id;
+  // 中文注释：旧存档里的 activeTargetId 多数来自历史默认值，读取时清空，避免继续污染变量更新。
+  const activeTargetId = null;
 
   return {
     world: normalizeWorld(raw),
-    targets: targets.length ? targets : [{ ...defaultTarget }],
+    targets: targets.length ? targets : [],
     activeTargetId,
     player: normalizePlayer(raw),
   };

@@ -364,7 +364,7 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
 export function applyProgressUpdate(
   statusData: StatusData,
   update: ProgressUpdate,
-  targetId = statusData.activeTargetId,
+  targetId?: string | null,
   plotLibrary?: PlotLibrary | null,
 ): void {
   const schedule = buildSchedule(plotLibrary);
@@ -377,6 +377,10 @@ export function applyProgressUpdate(
   }
 
   if (update.affinityDelta !== undefined && update.affinityDelta !== 0) {
+    // 中文注释：旧单目标好感度必须有显式 targetId，不能再落到 activeTargetId 或首个角色。
+    if (!targetId) {
+      console.warn('[progress] skip legacy affinity without explicit target');
+    }
     const target = statusData.targets.find(t => t.id === targetId);
     if (target) {
       target.affinity = clamp((target.affinity ?? 0) + update.affinityDelta, 0, 100);
@@ -385,6 +389,10 @@ export function applyProgressUpdate(
   }
 
   if (Object.keys(update.outfitChanges).length) {
+    // 中文注释：旧单目标着装更新同样只允许明确对象，避免误写到默认角色。
+    if (!targetId) {
+      console.warn('[progress] skip outfit changes without explicit target');
+    }
     const target = statusData.targets.find(t => t.id === targetId);
     if (target) {
       for (const [part, desc] of Object.entries(update.outfitChanges)) {
@@ -442,8 +450,9 @@ export function applyProgressUpdate(
     delete statusData.player.inventory[name];
   }
 
-  syncMainEvents(statusData, plotLibrary);
   if (update.currentMainEventId === '') {
+    // 中文注释：先处理显式清空，再让时间/地点日程同步接管；避免“当前事件:无”覆盖已到达的主线事件。
     statusData.world.currentMainEventId = '';
   }
+  syncMainEvents(statusData, plotLibrary);
 }

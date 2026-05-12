@@ -544,6 +544,8 @@
   display: grid;
   place-items: center;
   padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .gal-loadsave__backdrop {
@@ -560,8 +562,9 @@
 .gal-loadsave__panel {
   position: relative;
   z-index: 1;
+  margin: auto;
   width: min(640px, calc(100vw - 32px));
-  max-height: min(72vh, 620px);
+  max-height: min(calc(100svh - 48px), 620px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
@@ -575,6 +578,12 @@
     0 1px 0 rgba(255, 255, 255, 0.88) inset;
   backdrop-filter: blur(18px);
   animation: gal-loadsave-in 0.18s ease-out;
+}
+
+/* 固定读档面板的可读高度；窗口太矮时让外层弹窗滚动，而不是把存档项压扁裁掉。 */
+.gal-loadsave__panel--scrollable {
+  max-height: none;
+  height: clamp(320px, 72svh, 620px);
 }
 
 .gal-loadsave__panel::before {
@@ -683,6 +692,8 @@
   position: relative;
   display: flex;
   align-items: stretch;
+  min-height: 92px;
+  flex: 0 0 auto;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.68);
   border: 1px solid rgba(220, 210, 195, 0.5);
@@ -706,6 +717,7 @@
 .gal-save-load {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1309,12 +1321,19 @@
 
   .gal-loadsave {
     padding: 14px;
+    place-items: start center;
   }
 
   .gal-loadsave__panel {
     width: 100%;
-    max-height: 78vh;
+    max-height: min(calc(100svh - 28px), 620px);
     border-radius: 16px;
+  }
+
+  /* 移动端保留存档项的可读高度；极矮窗口交给弹窗外层滚动。 */
+  .gal-loadsave__panel--scrollable {
+    max-height: none;
+    height: clamp(300px, 78svh, 620px);
   }
 
   .gal-loadsave__header {

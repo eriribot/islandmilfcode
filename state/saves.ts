@@ -13,7 +13,6 @@ import type {
   StatusData,
 } from '../types';
 import { normalizePhoneMessageStore } from './store';
-import { getActiveTarget } from '../types';
 import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
 
 const SAVE_INDEX_STORAGE_KEY = 'islandmilfcode:save-index:v2';
@@ -94,7 +93,10 @@ function normalizeSaveTargetMeta(input: unknown): SaveTargetMeta | null {
 }
 
 function createSaveTargetMeta(statusData: StatusData): SaveTargetMeta | null {
-  const target = getActiveTarget(statusData);
+  // 中文注释：存档封面只展示明确激活对象；不会用 targets[0] 当默认目标。
+  const target = statusData.activeTargetId
+    ? statusData.targets.find(item => item.id === statusData.activeTargetId) ?? null
+    : null;
   if (!target) return null;
   return {
     id: target.id,

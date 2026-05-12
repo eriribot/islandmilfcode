@@ -13,7 +13,6 @@ import { generateSecondaryRaw } from '../secondary-api';
 import { createRollbackSnapshot, pushMessage } from '../state/store';
 import { buildFactAnchorFromStatus, runSummary, shouldRunMinorSummary, type SummaryContext } from '../summary';
 import type { SummaryApiConfig, SummaryStore } from '../summary/types';
-import { getActiveTarget } from '../types';
 import type {
   PhoneChatMessage,
   PhoneProactiveState,
@@ -24,7 +23,7 @@ import type {
   UiMessage,
 } from '../types';
 import type { VariableAdapter } from '../variables/adapter';
-import { affinityStage, applyProgressUpdate, clamp, formatTime, syncMainEvents } from '../variables/normalize';
+import { affinityStage, applyProgressUpdate, clamp, formatTime, normalizeIncomingTime, syncMainEvents } from '../variables/normalize';
 import {
   discardStreamingMessage,
   ensureStreamingMessage,
@@ -70,6 +69,88 @@ const DEFAULT_PLAYER_STATS: PlayerStats = {
   kindness: 0,
   courage: 0,
 };
+
+const LOCAL_LOCATION_KEYWORDS = [
+  '视听教室',
+  '家庭餐厅',
+  '美术教室',
+  '侦探坡',
+  '天台',
+  '走廊',
+  '教室',
+  '校门',
+  '校园',
+  '丰之崎学园',
+  '学园',
+  '街道',
+  '公园',
+  '伦也家',
+  '电车',
+  '出版社',
+  '签名会现场',
+];
+
+function detectLocalTimeFromUserInput(userInput: string, currentTime: string): string | null {
+  const text = userInput.trim();
+  if (!text) return null;
+
+  const hasExplicitDate =
+    /\d{4}\s*[-年\/]\s*\d{1,2}\s*[-月\/]\s*\d{1,2}/.test(text) ||
+    /\d{1,2}\s*月\s*\d{1,2}\s*日/.test(text);
+  const hasAdvanceIntent = /(推进|跳到|快进|到了|来到|转到|时间|次日|翌日|第二天|明天|后天)/.test(text);
+  if (!hasExplicitDate && !hasAdvanceIntent) return null;
+
+  const nextTime = normalizeIncomingTime(text, currentTime);
+  return nextTime !== currentTime ? nextTime : null;
+}
+
+function getScheduledLocationKeywords(plotLibrary: PlotLibrary | null | undefined): string[] {
+  const values = new Set<string>();
+  for (const event of Object.values(plotLibrary?.events ?? {})) {
+    for (const location of event.schedule?.locations ?? []) {
+      const loc = String(location ?? '').trim();
+      if (!loc) continue;
+      values.add(loc);
+      for (const keyword of LOCAL_LOCATION_KEYWORDS) {
+        if (loc.includes(keyword)) values.add(keyword);
+      }
+    }
+  }
+  for (const keyword of LOCAL_LOCATION_KEYWORDS) values.add(keyword);
+  return Array.from(values).sort((a, b) => b.length - a.length);
+}
+
+function detectLocalLocationFromUserInput(userInput: string, plotLibrary: PlotLibrary | null | undefined): string | null {
+  const text = userInput.trim();
+  if (!text) return null;
+  return getScheduledLocationKeywords(plotLibrary).find(location => text.includes(location)) ?? null;
+}
+
+function applyLocalWorldHintsFromUserInput(ctx: ActionContext, userInput: string): boolean {
+  const { statusData, plotLibrary } = ctx.state;
+  const nextTime = detectLocalTimeFromUserInput(userInput, statusData.world.currentTime);
+  const nextLocation = detectLocalLocationFromUserInput(userInput, plotLibrary);
+  let changed = false;
+
+  if (nextTime && nextTime !== statusData.world.currentTime) {
+    statusData.world.currentTime = nextTime;
+    changed = true;
+  }
+  if (nextLocation && nextLocation !== statusData.world.currentLocation) {
+    statusData.world.currentLocation = nextLocation;
+    changed = true;
+  }
+
+  if (changed) {
+    ctx.adapter.save(statusData);
+    recordGenerationDebug(ctx, 'submit:local-world-hints', {
+      time: nextTime ?? '',
+      location: nextLocation ?? '',
+    });
+  }
+
+  return changed;
+}
 
 // 把 AI 给的主线事件 id 跟剧情库（世界书里第一卷/第二卷/第三卷条目合并后的 plotLibrary.events）对一遍，
 // 不在白名单里的整条丢掉。这样即使模型在空档期自造 SAE_2-1 之类的野 id，也只会影响正文叙述，不会污染 statusData。
@@ -249,20 +330,9 @@ function clampLegacyAffinityDelta(ctx: ActionContext, update: ProgressUpdate, ta
   if (update.affinityDelta === undefined || update.affinityDelta === 0) return update.affinityDelta;
   if (targetId) return update.affinityDelta;
 
-  const target = getActiveTarget(ctx.state.statusData);
-  if (!target) return undefined;
-
-  const verdict = classifyAffinityVerdict(ctx, target);
-  const clamped = clampAffinityByVerdict(update.affinityDelta, verdict);
-  if (verdict === 'unmentioned') {
-    console.warn('[progress] drop legacy affinity for unmentioned target:', target.name);
-    return undefined;
-  }
-  if (verdict === 'absent') {
-    console.warn('[progress] drop legacy affinity for absent target:', target.name);
-    return undefined;
-  }
-  return clamped || undefined;
+  // 主场景不再使用 activeTargetId 兜底，避免旧格式好感度长期落到加藤惠。
+  console.warn('[progress] drop legacy affinity without explicit target');
+  return undefined;
 }
 
 function applyTargetedAffinityDeltas(ctx: ActionContext, update: ProgressUpdate, forcedTargetId?: string | null) {
@@ -302,11 +372,13 @@ function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | nu
   if (!update) return false;
   const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary);
   const legacyDelta = clampLegacyAffinityDelta(ctx, sanitized, targetId);
-  const contextualized: ProgressUpdate = { ...sanitized, affinityDelta: legacyDelta };
+  // 主场景没有明确对象时，丢弃旧单目标着装更新，避免误写到 activeTargetId。
+  const outfitChanges = targetId ? sanitized.outfitChanges : {};
+  const contextualized: ProgressUpdate = { ...sanitized, affinityDelta: legacyDelta, outfitChanges };
   applyProgressUpdate(
     ctx.state.statusData,
     contextualized,
-    targetId ?? ctx.state.statusData.activeTargetId,
+    targetId ?? null,
     ctx.state.plotLibrary,
   );
   const targetedAffinityChanged = applyTargetedAffinityDeltas(ctx, contextualized, targetId);
@@ -317,12 +389,10 @@ function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | nu
 
 async function simulateGeneration(ctx: ActionContext, userInput: string) {
   const { state } = ctx;
-  const target = getActiveTarget(state.statusData);
-  const alias = target?.alias ?? target?.name ?? 'Target';
   const lines = [
     userInput,
     `${state.statusData.world.currentLocation} has gone quiet for a moment.`,
-    `${alias} seems to react to what you just said and continues the scene.`,
+    'The scene reacts to what you just said and continues.',
   ];
 
   let built = '';
@@ -387,6 +457,8 @@ export async function submitMessage(
     }
   }
   const eventBeforeGeneration = getLatestRecentEvent(ctx)?.key ?? null;
+
+  applyLocalWorldHintsFromUserInput(ctx, userInput);
 
   // 生成前基于当前时间/地点刷新事件状态。即使上一轮 AI 没输出状态增量,
   // 只要时间/地点已经对齐某个未触发事件,这里也能自动标记进行中,
@@ -1494,7 +1566,10 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
 
 export function changeDependency(ctx: ActionContext, delta: number) {
   const { state } = ctx;
-  const target = getActiveTarget(state.statusData);
+  // 中文注释：调试加减好感只允许明确激活对象，不能从目标数组首项兜底。
+  const target = state.statusData.activeTargetId
+    ? state.statusData.targets.find(item => item.id === state.statusData.activeTargetId) ?? null
+    : null;
   if (!target) return;
   target.affinity = clamp(target.affinity + delta, 0, 100);
   target.stage = affinityStage(target.affinity);
