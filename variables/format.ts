@@ -3,7 +3,7 @@ export function clamp(value: number, min: number, max: number) {
 }
 
 export function affinityStage(value: number) {
-  if (value < 20) return '疏离戒备';
+  if (value < 10) return '疏离戒备';
   if (value < 40) return '试探靠近';
   if (value < 60) return '熟悉彼此';
   if (value < 80) return '信任依赖';

@@ -431,12 +431,29 @@ export async function submitMessage(
   state.currentGenerationId = crypto.randomUUID();
   state.finalizedGenerationId = '';
   state.focusedMessagePage = 0;
-  let phoneDirective = extractPhoneMessageDirective(ctx, userInput);
+  const hasTavernGenerate = typeof win.generate === 'function' || typeof win.generateRaw === 'function';
+  let phoneDirective: PhoneDirective | null = null;
+  let phoneDirectiveSource: string | null = null;
+  if (hasTavernGenerate && hasExplicitPhoneSendIntent(userInput)) {
+    phoneDirective = await detectPhoneDirectiveWithLlm(ctx, userInput).catch(error => {
+      console.warn('[phone-directive] detector failed:', error);
+      return null;
+    });
+    if (phoneDirective) {
+      phoneDirectiveSource = 'llm-detector';
+    }
+  }
+  if (!phoneDirective) {
+    phoneDirective = extractPhoneMessageDirective(ctx, userInput);
+    if (phoneDirective) {
+      phoneDirectiveSource = 'fallback-parser';
+    }
+  }
   recordGenerationDebug(ctx, 'submit:start', {
     userInputLength: userInput.length,
     keepDraft: Boolean(options.keepDraft),
     phoneDirectiveTargetId: phoneDirective?.target.id ?? null,
-    phoneDirectiveSource: phoneDirective ? 'fallback-parser' : null,
+    phoneDirectiveSource,
   });
   ctx.clearNotification(false);
   ctx.closeReaderContextMenu(false);
@@ -451,19 +468,12 @@ export async function submitMessage(
   ctx.persistConversation();
   ctx.render();
 
-  const hasTavernGenerate = typeof win.generate === 'function' || typeof win.generateRaw === 'function';
-  if (hasTavernGenerate && !phoneDirective && hasExplicitPhoneSendIntent(userInput)) {
-    const llmDirective = await detectPhoneDirectiveWithLlm(ctx, userInput).catch(error => {
-      console.warn('[phone-directive] detector failed:', error);
-      return null;
+  if (phoneDirective) {
+    recordGenerationDebug(ctx, 'submit:phone-directive-detected', {
+      targetId: phoneDirective.target.id,
+      textLength: phoneDirective.text.length,
+      source: phoneDirectiveSource,
     });
-    if (llmDirective) {
-      phoneDirective = llmDirective;
-      recordGenerationDebug(ctx, 'submit:phone-directive-detected', {
-        targetId: llmDirective.target.id,
-        textLength: llmDirective.text.length,
-      });
-    }
   }
   const eventBeforeGeneration = getLatestRecentEvent(ctx)?.key ?? null;
 
@@ -521,12 +531,13 @@ export async function submitMessage(
             ordered_prompts: [
               {
                 role: 'system',
-                content: buildPrompt(state.statusData, promptHistory, '', ctx.summaryStore, {
+                content: buildPrompt(state.statusData, promptHistory, userInput, ctx.summaryStore, {
                   playerProfile: state.playerProfile,
                   plotLibrary: state.plotLibrary,
                   skipProgress: !!ctx.summaryApiConfig,
                   suppressPhoneMessageContent: Boolean(phoneDirective),
                   phoneMessageTargetName: phoneDirective?.target.name,
+                  suppressUserInputLine: true,
                 }),
               },
               {
@@ -909,6 +920,8 @@ function buildPhoneActionDetectorPrompts(ctx: ActionContext, userInput: string):
     '4. target_id 必须从联系人列表选择，不能编造。无法确定联系人时输出 none。',
     '5. message 要改写成真正发给对方的手机文本，不要包含“打开手机/发消息/询问某某”等动作描述。',
     '6. 如果只是正文里提到手机、提到某人，或角色主动发消息，不算玩家发送。',
+    '7. 括号内旁白、系统说明、意图说明、元评论，尤其是“这不是手机消息”“原来如此”等解释，绝对不能放进 message。',
+    '8. 如果玩家输入同时包含剧情行动和手机消息，只提取玩家明确想发送给联系人的那一句；没有明确短信正文时，把询问/告知意图改写成一句自然短消息。',
     '',
     '只输出以下 XML 之一：',
     '<phone_action>',

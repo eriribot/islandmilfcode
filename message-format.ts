@@ -148,7 +148,8 @@ export function extractContextReply(text: string, { streaming = false }: { strea
   // 标签完全丢失时的兜底：先剥掉元标签（tucao / progress / 思考块等），
   // 再看看剩下的是不是可展示的纯文本。之前直接因为残留标签返回空会吞整层。
   const stripped = stripMetaSubtags(raw);
-  if (/<\/?[a-zA-Z][^>]*>/i.test(stripped)) {
+  const strippedWithoutCodeBlocks = stripped.replace(/```[\s\S]*?```/g, '');
+  if (/<\/?[a-zA-Z][^>]*>/i.test(strippedWithoutCodeBlocks)) {
     return '';
   }
 
@@ -164,7 +165,7 @@ export function getVisibleMessageText(message: UiMessage) {
     return message.text;
   }
 
-  return extractContextReply(message.text) || '';
+  return extractContextReply(message.rawText || message.text) || '';
 }
 
 export function getReaderMessages(messages: UiMessage[]) {
@@ -617,6 +618,7 @@ export function buildPrompt(
     plotLibrary?: PlotLibrary | null;
     suppressPhoneMessageContent?: boolean;
     phoneMessageTargetName?: string;
+    suppressUserInputLine?: boolean;
   },
 ) {
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
@@ -654,7 +656,9 @@ export function buildPrompt(
     .filter(message => message.role === 'user' || message.role === 'assistant')
     .map(message => (message.role === 'assistant' ? getVisibleMessageText(message) || message.text : message.text))
     .join('\n');
-  const localAuditContext = [statusData.world.currentLocation, topEvent?.[0], topEvent?.[1], recentSceneContext, userInput]
+  // 审计协议只跟“当前可见场景/本轮输入”绑定，不能用剧情卡、事件名或地点命中。
+  // 否则世界书里反复出现某角色名时，会让局部审计变成每轮全局常驻规则。
+  const localAuditContext = [recentSceneContext, userInput]
     .filter(Boolean)
     .join('\n');
   const localAuditGuidance = buildLocalCharacterAuditList(statusData, localAuditContext);
@@ -687,7 +691,7 @@ export function buildPrompt(
     plotContext,
     summaryContext,
     conversationHistory,
-    userInput ? `玩家当前输入：${userInput}` : '',
+    userInput && !options?.suppressUserInputLine ? `玩家当前输入：${userInput}` : '',
     localAuditGuidance
       ? `角色局部条件审计：只在指定角色实际在场、发言、行动或立刻反应时应用。不要输出审计过程。\n${localAuditGuidance}`
       : '',

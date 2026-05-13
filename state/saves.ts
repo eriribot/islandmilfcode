@@ -1,5 +1,6 @@
 import type { SummaryStore } from '../summary/types';
 import { createDefaultSummaryStore } from '../summary/types';
+import { extractContextReply } from '../message-format';
 import type {
   Difficulty,
   GameState,
@@ -186,11 +187,22 @@ function normalizeGameState(gameState: Partial<GameState> | undefined, fallbackR
   };
 }
 
+function getLatestVisiblePreview(messages: PersistedMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || (message.role !== 'user' && message.role !== 'assistant')) continue;
+    const raw = String(message.rawText || message.text || '').trim();
+    const visible = message.role === 'assistant' ? extractContextReply(raw) : raw;
+    if (visible.trim()) return visible.trim();
+  }
+  return '';
+}
+
 function createMetaFromPayload(payload: SavePayload, input: { kind: SaveKind; label: string; createdAt?: number }): SaveMeta {
   const statusData = payload.gameState.statusData;
   const playerProfile = getPlayerProfileFromGameState(payload.gameState);
   const messageCount = payload.chatLog.length;
-  const latestPreview = payload.chatLog.length ? payload.chatLog[payload.chatLog.length - 1]?.text?.trim() : '';
+  const latestPreview = getLatestVisiblePreview(payload.chatLog);
   const now = Date.now();
 
   return {
