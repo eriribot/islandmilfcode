@@ -183,6 +183,14 @@ export type PlotLibrary = {
   writingProtocols?: Record<string, VolumeWritingProtocol>;
 };
 
+export type ScenePresence = {
+  presentIds: string[];
+  focusIds: string[];
+  absentIds: string[];
+  uncertainIds: string[];
+  evidence?: Record<string, string>;
+};
+
 export type StatusData = {
   world: {
     currentTime: string;

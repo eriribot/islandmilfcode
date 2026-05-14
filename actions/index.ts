@@ -20,6 +20,7 @@ import type {
   PlayerProfile,
   PlayerStats,
   PlotLibrary,
+  ScenePresence,
   TargetStatus,
   UiMessage,
 } from '../types';
@@ -512,6 +513,7 @@ export async function submitMessage(
     ctx.render();
 
     const promptHistory = state.uiMessages.slice(0, -1);
+    const scenePresence = await detectScenePresence(ctx, promptHistory, userInput);
     const requestGenerationId = state.currentGenerationId;
     const generator = win.generate ?? win.generateRaw;
     const baseConfig: Record<string, unknown> = {
@@ -538,6 +540,7 @@ export async function submitMessage(
                   suppressPhoneMessageContent: Boolean(phoneDirective),
                   phoneMessageTargetName: phoneDirective?.target.name,
                   suppressUserInputLine: true,
+                  scenePresence,
                 }),
               },
               {
@@ -554,6 +557,7 @@ export async function submitMessage(
               skipProgress: !!ctx.summaryApiConfig,
               suppressPhoneMessageContent: Boolean(phoneDirective),
               phoneMessageTargetName: phoneDirective?.target.name,
+              scenePresence,
             }),
           },
     );
@@ -992,6 +996,129 @@ async function generateSilentAnalysis(ctx: ActionContext, generationId: string, 
 function countCompletedConversationMessages(messages: UiMessage[]): number {
   return messages.filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
     .length;
+}
+
+function normalizeScenePresenceIds(ids: unknown, allowedIds: Set<string>) {
+  if (!Array.isArray(ids)) return [];
+  return Array.from(
+    new Set(
+      ids
+        .map(id => String(id ?? '').trim())
+        .filter(id => allowedIds.has(id)),
+    ),
+  );
+}
+
+function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[], userInput: string): RawPrompt[] {
+  const recentVisible = promptHistory
+    .filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
+    .slice(-4)
+    .map(message => {
+      const role = message.role === 'assistant' ? 'assistant' : 'user';
+      const text = message.role === 'assistant' ? getVisibleMessageText(message) || message.text : message.text;
+      return `[${role}] ${text}`;
+    })
+    .join('\n\n');
+
+  const targets = ctx.state.statusData.targets
+    .map(target => {
+      const aliases = getPhoneTargetSearchTerms(target)
+        .filter(term => term !== target.id && term !== target.name)
+        .join('、');
+      return `- id=${target.id}；姓名=${target.name}${target.alias ? `；别名=${target.alias}` : ''}${
+        aliases ? `；可匹配线索=${aliases}` : ''
+      }`;
+    })
+    .join('\n');
+
+  const systemPrompt = [
+    '现在需要对目前的场景进行判断,在正文开始生成时”哪些角色处于当前镜头内',
+    '只做判定，不续写剧情，不扮演角色，不输出思考过程。',
+    '',
+    '角色名单：',
+    targets || '无',
+    '',
+    '判定定义：',
+    '- present：角色明确处于当前镜头内，能立刻说话、行动、沉默、吃醋或产生即时反应。',
+    '- focus：玩家当前输入正在追上、寻找、靠近、转向或当面处理该角色；下一轮正文允许转场到她。',
+    '- absent：角色已明确离开、不在场、没来、无法即时反应。',
+    '- uncertain：只是被提到、回忆、议论或出现在旧信息里，不能证明当前在镜头内。',
+    '',
+    '硬规则：',
+    '1. 只能使用角色名单里的 id。',
+    '2. 第一次输入若没有最近正文，只看玩家当前输入；没有明确点名/寻找/靠近任何角色时，present 和 focus 都为空。',
+    '3. 不要因为角色好感度、剧情常识、世界书设定或你觉得她应该在场而加入 present。',
+    '4. 玩家当前输入若明确“追上去安慰她/去找某人/转向某人/和某人说话”，该角色进入 focus。',
+    '5. 输出必须是一个 JSON 对象，不要使用 Markdown 代码块。',
+  ].join('\n');
+
+  return [
+    { role: 'system', content: systemPrompt },
+    {
+      role: 'user',
+      content: [
+        '最近4条可见正文：',
+        recentVisible || '（无）',
+        '',
+        `玩家当前输入：${userInput || '（无）'}`,
+        '',
+        '请输出 JSON，格式如下：',
+        '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"}}',
+      ].join('\n'),
+    },
+  ];
+}
+
+function parseScenePresenceResult(ctx: ActionContext, rawResult: string): ScenePresence {
+  const allowedIds = new Set(ctx.state.statusData.targets.map(target => target.id));
+  const fallback: ScenePresence = { presentIds: [], focusIds: [], absentIds: [], uncertainIds: [], evidence: {} };
+  const text = String(rawResult ?? '').trim();
+  if (!text) return fallback;
+
+  const jsonText = text.match(/\{[\s\S]*\}/)?.[0] ?? '';
+  if (!jsonText) return fallback;
+
+  try {
+    const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+    const evidenceRaw = parsed.evidence && typeof parsed.evidence === 'object' ? parsed.evidence : {};
+    const evidence: Record<string, string> = {};
+    for (const [id, reason] of Object.entries(evidenceRaw as Record<string, unknown>)) {
+      if (allowedIds.has(id)) evidence[id] = String(reason ?? '').trim();
+    }
+    return {
+      presentIds: normalizeScenePresenceIds(parsed.present, allowedIds),
+      focusIds: normalizeScenePresenceIds(parsed.focus, allowedIds),
+      absentIds: normalizeScenePresenceIds(parsed.absent, allowedIds),
+      uncertainIds: normalizeScenePresenceIds(parsed.uncertain, allowedIds),
+      evidence,
+    };
+  } catch (error) {
+    console.warn('[scene-presence] parse failed:', error);
+    return fallback;
+  }
+}
+
+async function detectScenePresence(
+  ctx: ActionContext,
+  promptHistory: UiMessage[],
+  userInput: string,
+): Promise<ScenePresence> {
+  // 中文注释：镜头判定只服务本轮 prompt 注入，不写入存档；失败时保守地不注入任何角色强规则。
+  if (!ctx.state.statusData.targets.length) {
+    return { presentIds: [], focusIds: [], absentIds: [], uncertainIds: [], evidence: {} };
+  }
+  const generationId = `scene-presence-${crypto.randomUUID()}`;
+  const rawResult = await generateSilentAnalysis(ctx, generationId, buildScenePresencePrompts(ctx, promptHistory, userInput));
+  const parsed = parseScenePresenceResult(ctx, rawResult);
+  recordGenerationDebug(ctx, 'scene-presence:detected', {
+    generationId,
+    rawLength: String(rawResult ?? '').length,
+    presentIds: parsed.presentIds,
+    focusIds: parsed.focusIds,
+    absentIds: parsed.absentIds,
+    uncertainIds: parsed.uncertainIds,
+  });
+  return parsed;
 }
 
 async function runSecondaryProgressUpdate(

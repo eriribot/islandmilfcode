@@ -12,6 +12,7 @@ import type {
   PlayerStats,
   PlotEventCard,
   PlotLibrary,
+  ScenePresence,
   StatusData,
   TargetStatus,
   UiMessage,
@@ -544,8 +545,57 @@ function isTargetMentioned(target: TargetStatus, text: string) {
   return getTargetMentionTerms(target).some(term => normalized.includes(term.toLowerCase()));
 }
 
-function buildRelationshipGuidanceList(statusData: StatusData, playerProfile?: PlayerProfile | null) {
+function getSceneGuidanceTargetIds(scenePresence?: ScenePresence | null) {
+  if (!scenePresence) return null;
+  // 中文注释：完整关系指导只给“镜头内可即时反应”的角色，以及玩家当前动作正在追向/寻找的转场目标。
+  return new Set([...(scenePresence.presentIds ?? []), ...(scenePresence.focusIds ?? [])].filter(Boolean));
+}
+
+function buildScenePresenceContext(statusData: StatusData, scenePresence?: ScenePresence | null) {
+  if (!scenePresence) return '';
+  const targetById = new Map(statusData.targets.map(target => [target.id, target]));
+  const nameList = (ids: string[]) =>
+    ids
+      .map(id => targetById.get(id)?.name ?? id)
+      .filter(Boolean)
+      .join('、') || '无';
+  const guidedIds = new Set([...(scenePresence.presentIds ?? []), ...(scenePresence.focusIds ?? [])]);
+  const unguidedNames = statusData.targets
+    .filter(target => !guidedIds.has(target.id))
+    .map(target => target.name)
+    .join('、') || '无';
+
+  const evidenceLines = Object.entries(scenePresence.evidence ?? {})
+    .map(([id, reason]) => {
+      const name = targetById.get(id)?.name ?? id;
+      const text = String(reason ?? '').trim();
+      return text ? `- ${name}: ${text}` : '';
+    })
+    .filter(Boolean);
+
+  return [
+    '[镜头判定]',
+    '判定来源：生成正文前的独立在场人物判定；第一次输入没有历史正文时，只看玩家当前输入。',
+    `明确在场：${nameList(scenePresence.presentIds ?? [])}`,
+    `转场目标：${nameList(scenePresence.focusIds ?? [])}`,
+    `明确不在场：${nameList(scenePresence.absentIds ?? [])}`,
+    `不确定/仅被提及：${nameList(scenePresence.uncertainIds ?? [])}`,
+    `本轮不注入完整关系指导：${unguidedNames}`,
+    evidenceLines.length ? ['判定依据：', ...evidenceLines].join('\n') : '',
+    '镜头规则：只有明确在场和转场目标可以应用完整关系指导、局部审计、即时台词/动作/心理反应；明确不在场或不确定角色不得默认插话、旁听、吃醋或产生即时反应。',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildRelationshipGuidanceList(
+  statusData: StatusData,
+  playerProfile?: PlayerProfile | null,
+  scenePresence?: ScenePresence | null,
+) {
+  const allowedIds = getSceneGuidanceTargetIds(scenePresence);
   const lines = statusData.targets
+    .filter(target => !allowedIds || allowedIds.has(target.id))
     .map(target => {
       const guidance = getRelationshipGuidance(target);
       const address = getRelationshipAddressGuidance({ target, playerProfile });
@@ -558,9 +608,11 @@ function buildRelationshipGuidanceList(statusData: StatusData, playerProfile?: P
   return lines.length ? lines.join('\n\n') : '';
 }
 
-function buildLocalCharacterAuditList(statusData: StatusData, contextText: string) {
+function buildLocalCharacterAuditList(statusData: StatusData, contextText: string, scenePresence?: ScenePresence | null) {
+  const allowedIds = getSceneGuidanceTargetIds(scenePresence);
   const lines = statusData.targets
-    .filter(target => isTargetMentioned(target, contextText))
+    // 中文注释：有镜头判定时，局部审计只跟随判定结果；没有判定时保留旧的文本命中兜底。
+    .filter(target => (allowedIds ? allowedIds.has(target.id) : isTargetMentioned(target, contextText)))
     .map(target => {
       const audit = getRelationshipAuditGuidance(target);
       if (!audit) return '';
@@ -627,6 +679,7 @@ export function buildPrompt(
     suppressPhoneMessageContent?: boolean;
     phoneMessageTargetName?: string;
     suppressUserInputLine?: boolean;
+    scenePresence?: ScenePresence | null;
   },
 ) {
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
@@ -658,7 +711,8 @@ export function buildPrompt(
     ? Math.min(summaryStore.lastSummarizedIndex, Math.max(0, uiMessages.length - SUMMARY_KEEP_RECENT))
     : 0;
   const conversationHistory = buildConversationHistory(uiMessages, historyStartIndex);
-  const relationshipGuidanceList = buildRelationshipGuidanceList(statusData, playerProfile);
+  const scenePresenceContext = buildScenePresenceContext(statusData, options?.scenePresence);
+  const relationshipGuidanceList = buildRelationshipGuidanceList(statusData, playerProfile, options?.scenePresence);
   const recentSceneContext = uiMessages
     .slice(-4)
     .filter(message => message.role === 'user' || message.role === 'assistant')
@@ -669,7 +723,7 @@ export function buildPrompt(
   const localAuditContext = [recentSceneContext, userInput]
     .filter(Boolean)
     .join('\n');
-  const localAuditGuidance = buildLocalCharacterAuditList(statusData, localAuditContext);
+  const localAuditGuidance = buildLocalCharacterAuditList(statusData, localAuditContext, options?.scenePresence);
   const phoneMessageBoundary = options?.suppressPhoneMessageContent
     ? [
         '手机消息边界：',
@@ -690,6 +744,7 @@ export function buildPrompt(
     '这是多角色场景系统。没有全局默认变量目标；镜头焦点只由当前正文、玩家输入、剧情卡和明确在场角色决定。',
     `当前位置：${statusData.world.currentLocation}`,
     mainEventsContext,
+    scenePresenceContext,
     relationshipGuidanceList
       ? `角色局部关系指导：每一块只在描写对应角色时生效，禁止把某个角色的指导当成全局思考方式。\n${relationshipGuidanceList}`
       : '',
