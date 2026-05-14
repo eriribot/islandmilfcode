@@ -21,6 +21,7 @@ const MAIN_EVENT_FINISHED = '已结束';
 type ScheduledEvent = {
   id: string;
   date: string;
+  endDate: string;
 };
 
 function normalizeMainEventStatus(status: string | undefined): string {
@@ -41,8 +42,14 @@ function buildSchedule(plotLibrary: PlotLibrary | null | undefined): ScheduledEv
     .map(event => ({
       id: event.id,
       date: event.schedule.date,
+      endDate:
+        event.schedule.endDate && event.schedule.endDate >= event.schedule.date
+          ? event.schedule.endDate
+          : event.schedule.date,
     }));
-  events.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  events.sort(
+    (a, b) => a.date.localeCompare(b.date) || a.endDate.localeCompare(b.endDate) || a.id.localeCompare(b.id),
+  );
   return events;
 }
 
@@ -199,7 +206,11 @@ function compareDate(a: string, b: string) {
 }
 
 function eventMatchesCurrentDate(event: ScheduledEvent, currentDate: string) {
-  return currentDate === event.date;
+  return currentDate >= event.date && currentDate <= event.endDate;
+}
+
+function eventHasExpired(event: ScheduledEvent, currentDate: string) {
+  return compareDate(currentDate, event.endDate) > 0;
 }
 
 function getScheduledCurrentMainEventId(statusData: StatusData, schedule: ScheduledEvent[]) {
@@ -282,8 +293,8 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
       changed = true;
     }
 
-    // 中文注释：过了事件日期就直接结算，不再保留“延后/跳过”等中间态。
-    if (currentDate && compareDate(currentDate, event.date) > 0) {
+    // 中文注释：过了事件窗口才自动结算；没有持续至的旧事件仍按单日窗口处理。
+    if (currentDate && eventHasExpired(event, currentDate)) {
       if (normalizedStatus !== MAIN_EVENT_FINISHED) {
         mainEvents[event.id] = MAIN_EVENT_FINISHED;
         if (statusData.world.currentMainEventId === event.id) {

@@ -149,6 +149,7 @@ export type WorldbookEntry = {
 
 export type PlotEventSchedule = {
   date: string;
+  endDate?: string;
   timeSegments: string[];
   locations: string[];
 };

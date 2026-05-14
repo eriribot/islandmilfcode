@@ -117,6 +117,10 @@ function parseEventSchedule(raw: Record<string, unknown>): PlotEventSchedule | u
     getStringField(raw, ['日期', 'date', 'triggerDate']);
   const date = (dateRaw.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '').trim();
   if (!date) return undefined;
+  const endDateRaw =
+    getStringField(triggerControl, ['持续至', '结束日期', 'endDate', 'until']) ||
+    getStringField(raw, ['持续至', '结束日期', 'endDate', 'until']);
+  const endDate = (endDateRaw.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '').trim();
 
   const timeSegments = (() => {
     const fromTrigger = getStringArrayField(triggerControl, ['触发时间片段', 'triggerTimeSegments', 'timeSegments']);
@@ -130,7 +134,7 @@ function parseEventSchedule(raw: Record<string, unknown>): PlotEventSchedule | u
     return splitLocationField(raw['核心地点'] ?? raw['locations'] ?? raw['location']);
   })();
 
-  return { date, timeSegments, locations };
+  return { date, endDate: endDate && endDate >= date ? endDate : undefined, timeSegments, locations };
 }
 
 function summarizeEvent(raw: Record<string, unknown>) {

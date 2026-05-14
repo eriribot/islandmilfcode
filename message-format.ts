@@ -257,9 +257,16 @@ function diffDays(fromIso: string, toIso: string): number | null {
   return Math.round((b.getTime() - a.getTime()) / 86_400_000);
 }
 
+function formatScheduleDateRange(schedule: PlotEventCard['schedule']) {
+  if (!schedule?.date) return '';
+  const endDate = schedule.endDate && schedule.endDate > schedule.date ? `~${schedule.endDate}` : '';
+  return `${schedule.date}${endDate}`;
+}
+
 function formatEventIndexLine(event: PlotEventCard) {
   const parts = [`- ${event.id}`];
-  if (event.schedule?.date) parts.push(event.schedule.date);
+  const scheduleDate = formatScheduleDateRange(event.schedule);
+  if (scheduleDate) parts.push(scheduleDate);
   if (event.schedule?.timeSegments?.length) parts.push(event.schedule.timeSegments.join('/'));
   if (event.schedule?.locations?.length) parts.push(event.schedule.locations.join('、'));
   if (event.title) parts.push(event.title);
@@ -290,7 +297,7 @@ function pickNextUpcomingEvent(statusData: StatusData, plotLibrary: PlotLibrary)
   const candidates = Object.values(plotLibrary.events)
     .filter(event => Boolean(event.schedule?.date))
     .filter(event => normalizeMainEventStatus(mainEvents[event.id]) === MAIN_EVENT_NOT_STARTED)
-    .filter(event => !currentDate || event.schedule!.date >= currentDate)
+    .filter(event => !currentDate || (event.schedule!.endDate ?? event.schedule!.date) >= currentDate)
     .sort((a, b) => (a.schedule!.date.localeCompare(b.schedule!.date) || a.id.localeCompare(b.id)));
   return candidates[0] ?? null;
 }
@@ -401,9 +408,10 @@ function buildCurrentPlotContext(statusData: StatusData, plotLibrary?: PlotLibra
 
     if (upcoming?.schedule?.date) {
       const daysUntil = currentDate ? diffDays(currentDate, upcoming.schedule.date) : null;
+      const scheduleDate = formatScheduleDateRange(upcoming.schedule);
       gapLines.push(
         `下一个主线事件：${upcoming.id} ${upcoming.title}`,
-        `触发日期：${upcoming.schedule.date}${
+        `触发日期：${scheduleDate}${
           daysUntil != null ? `（距离当前日期约 ${daysUntil} 天）` : ''
         }`,
         upcoming.schedule.timeSegments?.length ? `建议时间片段：${upcoming.schedule.timeSegments.join('/')}（仅供叙事参考）` : '',
