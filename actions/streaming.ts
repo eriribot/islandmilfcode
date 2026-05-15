@@ -175,12 +175,13 @@ export function setupStreamingHooks(ctx: StreamingContext, eventStops: Array<() 
   const fully = win.iframe_events.STREAM_TOKEN_RECEIVED_FULLY;
   const ended = win.iframe_events.GENERATION_ENDED;
 
-  // 判断是否为后台任务（摘要/变量提取/手机聊天）的 generationId。
+  // 判断是否为后台任务（摘要/变量提取/镜头判定/手机聊天）的 generationId。
   function isBackgroundGeneration(generationId: unknown): boolean {
     return (
       typeof generationId === 'string' &&
       (generationId.startsWith('summary-') ||
         generationId.startsWith('progress-') ||
+        generationId.startsWith('scene-presence-') ||
         generationId.startsWith('phone-'))
     );
   }
