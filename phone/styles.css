@@ -607,30 +607,42 @@ body.floating-phone-dragging {
 
 /* ── 日历 ── */
 
+.phone-app-page--calendar {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.phone-calendar-scroll {
+  padding: 4px 2px 0;
+}
+
 .phone-calendar {
-  padding: 12px;
+  padding: 12px 10px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(210, 205, 198, 0.5);
 }
 
 .phone-calendar__nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .phone-calendar__nav-btn {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   border: none;
-  background: rgba(255, 255, 255, 0.5);
-  font-size: 16px;
-  font-weight: 700;
-  color: #5a4a3a;
+  background: rgba(242, 242, 247, 0.95);
+  font-size: 18px;
+  font-weight: 600;
+  color: #ff375f;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  line-height: 1;
 }
 
 .phone-calendar__nav-btn:disabled {
@@ -639,62 +651,270 @@ body.floating-phone-dragging {
 }
 
 .phone-calendar__month {
-  font-family: 'Klee One', serif;
-  font-size: 0.92rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  color: #1c1c1e;
+}
+
+.phone-calendar__month strong {
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.phone-calendar__month small {
+  color: #8e8e93;
+  font-size: 0.66rem;
   font-weight: 700;
-  color: #3a3028;
 }
 
 .phone-calendar__header {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   text-align: center;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .phone-calendar__weekday {
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: #b0a08a;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: #8e8e93;
   padding: 4px 0;
 }
 
 .phone-calendar__grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 2px;
+  gap: 3px;
 }
 
 .phone-calendar__cell {
   position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   aspect-ratio: 1;
-  font-size: 0.78rem;
-  color: #5a4a3a;
-  border-radius: 50%;
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #1c1c1e;
+  font-size: 0.76rem;
+  cursor: pointer;
+  appearance: none;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.phone-calendar__cell:hover {
+  background: rgba(242, 242, 247, 0.95);
+}
+
+.phone-calendar__cell:active {
+  transform: scale(0.96);
 }
 
 .phone-calendar__cell--empty {
   visibility: hidden;
 }
 
+.phone-calendar__cell--has-event {
+  background: rgba(242, 242, 247, 0.7);
+}
+
 .phone-calendar__cell--today {
-  background: rgba(184, 92, 110, 0.18);
-  color: #b85c6e;
+  color: #ff375f;
   font-weight: 700;
 }
 
+.phone-calendar__cell--selected {
+  background: #ff375f;
+  color: #fff;
+}
+
+.phone-calendar__cell--selected .phone-calendar__dot {
+  background: #fff;
+}
+
+.phone-calendar__cell--selected .phone-calendar__more {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.phone-calendar__day-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 15px;
+  line-height: 1;
+}
+
+.phone-calendar__dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 6px;
+  max-width: 100%;
+}
+
 .phone-calendar__dot {
-  position: absolute;
-  bottom: 2px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 4px;
-  height: 4px;
+  flex: 0 0 auto;
+  width: 3.5px;
+  height: 3.5px;
   border-radius: 50%;
-  background: #6b4e9e;
+  background: #007aff;
+}
+
+.phone-calendar__dot--2 {
+  background: #34c759;
+}
+
+.phone-calendar__dot--3 {
+  background: #af52de;
+}
+
+.phone-calendar__more {
+  color: #8e8e93;
+  font-size: 0.46rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.phone-calendar-agenda {
+  margin-top: 10px;
+  padding: 0 2px 12px;
+}
+
+.phone-calendar-agenda__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 2px 8px;
+}
+
+.phone-calendar-agenda__header span {
+  display: grid;
+  gap: 1px;
+}
+
+.phone-calendar-agenda__header strong {
+  color: #1c1c1e;
+  font-size: 0.94rem;
+  font-weight: 850;
+}
+
+.phone-calendar-agenda__header small {
+  color: #8e8e93;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.phone-calendar-agenda__list {
+  display: grid;
+  gap: 7px;
+}
+
+.phone-calendar-event {
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr);
+  gap: 9px;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(210, 205, 198, 0.46);
+}
+
+.phone-calendar-event__rail {
+  width: 4px;
+  min-height: 100%;
+  border-radius: 999px;
+  background: #007aff;
+}
+
+.phone-calendar-event--is-running .phone-calendar-event__rail {
+  background: #ff375f;
+}
+
+.phone-calendar-event--is-finished .phone-calendar-event__rail {
+  background: #34c759;
+}
+
+.phone-calendar-event--is-muted .phone-calendar-event__rail {
+  background: #8e8e93;
+}
+
+.phone-calendar-event--is-upcoming .phone-calendar-event__rail {
+  background: #007aff;
+}
+
+.phone-calendar-event__body,
+.phone-calendar-event__top {
+  min-width: 0;
+}
+
+.phone-calendar-event__body {
+  display: grid;
+  gap: 4px;
+}
+
+.phone-calendar-event__top {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.phone-calendar-event__top strong {
+  color: #1c1c1e;
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.phone-calendar-event__top em {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(242, 242, 247, 0.95);
+  color: #636366;
+  font-size: 0.58rem;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.phone-calendar-event__meta,
+.phone-calendar-event__place,
+.phone-calendar-event__summary {
+  display: block;
+  color: #636366;
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.phone-calendar-event__place {
+  color: #8e4f5f;
+}
+
+.phone-calendar-event__summary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.phone-calendar-agenda__empty {
+  padding: 18px 10px;
+  border-radius: 8px;
+  background: rgba(242, 242, 247, 0.8);
+  color: #8e8e93;
+  text-align: center;
+  font-size: 0.76rem;
+  font-weight: 700;
 }
 
 .paper-workspace--phone {

@@ -1,5 +1,5 @@
 import { escapeHtml } from '../html';
-import type { AppState, NotificationState, PhoneChatThread, StatusData, TargetStatus } from '../types';
+import type { AppState, NotificationState, PhoneChatThread, PlotEventCard, StatusData, TargetStatus } from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
 import { renderCharacterArchivePanel } from './archive';
 import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute } from './types';
@@ -407,7 +407,90 @@ function renderAppIcon(app: { icon: string; iconType?: 'text' | 'image'; label: 
 
 /** 日历起始日期 */
 const CALENDAR_EPOCH = new Date(2012, 2, 31);
-const WEEKDAY_HEADERS = ['日', '月', '火', '水', '木', '金', '土'];
+const WEEKDAY_HEADERS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+type CalendarEventItem = {
+  id: string;
+  title: string;
+  date: string;
+  endDate: string;
+  timeSegments: string[];
+  locations: string[];
+  summary: string;
+  status: string;
+};
+
+function pad2(n: number) {
+  return String(n).padStart(2, '0');
+}
+
+function formatIsoDateKey(year: number, monthIndex: number, day: number) {
+  return `${year}-${pad2(monthIndex + 1)}-${pad2(day)}`;
+}
+
+function formatCalendarDateLabel(dateKey: string) {
+  const match = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return dateKey;
+  return `${Number(match[2])}月${Number(match[3])}日`;
+}
+
+function formatCalendarDateRange(event: CalendarEventItem) {
+  return event.endDate && event.endDate !== event.date
+    ? `${formatCalendarDateLabel(event.date)} - ${formatCalendarDateLabel(event.endDate)}`
+    : formatCalendarDateLabel(event.date);
+}
+
+function getCalendarStatusLabel(status: string) {
+  const value = status.trim();
+  if (value === '进行中') return '进行中';
+  if (value === '已结束' || value === '已完成') return '已结束';
+  if (value === '跳过' || value === '延后') return value;
+  return '未开始';
+}
+
+function getCalendarStatusClass(status: string) {
+  const label = getCalendarStatusLabel(status);
+  if (label === '进行中') return 'is-running';
+  if (label === '已结束') return 'is-finished';
+  if (label === '跳过' || label === '延后') return 'is-muted';
+  return 'is-upcoming';
+}
+
+function buildCalendarEventItem(
+  event: PlotEventCard & { schedule: NonNullable<PlotEventCard['schedule']> },
+  statusData: StatusData,
+): CalendarEventItem {
+  return {
+    id: event.id,
+    title: event.title || event.id,
+    date: event.schedule.date,
+    endDate:
+      event.schedule.endDate && event.schedule.endDate >= event.schedule.date
+        ? event.schedule.endDate
+        : event.schedule.date,
+    timeSegments: event.schedule.timeSegments ?? [],
+    locations: event.schedule.locations ?? [],
+    summary: event.summary ?? '',
+    status: statusData.world.mainEvents?.[event.id] ?? '',
+  };
+}
+
+function collectCalendarEvents(state: AppState): CalendarEventItem[] {
+  return Object.values(state.plotLibrary.events)
+    .filter((event): event is PlotEventCard & { schedule: NonNullable<PlotEventCard['schedule']> } =>
+      Boolean(event.schedule?.date),
+    )
+    .map(event => buildCalendarEventItem(event, state.statusData))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.endDate.localeCompare(b.endDate) || a.id.localeCompare(b.id));
+}
+
+function eventTouchesDate(event: CalendarEventItem, dateKey: string) {
+  return dateKey >= event.date && dateKey <= event.endDate;
+}
+
+function eventTouchesRange(event: CalendarEventItem, startDate: string, endDate: string) {
+  return event.endDate >= startDate && event.date <= endDate;
+}
 
 /** 从游戏时间字符串解析年月日 */
 function parseGameDate(timeStr: string): { year: number; month: number; day: number } {
@@ -420,18 +503,72 @@ function parseGameDate(timeStr: string): { year: number; month: number; day: num
   return { year: 2012, month: 2, day: 31 };
 }
 
-/** 收集有事件的日期集合（格式 "YYYY-M-D"） */
-function collectEventDates(state: AppState): Set<string> {
-  const dates = new Set<string>();
-  for (const key of Object.keys(state.statusData.world.recentEvents)) {
-    try {
-      const d = new Date(key.replace(/\s.*$/, ''));
-      if (!isNaN(d.getTime())) dates.add(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`);
-    } catch {
-      /* skip */
-    }
+function buildMonthEventMap(events: CalendarEventItem[], year: number, monthIndex: number, daysInMonth: number) {
+  const map = new Map<string, CalendarEventItem[]>();
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dateKey = formatIsoDateKey(year, monthIndex, day);
+    const eventsForDay = events.filter(event => eventTouchesDate(event, dateKey));
+    if (eventsForDay.length) map.set(dateKey, eventsForDay);
   }
-  return dates;
+  return map;
+}
+
+function renderCalendarDots(events: CalendarEventItem[]) {
+  if (!events.length) return '';
+  const dots = events
+    .slice(0, 3)
+    .map((event, index) => `<span class="phone-calendar__dot phone-calendar__dot--${index + 1}" title="${escapeHtml(event.title)}"></span>`)
+    .join('');
+  const extra = events.length > 3 ? `<span class="phone-calendar__more">+${events.length - 3}</span>` : '';
+  return `<span class="phone-calendar__dots">${dots}${extra}</span>`;
+}
+
+function renderCalendarEventRow(event: CalendarEventItem) {
+  const statusLabel = getCalendarStatusLabel(event.status);
+  const statusClass = getCalendarStatusClass(event.status);
+  const timeLine = [formatCalendarDateRange(event), event.timeSegments.join(' / ')].filter(Boolean).join(' · ');
+  const locationLine = event.locations.join('、');
+  return `
+    <article class="phone-calendar-event phone-calendar-event--${statusClass}">
+      <span class="phone-calendar-event__rail"></span>
+      <span class="phone-calendar-event__body">
+        <span class="phone-calendar-event__top">
+          <strong>${escapeHtml(event.title)}</strong>
+          <em>${escapeHtml(statusLabel)}</em>
+        </span>
+        <span class="phone-calendar-event__meta">${escapeHtml(timeLine || event.id)}</span>
+        ${locationLine ? `<span class="phone-calendar-event__place">${escapeHtml(locationLine)}</span>` : ''}
+        ${event.summary ? `<span class="phone-calendar-event__summary">${escapeHtml(event.summary)}</span>` : ''}
+      </span>
+    </article>
+  `;
+}
+
+function renderCalendarAgenda(
+  selectedDate: string,
+  selectedEvents: CalendarEventItem[],
+  monthEvents: CalendarEventItem[],
+) {
+  const fallbackToMonth = !selectedEvents.length;
+  const events = fallbackToMonth ? monthEvents : selectedEvents;
+  const title = fallbackToMonth ? '本月事件' : '当天事件';
+  const subtitle = fallbackToMonth ? '本月日程' : formatCalendarDateLabel(selectedDate);
+
+  return `
+    <section class="phone-calendar-agenda">
+      <div class="phone-calendar-agenda__header">
+        <span>
+          <strong>${escapeHtml(title)}</strong>
+          <small>${escapeHtml(subtitle)}</small>
+        </span>
+      </div>
+      ${
+        events.length
+          ? `<div class="phone-calendar-agenda__list">${events.map(renderCalendarEventRow).join('')}</div>`
+          : '<div class="phone-calendar-agenda__empty">这个月份没有事件。</div>'
+      }
+    </section>
+  `;
 }
 
 /** 渲染日历网格 */
@@ -442,10 +579,21 @@ function renderCalendarGrid(state: AppState, monthOffset: number): string {
   const viewMonth = viewDate.getMonth();
   const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
   const firstDow = new Date(viewYear, viewMonth, 1).getDay();
-  const eventDates = collectEventDates(state);
+  const monthStart = formatIsoDateKey(viewYear, viewMonth, 1);
+  const monthEnd = formatIsoDateKey(viewYear, viewMonth, daysInMonth);
+  const calendarEvents = collectCalendarEvents(state);
+  const monthEvents = calendarEvents.filter(event => eventTouchesRange(event, monthStart, monthEnd));
+  const eventMap = buildMonthEventMap(monthEvents, viewYear, viewMonth, daysInMonth);
 
   const monthLabel = `${viewYear}年${viewMonth + 1}月`;
   const isCurrentMonth = viewYear === gd.year && viewMonth === gd.month;
+  const todayKey = formatIsoDateKey(gd.year, gd.month, gd.day);
+  const selectedDate =
+    calendarSelectedDateKey && calendarSelectedDateKey >= monthStart && calendarSelectedDateKey <= monthEnd
+      ? calendarSelectedDateKey
+      : isCurrentMonth
+        ? todayKey
+        : eventMap.keys().next().value ?? monthStart;
 
   let cells = '';
   // 前置空白
@@ -453,23 +601,33 @@ function renderCalendarGrid(state: AppState, monthOffset: number): string {
     cells += '<span class="phone-calendar__cell phone-calendar__cell--empty"></span>';
   }
   for (let d = 1; d <= daysInMonth; d++) {
-    const isToday = isCurrentMonth && d === gd.day;
-    const dateKey = `${viewYear}-${viewMonth}-${d}`;
-    const hasEvent = eventDates.has(dateKey);
+    const dateKey = formatIsoDateKey(viewYear, viewMonth, d);
+    const isToday = dateKey === todayKey;
+    const isSelected = dateKey === selectedDate;
+    const events = eventMap.get(dateKey) ?? [];
     const todayCls = isToday ? ' phone-calendar__cell--today' : '';
-    const dot = hasEvent ? '<span class="phone-calendar__dot"></span>' : '';
-    cells += `<span class="phone-calendar__cell${todayCls}">${d}${dot}</span>`;
+    const selectedCls = isSelected ? ' phone-calendar__cell--selected' : '';
+    const eventCls = events.length ? ' phone-calendar__cell--has-event' : '';
+    cells += `
+      <button class="phone-calendar__cell${todayCls}${selectedCls}${eventCls}" data-action="calendar-select-date" data-date="${escapeHtml(dateKey)}" type="button">
+        <span class="phone-calendar__day-number">${d}</span>
+        ${renderCalendarDots(events)}
+      </button>
+    `;
   }
 
   // 月份边界检查（不早于起始日期）
   const prevMonth = new Date(viewYear, viewMonth - 1, 1);
   const canPrev = prevMonth >= new Date(CALENDAR_EPOCH.getFullYear(), CALENDAR_EPOCH.getMonth(), 1);
+  const selectedEvents = eventMap.get(selectedDate) ?? [];
 
   return `
     <div class="phone-calendar">
       <div class="phone-calendar__nav">
         <button class="phone-calendar__nav-btn" data-action="calendar-prev" ${canPrev ? '' : 'disabled'}>‹</button>
-        <span class="phone-calendar__month">${escapeHtml(monthLabel)}</span>
+        <span class="phone-calendar__month">
+          <strong>${escapeHtml(monthLabel)}</strong>
+        </span>
         <button class="phone-calendar__nav-btn" data-action="calendar-next">›</button>
       </div>
       <div class="phone-calendar__header">
@@ -479,11 +637,13 @@ function renderCalendarGrid(state: AppState, monthOffset: number): string {
         ${cells}
       </div>
     </div>
+    ${renderCalendarAgenda(selectedDate, selectedEvents, monthEvents)}
   `;
 }
 
 /** 日历月份偏移量（由 index.ts 管理） */
 let calendarMonthOffset = 0;
+let calendarSelectedDateKey: string | null = null;
 
 export function setCalendarMonthOffset(offset: number) {
   calendarMonthOffset = offset;
@@ -493,13 +653,17 @@ export function getCalendarMonthOffset(): number {
   return calendarMonthOffset;
 }
 
+export function setCalendarSelectedDate(dateKey: string | null) {
+  calendarSelectedDateKey = dateKey;
+}
+
 function renderCalendarPhonePage(state: AppState) {
   const gd = parseGameDate(state.statusData.world.currentTime);
   const subtitle = `${gd.year}年${gd.month + 1}月${gd.day}日`;
   return `
-    <section class="phone-route-page phone-app-page" data-phone-route-view="app:calendar">
+    <section class="phone-route-page phone-app-page phone-app-page--calendar" data-phone-route-view="app:calendar">
       ${renderPhoneAppHeader(state, '日历', subtitle)}
-      <div class="phone-page-scroll">
+      <div class="phone-page-scroll phone-calendar-scroll">
         ${renderCalendarGrid(state, calendarMonthOffset)}
       </div>
     </section>

@@ -30,6 +30,13 @@ export type SummaryContext = {
   getFactAnchor?: () => FactAnchor | null;
 };
 
+export type SummaryRunResult = {
+  minorRan: boolean;
+  minorAppliedProgress: boolean;
+  majorRan: boolean;
+  globalRan: boolean;
+};
+
 function normalizeFactKey(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, '');
 }
@@ -143,12 +150,21 @@ function formatMessagesAsText(messages: UiMessage[]): string {
 
 // ── 自动摘要：生成结束后触发 ──
 
-export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | 'major' = 'auto'): Promise<void> {
+export async function runSummary(
+  ctx: SummaryContext,
+  mode: 'auto' | 'minor' | 'major' | 'global' = 'auto',
+): Promise<SummaryRunResult> {
   const { win, summaryStore: store, summaryApiConfig, uiMessages } = ctx;
   const messageCount = countConversationMessages(uiMessages);
   const anchor = ctx.getFactAnchor?.() ?? null;
   const pinnedFacts = () => store.keyFacts.filter(f => !f.superseded);
   let taskStarted = false;
+  const result: SummaryRunResult = {
+    minorRan: false,
+    minorAppliedProgress: false,
+    majorRan: false,
+    globalRan: false,
+  };
 
   const startTask = (detail: string) => {
     if (!ctx.state) return;
@@ -174,6 +190,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
     const unsummarized = getNextMinorSummaryChunk(uiMessages, startIndex);
     if (unsummarized.length > 0) {
       try {
+        result.minorRan = true;
         startTask('小摘要生成中');
         const prompts = buildMinorSummaryPrompt(unsummarized, anchor);
         const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
@@ -195,14 +212,14 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
           }
           store.lastSummarizedIndex = nextIndex;
           clearFailureState(store);
-          applyProgressFromMinorSummary(ctx, raw);
+          result.minorAppliedProgress = applyProgressFromMinorSummary(ctx, raw);
         }
       } catch (error) {
         failTask(error);
         recordFailure(store, 'minor', error);
         saveSummaryStore(win, store);
         ctx.onStoreUpdated();
-        return;
+        return result;
       }
     }
     // 小摘要模式到此为止，不继续级联。
@@ -210,7 +227,7 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
       finishTask();
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();
-      return;
+      return result;
     }
   }
 
@@ -221,10 +238,11 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
       // 没有可提升的摘要。
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();
-      return;
+      return result;
     }
     const consumed = store.minor.splice(0, store.minor.length);
     try {
+      result.majorRan = true;
       startTask('大摘要生成中');
       const prompts = buildMajorSummaryPrompt(consumed, anchor, pinnedFacts());
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
@@ -248,21 +266,22 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
       recordFailure(store, 'major', error);
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();
-      return;
+      return result;
     }
     // 大摘要模式在大摘要后停止，不做全局压缩。
     if (mode === 'major') {
       finishTask();
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();
-      return;
+      return result;
     }
   }
 
   // 全局压缩：只在自动级联中执行。
-  if (shouldRunGlobalCompression(store)) {
+  if (mode === 'global' || shouldRunGlobalCompression(store)) {
     const consumed = store.major.splice(0, store.major.length);
     try {
+      result.globalRan = true;
       startTask('全局记忆压缩中');
       const prompts = buildGlobalCompressionPrompt(store.global, consumed, anchor, pinnedFacts());
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
@@ -279,13 +298,14 @@ export async function runSummary(ctx: SummaryContext, mode: 'auto' | 'minor' | '
       recordFailure(store, 'global', error);
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();
-      return;
+      return result;
     }
   }
 
   finishTask();
   saveSummaryStore(win, store);
   ctx.onStoreUpdated();
+  return result;
 }
 
 // ── 重roll指定摘要条目 ──

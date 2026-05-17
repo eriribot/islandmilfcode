@@ -18,7 +18,7 @@ import {
 import { refreshWeatherForCurrentState } from './phone/weather';
 import { renderApp } from './render';
 import { mountRadarChart, unmountRadarChart } from './phone/radar';
-import { getCalendarMonthOffset, setCalendarMonthOffset } from './phone/render';
+import { getCalendarMonthOffset, setCalendarMonthOffset, setCalendarSelectedDate } from './phone/render';
 import {
   clearActiveSaveId,
   createManualSave,
@@ -997,6 +997,12 @@ function bindEvents() {
   root?.querySelector<HTMLButtonElement>('[data-action="calendar-next"]')?.addEventListener('click', () => {
     setCalendarMonthOffset(getCalendarMonthOffset() + 1);
     render();
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="calendar-select-date"]').forEach(button => {
+    button.addEventListener('click', () => {
+      setCalendarSelectedDate(button.dataset.date || null);
+      render();
+    });
   });
   root?.querySelector<HTMLButtonElement>('[data-action="return-to-title"]')?.addEventListener('click', () => {
     returnToTitle();

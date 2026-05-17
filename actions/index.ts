@@ -12,7 +12,14 @@ import {
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
 import { generateSecondaryRaw } from '../secondary-api';
 import { createRollbackSnapshot, pushMessage } from '../state/store';
-import { buildFactAnchorFromStatus, runSummary, shouldRunMinorSummary, type SummaryContext } from '../summary';
+import {
+  buildFactAnchorFromStatus,
+  runSummary,
+  shouldRunGlobalCompression,
+  shouldRunMajorSummary,
+  shouldRunMinorSummary,
+  type SummaryContext,
+} from '../summary';
 import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import type {
   PhoneChatMessage,
@@ -568,20 +575,9 @@ export async function submitMessage(
     });
     finalizeStreamingText(ctx, String(result ?? ''), requestGenerationId);
 
-    // 解析并应用变量更新。配置了副 API 时，变量只走后台入口；小摘要触发时由摘要顺手输出 state_delta。
-    if (ctx.summaryApiConfig) {
-      deferProgressToMinorSummary = shouldRunMinorSummary(
-        ctx.summaryStore,
-        countCompletedConversationMessages(state.uiMessages),
-      );
-      if (!deferProgressToMinorSummary) {
-        await runSecondaryProgressUpdate(
-          ctx,
-          `progress-${crypto.randomUUID()}`,
-          buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages)),
-        );
-      }
-    } else {
+    // 配置了副 API 时，变量更新统一延后到 finally 的 post-turn 后台入口；
+    // 到小摘要阈值时由小摘要同一发请求顺手输出 state_delta，避免 progress + summary 连打。
+    if (!ctx.summaryApiConfig) {
       // 主 API 的回复中已经包含 <progress>。
       const mainRaw = String(result ?? '');
       const progressUpdate = parseProgressUpdate(mainRaw);
@@ -623,19 +619,7 @@ export async function submitMessage(
         lastMsg.statusSnapshot = createRollbackSnapshot(state);
         ctx.persistConversation();
       }
-      if (ctx.summaryApiConfig) {
-        deferProgressToMinorSummary = shouldRunMinorSummary(
-          ctx.summaryStore,
-          countCompletedConversationMessages(state.uiMessages),
-        );
-        if (!deferProgressToMinorSummary) {
-          await runSecondaryProgressUpdate(
-            ctx,
-            `progress-${crypto.randomUUID()}`,
-            buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages)),
-          );
-        }
-      } else if (lastMsg?.role === 'assistant') {
+      if (!ctx.summaryApiConfig && lastMsg?.role === 'assistant') {
         const progressUpdate = parseProgressUpdate(lastMsg.text);
         if (progressUpdate) {
           applyFullProgressUpdate(ctx, progressUpdate);
@@ -671,6 +655,10 @@ export async function submitMessage(
     // 正文和主动小手机都结束后再顺序执行摘要，避免后台 generateRaw 抢占正文流。
     if (generationSucceeded && (typeof win.generateRaw === 'function' || typeof win.generate === 'function')) {
       recordGenerationDebug(ctx, 'submit:summary-start');
+      const postTurnMode = ctx.summaryApiConfig
+        ? pickPostTurnBackgroundMode(ctx.summaryStore, countCompletedConversationMessages(state.uiMessages))
+        : 'auto';
+      deferProgressToMinorSummary = postTurnMode === 'minor';
       const summaryCtx: SummaryContext = {
         win,
         state,
@@ -689,15 +677,32 @@ export async function submitMessage(
           summaryAppliedProgress = true;
         },
       };
-      await runSummary(summaryCtx).catch(() => {
-        /* 摘要错误在内部处理 */
-      });
-      if (deferProgressToMinorSummary && !summaryAppliedProgress) {
+      if (postTurnMode === 'minor') {
+        const summaryResult = await runSummary(summaryCtx, 'minor').catch(() => null);
+        if (summaryResult?.minorAppliedProgress) {
+          summaryAppliedProgress = true;
+        }
+        if (!summaryAppliedProgress) {
+          await runSecondaryProgressUpdate(
+            ctx,
+            `progress-fallback-${crypto.randomUUID()}`,
+            buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages)),
+          );
+        }
+      } else if (ctx.summaryApiConfig && (postTurnMode === 'major' || postTurnMode === 'global')) {
+        await runSummary(summaryCtx, postTurnMode).catch(() => {
+          /* 摘要错误在内部处理 */
+        });
+      } else if (ctx.summaryApiConfig) {
         await runSecondaryProgressUpdate(
           ctx,
-          `progress-fallback-${crypto.randomUUID()}`,
+          `progress-${crypto.randomUUID()}`,
           buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages)),
         );
+      } else {
+        await runSummary(summaryCtx).catch(() => {
+          /* 摘要错误在内部处理 */
+        });
       }
       recordGenerationDebug(ctx, 'submit:summary-finished');
     }
@@ -996,6 +1001,16 @@ async function generateSilentAnalysis(ctx: ActionContext, generationId: string, 
 function countCompletedConversationMessages(messages: UiMessage[]): number {
   return messages.filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
     .length;
+}
+
+function pickPostTurnBackgroundMode(
+  summaryStore: SummaryStore,
+  messageCount: number,
+): 'progress' | 'minor' | 'major' | 'global' {
+  if (shouldRunGlobalCompression(summaryStore)) return 'global';
+  if (shouldRunMajorSummary(summaryStore)) return 'major';
+  if (shouldRunMinorSummary(summaryStore, messageCount)) return 'minor';
+  return 'progress';
 }
 
 function normalizeScenePresenceIds(ids: unknown, allowedIds: Set<string>) {
