@@ -10,7 +10,7 @@ import {
   parseProgressUpdate,
 } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
-import { generateSecondaryRaw } from '../secondary-api';
+import { runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
 import { createRollbackSnapshot, pushMessage } from '../state/store';
 import {
   buildFactAnchorFromStatus,
@@ -989,9 +989,25 @@ function parsePhoneActionDetectorResult(
   return target ? { target, text: message } : null;
 }
 
-async function generateSilentAnalysis(ctx: ActionContext, generationId: string, prompts: RawPrompt[]): Promise<string> {
-  return generateSecondaryRaw({
+function commitPhoneDirectiveAnalysis(
+  ctx: ActionContext,
+  raw: string,
+  userInput: string,
+): { directive: PhoneDirective | null } {
+  return {
+    directive: parsePhoneActionDetectorResult(ctx, raw, userInput),
+  };
+}
+
+async function generateSilentAnalysis(
+  ctx: ActionContext,
+  generationId: string,
+  prompts: RawPrompt[],
+  kind: Extract<SecondaryTaskKind, 'phone-directive-detect' | 'scene-presence' | 'phone-scene-extract'>,
+): Promise<string> {
+  return runSecondaryTask({
     win: ctx.win,
+    kind,
     generationId,
     prompts,
     apiConfig: ctx.summaryApiConfig,
@@ -1113,6 +1129,12 @@ function parseScenePresenceResult(ctx: ActionContext, rawResult: string): SceneP
   }
 }
 
+function commitScenePresenceAnalysis(ctx: ActionContext, raw: string): { presence: ScenePresence } {
+  return {
+    presence: parseScenePresenceResult(ctx, raw),
+  };
+}
+
 async function detectScenePresence(
   ctx: ActionContext,
   promptHistory: UiMessage[],
@@ -1123,17 +1145,23 @@ async function detectScenePresence(
     return { presentIds: [], focusIds: [], absentIds: [], uncertainIds: [], evidence: {} };
   }
   const generationId = `scene-presence-${crypto.randomUUID()}`;
-  const rawResult = await generateSilentAnalysis(ctx, generationId, buildScenePresencePrompts(ctx, promptHistory, userInput));
-  const parsed = parseScenePresenceResult(ctx, rawResult);
+  const rawResult = await generateSilentAnalysis(
+    ctx,
+    generationId,
+    buildScenePresencePrompts(ctx, promptHistory, userInput),
+    'scene-presence',
+  );
+  const committed = commitScenePresenceAnalysis(ctx, rawResult);
+  const { presence } = committed;
   recordGenerationDebug(ctx, 'scene-presence:detected', {
     generationId,
     rawLength: String(rawResult ?? '').length,
-    presentIds: parsed.presentIds,
-    focusIds: parsed.focusIds,
-    absentIds: parsed.absentIds,
-    uncertainIds: parsed.uncertainIds,
+    presentIds: presence.presentIds,
+    focusIds: presence.focusIds,
+    absentIds: presence.absentIds,
+    uncertainIds: presence.uncertainIds,
   });
-  return parsed;
+  return presence;
 }
 
 async function runSecondaryProgressUpdate(
@@ -1149,15 +1177,15 @@ async function runSecondaryProgressUpdate(
     ctx.render();
   }
   try {
-    const raw = await generateSecondaryRaw({
+    const raw = await runSecondaryTask({
       win: ctx.win,
+      kind: targetId ? 'phone-progress' : 'progress',
       generationId,
       prompts,
       apiConfig: ctx.summaryApiConfig,
     });
-    const update = parseProgressUpdate(raw);
-    if (update) {
-      applyFullProgressUpdate(ctx, update, targetId);
+    const committed = commitProgressAnalysis(ctx, raw, targetId);
+    if (committed.applied) {
       if (showTask) clearBackgroundTask(ctx.state, 'progress');
       return true;
     }
@@ -1168,6 +1196,17 @@ async function runSecondaryProgressUpdate(
   }
   if (showTask) ctx.render();
   return false;
+}
+
+function commitProgressAnalysis(
+  ctx: ActionContext,
+  raw: string,
+  targetId?: string | null,
+): { applied: boolean; update: ProgressUpdate | null } {
+  const update = parseProgressUpdate(raw);
+  if (!update) return { applied: false, update: null };
+  applyFullProgressUpdate(ctx, update, targetId);
+  return { applied: true, update };
 }
 
 export async function retryBackgroundProgressUpdate(ctx: ActionContext) {
@@ -1188,16 +1227,17 @@ async function detectPhoneDirectiveWithLlm(ctx: ActionContext, userInput: string
   const prompts = buildPhoneActionDetectorPrompts(ctx, userInput);
   const generationId = `phone-directive-detect-${crypto.randomUUID()}`;
   debugPhoneFlow(ctx, 'directive-llm:start', { generationId, inputLength: userInput.length });
-  const rawResult = await generateSilentAnalysis(ctx, generationId, prompts);
+  const rawResult = await generateSilentAnalysis(ctx, generationId, prompts, 'phone-directive-detect');
 
-  const parsed = parsePhoneActionDetectorResult(ctx, String(rawResult ?? ''), userInput);
-  debugPhoneFlow(ctx, parsed ? 'directive-llm:matched' : 'directive-llm:no-match', {
+  const committed = commitPhoneDirectiveAnalysis(ctx, rawResult, userInput);
+  const { directive } = committed;
+  debugPhoneFlow(ctx, directive ? 'directive-llm:matched' : 'directive-llm:no-match', {
     generationId,
     rawLength: String(rawResult ?? '').length,
-    targetId: parsed?.target.id ?? null,
-    textLength: parsed?.text.length ?? 0,
+    targetId: directive?.target.id ?? null,
+    textLength: directive?.text.length ?? 0,
   });
-  return parsed;
+  return directive;
 }
 
 function buildScenePhoneMessageExtractorPrompts(ctx: ActionContext, sceneText: string): RawPrompt[] {
@@ -1294,6 +1334,16 @@ function parseScenePhoneMessageExtractorResult(
     .filter((item): item is ScenePhoneMessage => Boolean(item));
 }
 
+function commitScenePhoneMessageAnalysis(
+  ctx: ActionContext,
+  raw: string,
+  sceneText: string,
+): { messages: ScenePhoneMessage[] } {
+  return {
+    messages: parseScenePhoneMessageExtractorResult(ctx, raw, sceneText),
+  };
+}
+
 async function extractScenePhoneMessagesWithLlm(ctx: ActionContext, sceneText: string): Promise<ScenePhoneMessage[]> {
   if (!sceneText.trim()) {
     debugPhoneFlow(ctx, 'scene-extract-llm:skip-empty-scene');
@@ -1307,15 +1357,16 @@ async function extractScenePhoneMessagesWithLlm(ctx: ActionContext, sceneText: s
   const prompts = buildScenePhoneMessageExtractorPrompts(ctx, sceneText);
   const generationId = `phone-scene-extract-${crypto.randomUUID()}`;
   debugPhoneFlow(ctx, 'scene-extract-llm:start', { generationId, sceneLength: sceneText.length });
-  const rawResult = await generateSilentAnalysis(ctx, generationId, prompts);
+  const rawResult = await generateSilentAnalysis(ctx, generationId, prompts, 'phone-scene-extract');
 
-  const parsed = parseScenePhoneMessageExtractorResult(ctx, String(rawResult ?? ''), sceneText);
-  debugPhoneFlow(ctx, parsed.length ? 'scene-extract-llm:matched' : 'scene-extract-llm:no-match', {
+  const committed = commitScenePhoneMessageAnalysis(ctx, rawResult, sceneText);
+  const { messages } = committed;
+  debugPhoneFlow(ctx, messages.length ? 'scene-extract-llm:matched' : 'scene-extract-llm:no-match', {
     generationId,
     rawLength: String(rawResult ?? '').length,
-    count: parsed.length,
+    count: messages.length,
   });
-  return parsed;
+  return messages;
 }
 
 function extractPhoneMessageDirective(ctx: ActionContext, userInput: string): PhoneDirective | null {

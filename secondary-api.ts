@@ -3,6 +3,25 @@ import type { TavernWindow } from './types';
 
 export type SecondaryPrompt = { role: string; content: string };
 
+export type SecondaryTaskKind =
+  | 'summary-minor'
+  | 'summary-major'
+  | 'summary-global'
+  | 'progress'
+  | 'phone-progress'
+  | 'phone-directive-detect'
+  | 'scene-presence'
+  | 'phone-scene-extract'
+  | 'custom';
+
+export type SecondaryTaskCall = {
+  win: TavernWindow;
+  kind: SecondaryTaskKind;
+  generationId: string;
+  prompts: SecondaryPrompt[];
+  apiConfig: SummaryApiConfig | null;
+};
+
 export async function generateSecondaryRaw(input: {
   win: TavernWindow;
   generationId: string;
@@ -47,4 +66,8 @@ export async function generateSecondaryRaw(input: {
   }
 
   throw new Error('generateRaw/generate not available');
+}
+
+export async function runSecondaryTask(input: SecondaryTaskCall): Promise<string> {
+  return generateSecondaryRaw(input);
 }

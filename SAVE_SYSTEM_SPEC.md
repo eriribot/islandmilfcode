@@ -1,260 +1,455 @@
-        1 # IslandMemoryDB 方案评估与优化计划
-        2
-        3 ## Context
-        4
-        5 当前项目每轮 prompt 注入约 5,500-13,000 tokens，存在三个核心问题：
-        6 1. **全量注入** — 5个角色的关系指导全部注入，不管是否在场（浪费 1500-3000 tokens）
-        7 2. **摘要无筛选** — global + 所有 major + 所有 minor 全部拼接注入
-        8 3. **缺少结构化印象** — AI 只能从自由文本"回忆"角色对玩家的态度，容易幻觉
-        9
-       10 用户提出的 IslandMemoryDB 方案方向正确，但部分模块与现有系统重复。本计划给出"复用现有 + 增量增强"的优化
-          路径。
-       11
-       12 ---
-       13
-       14 ## 一、方案评估
-       15
-       16 ### 合理的部分
-       17
-       18 | 模块 | 评价 |
-       19 |------|------|
-       20 | `facts` | 方向对，但现有 KeyFact 已实现 80%。缺的是"锁定不可覆盖"和"按相关性筛选" |
-       21 | `relationTags` | **必要且缺失**。现有只有硬编码 stage 文本，没有动态关系描述 |
-       22 | `impressionTags` | **必要且缺失**。系统完全没有"角色对玩家的印象"维度 |
-       23 | `tasks` | 合理。KeyFact[promise] 只是文本，没有状态机(pending/done/expired) |
-       24 | `presence` | **必要**。现有 `isTargetMentioned` 只做文本匹配，太弱 |
-       25
-       26 ### 冗余/应复用的部分
-       27
-       28 | 模块 | 问题 |
-       29 |------|------|
-       30 | `episodeLog` | 与 SummaryStore 三级摘要完全重复，不需要 |
-       31 | `facts` 如果独立重建 | 与 KeyFact 重复，应增强而非另起 |
-       32
-       33 ### 核心结论
-       34
-       35 **不要新建独立的 IslandMemoryDB 模块**。现有 SummaryStore + StatusData 的存储管道已成熟（SavePayload →
-          MVU/localStorage），新增数据挂在同一管道上即可。
-       36
-       37 ---
-       38
-       39 ## 二、推荐架构
-       40
-       41 ```
-       42 现有系统增强（不新建独立DB）
-       43 ├─ KeyFact (增强)         → 加 locked/priority/relatedTargets 字段
-       44 ├─ RelationTag (新增)     → 动态关系标签，互斥覆盖
-       45 ├─ ImpressionTag (新增)   → 角色对玩家的印象标签+权重
-       46 ├─ TaskMemory (新增)      → 从 KeyFact[promise] 升级，加状态机
-       47 ├─ PresenceEngine (新增)  → 基于地点+文本+事件的在场推断
-       48 └─ SummaryStore (保留)    → 不变，裁剪注入量即可
-       49 ```
-       50
-       51 ---
-       52
-       53 ## 三、数据结构
-       54
-       55 新建文件 `memory/types.ts`：
-       56
-       57 ```typescript
-       58 export type RelationTag = {
-       59   id: string;
-       60   targetId: string;
-       61   label: string;              // "同伴候补"、"创作伙伴"
-       62   exclusiveGroup?: string;    // 同组只保留最新
-       63   sourceRange: [number, number];
-       64   createdAt: string;
-       65   superseded?: boolean;
-       66 };
-       67
-       68 export type ImpressionTag = {
-       69   id: string;
-       70   targetId: string;
-       71   label: string;              // "守口如瓶"、"说话轻浮"
-       72   weight: number;             // -5 到 +5
-       73   sourceRange: [number, number];
-       74   createdAt: string;
-       75 };
-       76
-       77 export type TaskMemoryStatus = 'pending' | 'done' | 'expired' | 'archived';
-       78
-       79 export type TaskMemory = {
-       80   id: string;
-       81   targetId: string;
-       82   content: string;
-       83   trigger?: string;
-       84   deadline?: string;          // 游戏内时间
-       85   status: TaskMemoryStatus;
-       86   sourceRange: [number, number];
-       87   createdAt: string;
-       88   resolvedAt?: string;
-       89 };
-       90
-       91 export type PresenceEntry = {
-       92   targetId: string;
-       93   reason: 'text_mention' | 'location_match' | 'event_participant' | 'explicit';
-       94   confidence: number;         // 0-1
-       95 };
-       96
-       97 export type PresenceState = {
-       98   current: PresenceEntry[];
-       99   previous: PresenceEntry[];
-      100 };
-      101
-      102 export type MemoryStore = {
-      103   relationTags: RelationTag[];
-      104   impressionTags: ImpressionTag[];
-      105   tasks: TaskMemory[];
-      106   presence: PresenceState;
-      107 };
-      108 ```
-      109
-      110 KeyFact 增强（修改 `summary/types.ts`）：
-      111 ```typescript
-      112 export type KeyFact = {
-      113   // ...现有字段不变
-      114   locked?: boolean;           // 锁定后不被 supersede
-      115   priority?: number;          // 1-5，默认3
-      116   relatedTargets?: string[];  // 关联角色，用于按在场筛选
-      117 };
-      118 ```
-      119
-      120 ---
-      121
-      122 ## 四、注入策略（核心省 token 点）
-      123
-      124 ### 优化后的 prompt 注入格式
-      125
-      126 ```
-      127 [在场角色记忆]
-      128
-      129 [英梨梨] 好感度:45 试探靠近
-      130 - 关系：同伴候补
-      131 - 印象：守口如瓶(+2)；偶尔说话轻浮(-1)
-      132 - 待办：User答应下周一请她吃蛋包饭 [截止:2012-04-22]
-      133 - 事实：User知道她的柏木英理身份，未公开泄露
-      134
-      135 [加藤惠] 好感度:32 试探靠近
-      136 - 关系：普通同学
-      137 - 印象：还算有礼貌(+1)
-      138
-      139 [不在场角色概况]
-      140 - 霞之丘诗羽：好感度15，关系=观察样本
-      141 - 波岛出海：好感度8
-      142 - 冰堂美智留：好感度12
-      143 ```
-      144
-      145 ### 注入规则
-      146
-      147 1. **在场角色**（由 PresenceEngine 判定）：注入完整 stage reaction + 结构化标签
-      148 2. **不在场角色**：只输出一行（名字+好感度+关系标签）
-      149 3. **KeyFact**：按 priority 降序，只注入 top-10 且 relatedTargets 包含在场角色的
-      150 4. **摘要**：只注入 global + 最新 1 条 major（minor 不注入，信息已被 major 吸收）
-      151
-      152 ---
-      153
-      154 ## 五、Token 预算对比
-      155
-      156 | 模块 | 优化前 | 优化后 | 节省 |
-      157 |------|--------|--------|------|
-      158 | 关系指导（5角色全量） | 2000-4000 | 400-1200（1-2在场） | ~60% |
-      159 | 摘要（全量） | 1500-4000 | 400-800（global+1 major） | ~70% |
-      160 | KeyFact（全量） | 300-800 | 200-400（top-10筛选） | ~40% |
-      161 | 结构化标签（新增） | 0 | 200-400 | +200-400 |
-      162 | 不在场角色摘要（新增） | 0 | 100-200 | +100-200 |
-      163 | **总计** | **6400-15000** | **4200-10000** | **~35%** |
-      164
-      165 ---
-      166
-      167 ## 六、读写时机
-      168
-      169 | 数据 | 写入时机 | 写入方式 |
-      170 |------|---------|---------|
-      171 | RelationTag | 小摘要生成时 | 扩展摘要 prompt，解析 `<relation_tags>` |
-      172 | ImpressionTag | 小摘要生成时 | 扩展摘要 prompt，解析 `<impression_tags>` |
-      173 | TaskMemory | 小摘要时 + state_delta 解析 | KeyFact[promise]自动升级；AI 通过 `任务完成:xxx` 标记 |
-      174 | PresenceState | 每轮生成前（同步） | 确定性算法：location匹配 + 文本提及 + 剧情卡参与者 |
-      175 | KeyFact 增强字段 | 小摘要时 | 扩展提取逻辑 |
-      176
-      177 ---
-      178
-      179 ## 七、实现优先级
-      180
-      181 ### P0 — 立即收益，改动最小（预计省 2000-3000 tokens/轮）
-      182
-      183 1. **PresenceEngine + 按在场筛选注入**
-      184    - 修改 `message-format.ts` 的 `buildRelationshipGuidanceList`
-      185    - 在场角色：完整指导；不在场：一行摘要
-      186    - 文件：`message-format.ts`
-      187
-      188 2. **摘要注入裁剪**
-      189    - `buildSummaryContextInline` 改为 global + 最新1条 major
-      190    - 文件：`message-format.ts`
-      191
-      192 ### P1 — 中等收益，新增数据结构
-      193
-      194 3. **MemoryStore 数据结构 + 存储管道**
-      195    - 新建 `memory/types.ts`
-      196    - 挂载到 SavePayload（与 summaryStore 同级）
-      197    - 文件：新建 `memory/types.ts`, 修改 `types.ts`, `state/saves.ts`
-      198
-      199 4. **ImpressionTag + RelationTag 提取**
-      200    - 扩展 `buildMinorSummaryPrompt` 增加提取指令
-      201    - 新增解析逻辑
-      202    - 文件：`summary/engine.ts`, `summary/run.ts`, 新建 `memory/engine.ts`
-      203
-      204 5. **TaskMemory 状态机**
-      205    - 从 KeyFact[promise] 自动迁移
-      206    - state_delta 增加 `任务完成:xxx` 解析
-      207    - 文件：`message-format.ts`, `memory/engine.ts`
-      208
-      209 ### P2 — 长期优化
-      210
-      211 6. **KeyFact 增强（priority + relatedTargets + 限量注入）**
-      212 7. **PresenceEngine 高级推断（location + 剧情卡参与者）**
-      213
-      214 ---
-      215
-      216 ## 八、关键设计决策
-      217
-      218 1. **在场判断必须是确定性的** — 不让 AI 判断谁在场，用 location + 文本提及 + 剧情卡做确定性推断
-      219 2. **硬编码关系指导保留** — relationship.ts 的 stage reaction 是精调的行为锚点，动态标签是补充层不是替
-          代层
-      220 3. **提取搭载副 API** — 不额外调 API，在已有的小摘要流程中扩展 prompt 和解析
-      221 4. **向后兼容** — MemoryStore 全部 optional，旧存档走 `createDefaultMemoryStore()` 兜底
-      222
-      223 ---
-      224
-      225 ## 九、验证方式
-      226
-      227 1. 对比优化前后同一场景的 prompt 长度（字符数/token 数）
-      228 2. 跑 3-5 轮对话，观察 AI 是否仍能正确引用不在场角色的信息（通过 KeyFact）
-      229 3. 检查在场判断准确率：手动标注 10 轮对话的在场角色，对比引擎输出
-      230 4. 观察 ImpressionTag 提取质量：是否能从对话中正确提取印象变化
-      231
-      232 ---
-      233
-      234 ## 关键文件清单
-      235
-      236 - `message-format.ts` — prompt 构建主逻辑，P0 改动集中在此
-      237 - `summary/engine.ts` — 摘要 prompt 构建，P1 扩展提取指令
-      238 - `summary/run.ts` — 摘要执行+解析，P1 增加标签解析
-      239 - `summary/types.ts` — KeyFact 类型增强
-      240 - `types.ts` — AppState/StatusData 类型
-      241 - `relationship.ts` — 关系指导（保留，不大改）
-      242 - 新建 `memory/types.ts` — MemoryStore 数据结构
-      243 - 新建 `memory/engine.ts` — 标签提取+在场推断逻辑
-  ⎿  3 PostToolUse hooks ran
+# IslandMemoryDB 表格化存档方案
 
-                                                                                        09:05 PM claude-opus-4-7
-● 计划已写好。核心结论：
+## Context
 
-  不要另建独立的 IslandMemoryDB — 你的 6 个模块中，episodeLog 与现有 SummaryStore 重复，facts 与 KeyFact 重复。其余 4
-  个（relationTags、impressionTags、tasks、presence）确实是缺失的，应作为增量挂载到现有存储管道上。
+当前项目已经有 `statusData`、`summaryStore`、手机消息、剧情库和副 API 分析任务。旧方案把 `SummaryStore` 视为摘要主链，再在旁边增量挂 `MemoryStore`，这个方向不够彻底。
 
-  最大的省 token 收益来自 P0（改动最小）：
+更正后的目标是：**把 summary 集成进 IslandMemoryDB，让 MemoryDB 成为长期记忆的主存储，summary 只是其中一种压缩视图。**
 
-- 在场角色筛选注入（不在场的只给一行摘要）→ 省 60% 关系指导 token
-- 摘要裁剪（只注入 global + 最新 major）→ 省 70% 摘要 token
+也就是说，不再把记忆理解成“一段段摘要文本”，而是让副 API 和解析器持续填写结构化表格。Prompt 构建时按当前场景检索相关表格行，再临时渲染成上下文。
 
-  结构化标签（印象/关系/任务）是 P1，收益在于减少幻觉 — AI 看到明确的 守口如瓶(+2) 比从 3000 字摘要中"回忆"稳定得多。
+---
+
+## 一、核心结论
+
+### 旧结论需要废弃
+
+旧结论：
+
+- `episodeLog` 与 `SummaryStore` 重复，所以不需要。
+- `facts` 与 `KeyFact` 重复，所以只增强 KeyFact。
+- `SummaryStore` 保留不变，只裁剪注入量。
+
+这些判断过于保守。真正应该做的是：
+
+1. `episodeLog` 不删除，而是升级成 `events` 表。
+2. `facts` 不依附 `KeyFact`，而是成为 `facts` 表。
+3. `minor / major / global summary` 不再是外置主结构，而是进入 `summaries` 表。
+4. `SummaryStore.keyFacts` 后续应迁移为 MemoryDB 的结构化表行。
+5. `summary` 只负责压缩旧表行和旧对话，不负责承载全部长期记忆。
+
+### 新结论
+
+**IslandMemoryDB 是表格化主存储。**
+
+`summary`、`facts`、`events`、`relations`、`tasks`、`phoneMessages` 等都属于 MemoryDB 的表。系统每轮不是只生成一段摘要，而是把可稳定复用的信息填入对应表格。
+
+---
+
+## 二、总体架构
+
+```text
+IslandMemoryDB
+├─ entities          角色、玩家、地点、组织等实体
+├─ events            已发生事件与剧情节点
+├─ facts             稳定事实
+├─ relations         角色关系与关系标签
+├─ impressions       角色对玩家的印象
+├─ tasks             承诺、待办、约定、未完成事项
+├─ secrets           秘密、知情范围、泄露状态
+├─ items             物品归属、位置、状态
+├─ locations         地点状态与地点相关记忆
+├─ phoneMessages     手机消息索引
+└─ summaries         minor / major / global 压缩视图
+```
+
+`statusData` 仍然保留，负责当前状态快照，例如当前时间、地点、好感度、主线事件进度。MemoryDB 负责长期可检索记忆。
+
+---
+
+## 三、表结构草案
+
+新建 `memory/types.ts`，核心类型如下。
+
+```typescript
+export type MemorySourceType =
+  | 'turn'
+  | 'summary'
+  | 'progress'
+  | 'phone'
+  | 'scene-presence'
+  | 'manual'
+  | 'migration';
+
+export type MemoryConfidence = 'low' | 'medium' | 'high' | 'certain';
+
+export type MemoryBaseRow = {
+  id: string;
+  sourceType: MemorySourceType;
+  sourceId?: string;
+  sourceRange?: [number, number];
+  confidence: MemoryConfidence;
+  importance: number; // 1-5
+  tags: string[];
+  createdAt: string;
+  updatedAt?: string;
+  lastSeenAt?: string;
+  active: boolean;
+  supersededBy?: string;
+};
+```
+
+### entities
+
+```typescript
+export type MemoryEntity = MemoryBaseRow & {
+  kind: 'character' | 'player' | 'location' | 'organization' | 'concept';
+  entityId: string;
+  name: string;
+  aliases: string[];
+};
+```
+
+### events
+
+```typescript
+export type MemoryEvent = MemoryBaseRow & {
+  title: string;
+  content: string;
+  time?: string;
+  location?: string;
+  participants: string[];
+  relatedMainEventId?: string;
+  outcome?: string;
+};
+```
+
+### facts
+
+```typescript
+export type MemoryFact = MemoryBaseRow & {
+  category: 'profile' | 'event' | 'location' | 'item' | 'relation' | 'rule' | 'other';
+  subject: string;
+  content: string;
+  relatedEntityIds: string[];
+};
+```
+
+### relations
+
+```typescript
+export type MemoryRelation = MemoryBaseRow & {
+  fromEntityId: string;
+  toEntityId: string;
+  label: string;
+  stage?: string;
+  affinity?: number;
+  exclusiveGroup?: string;
+  reason?: string;
+};
+```
+
+### impressions
+
+```typescript
+export type MemoryImpression = MemoryBaseRow & {
+  targetId: string;
+  label: string;
+  polarity: -1 | 0 | 1;
+  weight: number; // -5 到 +5
+  reason: string;
+};
+```
+
+### tasks
+
+```typescript
+export type MemoryTaskStatus = 'pending' | 'done' | 'expired' | 'archived';
+
+export type MemoryTask = MemoryBaseRow & {
+  ownerId?: string;
+  targetId?: string;
+  content: string;
+  trigger?: string;
+  deadline?: string;
+  status: MemoryTaskStatus;
+  resolvedAt?: string;
+};
+```
+
+### secrets
+
+```typescript
+export type MemorySecret = MemoryBaseRow & {
+  subject: string;
+  content: string;
+  knownBy: string[];
+  hiddenFrom: string[];
+  risk: 'low' | 'medium' | 'high';
+  revealed: boolean;
+};
+```
+
+### items
+
+```typescript
+export type MemoryItem = MemoryBaseRow & {
+  name: string;
+  ownerId?: string;
+  holderId?: string;
+  location?: string;
+  state?: string;
+};
+```
+
+### phoneMessages
+
+手机正文仍然可以保留在现有 `phoneMessages.threads` 中。MemoryDB 里只放可检索索引，避免重复塞完整聊天记录。
+
+```typescript
+export type MemoryPhoneMessage = MemoryBaseRow & {
+  targetId: string;
+  role: 'user' | 'assistant';
+  messageId: string;
+  textPreview: string;
+  time?: string;
+  linkedEventId?: string;
+};
+```
+
+### summaries
+
+summary 集成到 MemoryDB，作为压缩视图，而不是外部主存储。
+
+```typescript
+export type MemorySummaryLevel = 'minor' | 'major' | 'global';
+
+export type MemorySummary = MemoryBaseRow & {
+  level: MemorySummaryLevel;
+  range: [number, number];
+  text: string;
+  coveredRowIds: string[];
+  coveredSummaryIds: string[];
+};
+```
+
+### MemoryDB
+
+```typescript
+export type IslandMemoryDB = {
+  version: 1;
+  entities: MemoryEntity[];
+  events: MemoryEvent[];
+  facts: MemoryFact[];
+  relations: MemoryRelation[];
+  impressions: MemoryImpression[];
+  tasks: MemoryTask[];
+  secrets: MemorySecret[];
+  items: MemoryItem[];
+  phoneMessages: MemoryPhoneMessage[];
+  summaries: MemorySummary[];
+  indexes: {
+    byEntityId: Record<string, string[]>;
+    byTag: Record<string, string[]>;
+    bySourceId: Record<string, string[]>;
+  };
+};
+```
+
+---
+
+## 四、summary 如何集成
+
+现有 `SummaryStore`：
+
+```typescript
+{
+  global,
+  major,
+  minor,
+  keyFacts,
+  lastSummarizedIndex
+}
+```
+
+迁移后：
+
+```text
+SummaryStore.global        -> memoryDB.summaries[level=global]
+SummaryStore.major[]       -> memoryDB.summaries[level=major]
+SummaryStore.minor[]       -> memoryDB.summaries[level=minor]
+SummaryStore.keyFacts[]    -> memoryDB.facts / tasks / secrets / relations / items
+lastSummarizedIndex        -> memoryDB 元信息或 summary 游标
+```
+
+小摘要不再只是生成 `text`，而是一次“填表”：
+
+1. 生成 `MemorySummary(level=minor)`。
+2. 从同一轮结果提取 `events / facts / relations / impressions / tasks / secrets / items`。
+3. 所有新行记录 `sourceType='summary'` 和 `sourceId=minorSummary.id`。
+4. 大摘要和全局摘要只压缩 summary 行与高价值 memory 行，不覆盖原始结构化表。
+
+---
+
+## 五、写入时机
+
+| 数据表 | 写入时机 | 来源 |
+|---|---|---|
+| `events` | 主回复完成后、小摘要生成时 | progress 分析、summary 提取 |
+| `facts` | 小摘要生成时 | 旧 KeyFact 提取升级 |
+| `relations` | 小摘要生成时、好感变化时 | summary 提取、progress |
+| `impressions` | 小摘要生成时 | summary 提取 |
+| `tasks` | 玩家承诺、任务完成、summary 提取时 | phone directive、state_delta、summary |
+| `secrets` | 小摘要生成时 | summary 提取 |
+| `items` | 物品出现、归属变化时 | summary 提取、progress |
+| `phoneMessages` | 手机消息追加时 | phone thread commit |
+| `summaries` | minor / major / global 摘要生成时 | summary run |
+
+重要原则：**只把已解析、已提交、可信的结果写入 MemoryDB。不要把副 API 原始 raw 直接存成记忆。**
+
+---
+
+## 六、检索与注入策略
+
+Prompt 构建前执行一次 retrieval：
+
+```text
+当前用户输入
++ 当前时间/地点
++ 当前主线事件
++ 当前在场角色
++ 最近手机消息
+=> 查询 MemoryDB
+=> 生成本轮 memory context
+```
+
+### 注入分层
+
+1. **当前场景强相关**
+   - 在场角色相关 `relations / impressions / tasks / secrets`
+   - 当前地点相关 `events / facts / locations`
+   - 当前主线事件相关 `events / summaries`
+
+2. **稳定事实**
+   - 高 importance 且 active 的 `facts / secrets / tasks`
+   - 不被 `supersededBy` 覆盖
+
+3. **压缩摘要**
+   - 最新 global
+   - 与当前事件或角色相关的 major
+   - 必要时补最近 minor
+
+### 渲染示例
+
+```text
+[当前相关记忆]
+- 事件：英梨梨在美术教室承认自己就是柏木英理，User承诺不会公开。
+- 秘密：英梨梨的柏木英理身份；已知者：User、英梨梨；未公开。
+- 关系：User -> 英梨梨：创作伙伴候补，理由：共同处理社团企划。
+- 印象：英梨梨认为 User 守口如瓶(+2)，但偶尔说话轻浮(-1)。
+- 待办：User 答应下周一请英梨梨吃蛋包饭，状态 pending。
+
+[压缩摘要]
+- major：过去几轮围绕社团企划、英梨梨身份暴露和玩家承诺展开。
+```
+
+---
+
+## 七、去重与覆盖规则
+
+### 通用规则
+
+1. 同表同主体同内容：视为重复，只更新 `lastSeenAt`。
+2. 同表同主体同类别但内容冲突：旧行设置 `supersededBy`。
+3. `active=false` 的行默认不参与 prompt 注入。
+4. `importance>=4` 的行不会被普通低置信度行覆盖。
+5. `confidence='certain'` 的确定性状态优先于 LLM 提取结果。
+
+### 表级规则
+
+- `relations`：同一 `exclusiveGroup` 只保留最新 active 行。
+- `tasks`：pending 任务被 done/expired 覆盖，但保留历史。
+- `secrets`：`knownBy / hiddenFrom / revealed` 走状态更新，不直接新增重复秘密。
+- `phoneMessages`：按 `messageId` 去重。
+- `summaries`：只压缩，不覆盖结构化事实。
+
+---
+
+## 八、与现有代码的落点
+
+### 新增文件
+
+- `memory/types.ts`：表结构类型
+- `memory/store.ts`：默认值、反序列化、迁移
+- `memory/upsert.ts`：去重、覆盖、写入规则
+- `memory/retrieve.ts`：检索和评分
+- `memory/render.ts`：渲染成 prompt context
+- `memory/migrate.ts`：从旧 `SummaryStore` 迁移
+
+### 修改文件
+
+- `types.ts`
+  - `SavePayload` 或存档结构增加 `memoryDB`
+  - 保留 `summaryStore` 兼容旧存档，后续可降级为迁移来源
+
+- `summary/types.ts`
+  - 短期保留现有类型
+  - 后续 `SummaryStore` 可逐步变成兼容层
+
+- `summary/run.ts`
+  - minor 生成后写入 `memoryDB.summaries`
+  - keyFacts 解析结果改为分流写入具体表
+  - major/global 生成后写入 `memoryDB.summaries`
+
+- `actions/index.ts`
+  - 已集中化的 `commitProgressAnalysis`
+  - 已集中化的 `commitPhoneDirectiveAnalysis`
+  - 已集中化的 `commitScenePresenceAnalysis`
+  - 已集中化的 `commitScenePhoneMessageAnalysis`
+  - 这些 commit 点后续是写入 MemoryDB 的最佳入口
+
+- `message-format.ts`
+  - `buildPrompt` 从直接拼 `summaryStore` 改为拼 `renderMemoryContext(...)`
+  - 保留 statusData 当前状态注入
+
+---
+
+## 九、实现优先级
+
+### P0：建立表结构和迁移壳
+
+1. 新增 `IslandMemoryDB` 类型和默认值。
+2. 存档结构增加 `memoryDB?: IslandMemoryDB`。
+3. 写 `migrateSummaryStoreToMemoryDB(...)`。
+4. 暂时保持 prompt 仍读旧 summary，先保证存档兼容。
+
+### P1：summary 入表
+
+1. minor / major / global 摘要写入 `memoryDB.summaries`。
+2. `keyFacts` 分流写入 `facts / tasks / secrets / relations / items`。
+3. 建立基础 upsert 和 supersede 规则。
+
+### P2：检索注入
+
+1. 实现 `retrieveRelevantMemory(...)`。
+2. `buildPrompt` 注入 MemoryDB 检索结果。
+3. 摘要注入从“全量拼接”改为“相关 summaries + 高价值 rows”。
+
+### P3：副 API commit 写表
+
+1. progress commit 写 `events / relations`。
+2. phone directive commit 写 `tasks / phoneMessages`。
+3. phone scene extract commit 写 `phoneMessages / events`。
+4. scene presence 只作为本轮检索条件，不直接写长期记忆，除非有明确地点/事件证据。
+
+---
+
+## 十、验证方式
+
+1. 旧存档迁移后不丢失 `global / major / minor / keyFacts`。
+2. 连跑 5 轮对话，MemoryDB 表行稳定增长，不出现大量重复。
+3. 同一事实重复出现时只更新 `lastSeenAt`，不刷屏新增。
+4. 冲突事实能正确 supersede。
+5. Prompt 注入长度下降，同时仍能引用关键承诺、秘密和关系变化。
+6. 手机消息不会被重复索引。
+7. 中文文档和存档内容保持 UTF-8，不出现乱码。
+
+---
+
+## 十一、关键原则
+
+1. **MemoryDB 是主存储，summary 是表格中的压缩视图。**
+2. **先填表，再检索，再渲染 prompt。**
+3. **不要把 raw LLM 输出当记忆，只保存 parse/commit 后的结构化结果。**
+4. **statusData 管当前状态，MemoryDB 管长期可检索历史。**
+5. **summary 不再承担全部长期记忆，只承担压缩和索引辅助。**

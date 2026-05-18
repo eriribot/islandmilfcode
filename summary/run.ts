@@ -1,6 +1,6 @@
 import { getVisibleMessageText, parseProgressUpdate, type ProgressUpdate } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
-import { generateSecondaryRaw } from '../secondary-api';
+import { runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
 import type { AppState, TavernWindow, UiMessage } from '../types';
 import {
   buildGlobalCompressionPrompt,
@@ -85,10 +85,12 @@ async function callGenerateRaw(
   win: TavernWindow,
   prompts: Array<{ role: string; content: string }>,
   apiConfig: SummaryApiConfig | null,
+  kind: Extract<SecondaryTaskKind, 'summary-minor' | 'summary-major' | 'summary-global'>,
 ): Promise<string> {
-  return generateSecondaryRaw({
+  return runSecondaryTask({
     win,
     generationId: `summary-${crypto.randomUUID()}`,
+    kind,
     prompts,
     apiConfig,
   });
@@ -193,7 +195,7 @@ export async function runSummary(
         result.minorRan = true;
         startTask('小摘要生成中');
         const prompts = buildMinorSummaryPrompt(unsummarized, anchor);
-        const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
+        const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-minor');
         const text = parseSummaryResult(raw);
         if (text) {
           const nextIndex = startIndex + unsummarized.length;
@@ -245,7 +247,7 @@ export async function runSummary(
       result.majorRan = true;
       startTask('大摘要生成中');
       const prompts = buildMajorSummaryPrompt(consumed, anchor, pinnedFacts());
-      const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
+      const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-major');
       const text = parseSummaryResult(raw);
       if (text) {
         const firstRange = consumed[0]?.range[0] ?? 0;
@@ -284,7 +286,7 @@ export async function runSummary(
       result.globalRan = true;
       startTask('全局记忆压缩中');
       const prompts = buildGlobalCompressionPrompt(store.global, consumed, anchor, pinnedFacts());
-      const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
+      const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-global');
       const text = parseSummaryResult(raw);
       if (text) {
         store.global = text;
@@ -328,7 +330,7 @@ export async function rerollSummaryEntry(
       ctx.onTaskUpdated?.();
       const anchor = ctx.getFactAnchor?.() ?? null;
       const prompts = buildMinorSummaryPrompt(selected, anchor);
-      const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
+      const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-minor');
       const text = parseSummaryResult(raw);
       if (text) {
         const parsedFacts = parseKeyFactsFromSummary(raw);
@@ -370,7 +372,7 @@ export async function rerollSummaryEntry(
         { range: entry.range, text: formatMessagesAsText(messagesInRange), createdAt: '' },
       ];
       const prompts = buildMajorSummaryPrompt(pseudoMinors, anchor, pinned);
-      const raw = await callGenerateRaw(win, prompts, summaryApiConfig);
+      const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-major');
       const text = parseSummaryResult(raw);
       if (text) {
         store.major[entryIndex] = { ...entry, text, createdAt: new Date().toISOString() };
