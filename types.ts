@@ -1,5 +1,6 @@
 import type { SummaryApiConfig, SummaryModelFetchState, SummaryStore } from './summary/types';
 import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute, WeatherState } from './phone/types';
+import type { IslandMemoryDB } from './memorydatabase/types';
 
 export type TabKey = 'summary' | 'status' | 'inventory';
 
@@ -67,6 +68,8 @@ export type SavePayload = {
   gameState: GameState;
   chatLog: PersistedMessage[];
   summaryStore: SummaryStore;
+  /** 结构化长期记忆（旧存档可能没有，load 时从 summaryStore 迁移） */
+  memoryDB?: IslandMemoryDB;
   messageSnapshots?: MessageSnapshot[];
   version: number;
 };

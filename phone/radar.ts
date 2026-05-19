@@ -53,7 +53,7 @@ export function mountRadarChart(
     let breathPhase = 0;
     // 漂浮粒子池
     const particles: Particle[] = [];
-    const PARTICLE_COUNT = 18;
+    const PARTICLE_COUNT = 35;
     // 手绘抖动的种子偏移
     let wobbleSeed = 0;
 
@@ -70,10 +70,10 @@ export function mountRadarChart(
         particles.push({
           x: p.random(-radius, radius),
           y: p.random(-radius, radius),
-          vx: p.random(-0.15, 0.15),
-          vy: p.random(-0.15, 0.15),
-          size: p.random(1.5, 4),
-          alpha: p.random(20, 60),
+          vx: p.random(-0.3, 0.3),
+          vy: p.random(-0.3, 0.3),
+          size: p.random(2, 6),
+          alpha: p.random(40, 120),
           hue: p.random(200, 300),
         });
       }
@@ -82,11 +82,11 @@ export function mountRadarChart(
     function updateParticles() {
       const bound = radius * 1.2;
       for (const pt of particles) {
-        pt.x += pt.vx;
-        pt.y += pt.vy;
+        pt.x += pt.vx + Math.sin(breathPhase + pt.hue * 0.05) * 0.2;
+        pt.y += pt.vy + Math.cos(breathPhase * 0.7 + pt.hue * 0.03) * 0.2;
         if (Math.abs(pt.x) > bound) pt.vx *= -1;
         if (Math.abs(pt.y) > bound) pt.vy *= -1;
-        pt.alpha = 30 + 25 * Math.sin(breathPhase * 0.8 + pt.hue * 0.01);
+        pt.alpha = 50 + 50 * Math.sin(breathPhase * 0.8 + pt.hue * 0.01);
       }
     }
 
@@ -95,6 +95,9 @@ export function mountRadarChart(
       for (const pt of particles) {
         p.fill(pt.hue, 60, 90, pt.alpha / 255);
         p.ellipse(cx + pt.x, cy + pt.y, pt.size, pt.size);
+        // 拖尾残影
+        p.fill(pt.hue, 40, 95, pt.alpha * 0.3 / 255);
+        p.ellipse(cx + pt.x - pt.vx * 3, cy + pt.y - pt.vy * 3, pt.size * 0.6, pt.size * 0.6);
       }
     }
 
@@ -171,16 +174,20 @@ function easeOutBack(t: number): number {
 
 function drawGlow(p: p5, cx: number, cy: number, r: number) {
   p.noStroke();
-  const layers = 5;
+  const layers = 7;
   for (let i = layers; i >= 1; i--) {
     const ratio = i / layers;
-    p.fill(168, 147, 210, 6 * ratio);
-    p.ellipse(cx, cy, r * 2.2 * ratio, r * 2.2 * ratio);
+    p.fill(168, 147, 210, 8 * ratio);
+    p.ellipse(cx, cy, r * 2.4 * ratio, r * 2.4 * ratio);
   }
+  // 中心柔光
+  p.fill(200, 180, 240, 5);
+  p.ellipse(cx, cy, r * 0.8, r * 0.8);
 }
 
 function wobble(_p: p5, seed: number, i: number, phase: number): number {
-  return Math.sin(seed + i * 73.7 + phase * 0.3) * 1.2;
+  return Math.sin(seed + i * 73.7 + phase * 0.3) * 2.8
+    + Math.sin(seed * 1.7 + i * 31.3 + phase * 0.5) * 1.5;
 }
 
 /** 绘制手绘风格网格（带轴线脉冲） */
@@ -191,39 +198,44 @@ function drawGrid(
 ) {
   p.noFill();
 
+  // 多层手绘网格线（每层微偏移模拟铅笔重复描线）
   for (let ring = 1; ring <= GRID_RINGS; ring++) {
     const ringR = (r / GRID_RINGS) * ring;
-    const alpha = ring === GRID_RINGS ? 50 : 25;
-    p.stroke(160, 140, 110, alpha);
-    p.strokeWeight(ring === GRID_RINGS ? 1.2 : 0.8);
-    p.beginShape();
-    for (let i = 0; i < 5; i++) {
-      const a = start + step * i;
-      const wx = wobble(p, seed, ring * 10 + i, phase);
-      const wy = wobble(p, seed + 500, ring * 10 + i, phase);
-      p.vertex(cx + Math.cos(a) * ringR + wx, cy + Math.sin(a) * ringR + wy);
+    const passes = ring === GRID_RINGS ? 3 : 2;
+    for (let pass = 0; pass < passes; pass++) {
+      const alpha = ring === GRID_RINGS ? 40 - pass * 8 : 20 - pass * 5;
+      p.stroke(160, 140, 110, alpha);
+      p.strokeWeight(ring === GRID_RINGS ? 1.4 - pass * 0.3 : 0.9 - pass * 0.2);
+      p.beginShape();
+      for (let i = 0; i < 5; i++) {
+        const a = start + step * i;
+        const wx = wobble(p, seed + pass * 200, ring * 10 + i, phase);
+        const wy = wobble(p, seed + 500 + pass * 200, ring * 10 + i, phase);
+        p.vertex(cx + Math.cos(a) * ringR + wx, cy + Math.sin(a) * ringR + wy);
+      }
+      p.endShape(p.CLOSE);
     }
-    p.endShape(p.CLOSE);
   }
 
-  // 轴线（带脉冲闪光）
+  // 轴线（虚线 + 脉冲闪光 + 手绘抖动）
   for (let i = 0; i < 5; i++) {
     const a = start + step * i;
     const ex = cx + Math.cos(a) * r;
     const ey = cy + Math.sin(a) * r;
     const pulse = axisPulse[i];
-    const segments = 8;
+    const segments = 10;
     for (let s = 0; s < segments; s++) {
       if (s % 2 === 1) continue;
       const t0 = s / segments;
       const t1 = (s + 1) / segments;
-      // 脉冲时轴线变亮变粗
-      const segAlpha = 20 + 15 * (1 - t0) + pulse * 80;
+      const segAlpha = 25 + 20 * (1 - t0) + pulse * 100;
       p.stroke(160 - pulse * 30, 140 - pulse * 20, 110 + pulse * 80, segAlpha);
-      p.strokeWeight(0.7 + pulse * 1.5);
+      p.strokeWeight(0.8 + pulse * 2);
+      const jx = wobble(p, seed + i * 50, s, phase) * 0.4;
+      const jy = wobble(p, seed + i * 50 + 300, s, phase) * 0.4;
       p.line(
-        cx + (ex - cx) * t0, cy + (ey - cy) * t0,
-        cx + (ex - cx) * t1, cy + (ey - cy) * t1,
+        cx + (ex - cx) * t0 + jx, cy + (ey - cy) * t0 + jy,
+        cx + (ex - cx) * t1 + jx, cy + (ey - cy) * t1 + jy,
       );
     }
   }
@@ -235,12 +247,13 @@ function drawDataArea(
   step: number, start: number, values: number[],
   phase: number, entryScale: number,
 ) {
-  const breathScale = 1 + Math.sin(phase) * 0.03;
+  const breathScale = 1 + Math.sin(phase) * 0.06;
   const scale = breathScale * entryScale;
 
+  // 外层光晕描边（模糊感）
   p.noFill();
-  p.stroke(168, 147, 210, 40);
-  p.strokeWeight(4);
+  p.stroke(168, 147, 210, 25);
+  p.strokeWeight(6);
   p.beginShape();
   for (let i = 0; i < 5; i++) {
     const a = start + step * i;
@@ -249,9 +262,10 @@ function drawDataArea(
   }
   p.endShape(p.CLOSE);
 
-  p.fill(168, 147, 210, 30);
-  p.stroke(138, 117, 190, 130);
-  p.strokeWeight(1.5);
+  // 主填充区域
+  p.fill(168, 147, 210, 35);
+  p.stroke(138, 117, 190, 150);
+  p.strokeWeight(1.8);
   p.beginShape();
   for (let i = 0; i < 5; i++) {
     const a = start + step * i;
@@ -260,13 +274,27 @@ function drawDataArea(
   }
   p.endShape(p.CLOSE);
 
-  p.fill(200, 180, 240, 12);
+  // 内层高光核心
+  p.fill(200, 180, 255, 18);
   p.noStroke();
   p.beginShape();
   for (let i = 0; i < 5; i++) {
     const a = start + step * i;
-    const v = ((values[i] ?? 0) / 100) * scale * 0.6;
+    const v = ((values[i] ?? 0) / 100) * scale * 0.55;
     p.vertex(cx + Math.cos(a) * r * v, cy + Math.sin(a) * r * v);
+  }
+  p.endShape(p.CLOSE);
+
+  // 第二层手绘描边（偏移重叠）
+  p.noFill();
+  p.stroke(148, 127, 200, 60);
+  p.strokeWeight(1);
+  p.beginShape();
+  for (let i = 0; i < 5; i++) {
+    const a = start + step * i;
+    const v = ((values[i] ?? 0) / 100) * scale;
+    const jitter = Math.sin(phase * 0.5 + i * 2.1) * 1.5;
+    p.vertex(cx + Math.cos(a) * r * v + jitter, cy + Math.sin(a) * r * v + jitter);
   }
   p.endShape(p.CLOSE);
 }
@@ -317,14 +345,27 @@ function drawDataPoints(
     const py = cy + Math.sin(a) * r * v;
 
     const pulse = Math.sin(phase * 1.2 + i * 1.3) * 0.5 + 0.5;
-    const ringSize = 10 + pulse * 6;
-    p.noFill();
-    p.stroke(168, 147, 210, 30 + pulse * 30);
-    p.strokeWeight(1);
-    p.ellipse(px, py, ringSize, ringSize);
 
+    // 外层扩散光环
+    const outerRing = 16 + pulse * 10;
+    p.noFill();
+    p.stroke(168, 147, 210, 15 + pulse * 20);
+    p.strokeWeight(0.8);
+    p.ellipse(px, py, outerRing, outerRing);
+
+    // 内层脉冲环
+    const innerRing = 10 + pulse * 5;
+    p.stroke(148, 127, 210, 40 + pulse * 50);
+    p.strokeWeight(1.2);
+    p.ellipse(px, py, innerRing, innerRing);
+
+    // 核心实心点
     p.noStroke();
-    p.fill(138, 117, 190, 210);
-    p.ellipse(px, py, 6, 6);
+    p.fill(138, 117, 190, 230);
+    p.ellipse(px, py, 7, 7);
+
+    // 高光点
+    p.fill(220, 200, 255, 150 + pulse * 80);
+    p.ellipse(px - 1.5, py - 1.5, 2.5, 2.5);
   }
 }

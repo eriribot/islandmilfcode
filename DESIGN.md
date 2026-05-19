@@ -1,5 +1,23 @@
 // 待办
 
+## 2026-05-19 今日任务
+
+### 已完成
+- [x] 雷达图 p5 视觉增强（手绘感、粒子、呼吸动画）
+- [x] `memorydatabase/types.ts`：全部表结构类型（含 attributes 扩展表）
+- [x] `memorydatabase/defaults.ts` + `normalize.ts`：默认值工厂、反序列化兜底
+- [x] `memorydatabase/upsert.ts`：commitBatch + 去重规则（事实/关系/秘密/属性/手机消息）
+- [x] `memorydatabase/migrate.ts`：旧 SummaryStore → MemoryDB 迁移
+- [x] `types.ts`：SavePayload 增加 `memoryDB?: IslandMemoryDB` 字段
+- [x] `state/saves.ts`：load 时自动迁移、write 时带上 memoryDB
+
+### 待做
+- [ ] 手机消息收发链路对接 phone-core 的 table-repository 模式（mutation queue 串行写入）
+- [ ] 各 commit 点对接：summary/progress/phone-directive 实际调用 commitBatch 写入 memoryDB
+- [ ] 英梨梨审计规则重做（手动，参照 utaha 审计规则结构）
+
+---
+
 ## 手机发布节奏
 
 - 先做一个可玩的阶段版，再分批补内容和重构。

@@ -16,7 +16,12 @@
       "Bash(pnpm -s tsc --noEmit)",
       "Bash(python3 -m json.tool)",
       "Bash(python -c ' *)",
-      "Bash(Get-ChildItem -Path \"E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\" -Recurse -Directory)"
+      "Bash(Get-ChildItem -Path \"E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\" -Recurse -Directory)",
+      "Bash(cd *)",
+      "Bash(xargs grep -l \"p5\")",
+      "Bash(findstr /n \"^\")",
+      "Bash(findstr /b \"1: 2: 3: 4: 5: 6: 7: 8: 9: 10: 11: 12: 13: 14: 15:\")",
+      "Bash(Get-ChildItem -Path \"E:\\\\web\\\\st-yuzi-phone\\\\modules\\\\phone-core\" -Recurse -File)"
     ]
   }
 }

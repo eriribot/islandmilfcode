@@ -15,6 +15,8 @@ import type {
 } from '../types';
 import { normalizePhoneMessageStore } from './store';
 import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
+import { normalizeMemoryDB } from '../memorydatabase/normalize';
+import { migrateSummaryStoreToMemoryDB } from '../memorydatabase/migrate';
 
 const SAVE_INDEX_STORAGE_KEY = 'islandmilfcode:save-index:v2';
 const SAVE_PAYLOAD_STORAGE_PREFIX = 'islandmilfcode:save-payload:v2:';
@@ -314,12 +316,20 @@ function readPayload(saveId: string): SavePayload | null {
   const runId = String(payload.runId || payload.gameState?.runId || '');
   if (!runId) return null;
 
+  const summaryStore = cloneJson(payload.summaryStore ?? createDefaultSummaryStore());
+
+  // memoryDB：优先从存档读取，没有则从 summaryStore 迁移
+  const memoryDB =
+    normalizeMemoryDB(payload.memoryDB, runId)
+    ?? migrateSummaryStoreToMemoryDB(summaryStore, runId);
+
   return {
     saveId: String(payload.saveId || saveId),
     runId,
     gameState: normalizeGameState(payload.gameState, runId),
     chatLog: normalizePersistedMessages(payload.chatLog),
-    summaryStore: cloneJson(payload.summaryStore ?? createDefaultSummaryStore()),
+    summaryStore,
+    memoryDB,
     messageSnapshots: Array.isArray(payload.messageSnapshots) ? cloneJson(payload.messageSnapshots) : undefined,
     version: Number(payload.version ?? SAVE_VERSION) || SAVE_VERSION,
   };
@@ -456,6 +466,7 @@ export function writeSave(
     gameState: GameState;
     chatLog: PersistedMessage[];
     summaryStore: SummaryStore;
+    memoryDB?: import('../memorydatabase/types').IslandMemoryDB;
     kind?: SaveKind;
     label?: string;
   },
@@ -471,6 +482,7 @@ export function writeSave(
     gameState: normalizeGameState(data.gameState, data.runId),
     chatLog: normalizePersistedMessages(data.chatLog),
     summaryStore: cloneJson(data.summaryStore),
+    memoryDB: data.memoryDB ? cloneJson(data.memoryDB) : undefined,
     version: SAVE_VERSION,
   };
 
