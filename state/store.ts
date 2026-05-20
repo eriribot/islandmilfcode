@@ -12,6 +12,8 @@ import type {
 } from '../types';
 import { clamp, defaultStatusData, normalizeStatusData } from '../variables/normalize';
 import { getDefaultWeatherState } from '../phone/weather';
+import { createDefaultMemoryDB } from '../memorydatabase/defaults';
+import { createDefaultMemoryEditorState } from '../memorydatabase/editor';
 
 export const MESSAGE_MARKER = 'islandmilfcode';
 
@@ -267,6 +269,8 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
       fetchedAt: null,
     },
     summarizing: false,
+    memoryDB: createDefaultMemoryDB(''),
+    memoryEditor: createDefaultMemoryEditorState(),
   };
 }
 

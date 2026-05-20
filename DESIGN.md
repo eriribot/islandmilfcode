@@ -12,9 +12,27 @@
 - [x] `state/saves.ts`：load 时自动迁移、write 时带上 memoryDB
 
 ### 待做
-- [ ] 手机消息收发链路对接 phone-core 的 table-repository 模式（mutation queue 串行写入）
 - [ ] 各 commit 点对接：summary/progress/phone-directive 实际调用 commitBatch 写入 memoryDB
 - [ ] 英梨梨审计规则重做（手动，参照 utaha 审计规则结构）
+
+## 2026-05-20 今日任务
+
+### 已完成
+- [x] 英梨梨审计规则重做：5 条 Rule 全部写完，挂入 `getRelationshipAuditGuidance`
+- [x] `memorydatabase/commit-points.ts`：commitProgressToMemoryDB（attributes+events+items）+ commitSummaryToMemoryDB
+- [x] `memorydatabase/phone-repository.ts`：MutationQueue + indexPhoneMessage 串行写入
+- [x] AppState 加 `memoryDB: IslandMemoryDB`，createInitialState 初始化，saves load/write 全链路
+- [x] `actions/index.ts`：progress commit、手机消息（directive/proactive/scene-extract）全部接入 memoryDB
+- [x] `summary/run.ts`：minor/major/global 成功后调用 commitSummaryToMemoryDB
+- [x] `memorydatabase/editor.ts`：行级 CRUD（updateMemoryRow/expireMemoryRow/restoreMemoryRow/insertMemoryRow）+ 完整渲染
+- [x] `phone/types.ts` 加 `app:memory` 路由；AppState 加 `memoryEditor` 状态
+- [x] `phone/render.ts`：首页记忆库图标 + renderMemoryPhonePage 路由分发
+- [x] `index.ts`：memory editor 全部事件绑定（表切换/展开/编辑/保存/删除/恢复/新增/textarea 同步）
+
+### 待做
+- [ ] memory editor CSS 样式（`.memory-editor` / `.memory-tab` / `.memory-row` 等）
+- [ ] tsc 编译验证 + 修复类型错误
+- [ ] 手机消息收发链路端到端验证（发消息后确认 memoryDB.phoneMessages 有新行）
 
 ---
 

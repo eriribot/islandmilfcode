@@ -4,6 +4,7 @@ import { formatDate, formatTime } from '../variables/normalize';
 import { renderCharacterArchivePanel } from './archive';
 import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute } from './types';
 import { resolveWeatherRequest } from './weather';
+import { renderMemoryEditor } from '../memorydatabase/editor';
 
 type PhoneCharacterThemeId = PhoneCharacterId;
 
@@ -312,6 +313,16 @@ function renderPhoneHome(state: AppState) {
       label: '摘要',
       meta: `${summaryCount} 条记忆`,
       dock: true,
+    },
+    {
+      route: 'app:memory',
+      icon: '🧠',
+      label: '记忆库',
+      meta: `${
+        state.memoryDB.facts.filter(f => !f.expired).length +
+        state.memoryDB.events.filter(e => !e.expired).length +
+        state.memoryDB.attributes.filter(a => !a.expired).length
+      } 条活跃`,
     },
     {
       route: 'app:settings',
@@ -887,6 +898,17 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
   `;
 }
 
+function renderMemoryPhonePage(state: AppState) {
+  return `
+    <section class="phone-route-page phone-app-page phone-app-page--memory" data-phone-route-view="app:memory">
+      ${renderPhoneAppHeader(state, '记忆库', `schema v${state.memoryDB.version}`)}
+      <div class="phone-page-scroll memory-phone-scroll">
+        ${renderMemoryEditor(state)}
+      </div>
+    </section>
+  `;
+}
+
 function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:messages') return renderMessagesPhonePage(state);
   if (state.phoneRoute === 'app:chat') return renderPhoneChatPage(state);
@@ -895,6 +917,7 @@ function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:archive') return renderArchivePhonePage(state);
   if (state.phoneRoute === 'app:status') return renderStatusPhonePage(state, renderers);
   if (state.phoneRoute === 'app:inventory') return renderInventoryPhonePage(state.statusData, state, renderers);
+  if (state.phoneRoute === 'app:memory') return renderMemoryPhonePage(state);
   if (state.phoneRoute === 'app:settings') return renderSettingsPhonePage(state, renderers);
   return renderPhoneHome(state);
 }

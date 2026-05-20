@@ -48,6 +48,9 @@ import {
   type StreamingContext,
   updateStreamingText,
 } from './streaming';
+import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
+import { indexPhoneMessage } from '../memorydatabase/phone-repository';
+import type { IslandMemoryDB } from '../memorydatabase/types';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
@@ -57,6 +60,7 @@ export type ActionContext = StreamingContext & {
   summaryStore: SummaryStore;
   summaryApiConfig: SummaryApiConfig | null;
   onSummaryStoreUpdated: () => void;
+  readonly memoryDB: IslandMemoryDB;
 };
 
 const PHONE_PROACTIVE_COOLDOWN_MS = 3 * 60 * 1000;
@@ -401,6 +405,7 @@ function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | nu
   const targetedAffinityChanged = applyTargetedAffinityDeltas(ctx, contextualized, targetId);
   const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, contextualized);
   ctx.adapter.save(ctx.state.statusData);
+  commitProgressToMemoryDB(ctx.memoryDB, contextualized);
   return targetedAffinityChanged || statsChanged || true;
 }
 
@@ -1461,6 +1466,7 @@ function appendAssistantPhoneMessage(
   target: TargetStatus,
   thread: ReturnType<typeof ensurePhoneThread>,
   text: string,
+  source: 'phone-directive' | 'phone-scene-extract' = 'phone-directive',
 ) {
   const { state } = ctx;
   const assistantMessage: PhoneChatMessage = {
@@ -1477,6 +1483,7 @@ function appendAssistantPhoneMessage(
   if (!(state.phoneOpen && state.phoneRoute === 'app:chat' && state.phoneMessages.activeThreadId === target.id)) {
     thread.unread += 1;
   }
+  indexPhoneMessage(ctx.memoryDB, assistantMessage, target.id, source);
   ctx.persistConversation();
   ctx.showNotification({
     kind: 'message',
@@ -1494,6 +1501,7 @@ function appendUserPhoneMessage(
   target: TargetStatus,
   thread: ReturnType<typeof ensurePhoneThread>,
   text: string,
+  source: 'phone-directive' | 'phone-scene-extract' = 'phone-directive',
 ) {
   const { state } = ctx;
   const userMessage: PhoneChatMessage = {
@@ -1508,6 +1516,7 @@ function appendUserPhoneMessage(
   thread.messages = [...thread.messages, userMessage];
   thread.updatedAt = Date.now();
   thread.unread = 0;
+  indexPhoneMessage(ctx.memoryDB, userMessage, target.id, source);
   ctx.persistConversation();
 }
 
@@ -1517,9 +1526,9 @@ function appendExtractedScenePhoneMessage(ctx: ActionContext, item: ScenePhoneMe
   if (lastMessage?.role === item.role && lastMessage.text.trim() === item.text.trim()) return false;
 
   if (item.role === 'user') {
-    appendUserPhoneMessage(ctx, item.target, thread, item.text.trim());
+    appendUserPhoneMessage(ctx, item.target, thread, item.text.trim(), 'phone-scene-extract');
   } else {
-    appendAssistantPhoneMessage(ctx, item.target, thread, item.text.trim());
+    appendAssistantPhoneMessage(ctx, item.target, thread, item.text.trim(), 'phone-scene-extract');
   }
   return true;
 }
@@ -1695,6 +1704,7 @@ async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: Phon
   thread.unread = 0;
   state.phoneMessages.activeThreadId = target.id;
   state.phoneMessages.generating = true;
+  indexPhoneMessage(ctx.memoryDB, userMessage, target.id, 'phone-directive');
   ctx.persistConversation();
   ctx.render();
 
@@ -1769,6 +1779,7 @@ async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: Phon
     if (!(state.phoneOpen && state.phoneRoute === 'app:chat' && state.phoneMessages.activeThreadId === target.id)) {
       thread.unread += 1;
     }
+    indexPhoneMessage(ctx.memoryDB, assistantMessage, target.id, 'phone-directive');
     ctx.persistConversation();
     ctx.showNotification({
       kind: 'message',
@@ -1820,6 +1831,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
   state.phoneMessages.draft = '';
   state.phoneMessages.generating = true;
   state.phoneMessages.activeThreadId = target.id;
+  indexPhoneMessage(ctx.memoryDB, userMessage, target.id, 'phone-directive');
   ctx.persistConversation();
   ctx.render();
 
@@ -1892,6 +1904,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
     );
 
     assistantMessage.statusSnapshot = createRollbackSnapshot(state);
+    indexPhoneMessage(ctx.memoryDB, assistantMessage, target.id, 'phone-directive');
     ctx.persistConversation();
   } catch (error) {
     thread.messages = thread.messages.filter(message => message.id !== userMessage.id);

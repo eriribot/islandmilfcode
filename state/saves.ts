@@ -430,6 +430,7 @@ export function createManualSave(input: {
   gameState: GameState;
   chatLog: PersistedMessage[];
   summaryStore: SummaryStore;
+  memoryDB?: import('../memorydatabase/types').IslandMemoryDB;
 }): SaveMeta {
   const saveId = crypto.randomUUID();
   const payload: SavePayload = {
@@ -438,6 +439,7 @@ export function createManualSave(input: {
     gameState: normalizeGameState(input.gameState, input.runId),
     chatLog: normalizePersistedMessages(input.chatLog),
     summaryStore: cloneJson(input.summaryStore),
+    memoryDB: input.memoryDB ? cloneJson(input.memoryDB) : undefined,
     version: SAVE_VERSION,
   };
   const index = readSaveIndex();
@@ -506,6 +508,7 @@ export function writeAutosave(data: {
   gameState: GameState;
   chatLog: PersistedMessage[];
   summaryStore: SummaryStore;
+  memoryDB?: import('../memorydatabase/types').IslandMemoryDB;
 }): SaveMeta | null {
   const saveId = `autosave_${data.runId}`;
   return writeSave(saveId, {

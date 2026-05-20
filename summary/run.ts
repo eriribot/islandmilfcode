@@ -15,6 +15,8 @@ import {
 } from './engine';
 import { saveSummaryStore } from './store';
 import type { FactAnchor, KeyFact, SummaryApiConfig, SummaryStore } from './types';
+import { commitSummaryToMemoryDB } from '../memorydatabase/commit-points';
+import type { IslandMemoryDB } from '../memorydatabase/types';
 
 /** 摘要运行所需的上下文。 */
 export type SummaryContext = {
@@ -28,6 +30,8 @@ export type SummaryContext = {
   onProgressUpdate?: (update: ProgressUpdate) => void;
   /** 当前结构化状态快照，用作摘要 prompt 的事实锚点。缺省时不注入。 */
   getFactAnchor?: () => FactAnchor | null;
+  /** memoryDB 引用，摘要成功后写入 summaries/facts 表。 */
+  memoryDB?: IslandMemoryDB;
 };
 
 export type SummaryRunResult = {
@@ -214,6 +218,7 @@ export async function runSummary(
           }
           store.lastSummarizedIndex = nextIndex;
           clearFailureState(store);
+          commitSummaryToMemoryDB(ctx.memoryDB, 'minor', text, range, newFacts);
           result.minorAppliedProgress = applyProgressFromMinorSummary(ctx, raw);
         }
       } catch (error) {
@@ -258,6 +263,7 @@ export async function runSummary(
           createdAt: new Date().toISOString(),
         });
         clearFailureState(store);
+        commitSummaryToMemoryDB(ctx.memoryDB, 'major', text, [firstRange, lastRange]);
       } else {
         // 解析失败时恢复已消费的小摘要。
         store.minor.unshift(...consumed);
@@ -291,6 +297,8 @@ export async function runSummary(
       if (text) {
         store.global = text;
         clearFailureState(store);
+        const globalRange: [number, number] = [0, ctx.memoryDB?.lastProcessedIndex ?? store.lastSummarizedIndex];
+        commitSummaryToMemoryDB(ctx.memoryDB, 'global', text, globalRange);
       } else {
         store.major.unshift(...consumed);
       }

@@ -1,6 +1,7 @@
 import type { SummaryApiConfig, SummaryModelFetchState, SummaryStore } from './summary/types';
 import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute, WeatherState } from './phone/types';
 import type { IslandMemoryDB } from './memorydatabase/types';
+import type { MemoryTableName } from './memorydatabase/editor';
 
 export type TabKey = 'summary' | 'status' | 'inventory';
 
@@ -296,6 +297,19 @@ export type AppState = {
   summaryApiConfig: SummaryApiConfig | null;
   summaryModelFetch: SummaryModelFetchState;
   summarizing: boolean;
+  memoryDB: IslandMemoryDB;
+  memoryEditor: MemoryEditorState;
+};
+
+export type MemoryEditorState = {
+  selectedTable: MemoryTableName;
+  expandedRowId: string | null;
+  editingRowId: string | null;
+  editingDraft: string;
+  creating: boolean;
+  creatingDraft: string;
+  showExpired: boolean;
+  error: string | null;
 };
 
 export type TavernWindow = Window &

@@ -58,6 +58,13 @@ import type { PhoneCharacterId, PhoneRoute } from './phone/types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp, syncMainEvents } from './variables/normalize';
 import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
+import {
+  updateMemoryRow,
+  expireMemoryRow,
+  restoreMemoryRow,
+  insertMemoryRow,
+  type MemoryTableName,
+} from './memorydatabase/editor';
 
 const win = window as TavernWindow;
 const root = document.querySelector<HTMLDivElement>('#app');
@@ -160,6 +167,9 @@ const ctx: ActionContext = {
   get win() {
     return win;
   },
+  get memoryDB() {
+    return state.memoryDB;
+  },
   get adapter() {
     return guardedAdapter;
   },
@@ -214,6 +224,7 @@ function persistToSave() {
     gameState: buildGameState(),
     chatLog: serializeMessages(state.uiMessages),
     summaryStore: state.summaryStore,
+    memoryDB: state.memoryDB,
   });
   if (meta) {
     state.activeSaveId = meta.saveId;
@@ -229,6 +240,7 @@ function persistManualSave() {
     gameState: buildGameState(),
     chatLog: serializeMessages(state.uiMessages),
     summaryStore: state.summaryStore,
+    memoryDB: state.memoryDB,
   });
   state.activeSaveId = meta.saveId;
   setActiveSaveId(meta.saveId);
@@ -307,6 +319,9 @@ function enterSave(saveId: string) {
   };
   state.runtimeFlags = JSON.parse(JSON.stringify(save.payload.gameState.runtimeFlags ?? {}));
   state.summaryStore = save.payload.summaryStore;
+  if (save.payload.memoryDB) {
+    state.memoryDB = save.payload.memoryDB;
+  }
   state.phoneMessages = normalizePhoneMessageStore(state.runtimeFlags.phoneMessages);
   cacheStatusData(state.statusData);
   guardedAdapterSave(state.statusData);
@@ -1004,6 +1019,122 @@ function bindEvents() {
       render();
     });
   });
+
+  // ── Memory editor events ──
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-select-table"]').forEach(button => {
+    button.addEventListener('click', () => {
+      state.memoryEditor.selectedTable = (button.dataset.table ?? 'facts') as MemoryTableName;
+      state.memoryEditor.expandedRowId = null;
+      state.memoryEditor.editingRowId = null;
+      state.memoryEditor.creating = false;
+      state.memoryEditor.error = null;
+      render();
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-toggle-row"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const rowId = button.dataset.rowId ?? '';
+      state.memoryEditor.expandedRowId = state.memoryEditor.expandedRowId === rowId ? null : rowId;
+      state.memoryEditor.editingRowId = null;
+      state.memoryEditor.error = null;
+      render();
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-edit-row"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const rowId = button.dataset.rowId ?? '';
+      const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
+      const rows = (state.memoryDB as unknown as Record<string, unknown[]>)[table];
+      const row = Array.isArray(rows) ? rows.find((r: any) => r.id === rowId) : null;
+      state.memoryEditor.editingRowId = rowId;
+      state.memoryEditor.editingDraft = row ? JSON.stringify(row, null, 2) : '{}';
+      state.memoryEditor.error = null;
+      render();
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-save-edit"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const rowId = button.dataset.rowId ?? '';
+      const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
+      try {
+        const parsed = JSON.parse(state.memoryEditor.editingDraft);
+        if (!parsed || typeof parsed !== 'object') throw new Error('必须是 JSON 对象');
+        updateMemoryRow(state.memoryDB, table, rowId, parsed);
+        state.memoryEditor.editingRowId = null;
+        state.memoryEditor.error = null;
+        persistToSave();
+      } catch (e) {
+        state.memoryEditor.error = e instanceof Error ? e.message : String(e);
+      }
+      render();
+    });
+  });
+  root?.querySelectorAll<HTMLElement>('[data-action="memory-cancel-edit"]').forEach(el => {
+    el.addEventListener('click', () => {
+      state.memoryEditor.editingRowId = null;
+      state.memoryEditor.error = null;
+      render();
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-expire-row"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const rowId = button.dataset.rowId ?? '';
+      const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
+      expireMemoryRow(state.memoryDB, table, rowId);
+      persistToSave();
+      render();
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-restore-row"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const rowId = button.dataset.rowId ?? '';
+      const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
+      restoreMemoryRow(state.memoryDB, table, rowId);
+      persistToSave();
+      render();
+    });
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="memory-new-row"]')?.addEventListener('click', () => {
+    state.memoryEditor.creating = true;
+    state.memoryEditor.creatingDraft = '{\n  \n}';
+    state.memoryEditor.error = null;
+    render();
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="memory-save-new"]')?.addEventListener('click', () => {
+    const table = state.memoryEditor.selectedTable;
+    try {
+      const parsed = JSON.parse(state.memoryEditor.creatingDraft);
+      if (!parsed || typeof parsed !== 'object') throw new Error('必须是 JSON 对象');
+      const newId = insertMemoryRow(state.memoryDB, table, parsed);
+      if (!newId) throw new Error('写入失败');
+      state.memoryEditor.creating = false;
+      state.memoryEditor.creatingDraft = '';
+      state.memoryEditor.expandedRowId = newId;
+      state.memoryEditor.error = null;
+      persistToSave();
+    } catch (e) {
+      state.memoryEditor.error = e instanceof Error ? e.message : String(e);
+    }
+    render();
+  });
+  root?.querySelectorAll<HTMLElement>('[data-action="memory-cancel-new"]').forEach(el => {
+    el.addEventListener('click', () => {
+      state.memoryEditor.creating = false;
+      state.memoryEditor.error = null;
+      render();
+    });
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="memory-toggle-expired"]')?.addEventListener('click', () => {
+    state.memoryEditor.showExpired = !state.memoryEditor.showExpired;
+    render();
+  });
+  root?.querySelector<HTMLTextAreaElement>('[data-field="memory-edit-draft"]')?.addEventListener('input', event => {
+    state.memoryEditor.editingDraft = (event.target as HTMLTextAreaElement).value;
+  });
+  root?.querySelector<HTMLTextAreaElement>('[data-field="memory-new-draft"]')?.addEventListener('input', event => {
+    state.memoryEditor.creatingDraft = (event.target as HTMLTextAreaElement).value;
+  });
+
   root?.querySelector<HTMLButtonElement>('[data-action="return-to-title"]')?.addEventListener('click', () => {
     returnToTitle();
   });
