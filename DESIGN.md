@@ -11,9 +11,6 @@
 - [x] `types.ts`：SavePayload 增加 `memoryDB?: IslandMemoryDB` 字段
 - [x] `state/saves.ts`：load 时自动迁移、write 时带上 memoryDB
 
-### 待做
-- [ ] 各 commit 点对接：summary/progress/phone-directive 实际调用 commitBatch 写入 memoryDB
-- [ ] 英梨梨审计规则重做（手动，参照 utaha 审计规则结构）
 
 ## 2026-05-20 今日任务
 
@@ -31,8 +28,7 @@
 
 ### 待做
 - [ ] memory editor CSS 样式（`.memory-editor` / `.memory-tab` / `.memory-row` 等）
-- [ ] tsc 编译验证 + 修复类型错误
-- [ ] 手机消息收发链路端到端验证（发消息后确认 memoryDB.phoneMessages 有新行）
+
 
 ---
 

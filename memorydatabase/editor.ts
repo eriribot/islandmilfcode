@@ -33,9 +33,84 @@ const TABLE_LABELS: Record<MemoryTableName, string> = {
   attributes: '属性',
 };
 
+const EDITABLE_TABLES = new Set<MemoryTableName>([
+  'events',
+  'facts',
+  'tasks',
+  'secrets',
+  'items',
+  'phoneMessages',
+  'summaries',
+]);
+
+const USER_VISIBLE_TABLES: MemoryTableName[] = [
+  'tasks',
+  'items',
+  'phoneMessages',
+  'summaries',
+];
+
+type FactCategory = string;
+
+const FACT_CATEGORY_ORDER: FactCategory[] = [
+  'event',
+  'profile',
+  'trait',
+  'state',
+  'preference',
+  'relationship',
+  'knowledge',
+  'opinion',
+  'background',
+  'ability',
+  'habit',
+  'goal',
+  'secret',
+  'memory',
+  'emotion',
+];
+
+type HomeEntry =
+  | { kind: 'table'; table: MemoryTableName; label: string; count: number }
+  | { kind: 'category'; category: FactCategory; label: string; count: number };
+
+function buildHomeEntries(db: IslandMemoryDB): HomeEntry[] {
+  const facts = getTable(db, 'facts').filter(r => !r.expired);
+  const catCounts = new Map<string, number>();
+  for (const row of facts) {
+    const cat = String((row as unknown as Record<string, unknown>).category ?? '');
+    catCounts.set(cat, (catCounts.get(cat) ?? 0) + 1);
+  }
+
+  const entries: HomeEntry[] = [];
+
+  const sortedCats = [...catCounts.keys()].sort((a, b) => {
+    const ia = FACT_CATEGORY_ORDER.indexOf(a);
+    const ib = FACT_CATEGORY_ORDER.indexOf(b);
+    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+  });
+
+  for (const cat of sortedCats) {
+    entries.push({
+      kind: 'category',
+      category: cat,
+      label: localizeCategory(cat) || cat,
+      count: catCounts.get(cat) ?? 0,
+    });
+  }
+
+  for (const table of USER_VISIBLE_TABLES) {
+    const count = getTable(db, table).filter(r => !r.expired).length;
+    entries.push({ kind: 'table', table, label: TABLE_LABELS[table], count });
+  }
+
+  return entries;
+}
+
 export function createDefaultMemoryEditorState(): MemoryEditorState {
   return {
-    selectedTable: 'facts',
+    selectedTable: null,
+    selectedCategory: null,
     expandedRowId: null,
     editingRowId: null,
     editingDraft: '',
@@ -56,6 +131,64 @@ function findRow(db: IslandMemoryDB, table: MemoryTableName, id: string): Memory
 }
 
 const PROTECTED_KEYS = new Set(['id', 'createdAt']);
+
+export function createMemoryDraft(table: MemoryTableName, row: MemoryBaseRow): string {
+  const r = row as unknown as Record<string, unknown>;
+  switch (table) {
+    case 'facts':
+      return String(r.content ?? '');
+    case 'events':
+      return String(r.description ?? r.title ?? '');
+    case 'tasks':
+      return String(r.content ?? '');
+    case 'secrets':
+      return String(r.content ?? '');
+    case 'items':
+      return String(r.state ?? r.name ?? '');
+    case 'phoneMessages':
+      return String(r.textPreview ?? '');
+    case 'summaries':
+      return String(r.text ?? '');
+    default:
+      return '';
+  }
+}
+
+export function createMemoryPatchFromDraft(table: MemoryTableName, draft: string): Record<string, unknown> {
+  const value = draft.trim();
+  if (!value) throw new Error('内容不能为空');
+
+  switch (table) {
+    case 'facts':
+      return { category: 'event', subject: 'User', content: value };
+    case 'events':
+      return { title: value.slice(0, 28) || 'User 事件', description: value };
+    case 'tasks':
+      return { content: value };
+    case 'secrets':
+      return { content: value };
+    case 'items':
+      return { state: value };
+    case 'phoneMessages':
+      return { textPreview: value.slice(0, 200) };
+    case 'summaries':
+      return { text: value };
+    default:
+      throw new Error('该表是系统索引，只能查看，不能手动编辑。');
+  }
+}
+
+export function createUserEventMemoryPayload(draft: string): Record<string, unknown> {
+  const content = draft.trim();
+  if (!content) throw new Error('事件内容不能为空');
+  return {
+    category: 'event',
+    subject: 'User',
+    content,
+    importance: 3,
+    confidence: 'high',
+  };
+}
 
 export function updateMemoryRow(
   db: IslandMemoryDB,
@@ -121,30 +254,66 @@ function getTableCounts(db: IslandMemoryDB, table: MemoryTableName) {
   return { active, expired, total: rows.length };
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  manual: '手动',
+  system: '系统',
+  progress: '剧情',
+  summary: '摘要',
+  'phone-directive': '手机',
+  'phone-scene-extract': '手机',
+  unknown: '自动',
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  event: '事件',
+  profile: '档案',
+  trait: '特征',
+  preference: '偏好',
+  relationship: '关系',
+  knowledge: '知识',
+  state: '状态',
+  opinion: '观点',
+  background: '背景',
+  ability: '能力',
+  habit: '习惯',
+  goal: '目标',
+  secret: '秘密',
+  memory: '记忆',
+  emotion: '情感',
+};
+
+function localizeSource(source: string): string {
+  return SOURCE_LABELS[source] ?? source;
+}
+
+function localizeCategory(category: string): string {
+  return CATEGORY_LABELS[category] ?? category;
+}
+
 function previewRow(table: MemoryTableName, row: MemoryBaseRow): string {
   const r = row as unknown as Record<string, unknown>;
   switch (table) {
     case 'entities':
       return `${String(r.kind ?? '?')} · ${String(r.name ?? r.entityId ?? '')}`;
     case 'events':
-      return `${String(r.title ?? '')} — ${String(r.description ?? '').slice(0, 40)}`;
+      return `${String(r.title ?? '事件')} · ${String(r.description ?? '').slice(0, 42)}`;
     case 'facts':
-      return `[${String(r.category ?? '')}] ${String(r.subject ?? '')}: ${String(r.content ?? '').slice(0, 60)}`;
+      return `${String(r.subject ?? '')}: ${String(r.content ?? '').slice(0, 72)}`;
     case 'relations':
       return `${String(r.fromId ?? '')} → ${String(r.toId ?? '')} (${String(r.label ?? '')})`;
     case 'impressions':
       return `${String(r.targetId ?? '')} 对 ${String(r.subject ?? '')}: ${String(r.label ?? '')}`;
     case 'tasks':
-      return `[${String(r.status ?? '')}] ${String(r.content ?? '').slice(0, 60)}`;
+      return `[${String(r.status ?? '')}] ${String(r.content ?? '').slice(0, 64)}`;
     case 'secrets':
       return `${String(r.subject ?? '')} (${String(r.risk ?? '')}/${r.revealed ? '已暴露' : '未暴露'})`;
     case 'items':
-      return `${String(r.action ?? 'noted')} · ${String(r.name ?? '')} ${r.count !== undefined ? `×${r.count}` : ''}`;
+      return `${String(r.name ?? '')} ${r.count !== undefined ? `×${r.count}` : ''}`;
     case 'phoneMessages':
-      return `[${String(r.role ?? '')}] ${String(r.targetId ?? '')}: ${String(r.textPreview ?? '').slice(0, 50)}`;
+      return `${String(r.targetId ?? '')}: ${String(r.textPreview ?? '').slice(0, 54)}`;
     case 'summaries': {
       const range = Array.isArray(r.range) ? `[${(r.range as number[]).join(',')}]` : '';
-      return `${String(r.level ?? '')} ${range} ${String(r.text ?? '').slice(0, 50)}`;
+      return `${String(r.level ?? '')} ${range} ${String(r.text ?? '').slice(0, 54)}`;
     }
     case 'attributes':
       return `${String(r.targetId ?? '')}.${String(r.key ?? '')} = ${String(r.value ?? '')}`;
@@ -153,31 +322,73 @@ function previewRow(table: MemoryTableName, row: MemoryBaseRow): string {
   }
 }
 
-function renderTableTabs(db: IslandMemoryDB, editor: MemoryEditorState): string {
-  return MEMORY_TABLE_NAMES.map(name => {
-    const counts = getTableCounts(db, name);
-    const active = name === editor.selectedTable;
-    return `
-      <button
-        class="memory-tab ${active ? 'is-active' : ''}"
-        data-action="memory-select-table"
-        data-table="${name}"
-      >
-        <strong>${escapeHtml(TABLE_LABELS[name])}</strong>
-        <span>${counts.active}${counts.expired ? ` · ${counts.expired} 已删` : ''}</span>
-      </button>
-    `;
-  }).join('');
+function renderReadableFields(table: MemoryTableName, row: MemoryBaseRow): string {
+  const r = row as unknown as Record<string, unknown>;
+  const fields: Array<[string, string]> = [];
+
+  switch (table) {
+    case 'entities':
+      fields.push(['名称', String(r.name ?? '')], ['类型', String(r.kind ?? '')]);
+      break;
+    case 'events':
+      fields.push(['标题', String(r.title ?? '')], ['事件', String(r.description ?? '')]);
+      break;
+    case 'facts':
+      fields.push(['对象', String(r.subject ?? '')], ['类型', String(r.category ?? '')], ['内容', String(r.content ?? '')]);
+      break;
+    case 'relations':
+      fields.push(['来源', String(r.fromId ?? '')], ['对象', String(r.toId ?? '')], ['关系', String(r.label ?? '')]);
+      break;
+    case 'impressions':
+      fields.push(['角色', String(r.targetId ?? '')], ['对象', String(r.subject ?? '')], ['印象', String(r.label ?? '')]);
+      break;
+    case 'tasks':
+      fields.push(['状态', String(r.status ?? '')], ['事项', String(r.content ?? '')]);
+      break;
+    case 'secrets':
+      fields.push(['主题', String(r.subject ?? '')], ['秘密', String(r.content ?? '')], ['风险', String(r.risk ?? '')]);
+      break;
+    case 'items':
+      fields.push(['物品', String(r.name ?? '')], ['状态', String(r.state ?? '')], ['动作', String(r.action ?? '')]);
+      break;
+    case 'phoneMessages':
+      fields.push(['对象', String(r.targetId ?? '')], ['角色', String(r.role ?? '')], ['消息', String(r.textPreview ?? '')]);
+      break;
+    case 'summaries':
+      fields.push(['层级', String(r.level ?? '')], ['摘要', String(r.text ?? '')]);
+      break;
+    case 'attributes':
+      fields.push(['对象', String(r.targetId ?? '')], ['属性', String(r.key ?? '')], ['值', String(r.value ?? '')]);
+      break;
+    default:
+      break;
+  }
+
+  const rendered = fields
+    .filter(([, value]) => value.trim())
+    .map(
+      ([label, value]) => `
+        <div class="memory-field">
+          <span>${escapeHtml(label)}</span>
+          <p>${escapeHtml(value)}</p>
+        </div>
+      `,
+    )
+    .join('');
+
+  return rendered || '<div class="memory-field"><span>内容</span><p>暂无可读内容</p></div>';
 }
 
 function renderRowDetail(table: MemoryTableName, row: MemoryBaseRow, editor: MemoryEditorState): string {
   const isEditing = editor.editingRowId === row.id;
-  const json = JSON.stringify(row, null, 2);
 
   if (isEditing) {
     return `
       <div class="memory-row-detail memory-row-detail--editing">
-        <textarea class="memory-edit-textarea" data-field="memory-edit-draft" rows="14">${escapeHtml(editor.editingDraft)}</textarea>
+        <label class="memory-form-field">
+          <span>内容</span>
+          <textarea class="memory-edit-textarea" data-field="memory-edit-draft" rows="6">${escapeHtml(editor.editingDraft)}</textarea>
+        </label>
         ${editor.error ? `<div class="memory-error">${escapeHtml(editor.error)}</div>` : ''}
         <div class="memory-row-actions">
           <button class="memory-action memory-action--primary" data-action="memory-save-edit" data-table="${table}" data-row-id="${escapeHtml(row.id)}">保存</button>
@@ -189,45 +400,116 @@ function renderRowDetail(table: MemoryTableName, row: MemoryBaseRow, editor: Mem
 
   return `
     <div class="memory-row-detail">
-      <pre class="memory-row-json">${escapeHtml(json)}</pre>
+      <div class="memory-fields">
+        ${renderReadableFields(table, row)}
+      </div>
       <div class="memory-row-actions">
-        <button class="memory-action" data-action="memory-edit-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">编辑</button>
         ${
-          row.expired
-            ? `<button class="memory-action" data-action="memory-restore-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">恢复</button>`
-            : `<button class="memory-action memory-action--danger" data-action="memory-expire-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">软删除</button>`
+          EDITABLE_TABLES.has(table)
+            ? `<button class="memory-action" data-action="memory-edit-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">编辑内容</button>`
+            : ''
         }
+        <button class="memory-action memory-action--danger" data-action="memory-expire-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">删除</button>
       </div>
     </div>
   `;
 }
 
-function renderRowList(db: IslandMemoryDB, editor: MemoryEditorState): string {
-  const table = editor.selectedTable;
-  const rows = getTable(db, table);
-  const visible = editor.showExpired ? rows : rows.filter(row => !row.expired);
+function renderSingleRow(table: MemoryTableName, row: MemoryBaseRow, editor: MemoryEditorState): string {
+  const expanded = editor.expandedRowId === row.id || editor.editingRowId === row.id;
+  const sourceLabel = localizeSource(row.source ?? 'unknown');
+  const stamp = (row.createdAt ?? '').slice(0, 19).replace('T', ' ');
+  return `
+    <article class="memory-row">
+      <button class="memory-row-summary" data-action="memory-toggle-row" data-row-id="${escapeHtml(row.id)}">
+        <span class="memory-row-preview">${escapeHtml(previewRow(table, row))}</span>
+        <span class="memory-row-meta">
+          <small>${escapeHtml(sourceLabel)} · ${escapeHtml(stamp)}</small>
+        </span>
+      </button>
+      ${expanded ? renderRowDetail(table, row, editor) : ''}
+    </article>
+  `;
+}
 
-  if (!visible.length) {
-    return `<div class="memory-empty">${editor.showExpired ? '该表为空。' : '该表没有活跃行。'}</div>`;
+function renderRowList(db: IslandMemoryDB, table: MemoryTableName, editor: MemoryEditorState): string {
+  const rows = getTable(db, table).filter(row => !row.expired);
+
+  if (!rows.length) {
+    return `<div class="memory-empty">暂无记录。</div>`;
   }
 
-  const sorted = [...visible].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+  if (table === 'facts') {
+    const groups = new Map<string, MemoryBaseRow[]>();
+    for (const row of rows) {
+      const cat = String((row as unknown as Record<string, unknown>).category ?? '');
+      const list = groups.get(cat) ?? [];
+      list.push(row);
+      groups.set(cat, list);
+    }
 
-  return sorted
-    .map(row => {
-      const expanded = editor.expandedRowId === row.id || editor.editingRowId === row.id;
-      const sourceLabel = row.source ?? 'unknown';
-      const stamp = (row.createdAt ?? '').slice(0, 19).replace('T', ' ');
+    const categoryOrder = ['event', 'profile', 'trait', 'state', 'preference', 'relationship', 'knowledge', 'opinion', 'background', 'ability', 'habit', 'goal', 'secret', 'memory', 'emotion'];
+    const sortedKeys = [...groups.keys()].sort((a, b) => {
+      const ia = categoryOrder.indexOf(a);
+      const ib = categoryOrder.indexOf(b);
+      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+    });
+
+    return sortedKeys.map(cat => {
+      const catRows = groups.get(cat)!.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+      const label = localizeCategory(cat) || cat;
       return `
-        <article class="memory-row ${row.expired ? 'is-expired' : ''}">
+        <div class="memory-group">
+          <div class="memory-group-title">${escapeHtml(label)}</div>
+          ${catRows.map(row => renderSingleRow(table, row, editor)).join('')}
+        </div>
+      `;
+    }).join('');
+  }
+
+  const sorted = [...rows].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+  return sorted.map(row => renderSingleRow(table, row, editor)).join('');
+}
+
+function renderTrashList(db: IslandMemoryDB, editor: MemoryEditorState): string {
+  const allExpired: Array<{ table: MemoryTableName; row: MemoryBaseRow }> = [];
+  for (const row of getTable(db, 'facts')) {
+    if (row.expired) allExpired.push({ table: 'facts', row });
+  }
+  for (const name of USER_VISIBLE_TABLES) {
+    for (const row of getTable(db, name)) {
+      if (row.expired) allExpired.push({ table: name, row });
+    }
+  }
+
+  if (!allExpired.length) {
+    return `<div class="memory-empty">回收站为空。</div>`;
+  }
+
+  allExpired.sort((a, b) => (b.row.updatedAt ?? '').localeCompare(a.row.updatedAt ?? ''));
+
+  return allExpired
+    .map(({ table, row }) => {
+      const expanded = editor.expandedRowId === row.id;
+      const stamp = (row.updatedAt ?? row.createdAt ?? '').slice(0, 19).replace('T', ' ');
+      return `
+        <article class="memory-row is-expired">
           <button class="memory-row-summary" data-action="memory-toggle-row" data-row-id="${escapeHtml(row.id)}">
             <span class="memory-row-preview">${escapeHtml(previewRow(table, row))}</span>
             <span class="memory-row-meta">
-              <small>${escapeHtml(sourceLabel)} · ${escapeHtml(stamp)}</small>
-              ${row.expired ? '<em class="memory-row-flag">已删</em>' : ''}
+              <small>${escapeHtml(TABLE_LABELS[table])} · ${escapeHtml(stamp)}</small>
             </span>
           </button>
-          ${expanded ? renderRowDetail(table, row, editor) : ''}
+          ${expanded ? `
+            <div class="memory-row-detail">
+              <div class="memory-fields">
+                ${renderReadableFields(table, row)}
+              </div>
+              <div class="memory-row-actions">
+                <button class="memory-action memory-action--primary" data-action="memory-restore-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">恢复</button>
+              </div>
+            </div>
+          ` : ''}
         </article>
       `;
     })
@@ -238,43 +520,147 @@ function renderCreateForm(editor: MemoryEditorState): string {
   if (!editor.creating) {
     return `
       <div class="memory-create-bar">
-        <button class="memory-action memory-action--primary" data-action="memory-new-row">新增行</button>
-        <button class="memory-action" data-action="memory-toggle-expired">${editor.showExpired ? '隐藏已删' : '显示已删'}</button>
+        <button class="memory-action memory-action--primary" data-action="memory-new-row">记录事件</button>
       </div>
     `;
   }
 
   return `
     <div class="memory-create-form">
-      <div class="memory-create-title">新增 ${escapeHtml(TABLE_LABELS[editor.selectedTable])} 行（JSON，无需写 id/createdAt/source）</div>
-      <textarea class="memory-edit-textarea" data-field="memory-new-draft" rows="10">${escapeHtml(editor.creatingDraft)}</textarea>
+      <div class="memory-create-title">记录事件</div>
+      <label class="memory-form-field">
+        <span>事件内容</span>
+        <textarea class="memory-edit-textarea" data-field="memory-new-draft" rows="6" placeholder="例如：在15分钟内用安艺家剩余的食材做出美味的晚餐，受到加藤惠与英梨梨的认可。">${escapeHtml(editor.creatingDraft)}</textarea>
+      </label>
       ${editor.error ? `<div class="memory-error">${escapeHtml(editor.error)}</div>` : ''}
       <div class="memory-row-actions">
-        <button class="memory-action memory-action--primary" data-action="memory-save-new" data-table="${editor.selectedTable}">保存</button>
+        <button class="memory-action memory-action--primary" data-action="memory-save-new">保存</button>
         <button class="memory-action" data-action="memory-cancel-new">取消</button>
       </div>
     </div>
   `;
 }
 
-export function renderMemoryEditor(state: AppState): string {
+function getTotalExpiredCount(db: IslandMemoryDB): number {
+  let count = 0;
+  for (const row of getTable(db, 'facts')) {
+    if (row.expired) count += 1;
+  }
+  for (const name of USER_VISIBLE_TABLES) {
+    for (const row of getTable(db, name)) {
+      if (row.expired) count += 1;
+    }
+  }
+  return count;
+}
+
+function renderMemoryHome(db: IslandMemoryDB): string {
+  const trashCount = getTotalExpiredCount(db);
+  const entries = buildHomeEntries(db);
+
+  const cards = entries.map(entry => {
+    if (entry.kind === 'category') {
+      return `
+        <button class="memory-home-card" data-action="memory-open-category" data-category="${escapeHtml(entry.category)}">
+          <strong>${escapeHtml(entry.label)}</strong>
+          <span class="memory-home-card__count">${entry.count} 条</span>
+        </button>
+      `;
+    }
+    return `
+      <button class="memory-home-card" data-action="memory-open-table" data-table="${entry.table}">
+        <strong>${escapeHtml(entry.label)}</strong>
+        <span class="memory-home-card__count">${entry.count} 条</span>
+      </button>
+    `;
+  }).join('');
+
+  return `
+    <div class="memory-editor">
+      <div class="memory-home-grid">
+        ${cards}
+      </div>
+      <button class="memory-trash-entry" data-action="memory-open-trash">
+        <span>回收站</span>
+        <span>${trashCount} 条已删除</span>
+      </button>
+    </div>
+  `;
+}
+
+function renderMemoryTablePage(state: AppState, table: MemoryTableName): string {
   const db = state.memoryDB;
   const editor = state.memoryEditor;
 
   return `
     <div class="memory-editor">
-      <div class="memory-editor-meta">
-        <span>runId: <code>${escapeHtml(db.runId || '(未绑定)')}</code></span>
-        <span>cursor: ${db.lastProcessedIndex}</span>
-        <span>schema v${db.version}</span>
+      <div class="memory-sub-header">
+        <button class="memory-action" data-action="memory-back-to-home">← 返回</button>
+        <strong>${escapeHtml(TABLE_LABELS[table])}</strong>
       </div>
-      <nav class="memory-tabs" aria-label="记忆表">
-        ${renderTableTabs(db, editor)}
-      </nav>
-      ${renderCreateForm(editor)}
+      ${table === 'facts' ? renderCreateForm(editor) : ''}
       <div class="memory-row-list">
-        ${renderRowList(db, editor)}
+        ${renderRowList(db, table, editor)}
       </div>
     </div>
   `;
+}
+
+function renderMemoryTrashPage(state: AppState): string {
+  const db = state.memoryDB;
+  const editor = state.memoryEditor;
+
+  return `
+    <div class="memory-editor">
+      <div class="memory-sub-header">
+        <button class="memory-action" data-action="memory-back-to-home">← 返回</button>
+        <strong>回收站</strong>
+      </div>
+      <div class="memory-row-list">
+        ${renderTrashList(db, editor)}
+      </div>
+    </div>
+  `;
+}
+
+function renderMemoryCategoryPage(state: AppState, category: string): string {
+  const db = state.memoryDB;
+  const editor = state.memoryEditor;
+  const rows = getTable(db, 'facts')
+    .filter(r => !r.expired && String((r as unknown as Record<string, unknown>).category ?? '') === category);
+  const label = localizeCategory(category) || category;
+  const showCreate = category === 'event';
+
+  const sorted = [...rows].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+  const rowsHtml = sorted.length
+    ? sorted.map(row => renderSingleRow('facts', row, editor)).join('')
+    : `<div class="memory-empty">暂无记录。</div>`;
+
+  return `
+    <div class="memory-editor">
+      <div class="memory-sub-header">
+        <button class="memory-action" data-action="memory-back-to-home">← 返回</button>
+        <strong>${escapeHtml(label)}</strong>
+      </div>
+      ${showCreate ? renderCreateForm(editor) : ''}
+      <div class="memory-row-list">
+        ${rowsHtml}
+      </div>
+    </div>
+  `;
+}
+
+export function renderMemoryEditor(state: AppState): string {
+  const editor = state.memoryEditor;
+
+  if (editor.selectedCategory) {
+    return renderMemoryCategoryPage(state, editor.selectedCategory);
+  }
+  if (editor.selectedTable === null) {
+    return renderMemoryHome(state.memoryDB);
+  }
+  if (editor.selectedTable === '__trash') {
+    return renderMemoryTrashPage(state);
+  }
+  return renderMemoryTablePage(state, editor.selectedTable);
 }

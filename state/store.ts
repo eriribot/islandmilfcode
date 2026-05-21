@@ -1,4 +1,4 @@
-import { getReaderMessages } from '../message-format';
+import { getReaderMessages, isFrontendHtmlShell } from '../message-format';
 import { createDefaultSummaryStore, deserializeSummaryStore } from '../summary/types';
 import type { FloatingPhonePosition } from '../phone/types';
 import type {
@@ -14,6 +14,7 @@ import { clamp, defaultStatusData, normalizeStatusData } from '../variables/norm
 import { getDefaultWeatherState } from '../phone/weather';
 import { createDefaultMemoryDB } from '../memorydatabase/defaults';
 import { createDefaultMemoryEditorState } from '../memorydatabase/editor';
+import { normalizeMemoryDB } from '../memorydatabase/normalize';
 
 export const MESSAGE_MARKER = 'islandmilfcode';
 
@@ -117,6 +118,13 @@ function clonePhoneMessagesForSnapshot(input: unknown): PhoneMessageStore {
   };
 }
 
+function cloneMemoryDBForSnapshot(input: unknown) {
+  const raw = typeof input === 'object' && input ? (input as { runId?: unknown }) : {};
+  const runId = typeof raw.runId === 'string' ? raw.runId : '';
+  const normalized = normalizeMemoryDB(input, runId);
+  return normalized ? cloneJson(normalized) : undefined;
+}
+
 function normalizeRollbackSnapshot(input: unknown, options: { includeSideWindows?: boolean } = {}): RollbackSnapshot {
   const { includeSideWindows = true } = options;
 
@@ -132,6 +140,10 @@ function normalizeRollbackSnapshot(input: unknown, options: { includeSideWindows
     statusData: normalizeStatusData(raw.statusData ?? defaultStatusData),
   };
 
+  if (raw.playerProfile && typeof raw.playerProfile === 'object') {
+    snapshot.playerProfile = cloneJson(raw.playerProfile as RollbackSnapshot['playerProfile']);
+  }
+
   if (includeSideWindows) {
     if (raw.phoneMessages) {
       snapshot.phoneMessages = clonePhoneMessagesForSnapshot(raw.phoneMessages);
@@ -139,26 +151,39 @@ function normalizeRollbackSnapshot(input: unknown, options: { includeSideWindows
     if (raw.summaryStore) {
       snapshot.summaryStore = deserializeSummaryStore(raw.summaryStore);
     }
+    if (raw.memoryDB) {
+      snapshot.memoryDB = cloneMemoryDBForSnapshot(raw.memoryDB);
+    }
   }
 
   return snapshot;
 }
 
-export function createRollbackSnapshot(state: Pick<AppState, 'statusData' | 'phoneMessages' | 'summaryStore'>) {
+export function createRollbackSnapshot(
+  state: Pick<AppState, 'statusData' | 'playerProfile' | 'phoneMessages' | 'summaryStore' | 'memoryDB'>,
+) {
   return {
     statusData: cloneJson(state.statusData),
+    playerProfile: cloneJson(state.playerProfile),
     phoneMessages: clonePhoneMessagesForSnapshot(state.phoneMessages),
     summaryStore: deserializeSummaryStore(cloneJson(state.summaryStore)),
+    memoryDB: cloneMemoryDBForSnapshot(state.memoryDB),
   };
 }
 
 function restoreRollbackSnapshot(state: AppState, snapshot: RollbackSnapshot) {
   state.statusData = cloneJson(snapshot.statusData);
+  if (snapshot.playerProfile) {
+    state.playerProfile = cloneJson(snapshot.playerProfile);
+  }
   if (snapshot.phoneMessages) {
     state.phoneMessages = clonePhoneMessagesForSnapshot(snapshot.phoneMessages);
   }
   if (snapshot.summaryStore) {
     state.summaryStore = deserializeSummaryStore(snapshot.summaryStore);
+  }
+  if (snapshot.memoryDB) {
+    state.memoryDB = cloneMemoryDBForSnapshot(snapshot.memoryDB) ?? state.memoryDB;
   }
 }
 
@@ -310,7 +335,9 @@ export async function loadMessagesFromChat(win: TavernWindow): Promise<UiMessage
       return [];
     }
 
-    return selectedMessages.map(message => mapChatMessageToUiMessage(message));
+    return selectedMessages
+      .filter(message => !isFrontendHtmlShell(String(message.message ?? '')))
+      .map(message => mapChatMessageToUiMessage(message));
   } catch {
     return [];
   }

@@ -5,6 +5,7 @@ import {
   buildPrompt,
   extractPhoneChatReply,
   extractTaggedReply,
+  getPromptMessageText,
   type ProgressUpdate,
   getVisibleMessageText,
   parseProgressUpdate,
@@ -255,7 +256,8 @@ function getLatestAssistantSceneText(ctx: ActionContext) {
   for (let index = ctx.state.uiMessages.length - 1; index >= 0; index -= 1) {
     const message = ctx.state.uiMessages[index];
     if (message?.role !== 'assistant' || message.streaming) continue;
-    return (getVisibleMessageText(message) || message.text || '').trim();
+    const text = getPromptMessageText(message).trim();
+    if (text) return text;
   }
   return '';
 }
@@ -675,6 +677,7 @@ export async function submitMessage(
           ctx.onSummaryStoreUpdated();
           ctx.render();
         },
+        memoryDB: ctx.memoryDB,
         getFactAnchor: () => buildFactAnchorFromStatus(ctx.state.statusData),
         onProgressUpdate: update => {
           if (!deferProgressToMinorSummary) return;
@@ -1036,13 +1039,7 @@ function pickPostTurnBackgroundMode(
 
 function normalizeScenePresenceIds(ids: unknown, allowedIds: Set<string>) {
   if (!Array.isArray(ids)) return [];
-  return Array.from(
-    new Set(
-      ids
-        .map(id => String(id ?? '').trim())
-        .filter(id => allowedIds.has(id)),
-    ),
-  );
+  return Array.from(new Set(ids.map(id => String(id ?? '').trim()).filter(id => allowedIds.has(id))));
 }
 
 function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[], userInput: string): RawPrompt[] {
@@ -1051,9 +1048,10 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     .slice(-4)
     .map(message => {
       const role = message.role === 'assistant' ? 'assistant' : 'user';
-      const text = message.role === 'assistant' ? getVisibleMessageText(message) || message.text : message.text;
+      const text = getPromptMessageText(message);
       return `[${role}] ${text}`;
     })
+    .filter(line => line.trim() !== '[assistant]' && line.trim() !== '[user]')
     .join('\n\n');
 
   const targets = ctx.state.statusData.targets

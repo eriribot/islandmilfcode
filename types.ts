@@ -115,8 +115,10 @@ export type PhoneMessageStore = {
 
 export type RollbackSnapshot = {
   statusData: StatusData;
+  playerProfile?: PlayerProfile;
   phoneMessages?: PhoneMessageStore;
   summaryStore?: SummaryStore;
+  memoryDB?: IslandMemoryDB;
 };
 
 export type PhoneProactiveState = {
@@ -302,7 +304,8 @@ export type AppState = {
 };
 
 export type MemoryEditorState = {
-  selectedTable: MemoryTableName;
+  selectedTable: MemoryTableName | '__trash' | null;
+  selectedCategory: string | null;
   expandedRowId: string | null;
   editingRowId: string | null;
   editingDraft: string;

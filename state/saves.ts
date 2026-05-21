@@ -1,6 +1,6 @@
 import type { SummaryStore } from '../summary/types';
 import { createDefaultSummaryStore } from '../summary/types';
-import { extractContextReply } from '../message-format';
+import { extractContextReply, isFrontendHtmlShell } from '../message-format';
 import type {
   Difficulty,
   GameState,
@@ -98,7 +98,7 @@ function normalizeSaveTargetMeta(input: unknown): SaveTargetMeta | null {
 function createSaveTargetMeta(statusData: StatusData): SaveTargetMeta | null {
   // 中文注释：存档封面只展示明确激活对象；不会用 targets[0] 当默认目标。
   const target = statusData.activeTargetId
-    ? statusData.targets.find(item => item.id === statusData.activeTargetId) ?? null
+    ? (statusData.targets.find(item => item.id === statusData.activeTargetId) ?? null)
     : null;
   if (!target) return null;
   return {
@@ -164,7 +164,12 @@ function safeRemove(key: string): void {
 function normalizePersistedMessages(messages: PersistedMessage[] | undefined): PersistedMessage[] {
   if (!Array.isArray(messages)) return [];
   return messages
-    .filter(message => message && (message.role === 'user' || message.role === 'assistant'))
+    .filter(
+      message =>
+        message &&
+        (message.role === 'user' || message.role === 'assistant') &&
+        !isFrontendHtmlShell(String(message.rawText || message.text || '')),
+    )
     .map(message => ({
       role: message.role,
       speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
@@ -200,7 +205,10 @@ function getLatestVisiblePreview(messages: PersistedMessage[]): string {
   return '';
 }
 
-function createMetaFromPayload(payload: SavePayload, input: { kind: SaveKind; label: string; createdAt?: number }): SaveMeta {
+function createMetaFromPayload(
+  payload: SavePayload,
+  input: { kind: SaveKind; label: string; createdAt?: number },
+): SaveMeta {
   const statusData = payload.gameState.statusData;
   const playerProfile = getPlayerProfileFromGameState(payload.gameState);
   const messageCount = payload.chatLog.length;
@@ -319,9 +327,7 @@ function readPayload(saveId: string): SavePayload | null {
   const summaryStore = cloneJson(payload.summaryStore ?? createDefaultSummaryStore());
 
   // memoryDB：优先从存档读取，没有则从 summaryStore 迁移
-  const memoryDB =
-    normalizeMemoryDB(payload.memoryDB, runId)
-    ?? migrateSummaryStoreToMemoryDB(summaryStore, runId);
+  const memoryDB = normalizeMemoryDB(payload.memoryDB, runId) ?? migrateSummaryStoreToMemoryDB(summaryStore, runId);
 
   return {
     saveId: String(payload.saveId || saveId),
@@ -400,7 +406,15 @@ export function listSavesByRunId(runId: string): SaveMeta[] {
   return listSaves().filter(save => save.runId === runId);
 }
 
-export function createSave(opts: { characterName: string; gender?: string; personality: string; appearance: string; className?: string; stats?: PlayerStats; difficulty?: Difficulty }): SaveMeta {
+export function createSave(opts: {
+  characterName: string;
+  gender?: string;
+  personality: string;
+  appearance: string;
+  className?: string;
+  stats?: PlayerStats;
+  difficulty?: Difficulty;
+}): SaveMeta {
   const runId = crypto.randomUUID();
   const saveId = `autosave_${runId}`;
   const payload = buildInitialPayload({

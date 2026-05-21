@@ -21,7 +21,14 @@
       "Bash(xargs grep -l \"p5\")",
       "Bash(findstr /n \"^\")",
       "Bash(findstr /b \"1: 2: 3: 4: 5: 6: 7: 8: 9: 10: 11: 12: 13: 14: 15:\")",
-      "Bash(Get-ChildItem -Path \"E:\\\\web\\\\st-yuzi-phone\\\\modules\\\\phone-core\" -Recurse -File)"
+      "Bash(Get-ChildItem -Path \"E:\\\\web\\\\st-yuzi-phone\\\\modules\\\\phone-core\" -Recurse -File)",
+      "Bash(git *)",
+      "Bash(python)",
+      "Bash(npx webpack *)",
+      "Bash(grep -l \"islandmilfcode\" webpack*.*)",
+      "Bash(ls webpack*.*)",
+      "Bash(ls src/islandmilfcode/*.html)",
+      "Bash(ls src/islandmilfcode/index.html)"
     ]
   }
 }

@@ -1,4 +1,4 @@
-import { extractTaggedReply, getVisibleMessageText } from '../message-format';
+import { extractTaggedReply, getPromptMessageText } from '../message-format';
 import type { UiMessage } from '../types';
 import type { FactAnchor, KeyFact, KeyFactCategory, SummaryEntry, SummaryStore } from './types';
 import { KEY_FACT_CATEGORY_LABEL, KEY_FACT_CATEGORY_MAP } from './types';
@@ -40,7 +40,8 @@ function formatMessagesForSummary(messages: UiMessage[]): string {
   return messages
     .filter(m => m.role === 'user' || m.role === 'assistant')
     .map(m => {
-      const text = m.role === 'assistant' ? getVisibleMessageText(m) || m.text : m.text;
+      const text = getPromptMessageText(m);
+      if (!text.trim()) return '';
       const speaker = m.speaker || (m.role === 'assistant' ? 'Assistant' : 'User');
       return `[${speaker}]\n${text.trim()}`;
     })
@@ -54,9 +55,7 @@ function renderFactAnchor(anchor: FactAnchor | null | undefined): string {
   const affinities = anchor.affinities.length
     ? anchor.affinities.map(a => `${a.name}: ${a.value}（${a.stage}）`).join('、')
     : '无';
-  const mainEvents = anchor.mainEvents.length
-    ? anchor.mainEvents.map(e => `${e.id}:${e.status}`).join('；')
-    : '无';
+  const mainEvents = anchor.mainEvents.length ? anchor.mainEvents.map(e => `${e.id}:${e.status}`).join('；') : '无';
   return [
     '【状态快照（绝对事实，不得改写）】',
     `- 当前时间：${anchor.time || '未知'}`,

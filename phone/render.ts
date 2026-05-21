@@ -899,9 +899,14 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
 }
 
 function renderMemoryPhonePage(state: AppState) {
+  const subtitle = state.memoryEditor.selectedTable === null
+    ? ''
+    : state.memoryEditor.selectedTable === '__trash'
+      ? '回收站'
+      : '';
   return `
     <section class="phone-route-page phone-app-page phone-app-page--memory" data-phone-route-view="app:memory">
-      ${renderPhoneAppHeader(state, '记忆库', `schema v${state.memoryDB.version}`)}
+      ${renderPhoneAppHeader(state, '记忆库', subtitle)}
       <div class="phone-page-scroll memory-phone-scroll">
         ${renderMemoryEditor(state)}
       </div>

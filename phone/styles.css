@@ -605,6 +605,352 @@ body.floating-phone-dragging {
   overscroll-behavior: contain;
 }
 
+/* ── Memory editor ── */
+
+.phone-app-page--memory {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.memory-phone-scroll {
+  padding: 4px 2px 0;
+}
+
+.memory-home-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.memory-home-card {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px 12px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--ink-dark);
+  background: rgba(255, 252, 245, 0.84);
+  border: 1px solid rgba(180, 160, 130, 0.16);
+  cursor: pointer;
+}
+
+.memory-home-card:active {
+  background: rgba(240, 235, 220, 0.9);
+}
+
+.memory-home-card strong {
+  font-size: 13px;
+}
+
+.memory-home-card__count {
+  color: var(--ink-faint);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.memory-trash-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  text-align: left;
+  color: var(--ink-soft);
+  background: rgba(255, 245, 245, 0.72);
+  border: 1px solid rgba(180, 130, 130, 0.14);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.memory-trash-entry:active {
+  background: rgba(255, 235, 235, 0.9);
+}
+
+.memory-sub-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.memory-sub-header strong {
+  font-size: 14px;
+  color: var(--ink-dark);
+}
+
+.memory-group {
+  display: grid;
+  gap: 6px;
+}
+
+.memory-group + .memory-group {
+  margin-top: 12px;
+}
+
+.memory-group-title {
+  padding: 4px 8px;
+  color: var(--ink-assistant);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.memory-editor {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+}
+
+.memory-editor-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(255, 252, 245, 0.84);
+  border: 1px solid rgba(180, 160, 130, 0.16);
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.memory-editor-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.memory-tab {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 10px 9px;
+  border-radius: 8px;
+  color: var(--ink-soft);
+  background: rgba(255, 252, 245, 0.72);
+  border: 1px solid rgba(180, 160, 130, 0.14);
+  cursor: pointer;
+  text-align: left;
+}
+
+.memory-tab strong,
+.memory-tab span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-tab strong {
+  font-size: 12px;
+  color: var(--ink-dark);
+}
+
+.memory-tab span {
+  font-size: 10px;
+}
+
+.memory-tab.is-active {
+  color: var(--ink-assistant);
+  background: rgba(107, 78, 158, 0.08);
+  border-color: rgba(107, 78, 158, 0.2);
+}
+
+.memory-create-bar,
+.memory-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.memory-create-form,
+.memory-row-detail,
+.memory-row {
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 252, 245, 0.88);
+  border: 1px solid rgba(180, 160, 130, 0.16);
+}
+
+.memory-create-form {
+  display: grid;
+  gap: 10px;
+}
+
+.memory-create-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--ink-dark);
+}
+
+.memory-form-field {
+  display: grid;
+  gap: 6px;
+}
+
+.memory-form-field span {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+.memory-edit-textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  padding: 10px 11px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 160, 130, 0.22);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink-dark);
+  line-height: 1.55;
+}
+
+.memory-edit-textarea::placeholder {
+  color: var(--ink-faint);
+}
+
+.memory-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-field {
+  display: grid;
+  gap: 3px;
+}
+
+.memory-field span {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--ink-faint);
+  letter-spacing: 0;
+}
+
+.memory-field p {
+  margin: 0;
+  color: var(--ink-dark);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.memory-row-list {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-row {
+  display: grid;
+  gap: 10px;
+}
+
+.memory-row.is-expired {
+  opacity: 0.72;
+}
+
+.memory-row-summary {
+  width: 100%;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.memory-row-preview,
+.memory-row-meta small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-row-preview {
+  color: var(--ink-dark);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.memory-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ink-faint);
+  font-size: 10px;
+}
+
+.memory-row-meta small {
+  min-width: 0;
+}
+
+.memory-row-flag {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-style: normal;
+  color: #b85c6e;
+}
+
+.memory-empty,
+.memory-error {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.memory-empty {
+  color: var(--ink-soft);
+  background: rgba(255, 252, 245, 0.7);
+  border: 1px dashed rgba(180, 160, 130, 0.18);
+}
+
+.memory-error {
+  color: #8d3d3d;
+  background: rgba(255, 235, 235, 0.78);
+  border: 1px solid rgba(172, 71, 71, 0.18);
+}
+
+.memory-action {
+  min-height: 30px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 252, 245, 0.95);
+  border: 1px solid rgba(180, 160, 130, 0.18);
+  color: var(--ink-dark);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.memory-action--primary {
+  color: #fff;
+  background: var(--ink-assistant);
+  border-color: transparent;
+}
+
+.memory-action--danger {
+  color: #8d3d3d;
+  background: rgba(255, 235, 235, 0.9);
+  border-color: rgba(172, 71, 71, 0.16);
+}
+
 /* ── 日历 ── */
 
 .phone-app-page--calendar {

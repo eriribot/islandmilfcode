@@ -59,6 +59,9 @@ import { createVariableAdapter, type VariableAdapter } from './variables/adapter
 import { clamp, syncMainEvents } from './variables/normalize';
 import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
 import {
+  createMemoryDraft,
+  createMemoryPatchFromDraft,
+  createUserEventMemoryPayload,
   updateMemoryRow,
   expireMemoryRow,
   restoreMemoryRow,
@@ -1021,9 +1024,18 @@ function bindEvents() {
   });
 
   // ── Memory editor events ──
-  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-select-table"]').forEach(button => {
+  function renderMemoryKeepScroll() {
+    const scrollEl = root?.querySelector<HTMLElement>('.memory-phone-scroll');
+    const scrollTop = scrollEl?.scrollTop ?? 0;
+    render();
+    const restored = root?.querySelector<HTMLElement>('.memory-phone-scroll');
+    if (restored) restored.scrollTop = scrollTop;
+  }
+
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-open-table"]').forEach(button => {
     button.addEventListener('click', () => {
       state.memoryEditor.selectedTable = (button.dataset.table ?? 'facts') as MemoryTableName;
+      state.memoryEditor.selectedCategory = null;
       state.memoryEditor.expandedRowId = null;
       state.memoryEditor.editingRowId = null;
       state.memoryEditor.creating = false;
@@ -1031,13 +1043,43 @@ function bindEvents() {
       render();
     });
   });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-open-category"]').forEach(button => {
+    button.addEventListener('click', () => {
+      state.memoryEditor.selectedTable = null;
+      state.memoryEditor.selectedCategory = button.dataset.category ?? '';
+      state.memoryEditor.expandedRowId = null;
+      state.memoryEditor.editingRowId = null;
+      state.memoryEditor.creating = false;
+      state.memoryEditor.error = null;
+      render();
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-back-to-home"]').forEach(button => {
+    button.addEventListener('click', () => {
+      state.memoryEditor.selectedTable = null;
+      state.memoryEditor.selectedCategory = null;
+      state.memoryEditor.expandedRowId = null;
+      state.memoryEditor.editingRowId = null;
+      state.memoryEditor.creating = false;
+      state.memoryEditor.error = null;
+      render();
+    });
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="memory-open-trash"]')?.addEventListener('click', () => {
+    state.memoryEditor.selectedTable = '__trash';
+    state.memoryEditor.selectedCategory = null;
+    state.memoryEditor.expandedRowId = null;
+    state.memoryEditor.editingRowId = null;
+    state.memoryEditor.error = null;
+    render();
+  });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-toggle-row"]').forEach(button => {
     button.addEventListener('click', () => {
       const rowId = button.dataset.rowId ?? '';
       state.memoryEditor.expandedRowId = state.memoryEditor.expandedRowId === rowId ? null : rowId;
       state.memoryEditor.editingRowId = null;
       state.memoryEditor.error = null;
-      render();
+      renderMemoryKeepScroll();
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-edit-row"]').forEach(button => {
@@ -1047,9 +1089,9 @@ function bindEvents() {
       const rows = (state.memoryDB as unknown as Record<string, unknown[]>)[table];
       const row = Array.isArray(rows) ? rows.find((r: any) => r.id === rowId) : null;
       state.memoryEditor.editingRowId = rowId;
-      state.memoryEditor.editingDraft = row ? JSON.stringify(row, null, 2) : '{}';
+      state.memoryEditor.editingDraft = row ? createMemoryDraft(table, row as any) : '';
       state.memoryEditor.error = null;
-      render();
+      renderMemoryKeepScroll();
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-save-edit"]').forEach(button => {
@@ -1057,23 +1099,22 @@ function bindEvents() {
       const rowId = button.dataset.rowId ?? '';
       const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
       try {
-        const parsed = JSON.parse(state.memoryEditor.editingDraft);
-        if (!parsed || typeof parsed !== 'object') throw new Error('必须是 JSON 对象');
-        updateMemoryRow(state.memoryDB, table, rowId, parsed);
+        const patch = createMemoryPatchFromDraft(table, state.memoryEditor.editingDraft);
+        updateMemoryRow(state.memoryDB, table, rowId, patch);
         state.memoryEditor.editingRowId = null;
         state.memoryEditor.error = null;
         persistToSave();
       } catch (e) {
         state.memoryEditor.error = e instanceof Error ? e.message : String(e);
       }
-      render();
+      renderMemoryKeepScroll();
     });
   });
   root?.querySelectorAll<HTMLElement>('[data-action="memory-cancel-edit"]').forEach(el => {
     el.addEventListener('click', () => {
       state.memoryEditor.editingRowId = null;
       state.memoryEditor.error = null;
-      render();
+      renderMemoryKeepScroll();
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-expire-row"]').forEach(button => {
@@ -1082,7 +1123,7 @@ function bindEvents() {
       const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
       expireMemoryRow(state.memoryDB, table, rowId);
       persistToSave();
-      render();
+      renderMemoryKeepScroll();
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-restore-row"]').forEach(button => {
@@ -1091,21 +1132,18 @@ function bindEvents() {
       const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
       restoreMemoryRow(state.memoryDB, table, rowId);
       persistToSave();
-      render();
+      renderMemoryKeepScroll();
     });
   });
   root?.querySelector<HTMLButtonElement>('[data-action="memory-new-row"]')?.addEventListener('click', () => {
     state.memoryEditor.creating = true;
-    state.memoryEditor.creatingDraft = '{\n  \n}';
+    state.memoryEditor.creatingDraft = '';
     state.memoryEditor.error = null;
-    render();
+    renderMemoryKeepScroll();
   });
   root?.querySelector<HTMLButtonElement>('[data-action="memory-save-new"]')?.addEventListener('click', () => {
-    const table = state.memoryEditor.selectedTable;
     try {
-      const parsed = JSON.parse(state.memoryEditor.creatingDraft);
-      if (!parsed || typeof parsed !== 'object') throw new Error('必须是 JSON 对象');
-      const newId = insertMemoryRow(state.memoryDB, table, parsed);
+      const newId = insertMemoryRow(state.memoryDB, 'facts', createUserEventMemoryPayload(state.memoryEditor.creatingDraft));
       if (!newId) throw new Error('写入失败');
       state.memoryEditor.creating = false;
       state.memoryEditor.creatingDraft = '';
@@ -1115,18 +1153,14 @@ function bindEvents() {
     } catch (e) {
       state.memoryEditor.error = e instanceof Error ? e.message : String(e);
     }
-    render();
+    renderMemoryKeepScroll();
   });
   root?.querySelectorAll<HTMLElement>('[data-action="memory-cancel-new"]').forEach(el => {
     el.addEventListener('click', () => {
       state.memoryEditor.creating = false;
       state.memoryEditor.error = null;
-      render();
+      renderMemoryKeepScroll();
     });
-  });
-  root?.querySelector<HTMLButtonElement>('[data-action="memory-toggle-expired"]')?.addEventListener('click', () => {
-    state.memoryEditor.showExpired = !state.memoryEditor.showExpired;
-    render();
   });
   root?.querySelector<HTMLTextAreaElement>('[data-field="memory-edit-draft"]')?.addEventListener('input', event => {
     state.memoryEditor.editingDraft = (event.target as HTMLTextAreaElement).value;
@@ -1193,6 +1227,7 @@ function bindEvents() {
           state.summarizing = false;
           render();
         },
+        memoryDB: state.memoryDB,
         getFactAnchor: () => buildFactAnchorFromStatus(state.statusData),
       },
       mode,
@@ -1233,6 +1268,7 @@ function bindEvents() {
             state.summarizing = false;
             render();
           },
+          memoryDB: state.memoryDB,
           getFactAnchor: () => buildFactAnchorFromStatus(state.statusData),
         },
         level,

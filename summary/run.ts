@@ -1,4 +1,4 @@
-import { getVisibleMessageText, parseProgressUpdate, type ProgressUpdate } from '../message-format';
+import { getPromptMessageText, parseProgressUpdate, type ProgressUpdate } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
 import { runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
 import type { AppState, TavernWindow, UiMessage } from '../types';
@@ -146,7 +146,8 @@ function countConversationMessages(messages: UiMessage[]): number {
 function formatMessagesAsText(messages: UiMessage[]): string {
   return messages
     .map(m => {
-      const text = m.role === 'assistant' ? getVisibleMessageText(m) || m.text : m.text;
+      const text = getPromptMessageText(m);
+      if (!text.trim()) return '';
       const speaker = m.speaker || (m.role === 'assistant' ? 'Assistant' : 'User');
       return `[${speaker}]\n${text.trim()}`;
     })

@@ -41,6 +41,21 @@ const META_SUBTAG_NAMES = [
   'story_progress',
 ];
 
+export function isFrontendHtmlShell(text: string) {
+  const raw = String(text ?? '')
+    .trim()
+    .replace(/^\[[^\]\n]{1,48}\]\s*\n/, '')
+    .trim();
+  if (!raw) return false;
+  if (!/^(?:<!doctype\s+html\b|<html\b|<head\b|<meta\b|<script\b)/i.test(raw)) return false;
+  return (
+    /<div\s+id=(["'])app\1/i.test(raw) ||
+    /<title>[^<]*islandmilfcode/i.test(raw) ||
+    /islandmilfcode/i.test(raw) ||
+    /webpack-internal:\/\/\/\.\/src\/islandmilfcode/i.test(raw)
+  );
+}
+
 function stripMetaSubtags(text: string) {
   if (!text) return text;
   let result = text;
@@ -125,7 +140,12 @@ export function extractTucaoBlocks(text: string, { streaming = false }: { stream
 
     if (lastOpen?.index != null && (!lastClose?.index || lastOpen.index > lastClose.index)) {
       const start = lastOpen.index + lastOpen[0].length;
-      const body = sanitizeVisibleReply(raw.slice(start).replace(/<[^>]*$/, '').trim());
+      const body = sanitizeVisibleReply(
+        raw
+          .slice(start)
+          .replace(/<[^>]*$/, '')
+          .trim(),
+      );
       if (body && blocks[blocks.length - 1] !== body) blocks.push(body);
     }
   }
@@ -136,6 +156,9 @@ export function extractTucaoBlocks(text: string, { streaming = false }: { stream
 export function extractContextReply(text: string, { streaming = false }: { streaming?: boolean } = {}) {
   const raw = String(text ?? '');
   if (!raw) {
+    return '';
+  }
+  if (isFrontendHtmlShell(raw)) {
     return '';
   }
 
@@ -169,10 +192,25 @@ export function getVisibleMessageText(message: UiMessage) {
   return extractContextReply(message.rawText || message.text) || '';
 }
 
+export function getPromptMessageText(message: UiMessage) {
+  if (message.role !== 'assistant') {
+    return message.text;
+  }
+
+  const visible = getVisibleMessageText(message);
+  if (visible) return visible;
+
+  const raw = String(message.rawText || message.text || '');
+  if (isFrontendHtmlShell(raw)) return '';
+
+  return String(message.text || '');
+}
+
 export function getReaderMessages(messages: UiMessage[]) {
   return messages.filter(message => {
     if (message.role === 'system') return false;
     if (message.role === 'user') return Boolean(message.text.trim());
+    if (isFrontendHtmlShell(message.rawText || message.text)) return false;
     // assistant: 流式中或有任何原文都保留，让掉标签的楼层也能被翻到并走编辑入口恢复。
     return message.streaming || Boolean(message.text.trim());
   });
@@ -186,9 +224,7 @@ function buildConversationHistory(uiMessages: UiMessage[], startIndex = 0) {
     .slice(startIndex)
     .filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
     .map(message => {
-      const visibleText = (
-        message.role === 'assistant' ? getVisibleMessageText(message) || message.text : message.text
-      ).trim();
+      const visibleText = getPromptMessageText(message).trim();
       if (!visibleText) return '';
       const speaker = (message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')).trim();
       return `[${message.role}:${speaker}]\n${visibleText}`;
@@ -228,7 +264,9 @@ function buildMainEventsContext(statusData: StatusData) {
     .map(([id, status]) => `- ${id}：${status}`);
 
   return [
-    currentId ? `当前主线事件：${currentId}（${statusData.world.mainEvents?.[currentId] ?? '状态未知'}）` : '当前主线事件：无',
+    currentId
+      ? `当前主线事件：${currentId}（${statusData.world.mainEvents?.[currentId] ?? '状态未知'}）`
+      : '当前主线事件：无',
     ...(lines.length ? ['主线事件状态：', ...lines] : []),
   ].join('\n');
 }
@@ -299,7 +337,7 @@ function pickNextUpcomingEvent(statusData: StatusData, plotLibrary: PlotLibrary)
     .filter(event => Boolean(event.schedule?.date))
     .filter(event => normalizeMainEventStatus(mainEvents[event.id]) === MAIN_EVENT_NOT_STARTED)
     .filter(event => !currentDate || (event.schedule!.endDate ?? event.schedule!.date) >= currentDate)
-    .sort((a, b) => (a.schedule!.date.localeCompare(b.schedule!.date) || a.id.localeCompare(b.id)));
+    .sort((a, b) => a.schedule!.date.localeCompare(b.schedule!.date) || a.id.localeCompare(b.id));
   return candidates[0] ?? null;
 }
 
@@ -348,7 +386,10 @@ function compressPlotCardContent(rawContent: string): string {
       lines.push(`  ${name}:`);
       const cog = detail['认知'];
       if (Array.isArray(cog) && cog.length) {
-        const top = cog.slice(0, 2).map(c => String(c ?? '').trim()).filter(Boolean);
+        const top = cog
+          .slice(0, 2)
+          .map(c => String(c ?? '').trim())
+          .filter(Boolean);
         if (top.length) lines.push(`    认知: ${top.join('; ')}`);
       }
       if (detail['心态']) lines.push(`    心态: ${String(detail['心态']).trim()}`);
@@ -374,10 +415,7 @@ function compressPlotCardContent(rawContent: string): string {
 }
 
 // 把卷级写作协议压缩成 prompt 友好的几行。每类只取前 2 条,避免重复堆叠。
-function buildVolumeWritingProtocol(
-  plotLibrary: PlotLibrary | null | undefined,
-  volumeId: string | undefined,
-): string {
+function buildVolumeWritingProtocol(plotLibrary: PlotLibrary | null | undefined, volumeId: string | undefined): string {
   if (!plotLibrary?.writingProtocols || !volumeId) return '';
   const proto = plotLibrary.writingProtocols[volumeId];
   if (!proto) return '';
@@ -412,11 +450,13 @@ function buildCurrentPlotContext(statusData: StatusData, plotLibrary?: PlotLibra
       const scheduleDate = formatScheduleDateRange(upcoming.schedule);
       gapLines.push(
         `下一个主线事件：${upcoming.id} ${upcoming.title}`,
-        `触发日期：${scheduleDate}${
-          daysUntil != null ? `（距离当前日期约 ${daysUntil} 天）` : ''
-        }`,
-        upcoming.schedule.timeSegments?.length ? `建议时间片段：${upcoming.schedule.timeSegments.join('/')}（仅供叙事参考）` : '',
-        upcoming.schedule.locations?.length ? `建议地点：${upcoming.schedule.locations.join('、')}（仅供叙事参考）` : '',
+        `触发日期：${scheduleDate}${daysUntil != null ? `（距离当前日期约 ${daysUntil} 天）` : ''}`,
+        upcoming.schedule.timeSegments?.length
+          ? `建议时间片段：${upcoming.schedule.timeSegments.join('/')}（仅供叙事参考）`
+          : '',
+        upcoming.schedule.locations?.length
+          ? `建议地点：${upcoming.schedule.locations.join('、')}（仅供叙事参考）`
+          : '',
         upcoming.summary ? `阶段摘要：${upcoming.summary}` : '',
       );
     } else {
@@ -476,7 +516,9 @@ function statRank(value: number) {
 }
 
 function normalizeStatKey(raw: string): keyof PlayerStats | null {
-  const key = String(raw ?? '').trim().toLowerCase();
+  const key = String(raw ?? '')
+    .trim()
+    .toLowerCase();
   if (/^(知识|知識|knowledge|know)$/.test(key)) return 'knowledge';
   if (/^(魅力|charm)$/.test(key)) return 'charm';
   if (/^(灵巧|靈巧|技巧|手艺|手藝|proficiency|dexterity|craft)$/.test(key)) return 'proficiency';
@@ -529,7 +571,9 @@ function buildAffinityUpdateExamples(statusData: StatusData) {
 }
 
 function normalizeForMentionMatch(value: unknown) {
-  return String(value ?? '').trim().toLowerCase();
+  return String(value ?? '')
+    .trim()
+    .toLowerCase();
 }
 
 function getTargetMentionTerms(target: TargetStatus) {
@@ -560,10 +604,11 @@ function buildScenePresenceContext(statusData: StatusData, scenePresence?: Scene
       .filter(Boolean)
       .join('、') || '无';
   const guidedIds = new Set([...(scenePresence.presentIds ?? []), ...(scenePresence.focusIds ?? [])]);
-  const unguidedNames = statusData.targets
-    .filter(target => !guidedIds.has(target.id))
-    .map(target => target.name)
-    .join('、') || '无';
+  const unguidedNames =
+    statusData.targets
+      .filter(target => !guidedIds.has(target.id))
+      .map(target => target.name)
+      .join('、') || '无';
 
   const evidenceLines = Object.entries(scenePresence.evidence ?? {})
     .map(([id, reason]) => {
@@ -608,7 +653,11 @@ function buildRelationshipGuidanceList(
   return lines.length ? lines.join('\n\n') : '';
 }
 
-function buildLocalCharacterAuditList(statusData: StatusData, contextText: string, scenePresence?: ScenePresence | null) {
+function buildLocalCharacterAuditList(
+  statusData: StatusData,
+  contextText: string,
+  scenePresence?: ScenePresence | null,
+) {
   const allowedIds = getSceneGuidanceTargetIds(scenePresence);
   const lines = statusData.targets
     // 中文注释：有镜头判定时，局部审计只跟随判定结果；没有判定时保留旧的文本命中兜底。
@@ -635,9 +684,7 @@ function buildPinnedKeyFactsInline(facts: KeyFact[] | undefined): string {
     if (!grouped.has(fact.category)) grouped.set(fact.category, []);
     grouped.get(fact.category)!.push(fact);
   }
-  const lines: string[] = [
-    '[Pinned key facts — 权威事实层，优先级高于下方摘要。如与摘要冲突，以此为准。]',
-  ];
+  const lines: string[] = ['[Pinned key facts — 权威事实层，优先级高于下方摘要。如与摘要冲突，以此为准。]'];
   for (const [category, items] of grouped) {
     const label = KEY_FACT_CATEGORY_LABEL[category] ?? category;
     for (const f of items) {
@@ -696,12 +743,12 @@ export function buildPrompt(
         .join('\n')
     : '';
 
-  const hasSummary = summaryStore && (
-    summaryStore.global ||
-    summaryStore.major.length ||
-    summaryStore.minor.length ||
-    summaryStore.keyFacts.some(f => !f.superseded)
-  );
+  const hasSummary =
+    summaryStore &&
+    (summaryStore.global ||
+      summaryStore.major.length ||
+      summaryStore.minor.length ||
+      summaryStore.keyFacts.some(f => !f.superseded));
   const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
   const mainEventsContext = buildMainEventsContext(statusData);
   const plotContext = buildCurrentPlotContext(statusData, options?.plotLibrary);
@@ -716,13 +763,12 @@ export function buildPrompt(
   const recentSceneContext = uiMessages
     .slice(-4)
     .filter(message => message.role === 'user' || message.role === 'assistant')
-    .map(message => (message.role === 'assistant' ? getVisibleMessageText(message) || message.text : message.text))
+    .map(message => getPromptMessageText(message))
+    .filter(Boolean)
     .join('\n');
   // 审计协议只跟“当前可见场景/本轮输入”绑定，不能用剧情卡、事件名或地点命中。
   // 否则世界书里反复出现某角色名时，会让局部审计变成每轮全局常驻规则。
-  const localAuditContext = [recentSceneContext, userInput]
-    .filter(Boolean)
-    .join('\n');
+  const localAuditContext = [recentSceneContext, userInput].filter(Boolean).join('\n');
   const localAuditGuidance = buildLocalCharacterAuditList(statusData, localAuditContext, options?.scenePresence);
   const phoneMessageBoundary = options?.suppressPhoneMessageContent
     ? [
@@ -801,12 +847,12 @@ export function buildPhoneChatPrompt(input: {
   const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile });
   const recentEventsContext = buildRecentEventsContext(statusData);
   const mainEventsContext = buildMainEventsContext(statusData);
-  const hasSummary = summaryStore && (
-    summaryStore.global ||
-    summaryStore.major.length ||
-    summaryStore.minor.length ||
-    summaryStore.keyFacts.some(f => !f.superseded)
-  );
+  const hasSummary =
+    summaryStore &&
+    (summaryStore.global ||
+      summaryStore.major.length ||
+      summaryStore.minor.length ||
+      summaryStore.keyFacts.some(f => !f.superseded));
   const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
   const plotContext = buildCurrentPlotContext(statusData, input.plotLibrary);
   const playerProfileText = playerProfile?.name
@@ -917,7 +963,11 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
     `  时间: ${statusData.world.currentTime}`,
     `  地点: ${statusData.world.currentLocation}`,
     `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
-    `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
+    `  主线事件: ${
+      Object.entries(statusData.world.mainEvents ?? {})
+        .map(([id, status]) => `${id}:${status}`)
+        .join('；') || '无'
+    }`,
     target
       ? `  当前明确变量对象: ${target.name}；好感度: ${target.affinity} (${target.stage})`
       : '  全局默认变量目标: 无；好感度更新必须显式写角色名或 id',
@@ -963,14 +1013,16 @@ export function buildProgressPrompt(
   const affinityExamples = buildAffinityUpdateExamples(statusData);
 
   const recentUserMessage = [...turnMessages].reverse().find(m => m.role === 'user');
-  const timeIntentNote = recentUserMessage && detectTimeAdvanceIntent(recentUserMessage.text)
-    ? '玩家最近输入提到推进时间。以正文实际描写为准：只有当对话正文确实跨过了一个时段或日期时或玩家提到今天,明天加时间段这里需要思考具时间，才输出完整 `时间:YYYY-MM-DD HH:mm` 字段；正文没有真正推进时间时，整行省略，禁止凭玩家输入里的时间词自行补齐一个新时间。'
-    : '';
+  const timeIntentNote =
+    recentUserMessage && detectTimeAdvanceIntent(recentUserMessage.text)
+      ? '玩家最近输入提到推进时间。以正文实际描写为准：只有当对话正文确实跨过了一个时段或日期时或玩家提到今天,明天加时间段这里需要思考具时间，才输出完整 `时间:YYYY-MM-DD HH:mm` 字段；正文没有真正推进时间时，整行省略，禁止凭玩家输入里的时间词自行补齐一个新时间。'
+      : '';
 
   const formatted = turnMessages
     .filter(m => m.role === 'user' || m.role === 'assistant')
     .map(m => {
-      const text = m.role === 'assistant' ? getVisibleMessageText(m) || m.text : m.text;
+      const text = getPromptMessageText(m);
+      if (!text.trim()) return '';
       const speaker = m.speaker || (m.role === 'assistant' ? 'Assistant' : 'User');
       return `[${speaker}]\n${text.trim()}`;
     })
@@ -986,7 +1038,11 @@ export function buildProgressPrompt(
         `  时间: ${statusData.world.currentTime}`,
         `  地点: ${statusData.world.currentLocation}`,
         `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
-        `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
+        `  主线事件: ${
+          Object.entries(statusData.world.mainEvents ?? {})
+            .map(([id, status]) => `${id}:${status}`)
+            .join('；') || '无'
+        }`,
         '  全局默认变量目标: 无（主场景不再使用旧单目标兜底）',
         `  可更新角色列表:\n${targetList}`,
         '  着装: 主场景不使用默认对象；只有正文明确涉及某角色服装时才记录',
@@ -1050,7 +1106,11 @@ export function buildPhoneProgressPrompt(input: {
         `  时间: ${statusData.world.currentTime}`,
         `  地点: ${statusData.world.currentLocation}`,
         `  当前事件: ${statusData.world.currentMainEventId || '无'}`,
-        `  主线事件: ${Object.entries(statusData.world.mainEvents ?? {}).map(([id, status]) => `${id}:${status}`).join('；') || '无'}`,
+        `  主线事件: ${
+          Object.entries(statusData.world.mainEvents ?? {})
+            .map(([id, status]) => `${id}:${status}`)
+            .join('；') || '无'
+        }`,
         `  聊天对象: ${target.name}`,
         `  好感度: ${target.affinity} (${target.stage})`,
         '',
@@ -1107,7 +1167,7 @@ function createEmptyProgressUpdate(): ProgressUpdate {
 // 小此预设输出的 <progress> 格式特征:PG.1 / 时间推进:A → B / 主线任务进度:xxx / 概括:xxx
 // 这种格式如果用我们原来的通用 parser 会把 PG.1 / 时间推进 / 概括 全部塞进 events,污染 recentEvents
 function isKonatanProgressFormat(body: string): boolean {
-  if (/^\s*PG\.?\s*\d/mi.test(body)) return true;
+  if (/^\s*PG\.?\s*\d/im.test(body)) return true;
   if (/时间推进\s*[:：][^\n]*[→>]/.test(body)) return true;
   if (/主线任务进度\s*[:：]/.test(body)) return true;
   return false;
@@ -1249,8 +1309,7 @@ function parseStateBody(body: string): ProgressUpdate | null {
 
     // 事件:本轮剧情=描述 / 事件.本轮剧情:描述
     const namedEventMatch =
-      trimmed.match(/^事件[.．]\s*([^:：=＝]+)[:：=＝]\s*(.+)/) ??
-      trimmed.match(/^事件[:：]\s*([^=＝]+)[=＝]\s*(.+)/);
+      trimmed.match(/^事件[.．]\s*([^:：=＝]+)[:：=＝]\s*(.+)/) ?? trimmed.match(/^事件[:：]\s*([^=＝]+)[=＝]\s*(.+)/);
     if (namedEventMatch) {
       result.events[namedEventMatch[1].trim()] = namedEventMatch[2].trim();
       hasAnyField = true;
