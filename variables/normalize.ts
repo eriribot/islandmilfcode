@@ -1,6 +1,6 @@
 import type { ProgressUpdate } from '../message-format';
 import type { PlotEventCard, PlotLibrary, StatusData } from '../types';
-import { affinityStage, clamp } from './format';
+import { affinityStage, clamp, obsessionStage } from './format';
 
 export { defaultStatusData, defaultTarget } from './defaults';
 export {
@@ -10,6 +10,7 @@ export {
   formatDate,
   formatTime,
   getInventoryIcon,
+  obsessionStage,
 } from './format';
 export { normalizeStatusData, serializeStatusData } from './legacy';
 
@@ -351,6 +352,17 @@ export function applyProgressUpdate(
     if (target) {
       target.affinity = clamp((target.affinity ?? 0) + update.affinityDelta, 0, 100);
       target.stage = affinityStage(target.affinity);
+    }
+  }
+
+  if (update.obsessionDelta !== undefined && update.obsessionDelta !== 0) {
+    if (!targetId) {
+      console.warn('[progress] skip legacy obsession without explicit target');
+    }
+    const target = statusData.targets.find(t => t.id === targetId);
+    if (target) {
+      target.obsession = clamp((target.obsession ?? 0) + update.obsessionDelta, 0, 100);
+      target.obsessionStage = obsessionStage(target.obsession);
     }
   }
 

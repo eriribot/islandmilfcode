@@ -11,7 +11,9 @@ export const defaultTarget: TargetStatus = {
   name: '未载入攻略对象',
   alias: '攻略对象',
   affinity: 0,
+  obsession: 0,
   stage: '资料未载入',
+  obsessionStage: '资料未载入',
   titles: {
     资料占位: {
       effect: '等待从世界书读取攻略对象资料。',
@@ -29,7 +31,9 @@ export const builtInTargetSeeds: TargetStatus[] = [
     name: '加藤惠',
     alias: '加藤 / 惠 / 小惠 / 路人女 / 圣人惠 / Megumi Kato',
     affinity: 0,
+    obsession: 0,
     stage: '疏离戒备',
+    obsessionStage: '毫无波澜',
     titles: {},
     outfits: { ...DEFAULT_TARGET_OUTFITS },
     meta: {
@@ -43,7 +47,9 @@ export const builtInTargetSeeds: TargetStatus[] = [
     name: '泽村·斯宾塞·英梨梨',
     alias: '英梨梨 / 泽村 / 柏木英理 / Eriri Sawamura',
     affinity: 0,
+    obsession: 75,
     stage: '疏离戒备',
+    obsessionStage: '难分难舍',
     titles: {},
     outfits: { ...DEFAULT_TARGET_OUTFITS },
     meta: {
@@ -57,7 +63,9 @@ export const builtInTargetSeeds: TargetStatus[] = [
     name: '霞之丘诗羽',
     alias: '霞之丘 / 诗羽 / 霞诗子 / Utaha Kasumigaoka',
     affinity: 0,
+    obsession: 70,
     stage: '疏离戒备',
+    obsessionStage: '难分难舍',
     titles: {},
     outfits: { ...DEFAULT_TARGET_OUTFITS },
     meta: {
@@ -71,7 +79,9 @@ export const builtInTargetSeeds: TargetStatus[] = [
     name: '波岛出海',
     alias: '波岛 / 出海 / Hashima Izumi / Izumi Hashima',
     affinity: 0,
+    obsession: 45,
     stage: '疏离戒备',
+    obsessionStage: '芳心暗许',
     titles: {},
     outfits: { ...DEFAULT_TARGET_OUTFITS },
     meta: {
@@ -85,7 +95,9 @@ export const builtInTargetSeeds: TargetStatus[] = [
     name: '冰堂美智留',
     alias: '冰堂 / 美智留 / 氷堂 / Hyodo Michiru / Hyoudou Michiru',
     affinity: 0,
+    obsession: 15,
     stage: '疏离戒备',
+    obsessionStage: '朦胧好感',
     titles: {},
     outfits: { ...DEFAULT_TARGET_OUTFITS },
     meta: {

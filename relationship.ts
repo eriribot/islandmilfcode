@@ -540,7 +540,13 @@ export function getRelationshipGuidance(target: TargetStatus | null) {
   if (!target) return '';
   const affinity = Math.max(0, Math.min(100, Math.round(Number(target.affinity ?? 0) || 0)));
   const reaction = getStageReactions(target).find(item => affinity <= item.maxAffinity);
-  return reaction?.guidance ?? '';
+  const obsession = Math.max(0, Math.min(100, Math.round(Number(target.obsession ?? 0) || 0)));
+  const obsessionHint = obsession >= 80
+    ? '执念极深，面对伦也相关旧线时容易被拉回旧伤口，不要把这条牵引写成普通好感。'
+    : obsession >= 40
+      ? '旧线仍在牵引，提到伦也、初恋、青梅位置或原作锚点时会明显波动。'
+      : '旧线牵引较弱，当前更容易把注意力放回眼前的 User。';
+  return [reaction?.guidance ?? '', obsessionHint].filter(Boolean).join(' ');
 }
 
 export function getRelationshipAddressGuidance(input: AddressGuidanceInput | null) {

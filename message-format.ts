@@ -556,7 +556,7 @@ function buildTargetStateList(statusData: StatusData) {
         .join('、');
       const className = String(target.meta?.className ?? '').trim();
       const classSegment = className ? `；班级/身份=${className}` : '';
-      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度=${target.affinity}（${target.stage}）；更新键=好感度.${target.name}:±N`;
+      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度=${target.affinity}（${target.stage}）；执念度=${target.obsession}（${target.obsessionStage}）；更新键=好感度.${target.name}:±N / 执念度.${target.name}:±N`;
     })
     .join('\n');
 }
@@ -568,6 +568,15 @@ function buildAffinityUpdateExamples(statusData: StatusData) {
     .slice(0, 3)
     .map((name, index) => `好感度.${name}:${index === 1 ? '+2' : '+1'}`);
   return examples.length ? examples.join(' / ') : '好感度.角色名:+1';
+}
+
+function buildObsessionUpdateExamples(statusData: StatusData) {
+  const examples = statusData.targets
+    .map(target => target.name || target.id)
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((name, index) => `执念度.${name}:${index === 1 ? '+1' : '-1'}`);
+  return examples.length ? examples.join(' / ') : '执念度.角色名:+1';
 }
 
 function normalizeForMentionMatch(value: unknown) {
@@ -877,7 +886,7 @@ export function buildPhoneChatPrompt(input: {
     `当前时间：${statusData.world.currentTime}`,
     `当前位置：${statusData.world.currentLocation}`,
     mainEventsContext,
-    `当前关系：${target.stage} · 好感度 ${target.affinity}`,
+    `当前关系：${target.stage} · 好感度 ${target.affinity} · 执念 ${target.obsession}（${target.obsessionStage}）`,
     relationshipGuidance ? `当前关系反应：${relationshipGuidance}` : '',
     addressGuidance ? `称呼规则：${addressGuidance}` : '',
     playerProfileText,
@@ -922,13 +931,15 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
     : '';
   const targetList = buildTargetStateList(statusData);
   const affinityExamples = buildAffinityUpdateExamples(statusData);
+  const obsessionExamples = buildObsessionUpdateExamples(statusData);
 
   return [
     '',
     '在可见正文之后，必须输出一个 <progress> 块记录变量变化。',
     '使用 key:value 格式，每行一个字段。只写发生变化的字段，未变化字段省略。',
-    '长场景结束后必须评估好感度。多人场景中，所有在场并明确对 User 有反应的角色都要分别评估。',
+    '长场景结束后必须评估好感度；若本轮触发伦也/旧线/创作伤口，也要评估执念度。多人场景中，所有在场并明确对 User 有反应的角色都要分别评估。',
     '普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。只有角色不在场、完全无互动、或关系没有变化时才省略该角色好感度。',
+    '执念度专指角色对伦也这条旧线的牵引强度；它可以与好感度同时变化，但不要把它当成对 User 的关系温度。',
     '可用字段：',
     '  时间:YYYY-MM-DD HH:mm   — 仅当正文确实描写了时间流逝（进入次日/深夜，或明确跨过一个时段）时才输出，必须完整 YYYY-MM-DD HH:mm。正文未真正推进时间时整行省略；禁止使用 `4月16日`、`2012-04-16`（缺 HH:mm）、`明天` 这种非完整格式，也禁止仅凭玩家输入里的时间词就自行补一个新时间。',
     '  地点:新地点            — 角色实际移动到新地点时更新',
@@ -936,6 +947,7 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
       ? `  好感度:±N              — 旧格式好感变化，仅用于当前明确单对象：${target.name}`
       : '  好感度:±N              — 主场景禁用旧格式；必须改用 好感度.角色名或id:±N',
     `  好感度.角色名或id:±N    — 指定角色好感变化；多人场景必须从下方“可更新角色列表”的更新键复制角色名或 id（例：${affinityExamples}）`,
+    `  执念度.角色名或id:±N    — 指定角色执念变化；语义是角色对伦也旧线/锚点的牵引（例：${obsessionExamples}）`,
     '  五维.能力名:±N          — 玩家五维变化（能力名: 知识/魅力/灵巧/体贴/勇气；例：五维.体贴:+1）',
     target
       ? `  着装.部位:描述          — 更新当前明确对象 ${target.name} 的某个部位着装（例：着装.上装:换上了黑色卫衣）`
@@ -969,8 +981,8 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
         .join('；') || '无'
     }`,
     target
-      ? `  当前明确变量对象: ${target.name}；好感度: ${target.affinity} (${target.stage})`
-      : '  全局默认变量目标: 无；好感度更新必须显式写角色名或 id',
+      ? `  当前明确变量对象: ${target.name}；好感度: ${target.affinity} (${target.stage})；执念度: ${target.obsession} (${target.obsessionStage})`
+      : '  全局默认变量目标: 无；好感度/执念度更新必须显式写角色名或 id',
     `  可更新角色列表:\n${targetList}`,
     `  着装: ${outfitList || '无'}`,
     `  物品: ${inventoryList}`,
@@ -980,6 +992,7 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
 function buildStateDeltaInstruction(statusData: StatusData): string {
   const targetList = buildTargetStateList(statusData);
   const affinityExamples = buildAffinityUpdateExamples(statusData);
+  const obsessionExamples = buildObsessionUpdateExamples(statusData);
   return [
     '',
     '在你按预设规则输出完所有内容后,在消息最末尾追加一个 <state_delta> 块(独立于预设要求的任何标签):',
@@ -988,6 +1001,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
     '时间:YYYY-MM-DD HH:mm',
     '地点:当前所处具体地点',
     `好感度.角色名:±N（必须从下方“可更新角色”的更新键复制角色名；例如 ${affinityExamples}）`,
+    `执念度.角色名:±N（例：${obsessionExamples}）`,
     '五维.能力名:±N',
     '主线事件.事件ID:状态',
     '当前事件:事件ID',
@@ -996,7 +1010,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
     `当前时间: ${statusData.world.currentTime}`,
     `当前地点: ${statusData.world.currentLocation}`,
     `当前事件: ${statusData.world.currentMainEventId || '无'}`,
-    '全局默认变量目标: 无；好感度更新必须显式写角色名或 id',
+    '全局默认变量目标: 无；好感度/执念度更新必须显式写角色名或 id',
     `可更新角色:\n${targetList}`,
   ].join('\n');
 }
@@ -1011,6 +1025,7 @@ export function buildProgressPrompt(
       .join('、') || '无';
   const targetList = buildTargetStateList(statusData);
   const affinityExamples = buildAffinityUpdateExamples(statusData);
+  const obsessionExamples = buildObsessionUpdateExamples(statusData);
 
   const recentUserMessage = [...turnMessages].reverse().find(m => m.role === 'user');
   const timeIntentNote =
@@ -1054,6 +1069,10 @@ export function buildProgressPrompt(
         '  阅读本轮完整正文，不要只看最后一句。多人在场时，分别判断每个明确在场且对 User 产生情绪反应的角色。',
         '  普通友好互动或者逗乐大家的行动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4,重大事件的可靠+8；冒犯、越界、揭短、冷落通常 -1 到 -6。',
         '  不要因为变化很小就省略好感度；只有角色不在场、完全无互动、纯环境描写、或关系没有任何变化时，才不输出该角色好感度。',
+        '执念度判断规则：',
+        '  执念度表示角色对伦也这条旧线的牵引强度；它不是对 User 的好感度。',
+        '  只有当本轮正文明确触发伦也、初恋、青梅位置、核心读者、创作伤口或原作锚点时，才输出执念度变化。',
+        '  好感度与执念度可以同时变化，且不要求同向。',
         timeIntentNote ? `\n时间推进提醒：${timeIntentNote}` : '',
         '',
         '请用 <progress> 标签输出变化的字段，每行一个 key:value。如果没有任何变化，输出空的 <progress></progress>。',
@@ -1062,6 +1081,7 @@ export function buildProgressPrompt(
         '  地点:新地点',
         '  好感度:±N（主场景禁用旧格式；必须使用 好感度.角色名:±N）',
         `  好感度.角色名或id:±N（多人场景必须用这个格式，并从“可更新角色列表”的更新键复制角色名；例如 ${affinityExamples}）`,
+        `  执念度.角色名或id:±N（多人场景必须显式指定角色；例如 ${obsessionExamples}）`,
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
         '  着装.部位:描述（主场景禁用旧单目标着装格式；没有明确对象时不要输出）',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
@@ -1113,6 +1133,7 @@ export function buildPhoneProgressPrompt(input: {
         }`,
         `  聊天对象: ${target.name}`,
         `  好感度: ${target.affinity} (${target.stage})`,
+        `  执念度: ${target.obsession} (${target.obsessionStage})`,
         '',
         '请用 <progress> 标签输出变化字段，每行一个 key:value。没有变化就输出空的 <progress></progress>。',
         '可用字段：',
@@ -1120,6 +1141,8 @@ export function buildPhoneProgressPrompt(input: {
         '  地点:新地点',
         `  好感度:±N（只更新当前聊天对象：${target.name}）`,
         `  好感度.${target.name}:±N（也可显式写当前聊天对象；例如 好感度.${target.name}:+1）`,
+        `  执念度:±N（只更新当前聊天对象：${target.name}）`,
+        `  执念度.${target.name}:±N（也可显式写当前聊天对象；例如 执念度.${target.name}:+1）`,
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气）',
         '  着装.部位:描述',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
@@ -1144,6 +1167,8 @@ export type ProgressUpdate = {
   currentMainEventId?: string;
   affinityDelta?: number;
   affinityDeltas: Array<{ target: string; delta: number }>;
+  obsessionDelta?: number;
+  obsessionDeltas: Array<{ target: string; delta: number }>;
   statDeltas: Partial<Record<keyof PlayerStats, number>>;
   outfitChanges: Record<string, string>;
   events: Record<string, string>;
@@ -1155,6 +1180,7 @@ export type ProgressUpdate = {
 function createEmptyProgressUpdate(): ProgressUpdate {
   return {
     affinityDeltas: [],
+    obsessionDeltas: [],
     events: {},
     mainEvents: {},
     statDeltas: {},
@@ -1269,6 +1295,19 @@ function parseStateBody(body: string): ProgressUpdate | null {
       continue;
     }
 
+    // 执念度.角色名或id:±N / 执念度变化:角色名或id:±N
+    const targetedObsMatch =
+      trimmed.match(/^执念度[.．]\s*([^:：]+)[:：]\s*([+\-]?\d+)/) ??
+      trimmed.match(/^执念度变化[:：]\s*([^:：]+)[:：]\s*([+\-]?\d+)/);
+    if (targetedObsMatch) {
+      result.obsessionDeltas.push({
+        target: targetedObsMatch[1].trim(),
+        delta: parseInt(targetedObsMatch[2], 10) || 0,
+      });
+      hasAnyField = true;
+      continue;
+    }
+
     // 角色名或id.好感度:±N
     const prefixedAffMatch = trimmed.match(/^([^:：.．]+)[.．]\s*好感度[:：]\s*([+\-]?\d+)/);
     if (prefixedAffMatch) {
@@ -1280,10 +1319,28 @@ function parseStateBody(body: string): ProgressUpdate | null {
       continue;
     }
 
+    // 角色名或id.执念度:±N
+    const prefixedObsMatch = trimmed.match(/^([^:：.．]+)[.．]\s*执念度[:：]\s*([+\-]?\d+)/);
+    if (prefixedObsMatch) {
+      result.obsessionDeltas.push({
+        target: prefixedObsMatch[1].trim(),
+        delta: parseInt(prefixedObsMatch[2], 10) || 0,
+      });
+      hasAnyField = true;
+      continue;
+    }
+
     // 好感度:±N
     const affMatch = trimmed.match(/^好感度[:：]\s*([+\-]?\d+)/);
     if (affMatch) {
       result.affinityDelta = parseInt(affMatch[1], 10) || 0;
+      hasAnyField = true;
+      continue;
+    }
+
+    const obsMatch = trimmed.match(/^执念度[:：]\s*([+\-]?\d+)/);
+    if (obsMatch) {
+      result.obsessionDelta = parseInt(obsMatch[1], 10) || 0;
       hasAnyField = true;
       continue;
     }

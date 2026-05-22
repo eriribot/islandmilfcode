@@ -737,7 +737,7 @@ function renderPhoneContactRow(target: TargetStatus, hasThread: boolean) {
       ${renderTargetAvatar(target)}
       <span class="phone-chat-copy">
         <strong>${escapeHtml(getTargetName(target))}</strong>
-        <small>${escapeHtml(target.stage)} · 好感度 ${target.affinity}</small>
+        <small>${escapeHtml(target.stage)} · 好感 ${target.affinity} · 执念 ${target.obsession}</small>
       </span>
       <span class="phone-contact-state">${hasThread ? '继续' : '发消息'}</span>
     </button>
@@ -799,7 +799,7 @@ function renderPhoneChatPage(state: AppState) {
 
   return `
     <section class="phone-route-page phone-app-page phone-app-page--chat" data-phone-route-view="app:chat">
-      ${renderPhoneAppHeader(state, getTargetName(target), `${target.stage} · ${target.affinity}`)}
+      ${renderPhoneAppHeader(state, getTargetName(target), `${target.stage} · 好感 ${target.affinity} · 执念 ${target.obsession}`)}
       <div class="phone-chat-log">
         ${
           messages.length

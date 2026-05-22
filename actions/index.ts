@@ -39,6 +39,7 @@ import {
   clamp,
   formatTime,
   normalizeIncomingTime,
+  obsessionStage,
   syncMainEvents,
 } from '../variables/normalize';
 import {
@@ -396,6 +397,33 @@ function applyTargetedAffinityDeltas(ctx: ActionContext, update: ProgressUpdate,
   return changed;
 }
 
+function applyTargetedObsessionDeltas(ctx: ActionContext, update: ProgressUpdate, forcedTargetId?: string | null) {
+  let changed = false;
+
+  for (const item of update.obsessionDeltas) {
+    if (!item.delta) continue;
+    const target = findProgressTarget(ctx, item.target);
+    if (!target) {
+      console.warn('[progress] unknown obsession target:', item.target);
+      continue;
+    }
+
+    const verdict = classifyAffinityVerdict(ctx, target, forcedTargetId);
+    if (verdict === 'absent' || verdict === 'unmentioned') {
+      console.warn('[progress] drop obsession for inactive target:', item.target);
+      continue;
+    }
+
+    const nextObsession = clamp((target.obsession ?? 0) + item.delta, 0, 100);
+    if (nextObsession === target.obsession) continue;
+    target.obsession = nextObsession;
+    target.obsessionStage = obsessionStage(nextObsession);
+    changed = true;
+  }
+
+  return changed;
+}
+
 function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | null, targetId?: string | null) {
   if (!update) return false;
   const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary);
@@ -405,10 +433,11 @@ function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | nu
   const contextualized: ProgressUpdate = { ...sanitized, affinityDelta: legacyDelta, outfitChanges };
   applyProgressUpdate(ctx.state.statusData, contextualized, targetId ?? null, ctx.state.plotLibrary);
   const targetedAffinityChanged = applyTargetedAffinityDeltas(ctx, contextualized, targetId);
+  const targetedObsessionChanged = applyTargetedObsessionDeltas(ctx, contextualized, targetId);
   const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, contextualized);
   ctx.adapter.save(ctx.state.statusData);
   commitProgressToMemoryDB(ctx.memoryDB, contextualized);
-  return targetedAffinityChanged || statsChanged || true;
+  return targetedAffinityChanged || targetedObsessionChanged || statsChanged || true;
 }
 
 async function simulateGeneration(ctx: ActionContext, userInput: string) {

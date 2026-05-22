@@ -1963,6 +1963,52 @@ body.floating-phone-dragging {
   box-shadow: 0 0 12px rgba(215, 135, 160, 0.28);
 }
 
+.archive-obsession-head {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  color: #5f586f;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.archive-obsession-head strong {
+  color: #75609d;
+  font-family: 'Yu Mincho', 'Hiragino Mincho ProN', 'Times New Roman', serif;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.archive-obsession-icon {
+  position: relative;
+  width: 17px;
+  height: 17px;
+  display: inline-block;
+}
+
+.archive-obsession-icon::before,
+.archive-obsession-icon::after {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #8c76b5;
+  border-radius: 999px;
+  transform: rotate(-24deg);
+}
+
+.archive-obsession-icon::before {
+  left: 0;
+  top: 2px;
+}
+
+.archive-obsession-icon::after {
+  right: 0;
+  bottom: 2px;
+  border-color: #b39bd8;
+}
+
 .archive-meter-stack {
   display: grid;
   gap: 9px;
@@ -2022,6 +2068,28 @@ body.floating-phone-dragging {
 
 .archive-bar__fill--mood {
   background: linear-gradient(90deg, #f8ead2 0%, #eac99f 52%, #d7a86e 100%);
+}
+
+.archive-meter--obsession .archive-meter__meta {
+  color: #5f586f;
+}
+
+.archive-meter--obsession .archive-meter__meta em {
+  color: #7c7390;
+}
+
+.archive-meter--obsession .archive-bar {
+  border-color: rgba(147, 128, 181, 0.32);
+  background: linear-gradient(180deg, rgba(248, 246, 252, 0.98), rgba(231, 223, 242, 0.86));
+}
+
+.archive-meter--obsession .archive-bar__fill {
+  background: linear-gradient(90deg, #e2d7f5 0%, #b79ddf 52%, #8469b2 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.26);
+}
+
+.archive-affection-head strong {
+  color: #b86b84;
 }
 
 .archive-topbar {

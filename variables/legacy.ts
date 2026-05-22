@@ -1,9 +1,10 @@
 import type { StatusData, TargetStatus } from '../types';
 import { builtInTargetSeeds, defaultStatusData, defaultTarget } from './defaults';
-import { affinityStage, clamp } from './format';
+import { affinityStage, clamp, obsessionStage } from './format';
 
 const LEGACY_IZUMI_FILM_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg';
 const IZUMI_PHONE_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg';
+const OBSESSION_SEED_VERSION = 'renya-obsession-seed-v1';
 
 function normalizeTargetMeta(rawMeta: unknown): Record<string, unknown> | undefined {
   // 中文注释：meta 只接受普通对象，旧数据里的空值或非对象不再原样塞回 TargetStatus。
@@ -16,8 +17,27 @@ function normalizeTargetMeta(rawMeta: unknown): Record<string, unknown> | undefi
   return meta;
 }
 
+function getBuiltInTargetKeyFromValues(...values: unknown[]) {
+  const haystack = values.map(value => String(value ?? '').toLowerCase()).join('\n');
+  if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
+  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
+  if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
+  if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
+  if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
+  return '';
+}
+
 function normalizeTarget(raw: Record<string, any>, fallback: TargetStatus): TargetStatus {
   const affinity = clamp(Number(raw?.affinity ?? fallback.affinity) || 0, 0, 100);
+  const identityKey = getBuiltInTargetKeyFromValues(raw?.id, raw?.name, raw?.alias, raw?.meta?.worldbookEntryName);
+  const builtInFallback = builtInTargetSeeds.find(seed => getBuiltInTargetKey(seed) === identityKey);
+  const obsessionFallback = builtInFallback?.obsession ?? fallback.obsession ?? 0;
+  const rawMeta = normalizeTargetMeta(raw?.meta);
+  const shouldSeedObsession =
+    Boolean(builtInFallback) &&
+    rawMeta?.obsessionSeedVersion !== OBSESSION_SEED_VERSION &&
+    Number(raw?.obsession ?? 0) === 0;
+  const obsession = clamp(Number(shouldSeedObsession ? obsessionFallback : (raw?.obsession ?? obsessionFallback)) || 0, 0, 100);
   const titlesInput = raw?.titles ?? {};
   const outfitsInput = raw?.outfits ?? {};
 
@@ -26,7 +46,9 @@ function normalizeTarget(raw: Record<string, any>, fallback: TargetStatus): Targ
     name: String(raw?.name ?? fallback.name),
     alias: raw?.alias ?? fallback.alias,
     affinity,
+    obsession,
     stage: String(raw?.stage ?? affinityStage(affinity)),
+    obsessionStage: shouldSeedObsession ? obsessionStage(obsession) : String(raw?.obsessionStage ?? obsessionStage(obsession)),
     titles: Object.fromEntries(
       Object.entries(titlesInput)
         .filter(([key]) => Boolean(key))
@@ -41,7 +63,10 @@ function normalizeTarget(raw: Record<string, any>, fallback: TargetStatus): Targ
     outfits: Object.fromEntries(
       Object.entries({ ...fallback.outfits, ...outfitsInput }).map(([key, value]) => [key, String(value)]),
     ),
-    meta: normalizeTargetMeta(raw?.meta),
+    meta: rawMeta || shouldSeedObsession ? {
+      ...(rawMeta ?? {}),
+      ...(shouldSeedObsession ? { obsessionSeedVersion: OBSESSION_SEED_VERSION } : {}),
+    } : undefined,
   };
 }
 
@@ -86,15 +111,7 @@ function normalizePlayer(raw: Record<string, any>) {
 }
 
 function getBuiltInTargetKey(target: TargetStatus) {
-  const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
-    .map(value => String(value ?? '').toLowerCase())
-    .join('\n');
-  if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
-  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
-  if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
-  if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
-  if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
-  return '';
+  return getBuiltInTargetKeyFromValues(target.id, target.name, target.alias, target.meta?.worldbookEntryName);
 }
 
 function mergeBuiltInTargetSeeds(targets: TargetStatus[]) {
@@ -145,7 +162,9 @@ export function serializeStatusData(statusData: StatusData): Record<string, any>
       name: target.name,
       ...(target.alias ? { alias: target.alias } : {}),
       affinity: target.affinity,
+      obsession: target.obsession,
       stage: target.stage,
+      obsessionStage: target.obsessionStage,
       titles: target.titles,
       outfits: target.outfits,
       ...(target.meta ? { meta: target.meta } : {}),

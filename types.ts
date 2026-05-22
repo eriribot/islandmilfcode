@@ -131,7 +131,9 @@ export type TargetStatus = {
   name: string;
   alias?: string;
   affinity: number;
+  obsession: number;
   stage: string;
+  obsessionStage: string;
   titles: Record<string, { effect: string; selfComment: string }>;
   outfits: Record<string, string>;
   meta?: Record<string, unknown>;

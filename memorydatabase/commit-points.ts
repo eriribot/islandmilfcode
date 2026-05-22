@@ -30,6 +30,24 @@ export function commitProgressToMemoryDB(
     });
   }
 
+  for (const item of update.obsessionDeltas) {
+    if (!item.delta) continue;
+    const isDuplicate = deduplicateAttribute(db, {
+      targetId: item.target,
+      key: 'obsession-delta',
+      value: String(item.delta),
+    });
+    if (isDuplicate) continue;
+    inserts.attributes ??= [];
+    inserts.attributes.push({
+      targetId: item.target,
+      key: 'obsession-delta',
+      value: String(item.delta),
+      valueType: 'number',
+      delta: item.delta,
+    });
+  }
+
   for (const [statKey, delta] of Object.entries(update.statDeltas)) {
     if (!delta) continue;
     inserts.attributes ??= [];

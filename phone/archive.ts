@@ -1,12 +1,12 @@
 import { escapeHtml } from '../html';
 import type { TargetStatus } from '../types';
-import { affinityStage } from '../variables/normalize';
+import { affinityStage, obsessionStage } from '../variables/normalize';
 import type { PhoneCharacterId } from './types';
 
 const LEGACY_IZUMI_FILM_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg';
 const IZUMI_PHONE_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg';
 
-type ArchiveMeterTone = 'affection';
+type ArchiveMeterTone = 'affection' | 'obsession';
 
 type ArchiveMeter = {
   label: string;
@@ -40,7 +40,9 @@ type ResolvedArchive = CharacterArchive & {
   displayImageUrl: string;
   displayImageAlt: string;
   affinity: number;
+  obsession: number;
   stage: string;
+  obsStage: string;
 };
 
 const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
@@ -70,7 +72,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
       { label: '不擅长', value: '被强行推到台前' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
-    note: '该角色当前是开局变量档案；绑定酒馆世界书目标后会显示存档变量。',
+    note: '该角色当前是开局变量档案；绑定酒馆世界书目标后会显示实时变量。',
   },
   eriri: {
     id: 'eriri',
@@ -97,7 +99,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
       { label: '不擅长', value: '敷衍、落后、被当成小孩子' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
-    note: '该角色当前是档案占位；绑定酒馆世界书目标后会显示存档变量。',
+    note: '该角色当前是档案占位；绑定酒馆世界书目标后会显示实时变量。',
   },
   utaha: {
     id: 'utaha',
@@ -154,7 +156,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
       { label: '关系核心', value: '评价、认可、竞争与共同创作' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
-    note: '该角色当前是内置变量档案；绑定酒馆世界书目标后会显示存档变量。',
+    note: '该角色当前是内置变量档案；绑定酒馆世界书目标后会显示实时变量。',
   },
   michiru: {
     id: 'michiru',
@@ -181,7 +183,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
       { label: '特质', value: '开朗直球、同伴至上、凭直觉行动' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
-    note: '该角色当前是内置变量档案；绑定酒馆世界书目标后会显示存档变量。',
+    note: '该角色当前是内置变量档案；绑定酒馆世界书目标后会显示实时变量。',
   },
 };
 
@@ -230,7 +232,9 @@ function resolveArchive(characterId: PhoneCharacterId, targets: TargetStatus[]):
   const archive = getArchive(characterId);
   const target = getTargetForArchive(characterId, targets);
   const affinity = clampPercent(target?.affinity ?? 0);
+  const obsession = clampPercent(target?.obsession ?? 0);
   const stage = target?.stage || affinityStage(affinity);
+  const obsStage = target?.obsessionStage || obsessionStage(obsession);
 
   return {
     ...archive,
@@ -240,7 +244,9 @@ function resolveArchive(characterId: PhoneCharacterId, targets: TargetStatus[]):
     displayImageUrl: getArchiveImage(archive, target),
     displayImageAlt: `${target?.name || archive.name}头像`,
     affinity,
+    obsession,
     stage,
+    obsStage,
     meters: [
       {
         label: '好感度',
@@ -248,17 +254,21 @@ function resolveArchive(characterId: PhoneCharacterId, targets: TargetStatus[]):
         value: affinity,
         tone: 'affection',
       },
+      {
+        label: '执念度',
+        caption: target ? obsStage : '资料占位',
+        value: obsession,
+        tone: 'obsession',
+      },
     ],
-    note: target
-      ? `变量来源：${String(target.meta?.worldbookEntryName ?? '酒馆世界书')}。当前关系阶段为「${stage}」。`
-      : archive.note,
+    note: target ? `当前关系阶段为「${stage}」，对伦也的执念为「${obsStage}」。` : archive.note,
   };
 }
 
 function renderMeter(meter: ArchiveMeter) {
   const value = clampPercent(meter.value);
   return `
-    <div class="archive-meter">
+    <div class="archive-meter archive-meter--${meter.tone}">
       <div class="archive-meter__meta">
         <span>
           <strong>${escapeHtml(meter.label)}</strong>
@@ -276,8 +286,7 @@ function renderMeter(meter: ArchiveMeter) {
 export function renderCharacterArchivePanel(characterId: PhoneCharacterId, targets: TargetStatus[] = []) {
   const archive = resolveArchive(characterId, targets);
   const affection = archive.affinity;
-  const activeHearts = Math.max(0, Math.min(5, Math.ceil(affection / 20)));
-
+  const obsession = archive.obsession;
   return `
     <div class="archive-page">
       <div class="archive-character-tabs" aria-label="切换档案">
@@ -292,7 +301,7 @@ export function renderCharacterArchivePanel(characterId: PhoneCharacterId, targe
             >
               <img src="${escapeHtml(item.displayImageUrl)}" alt="${escapeHtml(item.displayName)}" loading="lazy" decoding="async" />
               <span>${escapeHtml(item.displayName)}</span>
-              ${item.loadedTarget ? '<i>变量</i>' : '<i>占位</i>'}
+              ${item.loadedTarget ? '<i>已载入</i>' : '<i>占位</i>'}
             </button>
           `;
         }).join('')}
@@ -338,11 +347,16 @@ export function renderCharacterArchivePanel(characterId: PhoneCharacterId, targe
       <section class="archive-subpanel">
         <h3>关系状态</h3>
         <div class="archive-affection-head">
-          <span>${archive.loadedTarget ? '存档变量' : '未载入变量'}</span>
+          <span>${archive.loadedTarget ? '当前好感' : '未载入变量'}</span>
           <strong>${affection}%</strong>
         </div>
         <div class="archive-hearts" aria-hidden="true">
-          ${Array.from({ length: 5 }, (_, index) => `<span class="${index < activeHearts ? 'is-active' : ''}"></span>`).join('')}
+          ${Array.from({ length: 5 }, (_, index) => `<span class="${index < Math.max(0, Math.min(5, Math.ceil(affection / 20))) ? 'is-active' : ''}"></span>`).join('')}
+        </div>
+        <div class="archive-obsession-head">
+          <span class="archive-obsession-icon" aria-hidden="true"></span>
+          <span>当前执念</span>
+          <strong>${obsession}%</strong>
         </div>
         <div class="archive-meter-stack">
           ${archive.meters.map(renderMeter).join('')}

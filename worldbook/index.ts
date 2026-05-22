@@ -357,7 +357,9 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
     name: targetName,
     alias: alias || undefined,
     affinity: defaultTarget.affinity,
+    obsession: defaultTarget.obsession,
     stage: affinityStage(defaultTarget.affinity),
+    obsessionStage: defaultTarget.obsessionStage,
     titles: Object.keys(titles).length ? titles : legacyTitles,
     outfits: {
       ...defaultTarget.outfits,
@@ -394,7 +396,9 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
     name,
     ...(alias ? { alias } : {}),
     affinity: defaultTarget.affinity,
+    obsession: defaultTarget.obsession,
     stage: affinityStage(defaultTarget.affinity),
+    obsessionStage: defaultTarget.obsessionStage,
     titles: {},
     outfits: { ...defaultTarget.outfits },
     meta: {
@@ -588,7 +592,10 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
     return {
       ...worldbookTarget,
       affinity: existing.affinity,
+      obsession: existing.obsession,
       stage: existing.stage === defaultTarget.stage ? worldbookTarget.stage : existing.stage,
+      obsessionStage:
+        existing.obsessionStage === defaultTarget.obsessionStage ? worldbookTarget.obsessionStage : existing.obsessionStage,
       titles: {
         ...worldbookTarget.titles,
         ...existing.titles,
