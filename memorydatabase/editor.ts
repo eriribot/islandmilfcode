@@ -59,15 +59,20 @@ const FACT_CATEGORY_ORDER: FactCategory[] = [
   'state',
   'preference',
   'relationship',
+  'relation',
   'knowledge',
   'opinion',
   'background',
   'ability',
   'habit',
   'goal',
+  'promise',
   'secret',
   'memory',
   'emotion',
+  'item',
+  'location',
+  'custom',
 ];
 
 type HomeEntry =
@@ -160,7 +165,7 @@ export function createMemoryPatchFromDraft(table: MemoryTableName, draft: string
 
   switch (table) {
     case 'facts':
-      return { category: 'event', subject: 'User', content: value };
+      return { content: value };
     case 'events':
       return { title: value.slice(0, 28) || 'User 事件', description: value };
     case 'tasks':
@@ -258,9 +263,14 @@ const SOURCE_LABELS: Record<string, string> = {
   manual: '手动',
   system: '系统',
   progress: '剧情',
+  'progress-commit': '剧情',
   summary: '摘要',
+  'summary-minor': '小摘要',
+  'summary-major': '大摘要',
+  'summary-global': '全局摘要',
   'phone-directive': '手机',
   'phone-scene-extract': '手机',
+  migration: '迁移',
   unknown: '自动',
 };
 
@@ -270,6 +280,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   trait: '特征',
   preference: '偏好',
   relationship: '关系',
+  relation: '关系',
   knowledge: '知识',
   state: '状态',
   opinion: '观点',
@@ -280,6 +291,41 @@ const CATEGORY_LABELS: Record<string, string> = {
   secret: '秘密',
   memory: '记忆',
   emotion: '情感',
+  promise: '承诺',
+  item: '物品',
+  location: '地点',
+  custom: '自定义',
+};
+
+const TASK_STATUS_LABELS: Record<string, string> = {
+  pending: '待办',
+  done: '已完成',
+  expired: '已过期',
+  archived: '已归档',
+};
+
+const SECRET_RISK_LABELS: Record<string, string> = {
+  low: '低',
+  medium: '中',
+  high: '高',
+};
+
+const SUMMARY_LEVEL_LABELS: Record<string, string> = {
+  minor: '小摘要',
+  major: '大摘要',
+  global: '全局摘要',
+};
+
+const ITEM_ACTION_LABELS: Record<string, string> = {
+  gained: '获得',
+  lost: '失去',
+  transformed: '变化',
+  noted: '记录',
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  user: '我',
+  assistant: '对方',
 };
 
 function localizeSource(source: string): string {
@@ -288,6 +334,26 @@ function localizeSource(source: string): string {
 
 function localizeCategory(category: string): string {
   return CATEGORY_LABELS[category] ?? category;
+}
+
+function localizeTaskStatus(status: string): string {
+  return TASK_STATUS_LABELS[status] ?? status;
+}
+
+function localizeSecretRisk(risk: string): string {
+  return SECRET_RISK_LABELS[risk] ?? risk;
+}
+
+function localizeSummaryLevel(level: string): string {
+  return SUMMARY_LEVEL_LABELS[level] ?? level;
+}
+
+function localizeItemAction(action: string): string {
+  return ITEM_ACTION_LABELS[action] ?? action;
+}
+
+function localizeRole(role: string): string {
+  return ROLE_LABELS[role] ?? role;
 }
 
 function previewRow(table: MemoryTableName, row: MemoryBaseRow): string {
@@ -304,16 +370,16 @@ function previewRow(table: MemoryTableName, row: MemoryBaseRow): string {
     case 'impressions':
       return `${String(r.targetId ?? '')} 对 ${String(r.subject ?? '')}: ${String(r.label ?? '')}`;
     case 'tasks':
-      return `[${String(r.status ?? '')}] ${String(r.content ?? '').slice(0, 64)}`;
+      return `[${localizeTaskStatus(String(r.status ?? ''))}] ${String(r.content ?? '').slice(0, 64)}`;
     case 'secrets':
-      return `${String(r.subject ?? '')} (${String(r.risk ?? '')}/${r.revealed ? '已暴露' : '未暴露'})`;
+      return `${String(r.subject ?? '')} (${localizeSecretRisk(String(r.risk ?? ''))}/${r.revealed ? '已暴露' : '未暴露'})`;
     case 'items':
       return `${String(r.name ?? '')} ${r.count !== undefined ? `×${r.count}` : ''}`;
     case 'phoneMessages':
       return `${String(r.targetId ?? '')}: ${String(r.textPreview ?? '').slice(0, 54)}`;
     case 'summaries': {
       const range = Array.isArray(r.range) ? `[${(r.range as number[]).join(',')}]` : '';
-      return `${String(r.level ?? '')} ${range} ${String(r.text ?? '').slice(0, 54)}`;
+      return `${localizeSummaryLevel(String(r.level ?? ''))} ${range} ${String(r.text ?? '').slice(0, 54)}`;
     }
     case 'attributes':
       return `${String(r.targetId ?? '')}.${String(r.key ?? '')} = ${String(r.value ?? '')}`;
@@ -334,7 +400,7 @@ function renderReadableFields(table: MemoryTableName, row: MemoryBaseRow): strin
       fields.push(['标题', String(r.title ?? '')], ['事件', String(r.description ?? '')]);
       break;
     case 'facts':
-      fields.push(['对象', String(r.subject ?? '')], ['类型', String(r.category ?? '')], ['内容', String(r.content ?? '')]);
+      fields.push(['对象', String(r.subject ?? '')], ['类型', localizeCategory(String(r.category ?? ''))], ['内容', String(r.content ?? '')]);
       break;
     case 'relations':
       fields.push(['来源', String(r.fromId ?? '')], ['对象', String(r.toId ?? '')], ['关系', String(r.label ?? '')]);
@@ -343,19 +409,19 @@ function renderReadableFields(table: MemoryTableName, row: MemoryBaseRow): strin
       fields.push(['角色', String(r.targetId ?? '')], ['对象', String(r.subject ?? '')], ['印象', String(r.label ?? '')]);
       break;
     case 'tasks':
-      fields.push(['状态', String(r.status ?? '')], ['事项', String(r.content ?? '')]);
+      fields.push(['状态', localizeTaskStatus(String(r.status ?? ''))], ['事项', String(r.content ?? '')]);
       break;
     case 'secrets':
-      fields.push(['主题', String(r.subject ?? '')], ['秘密', String(r.content ?? '')], ['风险', String(r.risk ?? '')]);
+      fields.push(['主题', String(r.subject ?? '')], ['秘密', String(r.content ?? '')], ['风险', localizeSecretRisk(String(r.risk ?? ''))]);
       break;
     case 'items':
-      fields.push(['物品', String(r.name ?? '')], ['状态', String(r.state ?? '')], ['动作', String(r.action ?? '')]);
+      fields.push(['物品', String(r.name ?? '')], ['状态', String(r.state ?? '')], ['动作', localizeItemAction(String(r.action ?? ''))]);
       break;
     case 'phoneMessages':
-      fields.push(['对象', String(r.targetId ?? '')], ['角色', String(r.role ?? '')], ['消息', String(r.textPreview ?? '')]);
+      fields.push(['对象', String(r.targetId ?? '')], ['角色', localizeRole(String(r.role ?? ''))], ['消息', String(r.textPreview ?? '')]);
       break;
     case 'summaries':
-      fields.push(['层级', String(r.level ?? '')], ['摘要', String(r.text ?? '')]);
+      fields.push(['层级', localizeSummaryLevel(String(r.level ?? ''))], ['摘要', String(r.text ?? '')]);
       break;
     case 'attributes':
       fields.push(['对象', String(r.targetId ?? '')], ['属性', String(r.key ?? '')], ['值', String(r.value ?? '')]);
@@ -448,10 +514,9 @@ function renderRowList(db: IslandMemoryDB, table: MemoryTableName, editor: Memor
       groups.set(cat, list);
     }
 
-    const categoryOrder = ['event', 'profile', 'trait', 'state', 'preference', 'relationship', 'knowledge', 'opinion', 'background', 'ability', 'habit', 'goal', 'secret', 'memory', 'emotion'];
     const sortedKeys = [...groups.keys()].sort((a, b) => {
-      const ia = categoryOrder.indexOf(a);
-      const ib = categoryOrder.indexOf(b);
+      const ia = FACT_CATEGORY_ORDER.indexOf(a);
+      const ib = FACT_CATEGORY_ORDER.indexOf(b);
       return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
     });
 
