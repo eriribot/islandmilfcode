@@ -25,6 +25,8 @@ export const defaultTarget: TargetStatus = {
   },
 };
 
+// 旧情度（obsession）= 对伦也旧线的牵挂深度。
+// 加藤惠在本卷开始时对伦也还停留在路人印象 → 0；其余四人按原作里的羁绊深浅给初始值。
 export const builtInTargetSeeds: TargetStatus[] = [
   {
     id: '加藤惠',
@@ -33,7 +35,7 @@ export const builtInTargetSeeds: TargetStatus[] = [
     affinity: 0,
     obsession: 0,
     stage: '疏离戒备',
-    obsessionStage: '毫无波澜',
+    obsessionStage: '已经放下',
     titles: {},
     outfits: { ...DEFAULT_TARGET_OUTFITS },
     meta: {
@@ -47,9 +49,9 @@ export const builtInTargetSeeds: TargetStatus[] = [
     name: '泽村·斯宾塞·英梨梨',
     alias: '英梨梨 / 泽村 / 柏木英理 / Eriri Sawamura',
     affinity: 0,
-    obsession: 75,
+    obsession: 80,
     stage: '疏离戒备',
-    obsessionStage: '难分难舍',
+    obsessionStage: '心还系着他',
     titles: {},
     outfits: { ...DEFAULT_TARGET_OUTFITS },
     meta: {
@@ -63,9 +65,9 @@ export const builtInTargetSeeds: TargetStatus[] = [
     name: '霞之丘诗羽',
     alias: '霞之丘 / 诗羽 / 霞诗子 / Utaha Kasumigaoka',
     affinity: 0,
-    obsession: 70,
+    obsession: 75,
     stage: '疏离戒备',
-    obsessionStage: '难分难舍',
+    obsessionStage: '心还系着他',
     titles: {},
     outfits: { ...DEFAULT_TARGET_OUTFITS },
     meta: {
@@ -79,9 +81,9 @@ export const builtInTargetSeeds: TargetStatus[] = [
     name: '波岛出海',
     alias: '波岛 / 出海 / Hashima Izumi / Izumi Hashima',
     affinity: 0,
-    obsession: 45,
+    obsession: 30,
     stage: '疏离戒备',
-    obsessionStage: '芳心暗许',
+    obsessionStage: '仍有牵挂',
     titles: {},
     outfits: { ...DEFAULT_TARGET_OUTFITS },
     meta: {
@@ -97,7 +99,7 @@ export const builtInTargetSeeds: TargetStatus[] = [
     affinity: 0,
     obsession: 15,
     stage: '疏离戒备',
-    obsessionStage: '朦胧好感',
+    obsessionStage: '旧线松动',
     titles: {},
     outfits: { ...DEFAULT_TARGET_OUTFITS },
     meta: {

@@ -11,7 +11,7 @@ import type {
   UiMessage,
 } from '../types';
 import { clamp, defaultStatusData, normalizeStatusData } from '../variables/normalize';
-import { getDefaultWeatherState } from '../phone/weather';
+import { createDefaultMusicPlayerState } from '../phone/music';
 import { createDefaultMemoryDB } from '../memorydatabase/defaults';
 import { createDefaultMemoryEditorState } from '../memorydatabase/editor';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
@@ -280,7 +280,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     plotLibrary: createEmptyPlotLibrary(),
     uiMessages: [createSystemMessage()],
     statusData: normalizeStatusData(defaultStatusData),
-    weather: getDefaultWeatherState(),
+    musicPlayer: createDefaultMusicPlayerState(),
     notification: null,
     backgroundTasks: [],
     readerContextMenu: null,

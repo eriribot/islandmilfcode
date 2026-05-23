@@ -33,7 +33,7 @@ export function shouldRunGlobalCompression(store: SummaryStore): boolean {
 type OrderedPrompt = { role: 'system' | 'user' | 'assistant'; content: string };
 
 const CHINESE_AUDIT_LANGUAGE_RULE =
-  '- 全程使用中文：最终标签内容、审计说明、思考标题、reasoning_content 或任何可见/可记录的推理过程都必须用中文，不要输出英文段落。';
+  '- 全程使用中文：最终标签内容、审计说明、思考标题、reasoning_content / 推理过程 / chain-of-thought 等任何可见或可记录的思考输出都必须用中文。禁止用英文进行内部推理或思考过渡，禁止出现 "Let me think / I will / The user wants / Step 1" 这类英文段落。中文以外的推理内容会被视为格式错误。';
 
 /** 将消息列表格式化为 [说话人]\n内容 的文本块，供摘要 prompt 使用。 */
 function formatMessagesForSummary(messages: UiMessage[]): string {
@@ -55,6 +55,9 @@ function renderFactAnchor(anchor: FactAnchor | null | undefined): string {
   const affinities = anchor.affinities.length
     ? anchor.affinities.map(a => `${a.name}: ${a.value}（${a.stage}）`).join('、')
     : '无';
+  const obsessions = anchor.obsessions?.length
+    ? anchor.obsessions.map(o => `${o.name}: ${o.value}（${o.stage}）`).join('、')
+    : '无';
   const mainEvents = anchor.mainEvents.length ? anchor.mainEvents.map(e => `${e.id}:${e.status}`).join('；') : '无';
   return [
     '【状态快照（绝对事实，不得改写）】',
@@ -62,7 +65,8 @@ function renderFactAnchor(anchor: FactAnchor | null | undefined): string {
     `- 当前地点：${anchor.location || '未知'}`,
     `- 当前主线事件：${anchor.currentMainEventId || '无'}`,
     `- 主线事件进度：${mainEvents}`,
-    `- 角色好感度：${affinities}`,
+    `- 角色好感度（对 User）：${affinities}`,
+    `- 角色执念度（对伦也旧线）：${obsessions}`,
   ].join('\n');
 }
 
@@ -112,7 +116,15 @@ export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnch
         '  时间:YYYY-MM-DD HH:mm（必须完整，禁止 `4月16日` 或缺 HH:mm 的格式）',
         '  地点:新地点',
         '  好感度.角色名:±N（多角色分别输出；例：好感度.加藤惠:+1）',
-        '  执念度.角色名:±N（角色对伦也旧线的牵引变化；例：执念度.霞之丘诗羽:-1）',
+        '  执念度.角色名:±N（角色对伦也旧线的牵挂变化，与好感度独立。允许扣减的通道：',
+        '    (a) 伦也直接出现并做出负面/低情商/失约/抛弃她的行为：-3 ~ -8；',
+        '    (b) 对比戏：同回合既有伦也负面行为又有 user 正面行为：-3 ~ -8 同时好感度 +2 ~ +5；',
+        '    (c) 替代位：伦也虽未出场，但 user 替伦也完成了她原本期待他做的事（陪改稿/陪打游戏/听她吐槽工作/重要时刻陪伴）：-1 ~ -3；',
+        '    (d) 吐露旧事：女主主动在 user 面前提起伦也的旧事或心结（不分正负），视为对 user 开放心防：-1 ~ -2；',
+        '    允许涨高的通道：伦也直接打动她、回到她身边、或 user 做了让她想起伦也某个缺点反而美化伦也的事：+1 ~ +5。',
+        '    动态门槛：旧情度 >= 70 时变化幅度可以更鲜明；< 30 时已是稳定关系，不要频繁微调；< 10 时除非伦也直接强行介入，否则保持不变。',
+        '    例：执念度.霞之丘诗羽:-3）',
+        '  数值幅度参考：日常单动取 ±1 ~ ±2；明确事件取 ±3 ~ ±5；重大冲击取 ±6 ~ ±8。',
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气；例：五维.体贴:+1）',
         '  着装.部位:描述（旧单目标格式；主场景没有明确对象时不要输出）',
         '  当前事件:事件ID（设置当前主线事件；清空用 当前事件:无）',
@@ -120,10 +132,10 @@ export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnch
         '  事件:本轮剧情=简短概括',
         '  物品+名称:数量:描述（获得物品；例：物品+蛋包饭券:1:英梨梨要求的交换条件）',
         '  物品-名称（失去或使用物品；例：物品-塑料袋）',
-        '<state_delta> 规则：没有全局默认变量目标；只更新正文里明确出现或直接受影响的角色。多角色同时在场时，分别输出 好感度.角色名:±N / 执念度.角色名:±N。不要把某个角色的审计或关系规则套给其他角色。',
+        '<state_delta> 规则：没有全局默认变量目标；只更新正文里明确出现或直接受影响的角色。多角色同时在场时，分别输出 好感度.角色名:±N / 执念度.角色名:±N。不要把某个角色的审计或关系规则套给其他角色。好感度与执念度是独立轴，一般场景只动其一；同回合都动只发生在对比戏（伦也负面 vs user 正面）或替代位场景（user 替伦也完成女主期待的事）。禁止两边无脑同步 ±1。为了测试解析链路，如果某角色本轮只变化了好感度、执念度没有变化，也要补写 `执念度.角色名:0`；0 表示本轮无变化。',
         '示例：',
         '<summary>',
-        '4月15日 放学后 / 美术室：User 请英梨梨帮忙检查稿子，她勉强答应但要求下周一请吃蛋包饭作为交换……',
+        '4月15日 放学后 / 美术室：user帮英梨梨因为伦也放鸽子遗留下的查稿子，她勉强答应但要求下周一请吃蛋包饭作为交换……',
         '',
         '时间：2012-04-15 16:30 ~ 17:40',
         '地点：私立丰之崎学园/美术室',
@@ -137,10 +149,11 @@ export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnch
         '时间:2012-04-15 16:30',
         '地点:私立丰之崎学园-美术室',
         '好感度.英梨梨:+1',
-        '执念度.英梨梨:+1',
-        '事件:本轮剧情=User 请英梨梨帮忙检查稿子，英梨梨提出下周一请吃蛋包饭作为交换。',
+        '执念度.英梨梨:0',
+        '事件:本轮剧情=因为伦也放了英梨梨鸽子,User不得不帮英梨梨检查稿子，英梨梨提出下周一请吃蛋包饭作为交换。',
         '物品+蛋包饭券:1:英梨梨要求的交换条件',
         '</state_delta>',
+        '（注：以上是日常戏示例，只动好感度，执念度未变化所以写 0。若同回合出现伦也负面 + user 正面的对比戏，可同时输出 好感度.英梨梨:+3 与 执念度.英梨梨:-5；若伦也未出场但 user 替伦也陪她改稿（替代位），可同时输出 好感度.英梨梨:+2 与 执念度.英梨梨:-2。）',
         anchorBlock,
       ]
         .filter(Boolean)

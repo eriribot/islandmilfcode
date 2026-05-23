@@ -293,13 +293,13 @@ body.floating-phone-dragging {
   align-items: flex-start;
   gap: 12px;
   min-height: 126px;
-  padding: 16px;
-  border-radius: 8px;
-  color: #f8fbff;
+  padding: 14px;
+  border-radius: 12px;
+  color: #fff8f6;
   background:
-    linear-gradient(135deg, rgba(43, 59, 74, 0.92), rgba(83, 106, 114, 0.88)),
-    radial-gradient(circle at top right, rgba(168, 219, 197, 0.42), transparent 42%);
-  box-shadow: 0 12px 28px rgba(42, 54, 64, 0.18);
+    linear-gradient(135deg, rgba(196, 39, 74, 0.94), rgba(232, 60, 92, 0.86)),
+    radial-gradient(circle at top right, rgba(255, 220, 200, 0.32), transparent 50%);
+  box-shadow: 0 12px 28px rgba(120, 26, 50, 0.22);
 }
 
 .phone-home-kicker {
@@ -310,66 +310,196 @@ body.floating-phone-dragging {
   opacity: 0.72;
 }
 
-.phone-home-weather {
+.phone-home-music {
   min-width: 0;
   flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.phone-home-hero h2 {
+.phone-home-music--idle .phone-music-hero-meta h2,
+.phone-home-music--idle .phone-music-hero-meta p {
+  visibility: hidden;
+}
+
+.phone-home-music--idle .phone-music-cover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.phone-home-music h2 {
   margin: 0;
   font-family: 'Zen Maru Gothic', sans-serif;
-  font-size: 28px;
-  line-height: 1.1;
+  font-size: 13px;
+  line-height: 1.3;
   letter-spacing: 0;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.phone-home-hero p {
-  margin: 8px 0 0;
-  font-size: 12px;
-  line-height: 1.45;
-  opacity: 0.78;
-}
-
-.phone-weather-main {
+.phone-music-hero-main {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
 }
 
-.phone-weather-icon {
-  width: 46px;
-  height: 46px;
-  flex: 0 0 auto;
+.phone-music-cover {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
   display: grid;
   place-items: center;
-  border-radius: 8px;
-  background: rgba(255, 252, 245, 0.88);
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 252, 245, 0.16);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
 }
 
-.phone-weather-icon img,
-.phone-weather-icon svg {
+.phone-music-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.phone-music-cover-fallback {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.phone-music-hero-meta {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.phone-music-hero-meta p {
+  margin: 2px 0 0;
+  font-size: 10px;
+  line-height: 1.4;
+  opacity: 0.82;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-music-hero-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.phone-music-hero-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.phone-music-seek {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+}
+
+.phone-music-seek:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.phone-music-seek::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.phone-music-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: #f8fbff;
+  border: 0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.phone-music-seek::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.22);
+  border: 0;
+}
+
+.phone-music-seek::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #f8fbff;
+  border: 0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+.phone-music-time {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  opacity: 0.78;
+  font-variant-numeric: tabular-nums;
+  margin-top: -2px;
+}
+
+.phone-music-hero-actions {
+  margin-top: 6px;
+}
+
+.phone-music-ctrl,
+.phone-music-hero-btn {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
   width: 34px;
   height: 34px;
-  display: block;
-  object-fit: contain;
-}
-
-.phone-weather-details {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
-}
-
-.phone-weather-details span {
-  padding: 3px 7px;
   border-radius: 999px;
-  font-size: 10px;
-  line-height: 1.2;
-  color: rgba(255, 255, 255, 0.88);
-  background: rgba(255, 255, 255, 0.14);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  transition: background 0.15s ease;
+}
+
+.phone-music-ctrl:hover,
+.phone-music-hero-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.phone-music-ctrl:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.phone-music-ctrl--text,
+.phone-music-hero-btn {
+  width: auto;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .phone-home-avatar {
@@ -2088,6 +2218,95 @@ body.floating-phone-dragging {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.26);
 }
 
+/* 旧情度危险位（>=70）：填充更深、加暗紫脉动，提示这条线还是伦也的 */
+.archive-meter--obsession[data-meter-level="danger"] .archive-bar__fill {
+  background: linear-gradient(90deg, #c4a8ec 0%, #8769bf 50%, #5a3a96 100%);
+  animation: archive-obsession-pulse 2.4s ease-in-out infinite;
+}
+
+.archive-meter--obsession[data-meter-level="danger"] .archive-meter__meta em {
+  color: #6b4f9a;
+  font-weight: 600;
+}
+
+/* 旧情度淡出位（<30）：颜色变冷淡、字标注变弱 */
+.archive-meter--obsession[data-meter-level="fading"] .archive-bar__fill {
+  background: linear-gradient(90deg, #efeaf8 0%, #c8b9e4 100%);
+  opacity: 0.85;
+}
+
+/* 旧情度已放下（<10）：灰虚线条，文字斜体表示"过去" */
+.archive-meter--obsession[data-meter-level="letgo"] .archive-bar {
+  border-style: dashed;
+  border-color: rgba(147, 128, 181, 0.4);
+}
+
+.archive-meter--obsession[data-meter-level="letgo"] .archive-bar__fill {
+  background: linear-gradient(90deg, rgba(200, 195, 215, 0.6), rgba(150, 145, 165, 0.6));
+  opacity: 0.65;
+}
+
+.archive-meter--obsession[data-meter-level="letgo"] .archive-meter__meta em {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+@keyframes archive-obsession-pulse {
+  0%, 100% {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.26), 0 0 0 0 rgba(132, 105, 178, 0);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34), 0 0 8px 1px rgba(132, 105, 178, 0.45);
+  }
+}
+
+/* ── 好感度按等级分段，配粉/蜜桃/玫瑰渐变。和旧情度形成暖/冷对比。 ── */
+.archive-meter--affection .archive-meter__meta {
+  color: #6b3f4b;
+}
+
+.archive-meter--affection .archive-meter__meta em {
+  color: #b86b84;
+}
+
+.archive-meter--affection .archive-bar {
+  border-color: rgba(214, 162, 178, 0.34);
+  background: linear-gradient(180deg, rgba(255, 248, 250, 0.98), rgba(252, 230, 235, 0.86));
+}
+
+.archive-meter--affection .archive-bar__fill {
+  background: linear-gradient(90deg, #ffd9e0 0%, #f6a6b9 52%, #e87399 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32);
+}
+
+/* 好感度高位（>=70）：暖红心动渐变 + 轻微暖光呼吸 */
+.archive-meter--affection[data-meter-level="hot"] .archive-bar__fill {
+  background: linear-gradient(90deg, #ffb1c1 0%, #ef7e9e 50%, #d44b73 100%);
+  animation: archive-affection-glow 2.6s ease-in-out infinite;
+}
+
+.archive-meter--affection[data-meter-level="hot"] .archive-meter__meta em {
+  color: #c64367;
+  font-weight: 600;
+}
+
+/* 好感度中等（30-70）：默认粉，已经默认样式覆盖 */
+
+/* 好感度低位（<30）：冷淡浅灰粉，没有什么实感 */
+.archive-meter--affection[data-meter-level="cold"] .archive-bar__fill {
+  background: linear-gradient(90deg, #f5e6ea 0%, #e9c5ce 100%);
+  opacity: 0.88;
+}
+
+@keyframes archive-affection-glow {
+  0%, 100% {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32), 0 0 0 0 rgba(212, 75, 115, 0);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42), 0 0 8px 1px rgba(232, 115, 153, 0.42);
+  }
+}
+
 .archive-affection-head strong {
   color: #b86b84;
 }
@@ -2387,4 +2606,194 @@ body.floating-phone-dragging {
   .same-layer-card {
     padding: 8px;
   }
+}
+
+/* ── Music search page ── */
+
+.phone-app-page--music {
+  background: linear-gradient(180deg, rgba(232, 60, 92, 0.08), rgba(255, 252, 245, 0.96) 22%);
+}
+
+.phone-app-page--music .phone-music-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: var(--journal-cream, #f6efe2);
+}
+
+.phone-music-search {
+  display: flex;
+  gap: 8px;
+}
+
+.phone-music-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid rgba(72, 90, 108, 0.2);
+  background: #fff;
+  font-family: inherit;
+}
+
+.phone-music-search-input:focus {
+  outline: none;
+  border-color: rgba(232, 60, 92, 0.55);
+  background: #fff;
+}
+
+.phone-music-search-btn {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  /* 网易云红 */
+  background: linear-gradient(135deg, #e83c5c, #c4274a);
+  color: #fff;
+}
+
+.phone-music-quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.phone-music-quick-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #586a78;
+}
+
+.phone-music-quick {
+  appearance: none;
+  border: 0;
+  background: rgba(168, 219, 197, 0.36);
+  color: #2b3b4a;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.phone-music-quick:hover {
+  background: rgba(168, 219, 197, 0.6);
+}
+
+.phone-music-quick.is-current {
+  background: rgba(247, 201, 72, 0.55);
+}
+
+.phone-music-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.phone-music-row {
+  appearance: none;
+  border: 0;
+  background: rgba(255, 255, 255, 0.65);
+  color: inherit;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.15s ease;
+}
+
+.phone-music-row:hover {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.phone-music-row:disabled {
+  cursor: progress;
+}
+
+.phone-music-row--current {
+  background: rgba(168, 219, 197, 0.45);
+}
+
+.phone-music-row__cover {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(72, 90, 108, 0.15);
+  font-size: 16px;
+  color: #586a78;
+}
+
+.phone-music-row__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.phone-music-row__copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.phone-music-row__copy strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2b3b4a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-music-row__copy small {
+  font-size: 11px;
+  color: #6b7c8a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-music-row__state {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #586a78;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(72, 90, 108, 0.12);
+}
+
+.phone-music-row--current .phone-music-row__state {
+  background: rgba(43, 59, 74, 0.85);
+  color: #f8fbff;
+}
+
+.phone-music-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #6b7c8a;
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 10px;
+}
+
+.phone-music-empty--error {
+  color: #b3463a;
+  background: rgba(245, 198, 192, 0.45);
 }

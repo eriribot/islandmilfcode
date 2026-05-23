@@ -79,6 +79,10 @@ type ScenePhoneMessage = {
   text: string;
 };
 
+// 合并版 progress prompt 解析出的手机消息暂存：同回合 maybeQueueProactivePhoneMessage 会读它并清空，跳过 phone-scene-extract 副 API。
+// 不放进 state（属于一次性流转数据，不需要存档），也不放进 ctx 类型（避免侵入）。流程顺序执行无竞态。
+let lastProgressPhoneMessages: ScenePhoneMessage[] | null = null;
+
 type RawPrompt = {
   role: 'system' | 'user' | 'assistant';
   content: string;
@@ -376,15 +380,13 @@ function applyTargetedAffinityDeltas(ctx: ActionContext, update: ProgressUpdate,
     }
 
     const verdict = classifyAffinityVerdict(ctx, target, forcedTargetId);
-    const effectiveDelta = clampAffinityByVerdict(item.delta, verdict);
     if (verdict === 'absent') {
       console.warn('[progress] drop affinity for absent target:', item.target);
       continue;
     }
-    if (verdict === 'unmentioned') {
-      console.warn('[progress] drop affinity for unmentioned target:', item.target);
-      continue;
-    }
+    // unmentioned 不再硬 drop：state_delta 多角色批量评估时（如群体场景）经常没在叙事里点名，
+    // 走 clampAffinityByVerdict 的软上限（±1）既保留 LLM 的判定又避免被夸大。
+    const effectiveDelta = clampAffinityByVerdict(item.delta, verdict);
     if (!effectiveDelta) continue;
 
     const nextAffinity = clamp((target.affinity ?? 0) + effectiveDelta, 0, 100);
@@ -409,11 +411,13 @@ function applyTargetedObsessionDeltas(ctx: ActionContext, update: ProgressUpdate
     }
 
     const verdict = classifyAffinityVerdict(ctx, target, forcedTargetId);
-    if (verdict === 'absent' || verdict === 'unmentioned') {
-      console.warn('[progress] drop obsession for inactive target:', item.target);
+    if (verdict === 'absent') {
+      console.warn('[progress] drop obsession for absent target:', item.target);
       continue;
     }
-
+    // 旧情度专门的语义允许间接通道（替代位 / 吐露旧事 / 回忆性提及伦也），
+    // 即使角色当回合不在镜头中央也可能合理变化；这里不再做幅度软上限，
+    // 在场判定（textContainsTargetActiveSignals / textMarksTargetFirmlyAbsent）已经把绝对不可能的情况挡掉。
     const nextObsession = clamp((target.obsession ?? 0) + item.delta, 0, 100);
     if (nextObsession === target.obsession) continue;
     target.obsession = nextObsession;
@@ -723,18 +727,29 @@ export async function submitMessage(
           await runSecondaryProgressUpdate(
             ctx,
             `progress-fallback-${crypto.randomUUID()}`,
-            buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages)),
+            buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
+              includePhoneMessages: true,
+            }),
           );
         }
       } else if (ctx.summaryApiConfig && (postTurnMode === 'major' || postTurnMode === 'global')) {
         await runSummary(summaryCtx, postTurnMode).catch(() => {
           /* 摘要错误在内部处理 */
         });
+        await runSecondaryProgressUpdate(
+          ctx,
+          `progress-after-${postTurnMode}-${crypto.randomUUID()}`,
+          buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
+            includePhoneMessages: true,
+          }),
+        );
       } else if (ctx.summaryApiConfig) {
         await runSecondaryProgressUpdate(
           ctx,
           `progress-${crypto.randomUUID()}`,
-          buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages)),
+          buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
+            includePhoneMessages: true,
+          }),
         );
       } else {
         await runSummary(summaryCtx).catch(() => {
@@ -1235,6 +1250,18 @@ function commitProgressAnalysis(
   raw: string,
   targetId?: string | null,
 ): { applied: boolean; update: ProgressUpdate | null } {
+  // 主回合 progress 现在合并了 phone_messages 提取；如果 raw 里带 <phone_messages> 块，
+  // 解析并暂存，由 maybeQueueProactivePhoneMessage 接力消费、跳过原本 phone-scene-extract 副 API。
+  if (!targetId) {
+    const latestSceneText = getLatestAssistantSceneText(ctx);
+    if (latestSceneText) {
+      const phoneMessages = parseScenePhoneMessageExtractorResult(ctx, raw, latestSceneText);
+      if (phoneMessages.length) {
+        lastProgressPhoneMessages = phoneMessages;
+      }
+    }
+  }
+
   const update = parseProgressUpdate(raw);
   if (!update) return { applied: false, update: null };
   applyFullProgressUpdate(ctx, update, targetId);
@@ -1590,19 +1617,30 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
   const latestEvent = getLatestRecentEvent(ctx);
   const latestSceneText = getLatestAssistantSceneText(ctx);
   const hasTavernGenerate = typeof win.generateRaw === 'function' || typeof win.generate === 'function';
-  const shouldRunPhoneExtractor = hasTavernGenerate && hasScenePhoneMessageHint(latestSceneText);
-  debugPhoneFlow(ctx, 'scene-extract:gate', {
-    hasTavernGenerate,
-    hasPhoneHint: hasScenePhoneMessageHint(latestSceneText),
-    willRun: shouldRunPhoneExtractor,
-    sceneLength: latestSceneText.length,
-  });
-  const extractedMessages = shouldRunPhoneExtractor
-    ? await extractScenePhoneMessagesWithLlm(ctx, latestSceneText).catch(error => {
-        console.warn('[phone-scene-extract] detector failed:', error);
-        return [] as ScenePhoneMessage[];
-      })
-    : [];
+
+  // 优先消费合并版 progress 已经一并解析出来的 phone_messages，跳过单独的 phone-scene-extract 副 API 调用。
+  const prefilled = lastProgressPhoneMessages;
+  lastProgressPhoneMessages = null;
+
+  let extractedMessages: ScenePhoneMessage[] = [];
+  if (prefilled && prefilled.length) {
+    extractedMessages = prefilled;
+    debugPhoneFlow(ctx, 'scene-extract:reuse-from-progress', { count: prefilled.length });
+  } else {
+    const shouldRunPhoneExtractor = hasTavernGenerate && hasScenePhoneMessageHint(latestSceneText);
+    debugPhoneFlow(ctx, 'scene-extract:gate', {
+      hasTavernGenerate,
+      hasPhoneHint: hasScenePhoneMessageHint(latestSceneText),
+      willRun: shouldRunPhoneExtractor,
+      sceneLength: latestSceneText.length,
+    });
+    extractedMessages = shouldRunPhoneExtractor
+      ? await extractScenePhoneMessagesWithLlm(ctx, latestSceneText).catch(error => {
+          console.warn('[phone-scene-extract] detector failed:', error);
+          return [] as ScenePhoneMessage[];
+        })
+      : [];
+  }
   let appendedFromScene = false;
 
   for (const item of extractedMessages) {

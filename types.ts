@@ -1,5 +1,5 @@
 import type { SummaryApiConfig, SummaryModelFetchState, SummaryStore } from './summary/types';
-import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute, WeatherState } from './phone/types';
+import type { FloatingPhonePosition, MusicPlayerState, PhoneCharacterId, PhoneRoute } from './phone/types';
 import type { IslandMemoryDB } from './memorydatabase/types';
 import type { MemoryTableName } from './memorydatabase/editor';
 
@@ -292,7 +292,7 @@ export type AppState = {
   plotLibrary: PlotLibrary;
   uiMessages: UiMessage[];
   statusData: StatusData;
-  weather: WeatherState;
+  musicPlayer: MusicPlayerState;
   notification: NotificationState | null;
   backgroundTasks: BackgroundTaskState[];
   readerContextMenu: ReaderContextMenuState | null;

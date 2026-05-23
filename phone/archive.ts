@@ -255,20 +255,30 @@ function resolveArchive(characterId: PhoneCharacterId, targets: TargetStatus[]):
         tone: 'affection',
       },
       {
-        label: '执念度',
+        label: '旧情度',
         caption: target ? obsStage : '资料占位',
         value: obsession,
         tone: 'obsession',
       },
     ],
-    note: target ? `当前关系阶段为「${stage}」，对伦也的执念为「${obsStage}」。` : archive.note,
+    note: target ? `当前关系阶段为「${stage}」，对伦也的旧情度为「${obsStage}」。` : archive.note,
   };
 }
 
 function renderMeter(meter: ArchiveMeter) {
   const value = clampPercent(meter.value);
+  // 旧情度按危险度分级；好感度按温度分级。两条轴的分级规则在 CSS 选择器里按 tone 分别响应。
+  let level = 'mid';
+  if (meter.tone === 'obsession') {
+    if (value >= 70) level = 'danger';
+    else if (value < 10) level = 'letgo';
+    else if (value < 30) level = 'fading';
+  } else if (meter.tone === 'affection') {
+    if (value >= 70) level = 'hot';
+    else if (value < 30) level = 'cold';
+  }
   return `
-    <div class="archive-meter archive-meter--${meter.tone}">
+    <div class="archive-meter archive-meter--${meter.tone}" data-meter-level="${level}">
       <div class="archive-meter__meta">
         <span>
           <strong>${escapeHtml(meter.label)}</strong>

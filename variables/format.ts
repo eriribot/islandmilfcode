@@ -10,12 +10,14 @@ export function affinityStage(value: number) {
   return '亲密相伴';
 }
 
+// 旧情度（obsession）= 角色对伦也旧线的牵挂程度，越高越偏向回到伦也身边。
+// 阶段命名按"危险度"读：还在他怀里 → 已经放下，玩家的目标是把它降下去。
 export function obsessionStage(value: number) {
-  if (value < 10) return '毫无波澜';
-  if (value < 30) return '朦胧好感';
-  if (value < 60) return '芳心暗许';
-  if (value < 85) return '难分难舍';
-  return '刻骨铭心';
+  if (value < 10) return '已经放下';
+  if (value < 30) return '旧线松动';
+  if (value < 60) return '仍有牵挂';
+  if (value < 85) return '心还系着他';
+  return '还在他怀里';
 }
 
 /** @deprecated Compatibility alias for older imports. */

@@ -556,7 +556,7 @@ function buildTargetStateList(statusData: StatusData) {
         .join('、');
       const className = String(target.meta?.className ?? '').trim();
       const classSegment = className ? `；班级/身份=${className}` : '';
-      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度=${target.affinity}（${target.stage}）；执念度=${target.obsession}（${target.obsessionStage}）；更新键=好感度.${target.name}:±N / 执念度.${target.name}:±N`;
+      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度（对 user）=${target.affinity}（${target.stage}）；执念度（旧情/对伦也）=${target.obsession}（${target.obsessionStage}）；更新键=好感度.${target.name}:±N / 执念度.${target.name}:±N`;
     })
     .join('\n');
 }
@@ -963,6 +963,7 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
     '时间:2012-03-31 08:30',
     '地点:东京·侦探坡',
     affinityExamples.split(' / ')[0] ?? '好感度.角色名:+1',
+    obsessionExamples.split(' / ')[0] ?? '执念度.角色名:-1',
     '五维.体贴:+1',
     '着装.上装:私立丰之崎学园的制服衬衫',
     '早晨外出:两人决定去便利店买早餐。',
@@ -1018,6 +1019,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
 export function buildProgressPrompt(
   statusData: StatusData,
   turnMessages: UiMessage[],
+  options?: { includePhoneMessages?: boolean },
 ): Array<{ role: 'system' | 'user'; content: string }> {
   const inventoryList =
     Object.entries(statusData.player.inventory)
@@ -1048,6 +1050,7 @@ export function buildProgressPrompt(
       role: 'system' as const,
       content: [
         '你是一个精确的状态追踪器。根据以下对话内容，分析是否有任何变量需要更新。',
+        '全程使用中文：所有标签内容、思考标题、reasoning_content / 推理过程 / chain-of-thought 等任何可见或可记录的思考输出都必须用中文。禁止用英文进行内部推理或思考过渡，禁止出现 "Let me think / I will / The user wants / Step 1" 这类英文段落。中文以外的推理内容会被视为格式错误。',
         '',
         '当前状态：',
         `  时间: ${statusData.world.currentTime}`,
@@ -1069,10 +1072,16 @@ export function buildProgressPrompt(
         '  阅读本轮完整正文，不要只看最后一句。多人在场时，分别判断每个明确在场且对 User 产生情绪反应的角色。',
         '  普通友好互动或者逗乐大家的行动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4,重大事件的可靠+8；冒犯、越界、揭短、冷落通常 -1 到 -6。',
         '  不要因为变化很小就省略好感度；只有角色不在场、完全无互动、纯环境描写、或关系没有任何变化时，才不输出该角色好感度。',
-        '执念度判断规则：',
-        '  执念度表示角色对伦也这条旧线的牵引强度；它不是对 User 的好感度。',
-        '  只有当本轮正文明确触发伦也、初恋、青梅位置、核心读者、创作伤口或原作锚点时，才输出执念度变化。',
-        '  好感度与执念度可以同时变化，且不要求同向。',
+        '执念度判断规则（与好感度独立的旧情度，对伦也旧线的牵挂）：',
+        '  允许扣减的四个通道：',
+        '    (a) 伦也直接出现并做出负面/低情商/失约/抛弃她的行为：-3 ~ -8；',
+        '    (b) 对比戏：同回合既有伦也负面行为又有 user 正面行为：-3 ~ -8（同时好感度 +2 ~ +5）；',
+        '    (c) 替代位：伦也虽未出场，user 替伦也完成她原本期待他做的事（陪改稿/陪打游戏/听她吐槽工作/重要时刻陪伴）：-1 ~ -3；',
+        '    (d) 吐露旧事：女主主动在 user 面前提起伦也旧事或心结（不分正负），视为对 user 开放心防：-1 ~ -2。',
+        '  允许涨高的通道：伦也直接打动她、回到她身边、或 user 做了让她想起伦也某个缺点反而美化伦也的事：+1 ~ +5。',
+        '  动态门槛：旧情度 >= 70 时变化幅度可以更鲜明；< 30 时已是稳定关系，不要频繁微调；< 10 时除非伦也强行介入，否则保持不变。',
+        '  数值幅度：日常 ±1~2、明确事件 ±3~5、重大冲击 ±6~8。',
+        '  好感度与执念度可以同时变化，且不要求同向，但禁止无脑同步 ±1。',
         timeIntentNote ? `\n时间推进提醒：${timeIntentNote}` : '',
         '',
         '请用 <progress> 标签输出变化的字段，每行一个 key:value。如果没有任何变化，输出空的 <progress></progress>。',
@@ -1091,7 +1100,35 @@ export function buildProgressPrompt(
         '  物品-名称',
         '',
         '只输出变化的字段，未变化的省略。',
-      ].join('\n'),
+        options?.includePhoneMessages
+          ? [
+              '',
+              '── 手机消息提取（同回合附加任务，节省 API 调用） ──',
+              '在判断变量之外，请同时检查"最新正文"里是否出现攻略对象用手机/LINE/短信/私聊给玩家发消息、或玩家在正文里用手机给攻略对象发消息。如有，按下方格式补充输出 <phone_messages> 标签，没有就输出空标签。',
+              '提取规则：',
+              '  1. incoming = 攻略对象发给玩家；outgoing = 玩家发给攻略对象。',
+              '  2. target_id 必须是"可更新角色列表"里出现过的 id；不能猜测归属。',
+              '  3. 如果正文只写"她/对方/手机弹出消息"等无法确定具体联系人，跳过这条不输出。',
+              '  4. message 优先用正文里明确写出的消息文本（引号、【】、冒号后的内容）；若只是概括，可用一句自然的手机文本重构；若内容不明确，跳过。',
+              '  5. 只提取手机/LINE/短信/私聊等远程消息；面对面对话、旁白、心理活动、系统通知、普通叙述不要输出。',
+              '  6. 非攻略对象（伦也、红坂朱音、丸户等）发来的消息不要输出，因为它们不会落到攻略对象的 thread。',
+              '  7. 可输出多条按正文顺序。没有可提取的消息时输出空的 <phone_messages></phone_messages>。',
+              '',
+              '输出格式（在 <progress> 后面追加）：',
+              '<phone_messages>',
+              'direction: incoming|outgoing',
+              'target_id: 联系人id',
+              'message: 消息正文',
+              '---',
+              'direction: incoming|outgoing',
+              'target_id: 联系人id',
+              'message: 消息正文',
+              '</phone_messages>',
+            ].join('\n')
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
     },
     {
       role: 'user' as const,
@@ -1117,6 +1154,7 @@ export function buildPhoneProgressPrompt(input: {
       role: 'system' as const,
       content: [
         '你是一个精确的手机聊天状态追踪器。根据手机聊天内容，判断变量是否需要更新。',
+        '全程使用中文：所有标签内容、思考标题、reasoning_content / 推理过程 / chain-of-thought 等任何可见或可记录的思考输出都必须用中文。禁止用英文进行内部推理或思考过渡，禁止出现 "Let me think / I will / The user wants / Step 1" 这类英文段落。中文以外的推理内容会被视为格式错误。',
         '手机聊天默认只影响好感度、近期事务和必要的时间推进。',
         '只要玩家的消息让聊天对象产生了明确情绪反应，就应评估好感度变化：普通友好互动通常 +0到+1，明显关心/理解/帮忙通常 +2，冒犯、越界、揭短或骚扰通常 -1 到 -6。',
         '不要因为数值很小就省略好感度；只有完全寒暄、无效输入或关系没有任何变化时，才输出空的 <progress></progress>。',
@@ -1141,8 +1179,9 @@ export function buildPhoneProgressPrompt(input: {
         '  地点:新地点',
         `  好感度:±N（只更新当前聊天对象：${target.name}）`,
         `  好感度.${target.name}:±N（也可显式写当前聊天对象；例如 好感度.${target.name}:+1）`,
-        `  执念度:±N（只更新当前聊天对象：${target.name}）`,
-        `  执念度.${target.name}:±N（也可显式写当前聊天对象；例如 执念度.${target.name}:+1）`,
+        `  执念度:±N（旧情度，对伦也旧线的牵挂；只更新当前聊天对象：${target.name}）`,
+        `  执念度.${target.name}:±N（也可显式写当前聊天对象；例如 执念度.${target.name}:-1）`,
+        '  ※ 好感度与执念度（旧情度）是独立两条轴：好感对 user，执念对伦也。允许扣减执念的通道：伦也直接负面 / 对比戏 / user 替代位（user 替伦也完成她期待的事）/ 主动吐露旧事。日常戏只动其一；对比或替代位场景才允许同回合双动；禁止无脑同步 ±1。日常 ±1~2，明确事件 ±3~5，重大冲击 ±6~8。',
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气）',
         '  着装.部位:描述',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',

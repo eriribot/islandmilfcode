@@ -541,11 +541,18 @@ export function getRelationshipGuidance(target: TargetStatus | null) {
   const affinity = Math.max(0, Math.min(100, Math.round(Number(target.affinity ?? 0) || 0)));
   const reaction = getStageReactions(target).find(item => affinity <= item.maxAffinity);
   const obsession = Math.max(0, Math.min(100, Math.round(Number(target.obsession ?? 0) || 0)));
+  // 旧情度 = 角色对伦也旧线的牵挂深度，与好感度并列、独立。
+  // 通道：伦也直接负面 / 对比戏 / user 替代位 / 主动吐露旧事 → 都能扣减。涨需要伦也直接介入或 user 美化了伦也。
+  // 高位（>=70）变化幅度可以鲜明；低位（<30）保持稳定不要频繁微调。
   const obsessionHint = obsession >= 80
-    ? '执念极深，面对伦也相关旧线时容易被拉回旧伤口，不要把这条牵引写成普通好感。'
-    : obsession >= 40
-      ? '旧线仍在牵引，提到伦也、初恋、青梅位置或原作锚点时会明显波动。'
-      : '旧线牵引较弱，当前更容易把注意力放回眼前的 User。';
+    ? '旧情度极高，伦也仍是她心里没放下的人；遇到他相关刺激会本能动摇。这个阶段允许较大波动：伦也负面行为或 user 替代位场景都可以让她明显松动。'
+    : obsession >= 60
+      ? '旧情度偏高，对伦也仍有明显牵挂；user 在替代伦也位置（陪她做她原本期待伦也做的事）的场景里会让她内心松动，可以表现出动摇瞬间。'
+      : obsession >= 30
+        ? '旧情度中等，旧线已经松动；与 user 形成对比的场景或 user 默默替补伦也时她会侧向 user，但不会立刻情感冷却。'
+        : obsession >= 10
+          ? '旧情度偏低，已是稳定关系阶段；不要再频繁微调旧情，只在伦也强行介入或女主主动谈起旧事时才波动。'
+          : '旧情度近乎清空，伦也已是过去式；除非伦也强行介入剧情，否则保持不动。可以正常表达对 user 的心动、不必再带回旧线。';
   return [reaction?.guidance ?? '', obsessionHint].filter(Boolean).join(' ');
 }
 

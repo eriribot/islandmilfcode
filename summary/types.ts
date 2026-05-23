@@ -87,6 +87,7 @@ export type FactAnchor = {
   location: string;
   currentMainEventId: string;
   affinities: Array<{ name: string; value: number; stage: string }>;
+  obsessions: Array<{ name: string; value: number; stage: string }>;
   mainEvents: Array<{ id: string; status: string }>;
 };
 
@@ -98,7 +99,7 @@ export function buildFactAnchorFromStatus(statusData: {
     currentMainEventId?: string;
     mainEvents?: Record<string, string>;
   };
-  targets: Array<{ name: string; affinity?: number; stage?: string }>;
+  targets: Array<{ name: string; affinity?: number; stage?: string; obsession?: number; obsessionStage?: string }>;
 }): FactAnchor {
   return {
     time: statusData.world.currentTime,
@@ -108,6 +109,11 @@ export function buildFactAnchorFromStatus(statusData: {
       name: t.name,
       value: t.affinity ?? 0,
       stage: t.stage ?? '',
+    })),
+    obsessions: statusData.targets.map(t => ({
+      name: t.name,
+      value: t.obsession ?? 0,
+      stage: t.obsessionStage ?? '',
     })),
     mainEvents: Object.entries(statusData.world.mainEvents ?? {}).map(([id, s]) => ({
       id,

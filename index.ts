@@ -15,7 +15,14 @@ import {
   openPhoneRoute,
   resetPhoneRoute as resetPhoneRouteState,
 } from './phone/routes';
-import { refreshWeatherForCurrentState } from './phone/weather';
+import {
+  CHARACTER_QUICK_SEARCH,
+  fetchTrackPicUrl,
+  fetchTrackStreamUrl,
+  formatPlaybackTime,
+  makeCharacterBgmTrack,
+  searchMusic,
+} from './phone/music';
 import { renderApp } from './render';
 import { mountRadarChart, unmountRadarChart } from './phone/radar';
 import { getCalendarMonthOffset, setCalendarMonthOffset, setCalendarSelectedDate } from './phone/render';
@@ -54,7 +61,7 @@ import type { SummaryApiConfig, SummaryModelOption } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
 import type { GameState, NotificationState, StatusData, TabKey, TavernWindow } from './types';
-import type { PhoneCharacterId, PhoneRoute } from './phone/types';
+import type { MusicTrack, PhoneCharacterId, PhoneRoute } from './phone/types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp, syncMainEvents } from './variables/normalize';
 import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
@@ -514,12 +521,16 @@ function closePhone() {
   closePhoneRoute(state, ctx);
 }
 
-function playPhoneCharacterBgm(bgmUrl: string | undefined) {
+function playPhoneCharacterBgm(characterId: PhoneCharacterId, bgmUrl: string | undefined) {
   const nextUrl = bgmUrl?.trim();
   if (!nextUrl) {
     // 中文注释：没有专属 BGM 的角色切换时要停止上一首，避免主题已经换了但音乐还停留在前一个角色。
     phoneBgmAudio?.pause();
     phoneBgmResolvedUrl = '';
+    state.musicPlayer.currentTrack = null;
+    state.musicPlayer.playing = false;
+    state.musicPlayer.currentTime = 0;
+    state.musicPlayer.duration = 0;
     return;
   }
 
@@ -530,6 +541,10 @@ function playPhoneCharacterBgm(bgmUrl: string | undefined) {
     // 同一个头像再次点击视为关闭当前 BGM，避免循环音乐一直播放打扰阅读。
     phoneBgmAudio.pause();
     phoneBgmAudio.currentTime = 0;
+    state.musicPlayer.playing = false;
+    state.musicPlayer.currentTrack = null;
+    state.musicPlayer.currentTime = 0;
+    state.musicPlayer.duration = 0;
     return;
   }
 
@@ -540,19 +555,181 @@ function playPhoneCharacterBgm(bgmUrl: string | undefined) {
     phoneBgmAudio.volume = 0.45;
     phoneBgmAudio.preload = 'auto';
     phoneBgmResolvedUrl = resolvedUrl;
+    bindPhoneBgmAudioEvents();
   } else {
     // 当前音乐已经暂停时，再次点击同一头像恢复从头播放。
     phoneBgmAudio.currentTime = 0;
   }
 
+  // 角色 BGM 也作为 currentTrack 显示在 hero 卡上：用户能看到当前在播什么、可以暂停/拖进度。
+  state.musicPlayer.currentTrack = makeCharacterBgmTrack(characterId, resolvedUrl);
+  state.musicPlayer.queue = [];
+  state.musicPlayer.currentTime = 0;
+  state.musicPlayer.duration = 0;
   // play() 在浏览器里返回 Promise；如果网络、格式或自动播放策略失败，不影响切换主题。
   void phoneBgmAudio.play().catch(error => {
     console.warn('角色 BGM 播放失败：', error);
   });
 }
 
+// phoneBgmAudio 是单例，事件监听只绑一次就够了；切换 src 时不需要重绑。
+function bindPhoneBgmAudioEvents() {
+  if (!phoneBgmAudio) return;
+  phoneBgmAudio.addEventListener('play', () => {
+    if (state.musicPlayer.currentTrack) {
+      state.musicPlayer.playing = true;
+      render();
+    }
+  });
+  phoneBgmAudio.addEventListener('pause', () => {
+    if (state.musicPlayer.currentTrack) {
+      state.musicPlayer.playing = false;
+      render();
+    }
+  });
+  phoneBgmAudio.addEventListener('ended', () => {
+    if (!state.musicPlayer.currentTrack) return;
+    state.musicPlayer.playing = false;
+    void playNextSearchTrack();
+  });
+  phoneBgmAudio.addEventListener('error', () => {
+    if (!state.musicPlayer.currentTrack) return;
+    state.musicPlayer.playing = false;
+    state.musicPlayer.loadingTrackId = null;
+    render();
+  });
+  // timeupdate/loadedmetadata 不能触发 render：每秒重渲整个手机会丢输入焦点、动画跳变。
+  // 这里直接 patch DOM；state 也同步更新，下一次 render 才能复位进度条到正确位置。
+  phoneBgmAudio.addEventListener('timeupdate', () => {
+    if (!state.musicPlayer.currentTrack || !phoneBgmAudio) return;
+    const t = phoneBgmAudio.currentTime || 0;
+    state.musicPlayer.currentTime = t;
+    if (seekDragging) return;
+    const seek = root?.querySelector<HTMLInputElement>('.phone-music-seek');
+    if (seek) seek.value = String(t);
+    const cur = root?.querySelector<HTMLElement>('[data-music-current-time]');
+    if (cur) cur.textContent = formatPlaybackTime(t);
+  });
+  phoneBgmAudio.addEventListener('loadedmetadata', () => {
+    if (!state.musicPlayer.currentTrack || !phoneBgmAudio) return;
+    const d = phoneBgmAudio.duration || 0;
+    state.musicPlayer.duration = d;
+    const seek = root?.querySelector<HTMLInputElement>('.phone-music-seek');
+    if (seek) {
+      seek.max = String(d);
+      seek.disabled = !(d > 0);
+    }
+    const dur = root?.querySelector<HTMLElement>('[data-music-duration]');
+    if (dur) dur.textContent = formatPlaybackTime(d);
+  });
+}
+
+// 拖动进度条的瞬间不能让 timeupdate 把 slider 拽回去；指针抬起或 change 事件触发后再 seek。
+let seekDragging = false;
+
+async function playMusicTrack(track: MusicTrack) {
+  // 搜索播放和角色 BGM 共用 phoneBgmAudio：先停角色 BGM 再放新音乐。
+  if (state.musicPlayer.loadingTrackId === track.id) return;
+  state.musicPlayer.loadingTrackId = track.id;
+  render();
+
+  try {
+    const [streamUrl, picUrl] = await Promise.all([
+      track.streamUrl ? Promise.resolve(track.streamUrl) : fetchTrackStreamUrl(track),
+      track.picUrl ? Promise.resolve(track.picUrl) : fetchTrackPicUrl(track),
+    ]);
+    const enriched: MusicTrack = { ...track, streamUrl, picUrl };
+
+    // 把 phoneBgmAudio 的 src 切到搜索曲目；loop 关掉以便 ended 时跳下一首。
+    if (phoneBgmAudio) {
+      phoneBgmAudio.pause();
+    }
+    phoneBgmAudio = new Audio(streamUrl);
+    phoneBgmAudio.loop = false;
+    phoneBgmAudio.volume = 0.55;
+    phoneBgmAudio.preload = 'auto';
+    phoneBgmResolvedUrl = new URL(streamUrl, window.location.href).href;
+    bindPhoneBgmAudioEvents();
+
+    state.musicPlayer.currentTrack = enriched;
+    state.musicPlayer.loadingTrackId = null;
+    // 把搜索结果当作可循环的队列：从结果里复制一份，下一首就在结果中循环。
+    state.musicPlayer.queue = state.musicPlayer.search.results.slice();
+    render();
+
+    await phoneBgmAudio.play();
+  } catch (error) {
+    state.musicPlayer.loadingTrackId = null;
+    state.musicPlayer.playing = false;
+    state.musicPlayer.search.error = error instanceof Error ? error.message : '播放失败';
+    state.musicPlayer.search.status = 'error';
+    render();
+  }
+}
+
+async function playNextSearchTrack() {
+  const queue = state.musicPlayer.queue;
+  const current = state.musicPlayer.currentTrack;
+  if (!queue.length || !current) return;
+  const idx = queue.findIndex(t => t.id === current.id && t.source === current.source);
+  const nextIndex = idx >= 0 && idx + 1 < queue.length ? idx + 1 : 0;
+  const next = queue[nextIndex];
+  if (next) {
+    await playMusicTrack(next);
+  }
+}
+
+function toggleMusicPlayPause() {
+  if (!phoneBgmAudio || !state.musicPlayer.currentTrack) return;
+  if (phoneBgmAudio.paused) {
+    void phoneBgmAudio.play().catch(error => {
+      console.warn('音乐恢复播放失败：', error);
+    });
+  } else {
+    phoneBgmAudio.pause();
+  }
+}
+
+async function submitMusicSearch(query: string) {
+  const trimmed = query.trim();
+  state.musicPlayer.search.query = trimmed;
+  if (!trimmed) {
+    state.musicPlayer.search.status = 'idle';
+    state.musicPlayer.search.results = [];
+    state.musicPlayer.search.error = null;
+    render();
+    return;
+  }
+
+  const requestId = state.musicPlayer.search.requestId + 1;
+  state.musicPlayer.search.requestId = requestId;
+  state.musicPlayer.search.status = 'loading';
+  state.musicPlayer.search.error = null;
+  render();
+
+  try {
+    const results = await searchMusic(trimmed, state.musicPlayer.search.source);
+    if (state.musicPlayer.search.requestId !== requestId) return;
+    state.musicPlayer.search.results = results;
+    state.musicPlayer.search.status = 'ready';
+    render();
+  } catch (error) {
+    if (state.musicPlayer.search.requestId !== requestId) return;
+    state.musicPlayer.search.results = [];
+    state.musicPlayer.search.status = 'error';
+    state.musicPlayer.search.error = error instanceof Error ? error.message : '搜索失败';
+    render();
+  }
+}
+
+function quickSearchCharacterSong(characterId: PhoneCharacterId) {
+  const keyword = CHARACTER_QUICK_SEARCH[characterId];
+  if (!keyword) return;
+  void submitMusicSearch(keyword);
+}
+
 function switchPhoneCharacter(characterId: PhoneCharacterId, bgmUrl?: string) {
-  playPhoneCharacterBgm(bgmUrl);
+  playPhoneCharacterBgm(characterId, bgmUrl);
   if (state.phoneCharacterId === characterId) return;
   state.phoneCharacterId = characterId;
   render();
@@ -1023,6 +1200,68 @@ function bindEvents() {
     });
   });
 
+  // ── Music events ──
+  // 搜索表单：阻止默认提交，读输入框值后异步搜索。
+  root?.querySelector<HTMLFormElement>('[data-action="music-search-submit"]')?.addEventListener('submit', event => {
+    event.preventDefault();
+    const input = root?.querySelector<HTMLInputElement>('[data-field="music-search"]');
+    void submitMusicSearch(input?.value ?? '');
+  });
+  // 输入框值同步进 state，避免 render 后丢失光标位置时丢字。
+  root?.querySelector<HTMLInputElement>('[data-field="music-search"]')?.addEventListener('input', event => {
+    state.musicPlayer.search.query = (event.target as HTMLInputElement).value;
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="music-quick-search"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const characterId = button.dataset.characterId as PhoneCharacterId | undefined;
+      if (characterId) quickSearchCharacterSong(characterId);
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="music-play-track"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const trackId = button.dataset.trackId;
+      const track = state.musicPlayer.search.results.find(t => t.id === trackId);
+      if (track) void playMusicTrack(track);
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="music-toggle-play"]').forEach(button => {
+    button.addEventListener('click', () => toggleMusicPlayPause());
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="music-next"]').forEach(button => {
+    button.addEventListener('click', () => void playNextSearchTrack());
+  });
+  // 进度条 seek：mousedown/touchstart 期间 timeupdate 不再写回 slider 值，避免抢手感。
+  root?.querySelectorAll<HTMLInputElement>('[data-action="music-seek"]').forEach(slider => {
+    const onPointerDown = () => { seekDragging = true; };
+    const onPointerUp = () => {
+      if (!seekDragging) return;
+      seekDragging = false;
+      const v = Number(slider.value);
+      if (phoneBgmAudio && Number.isFinite(v)) {
+        phoneBgmAudio.currentTime = v;
+        state.musicPlayer.currentTime = v;
+      }
+    };
+    slider.addEventListener('pointerdown', onPointerDown);
+    slider.addEventListener('pointerup', onPointerUp);
+    slider.addEventListener('pointercancel', onPointerUp);
+    // 拖动过程实时刷新左侧时间数字，提供反馈。
+    slider.addEventListener('input', () => {
+      const v = Number(slider.value);
+      const cur = root?.querySelector<HTMLElement>('[data-music-current-time]');
+      if (cur && Number.isFinite(v)) cur.textContent = formatPlaybackTime(v);
+    });
+    // 键盘（左右箭头）也走 change，保证无指针环境下能 seek。
+    slider.addEventListener('change', () => {
+      if (seekDragging) return;
+      const v = Number(slider.value);
+      if (phoneBgmAudio && Number.isFinite(v)) {
+        phoneBgmAudio.currentTime = v;
+        state.musicPlayer.currentTime = v;
+      }
+    });
+  });
+
   // ── Memory editor events ──
   function renderMemoryKeepScroll() {
     const scrollEl = root?.querySelector<HTMLElement>('.memory-phone-scroll');
@@ -1364,7 +1603,6 @@ function render() {
       persistToSave();
     }
     syncFocusedMessage(state);
-    refreshWeatherForCurrentState(state, render);
     root.innerHTML = renderApp(state, flipDirection);
     bindEvents();
 

@@ -28,7 +28,10 @@
       "Bash(grep -l \"islandmilfcode\" webpack*.*)",
       "Bash(ls webpack*.*)",
       "Bash(ls src/islandmilfcode/*.html)",
-      "Bash(ls src/islandmilfcode/index.html)"
+      "Bash(ls src/islandmilfcode/index.html)",
+      "WebFetch(domain:music-api.gdstudio.xyz)",
+      "Bash(del *)",
+      "Bash(pnpm run *)"
     ]
   }
 }

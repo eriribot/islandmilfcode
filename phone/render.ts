@@ -2,8 +2,8 @@ import { escapeHtml } from '../html';
 import type { AppState, NotificationState, PhoneChatThread, PlotEventCard, StatusData, TargetStatus } from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
 import { renderCharacterArchivePanel } from './archive';
-import type { FloatingPhonePosition, PhoneCharacterId, PhoneRoute } from './types';
-import { resolveWeatherRequest } from './weather';
+import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute } from './types';
+import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
 import { renderMemoryEditor } from '../memorydatabase/editor';
 
 type PhoneCharacterThemeId = PhoneCharacterId;
@@ -107,146 +107,71 @@ function renderPhoneAppHeader(state: AppState, title: string, subtitle = '') {
   `;
 }
 
-function formatWeatherNumber(value: number | null, digits = 0) {
-  if (value === null || Number.isNaN(value)) return '--';
-  return value.toFixed(digits);
-}
+function renderMusicHero(state: AppState) {
+  const { currentTrack, playing, loadingTrackId, currentTime, duration } = state.musicPlayer;
+  const dateLabel = escapeHtml(formatDate(state.statusData.world.currentTime));
 
-const WEATHER_ICON_SVGS: Record<string, string> = {
-  '100': `
-    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <circle cx="24" cy="24" r="10" fill="#f7c948" />
-      <g stroke="#f7c948" stroke-linecap="round" stroke-width="4">
-        <path d="M24 5v6" />
-        <path d="M24 37v6" />
-        <path d="M5 24h6" />
-        <path d="M37 24h6" />
-        <path d="m10.6 10.6 4.2 4.2" />
-        <path d="m33.2 33.2 4.2 4.2" />
-        <path d="m37.4 10.6-4.2 4.2" />
-        <path d="m14.8 33.2-4.2 4.2" />
-      </g>
-    </svg>
-  `,
-  '101': `
-    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <circle cx="17" cy="17" r="8" fill="#f7c948" />
-      <g stroke="#f7c948" stroke-linecap="round" stroke-width="3">
-        <path d="M17 4v4" />
-        <path d="M5 17h4" />
-        <path d="m8.5 8.5 2.8 2.8" />
-      </g>
-      <path fill="#dfe7ee" d="M18 38h20a8 8 0 0 0 .7-16A12 12 0 0 0 15.3 25 6.8 6.8 0 0 0 18 38z" />
-      <path fill="#c8d4dd" d="M18 38h20a8 8 0 0 0 7.5-5.3H13.2A6.8 6.8 0 0 0 18 38z" />
-    </svg>
-  `,
-  '104': `
-    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <path fill="#dfe7ee" d="M12 39h26a9 9 0 0 0 .9-18A14 14 0 0 0 11.6 24 7.6 7.6 0 0 0 12 39z" />
-      <path fill="#c2ced8" d="M12 39h26a9 9 0 0 0 8.5-6H7.6A7.6 7.6 0 0 0 12 39z" />
-    </svg>
-  `,
-  '302': `
-    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <path fill="#d5dde6" d="M13 31h24a8 8 0 0 0 .7-16A12.5 12.5 0 0 0 13 18.5 6.3 6.3 0 0 0 13 31z" />
-      <path fill="#f6b73c" d="m23 27-5 10h6l-2 8 9-12h-6l4-6z" />
-      <g stroke="#4aa3df" stroke-linecap="round" stroke-width="3">
-        <path d="M13 37v3" />
-        <path d="M34 36v3" />
-      </g>
-    </svg>
-  `,
-  '305': `
-    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <path fill="#d8e1e8" d="M12 31h25a8 8 0 0 0 .7-16A12.5 12.5 0 0 0 13 18.5 6.3 6.3 0 0 0 12 31z" />
-      <g stroke="#4aa3df" stroke-linecap="round" stroke-width="3">
-        <path d="M14 36v5" />
-        <path d="M24 35v6" />
-        <path d="M34 36v5" />
-      </g>
-    </svg>
-  `,
-  '309': `
-    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <path fill="#d8e1e8" d="M12 31h25a8 8 0 0 0 .7-16A12.5 12.5 0 0 0 13 18.5 6.3 6.3 0 0 0 12 31z" />
-      <g stroke="#66b9e8" stroke-linecap="round" stroke-width="2.5">
-        <path d="M16 36v2" />
-        <path d="M25 35v2" />
-        <path d="M34 36v2" />
-      </g>
-    </svg>
-  `,
-  '400': `
-    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <path fill="#d8e1e8" d="M12 31h25a8 8 0 0 0 .7-16A12.5 12.5 0 0 0 13 18.5 6.3 6.3 0 0 0 12 31z" />
-      <g stroke="#7dc9ee" stroke-linecap="round" stroke-width="2">
-        <path d="M18 36v7" />
-        <path d="M14.9 37.8 21.1 41" />
-        <path d="m14.9 41 6.2-3.2" />
-        <path d="M32 35v7" />
-        <path d="m28.9 36.8 6.2 3.2" />
-        <path d="m28.9 40 6.2-3.2" />
-      </g>
-    </svg>
-  `,
-  '501': `
-    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <path fill="#d8e1e8" d="M13 28h23a7.5 7.5 0 0 0 .6-15A11.5 11.5 0 0 0 14 16.2 6 6 0 0 0 13 28z" />
-      <g stroke="#9fb0bd" stroke-linecap="round" stroke-width="3">
-        <path d="M8 34h32" />
-        <path d="M13 40h26" />
-      </g>
-    </svg>
-  `,
-  '999': `
-    <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
-      <circle cx="24" cy="24" r="17" fill="#d8e1e8" />
-      <path fill="#7b8b96" d="M22 29c0-5 7-5.4 7-10 0-2.8-2.2-4.8-5.5-4.8-2.6 0-4.8 1.1-6.3 3l2.6 2.4c.9-1.1 2-1.7 3.3-1.7 1.4 0 2.3.7 2.3 1.8 0 2.8-7.2 3.8-7.2 9.3H22zm-2.2 6.6c0 1.6 1.3 2.8 3 2.8s3-1.2 3-2.8-1.3-2.8-3-2.8-3 1.2-3 2.8z" />
-    </svg>
-  `,
-};
+  // 极简 iOS 风：空态也是同样的卡片骨架，封面占位、控件 disable，避免出现"还没在播放"这种 UI 文字。
+  const hasTrack = Boolean(currentTrack);
+  const loading = hasTrack && loadingTrackId === currentTrack!.id;
+  const playLabel = loading ? '…' : playing ? '⏸' : '▶';
+  const playAria = playing ? '暂停' : '播放';
+  const cover = currentTrack?.picUrl
+    ? `<img src="${escapeHtml(currentTrack.picUrl)}" alt="" loading="lazy" decoding="async" />`
+    : `<span class="phone-music-cover-fallback" aria-hidden="true">♪</span>`;
 
-function renderWeatherIcon(iconCode: string, label: string) {
-  const safeIconCode = /^[0-9]+$/.test(iconCode) ? iconCode : '999';
-  const safeLabel = escapeHtml(label);
-  const iconSvg = WEATHER_ICON_SVGS[safeIconCode] ?? WEATHER_ICON_SVGS['999'];
+  const safeDuration = duration > 0 && Number.isFinite(duration) ? duration : 0;
+  const safeCurrent = Math.max(0, Math.min(currentTime || 0, safeDuration || currentTime || 0));
+  // BGM 在 loop 模式下 duration 也会有有限值；进度条直接可用。loading 期间保留可视占位。
+  const seekDisabled = !hasTrack || safeDuration <= 0;
+
+  const titleText = currentTrack?.name ?? ' ';
+  const subText = currentTrack
+    ? `${currentTrack.artist}${currentTrack.album ? ' · ' + currentTrack.album : ''}`
+    : ' ';
 
   return `
-    <span class="phone-weather-icon" role="img" aria-label="${safeLabel}">
-      ${iconSvg}
-    </span>
-  `;
-}
-
-function renderWeatherHero(state: AppState) {
-  const request = resolveWeatherRequest(state.statusData.world.currentTime, state.statusData.world.currentLocation);
-  const report = state.weather.key === request.key ? state.weather.report : null;
-  const status = state.weather.key === request.key ? state.weather.status : 'idle';
-
-  if (!report) {
-    const message = status === 'error' ? state.weather.error || '天气源暂时不可用' : '同步历史天气中...';
-    return `
-      <div class="phone-home-weather">
-        <span class="phone-home-kicker">${escapeHtml(formatDate(state.statusData.world.currentTime))}</span>
-        <h2>天气</h2>
-        <p>${escapeHtml(request.locationLabel)} · ${escapeHtml(message)}</p>
-      </div>
-    `;
-  }
-
-  return `
-    <div class="phone-home-weather">
-      <span class="phone-home-kicker">${escapeHtml(report.date)} · ${escapeHtml(report.locationLabel)}</span>
-      <div class="phone-weather-main">
-        ${renderWeatherIcon(report.icon, report.conditionLabel)}
-        <div>
-          <h2>${escapeHtml(report.conditionLabel)}</h2>
-          <p>${formatWeatherNumber(report.temperatureMinC)}-${formatWeatherNumber(report.temperatureMaxC)}°C</p>
+    <div class="phone-home-music ${hasTrack ? '' : 'phone-home-music--idle'}">
+      <span class="phone-home-kicker">${dateLabel}</span>
+      <div class="phone-music-hero-main">
+        <span class="phone-music-cover">${cover}</span>
+        <div class="phone-music-hero-meta">
+          <h2>${escapeHtml(titleText)}</h2>
+          <p>${escapeHtml(subText)}</p>
         </div>
       </div>
-      <div class="phone-weather-details">
-        <span>降水 ${formatWeatherNumber(report.precipitationMm, 1)}mm</span>
-        <span>风速 ${formatWeatherNumber(report.windSpeedMaxKmh)}km/h</span>
+      <div class="phone-music-hero-progress">
+        <input
+          class="phone-music-seek"
+          type="range"
+          min="0"
+          max="${safeDuration || 0}"
+          step="0.1"
+          value="${safeCurrent}"
+          data-action="music-seek"
+          aria-label="播放进度"
+          ${seekDisabled ? 'disabled' : ''}
+        />
+        <div class="phone-music-time">
+          <span data-music-current-time>${escapeHtml(formatPlaybackTime(safeCurrent))}</span>
+          <span data-music-duration>${escapeHtml(formatPlaybackTime(safeDuration))}</span>
+        </div>
+      </div>
+      <div class="phone-music-hero-controls">
+        <button
+          class="phone-music-ctrl"
+          data-action="music-toggle-play"
+          aria-label="${playAria}"
+          ${hasTrack ? '' : 'disabled'}
+          ${loading ? 'disabled' : ''}
+        >${playLabel}</button>
+        <button
+          class="phone-music-ctrl"
+          data-action="music-next"
+          aria-label="下一首"
+          ${hasTrack ? '' : 'disabled'}
+        >⏭</button>
+        <button class="phone-music-ctrl phone-music-ctrl--text" data-phone-route="app:music" aria-label="搜索音乐">🔍</button>
       </div>
     </div>
   `;
@@ -325,6 +250,14 @@ function renderPhoneHome(state: AppState) {
       } 条活跃`,
     },
     {
+      route: 'app:music',
+      icon: '🎵',
+      label: '音乐',
+      meta: state.musicPlayer.currentTrack
+        ? `${state.musicPlayer.playing ? '正在播放' : '已暂停'} · ${state.musicPlayer.currentTrack.name}`
+        : '搜索想听的曲子',
+    },
+    {
       route: 'app:settings',
       icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjNjA3ZDhiIiBkPSJNMzkuNiAyNy4yYy4xLS43LjItMS40LjItMi4ycy0uMS0xLjUtLjItMi4ybDQuNS0zLjJjLjQtLjMuNi0uOS4zLTEuNEw0MCAxMC44Yy0uMy0uNS0uOC0uNy0xLjMtLjRsLTUgMi4zYy0xLjItLjktMi40LTEuNi0zLjgtMi4yTDI5LjQgNWMtLjEtLjUtLjUtLjktMS0uOWgtOC42Yy0uNSAwLTEgLjQtMSAuOWwtLjUgNS41Yy0xLjQuNi0yLjcgMS4zLTMuOCAyLjJsLTUtMi4zYy0uNS0uMi0xLjEgMC0xLjMuNGwtNC4zIDcuNGMtLjMuNS0uMSAxLjEuMyAxLjRsNC41IDMuMmMtLjEuNy0uMiAxLjQtLjIgMi4ycy4xIDEuNS4yIDIuMkw0IDMwLjRjLS40LjMtLjYuOS0uMyAxLjRMOCAzOS4yYy4zLjUuOC43IDEuMy40bDUtMi4zYzEuMi45IDIuNCAxLjYgMy44IDIuMmwuNSA1LjVjLjEuNS41LjkgMSAuOWg4LjZjLjUgMCAxLS40IDEtLjlsLjUtNS41YzEuNC0uNiAyLjctMS4zIDMuOC0yLjJsNSAyLjNjLjUuMiAxLjEgMCAxLjMtLjRsNC4zLTcuNGMuMy0uNS4xLTEuMS0uMy0xLjR6TTI0IDM1Yy01LjUgMC0xMC00LjUtMTAtMTBzNC41LTEwIDEwLTEwczEwIDQuNSAxMCAxMHMtNC41IDEwLTEwIDEwIi8+PHBhdGggZmlsbD0iIzQ1NWE2NCIgZD0iTTI0IDEzYy02LjYgMC0xMiA1LjQtMTIgMTJzNS40IDEyIDEyIDEyczEyLTUuNCAxMi0xMnMtNS40LTEyLTEyLTEybTAgMTdjLTIuOCAwLTUtMi4yLTUtNXMyLjItNSA1LTVzNSAyLjIgNSA1cy0yLjIgNS01IDUiLz48L3N2Zz4=',
       iconType: 'image',
@@ -337,7 +270,7 @@ function renderPhoneHome(state: AppState) {
   return `
     <section class="phone-home phone-route-page" data-phone-route-view="home">
       <div class="phone-home-hero">
-        ${renderWeatherHero(state)}
+        ${renderMusicHero(state)}
         <div class="phone-character-panel" aria-label="角色切换">
           <div class="phone-home-avatar">
             <img
@@ -898,6 +831,93 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
   `;
 }
 
+function renderMusicTrackRow(track: MusicTrack, isCurrent: boolean, isLoading: boolean) {
+  // 当前曲目高亮、loading 期间禁用按钮，避免重复点击触发多个 fetchTrackStreamUrl。
+  const stateClass = isCurrent ? ' phone-music-row--current' : '';
+  return `
+    <button
+      class="phone-music-row${stateClass}"
+      data-action="music-play-track"
+      data-track-id="${escapeHtml(track.id)}"
+      ${isLoading ? 'disabled' : ''}
+    >
+      <span class="phone-music-row__cover">
+        ${track.picUrl ? `<img src="${escapeHtml(track.picUrl)}" alt="" loading="lazy" decoding="async" />` : '♪'}
+      </span>
+      <span class="phone-music-row__copy">
+        <strong>${escapeHtml(track.name)}</strong>
+        <small>${escapeHtml(track.artist)}${track.album ? ' · ' + escapeHtml(track.album) : ''}</small>
+      </span>
+      <span class="phone-music-row__state">${isLoading ? '…' : isCurrent ? '在播' : '播放'}</span>
+    </button>
+  `;
+}
+
+function renderMusicQuickEntries(currentCharacter: PhoneCharacterId) {
+  // 五小只角色歌快捷搜索：点一下就把对应作品/角色名填进搜索框并触发搜索。
+  const labels: Array<{ id: PhoneCharacterId; label: string }> = [
+    { id: 'megumi', label: '加藤惠' },
+    { id: 'eriri', label: '英梨梨' },
+    { id: 'utaha', label: '霞之丘诗羽' },
+    { id: 'izumi', label: '波岛出海' },
+    { id: 'michiru', label: '美智留' },
+  ];
+  return labels.map(item => `
+    <button
+      class="phone-music-quick ${item.id === currentCharacter ? 'is-current' : ''}"
+      data-action="music-quick-search"
+      data-character-id="${item.id}"
+      data-quick-keyword="${escapeHtml(CHARACTER_QUICK_SEARCH[item.id])}"
+      type="button"
+    >${escapeHtml(item.label)}</button>
+  `).join('');
+}
+
+function renderMusicPhonePage(state: AppState) {
+  const { search, currentTrack, loadingTrackId } = state.musicPlayer;
+  const subtitle = currentTrack
+    ? `${currentTrack.name} · ${currentTrack.artist}`
+    : '搜索想听的曲子';
+
+  let resultsBlock = '';
+  if (search.status === 'loading') {
+    resultsBlock = '<div class="phone-music-empty">搜索中…</div>';
+  } else if (search.status === 'error') {
+    resultsBlock = `<div class="phone-music-empty phone-music-empty--error">${escapeHtml(search.error || '搜索失败')}</div>`;
+  } else if (search.status === 'ready' && !search.results.length) {
+    resultsBlock = '<div class="phone-music-empty">这个关键词没找到结果，换个词试试。</div>';
+  } else if (search.status === 'ready') {
+    resultsBlock = `<div class="phone-music-list">${search.results
+      .map(track => renderMusicTrackRow(track, currentTrack?.id === track.id && currentTrack?.source === track.source, loadingTrackId === track.id))
+      .join('')}</div>`;
+  } else {
+    resultsBlock = '<div class="phone-music-empty">还没搜索过。试试搜"加藤惠"、"恋爱循环"或任意你想听的歌名。</div>';
+  }
+
+  return `
+    <section class="phone-route-page phone-app-page phone-app-page--music" data-phone-route-view="app:music">
+      ${renderPhoneAppHeader(state, '音乐', subtitle)}
+      <div class="phone-page-scroll phone-music-scroll">
+        <form class="phone-music-search" data-action="music-search-submit" autocomplete="off">
+          <input
+            class="phone-music-search-input"
+            data-field="music-search"
+            type="search"
+            value="${escapeHtml(search.query)}"
+            placeholder="搜索歌名、艺人或专辑"
+          />
+          <button class="phone-music-search-btn" type="submit">搜索</button>
+        </form>
+        <div class="phone-music-quick-row" aria-label="角色歌快捷入口">
+          <span class="phone-music-quick-label">路人女主</span>
+          ${renderMusicQuickEntries(state.phoneCharacterId)}
+        </div>
+        ${resultsBlock}
+      </div>
+    </section>
+  `;
+}
+
 function renderMemoryPhonePage(state: AppState) {
   const subtitle = state.memoryEditor.selectedTable === null
     ? ''
@@ -923,6 +943,7 @@ function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:status') return renderStatusPhonePage(state, renderers);
   if (state.phoneRoute === 'app:inventory') return renderInventoryPhonePage(state.statusData, state, renderers);
   if (state.phoneRoute === 'app:memory') return renderMemoryPhonePage(state);
+  if (state.phoneRoute === 'app:music') return renderMusicPhonePage(state);
   if (state.phoneRoute === 'app:settings') return renderSettingsPhonePage(state, renderers);
   return renderPhoneHome(state);
 }
