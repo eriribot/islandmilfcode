@@ -55,6 +55,9 @@ function renderFactAnchor(anchor: FactAnchor | null | undefined): string {
   const affinities = anchor.affinities.length
     ? anchor.affinities.map(a => `${a.name}: ${a.value}（${a.stage}）`).join('、')
     : '无';
+  const obsessions = anchor.obsessions?.length
+    ? anchor.obsessions.map(o => `${o.name}: ${o.value}（${o.stage}）`).join('、')
+    : '无';
   const mainEvents = anchor.mainEvents.length ? anchor.mainEvents.map(e => `${e.id}:${e.status}`).join('；') : '无';
   return [
     '【状态快照（绝对事实，不得改写）】',
@@ -63,6 +66,7 @@ function renderFactAnchor(anchor: FactAnchor | null | undefined): string {
     `- 当前主线事件：${anchor.currentMainEventId || '无'}`,
     `- 主线事件进度：${mainEvents}`,
     `- 角色好感度：${affinities}`,
+    `- 角色执念度：${obsessions}`,
   ].join('\n');
 }
 

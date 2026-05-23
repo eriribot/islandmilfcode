@@ -730,6 +730,11 @@ export async function submitMessage(
         await runSummary(summaryCtx, postTurnMode).catch(() => {
           /* 摘要错误在内部处理 */
         });
+        await runSecondaryProgressUpdate(
+          ctx,
+          `progress-after-${postTurnMode}-${crypto.randomUUID()}`,
+          buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages)),
+        );
       } else if (ctx.summaryApiConfig) {
         await runSecondaryProgressUpdate(
           ctx,
