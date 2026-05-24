@@ -406,6 +406,12 @@ export function listSavesByRunId(runId: string): SaveMeta[] {
   return listSaves().filter(save => save.runId === runId);
 }
 
+export function getAutosaveBranchSaveId(input: { activeSaveId?: string | null; runId: string }): string {
+  const activeSaveId = input.activeSaveId?.trim();
+  if (!activeSaveId) return `autosave_${input.runId}`;
+  return activeSaveId.startsWith('autosave_') ? activeSaveId : `autosave_${activeSaveId}`;
+}
+
 export function createSave(opts: {
   characterName: string;
   gender?: string;
@@ -523,8 +529,7 @@ export function writeAutosave(data: {
   chatLog: PersistedMessage[];
   summaryStore: SummaryStore;
   memoryDB?: import('../memorydatabase/types').IslandMemoryDB;
-}): SaveMeta | null {
-  const saveId = `autosave_${data.runId}`;
+}, saveId = getAutosaveBranchSaveId({ runId: data.runId })): SaveMeta | null {
   return writeSave(saveId, {
     ...data,
     kind: 'autosave',

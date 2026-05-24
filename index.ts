@@ -31,6 +31,7 @@ import {
   createManualSave,
   createSave,
   deleteSave,
+  getAutosaveBranchSaveId,
   loadSave,
   setActiveRunId,
   setActiveSaveId,
@@ -87,6 +88,7 @@ const STATUS_CACHE_KEY_PREFIX = 'islandmilfcode:status-cache:v2:';
 let flipDirection: 'forward' | 'backward' | '' = '';
 let phoneBgmAudio: HTMLAudioElement | null = null;
 let phoneBgmResolvedUrl = '';
+let restoringSave = false;
 
 let readerDragState: {
   pointerId: number;
@@ -228,14 +230,18 @@ function buildGameState(statusData: StatusData = state.statusData): GameState {
 }
 
 function persistToSave() {
-  if (!state.activeRunId) return;
+  if (!state.activeRunId || restoringSave) return;
+  const saveId = getAutosaveBranchSaveId({
+    activeSaveId: state.activeSaveId,
+    runId: state.activeRunId,
+  });
   const meta = writeAutosave({
     runId: state.activeRunId,
     gameState: buildGameState(),
     chatLog: serializeMessages(state.uiMessages),
     summaryStore: state.summaryStore,
     memoryDB: state.memoryDB,
-  });
+  }, saveId);
   if (meta) {
     state.activeSaveId = meta.saveId;
     setActiveSaveId(meta.saveId);
@@ -286,7 +292,7 @@ function rebuildRuntimeAfterRestore() {
   state.focusedMessagePage = 0;
 }
 
-async function refreshCharacterWorldbookTargets(options: { persist?: boolean } = {}) {
+async function refreshCharacterWorldbookTargets() {
   const { targets, plotLibrary } = await loadCharacterWorldbookData(win);
   const previousPlotEventCount = Object.keys(state.plotLibrary.events).length;
   state.plotLibrary = plotLibrary;
@@ -300,15 +306,13 @@ async function refreshCharacterWorldbookTargets(options: { persist?: boolean } =
   if (!targetsChanged && !plotChanged) return;
 
   guardedAdapterSave(state.statusData);
-  if (options.persist) {
-    persistToSave();
-  }
   render();
 }
 
 function enterSave(saveId: string) {
   const save = loadSave(saveId);
   if (!save) return;
+  restoringSave = true;
   state.activeRunId = save.payload.runId;
   state.activeSaveId = saveId;
   setActiveRunId(save.payload.runId);
@@ -337,7 +341,13 @@ function enterSave(saveId: string) {
   guardedAdapterSave(state.statusData);
   rebuildRuntimeAfterRestore();
   render();
-  void refreshCharacterWorldbookTargets({ persist: true });
+  void refreshCharacterWorldbookTargets()
+    .catch(error => {
+      console.warn('[save-restore] refreshCharacterWorldbookTargets failed:', error);
+    })
+    .finally(() => {
+      restoringSave = false;
+    });
 }
 
 function returnToTitle() {
