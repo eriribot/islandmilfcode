@@ -73,6 +73,7 @@ import {
   updateMemoryRow,
   expireMemoryRow,
   restoreMemoryRow,
+  deleteMemoryRow,
   insertMemoryRow,
   type MemoryTableName,
 } from './memorydatabase/editor';
@@ -1380,6 +1381,19 @@ function bindEvents() {
       const rowId = button.dataset.rowId ?? '';
       const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
       restoreMemoryRow(state.memoryDB, table, rowId);
+      persistToSave();
+      renderMemoryKeepScroll();
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-delete-row"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const rowId = button.dataset.rowId ?? '';
+      const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
+      if (!rowId) return;
+      deleteMemoryRow(state.memoryDB, table, rowId);
+      state.memoryEditor.expandedRowId = null;
+      state.memoryEditor.editingRowId = null;
+      state.memoryEditor.error = null;
       persistToSave();
       renderMemoryKeepScroll();
     });

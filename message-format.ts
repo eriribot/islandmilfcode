@@ -343,7 +343,7 @@ function pickNextUpcomingEvent(statusData: StatusData, plotLibrary: PlotLibrary)
 
 // 把事件卡 JSON 压缩成给 AI 写正文用的精简版本。
 // 砍掉:触发控制 / 结束控制 / 触发变量 / User介入参考 / 关键情节的 id 数组 — 这些是事件系统的元数据,AI 不需要。
-// 保留:标题 / 阶段摘要 / 阶段背景 / 关键人物 / 场景修饰(前2) / 人物状态(认知+心态+对白气质) / 叙事重点(前3)。
+// 保留:标题 / 阶段摘要 / 阶段背景 / 关键人物 / 场景修饰(前2) / 人物状态(认知+心态+对白气质) / 关系变量引导(前4) / 叙事重点(前3)。
 function compressPlotCardContent(rawContent: string): string {
   if (!rawContent) return '';
   let parsed: Record<string, unknown> | null = null;
@@ -363,7 +363,7 @@ function compressPlotCardContent(rawContent: string): string {
       const items = value
         .map(v => String(v ?? '').trim())
         .filter(Boolean)
-        .slice(0, max ?? 999);
+        .slice(0, max ?? 9999);
       if (items.length) lines.push(`${label}:`, ...items.map(s => `  - ${s}`));
     } else if (typeof value === 'string' && value.trim()) {
       lines.push(`${label}: ${value.trim()}`);
@@ -374,7 +374,7 @@ function compressPlotCardContent(rawContent: string): string {
   pushIf('阶段背景', parsed['阶段背景'], 3);
   pushIf('关键人物', parsed['关键人物']);
   pushIf('关键地点', parsed['关键地点']);
-  pushIf('场景修饰', parsed['场景修饰'], 2);
+  pushIf('场景修饰', parsed['场景修饰'], 3);
 
   // 人物状态:每个人保留 认知(前2) + 心态 + 对白气质
   const charState = parsed['人物状态'];
@@ -396,6 +396,8 @@ function compressPlotCardContent(rawContent: string): string {
       if (detail['对白气质']) lines.push(`    对白气质: ${String(detail['对白气质']).trim()}`);
     }
   }
+
+  pushIf('关系变量引导', parsed['关系变量引导'], 4);
 
   // 关键情节:只取描述,不传 id 数组
   const plot = parsed['关键情节'];
@@ -422,7 +424,7 @@ function buildVolumeWritingProtocol(plotLibrary: PlotLibrary | null | undefined,
   const sections: string[] = [];
   const pickTop = (label: string, items?: string[]) => {
     if (!items?.length) return;
-    const top = items.slice(0, 2);
+    const top = items.slice(0, 3);
     sections.push(`${label}: ${top.join(' / ')}`);
   };
   pickTop('作品调性', proto.作品调性);

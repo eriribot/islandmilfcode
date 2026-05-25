@@ -1,0 +1,75 @@
+制作流式或同层界面
+编写模板里的 AI 直接会使用以下列出的两种方案. 例如, 你可以直接要求:
+
+制作一个流式楼层界面，它使得楼层只会显示最新一段文本.
+日记络络中的流式 Galgame 界面
+同层前端界面
+要简单做流式传输, 我们使用酒馆助手的前端界面, 在其中设计发送按钮来触发酒馆助手的generate函数.
+
+也就是说:
+
+玩家只在一个前端界面内进行游玩
+
+对于玩家的输入, 我们通过前端助手的 generate、generateRaw 命令自行要求 ai 回复.
+
+如果需要流式显示, 我们监听 iframe_events.STREAM_TOKEN_RECEIVED_FULLY 事件来获取流式传输文本.
+
+我们依旧使用酒馆的楼层机制记录剧情: 将前端界面正则调成最大深度 0, 然后用 setChatMessages、createChatMessages、deleteChatMessages 等函数的 { refresh: 'none' } 参数来修改消息楼层但不刷新显示. 由于不会刷新显示, 玩家可以继续游玩你的界面, 但剧情记录等又能直接利用酒馆的楼层机制, 你不需要写一堆额外的代码来制作记录剧情功能.
+
+流式楼层界面
+前面提到我们可以在酒馆助手脚本中用 jquery 修改页面元素, 那么我们完全可以把酒馆的楼层显示隐藏起来, 自己在它原本的位置制作一个楼层显示:
+
+监听 tavern_events.MESSAGE_SEND -> message_id, 我们可以知道玩家要求了酒馆调用 AI 生成;
+
+监听 tavern_events.STREAM_TOKEN_RECEIVED -> text, 我们可以获取流式传输文本;
+
+监听 tavern_events.MESSAGE_RECEIVED -> message_id, 我们可以知道酒馆结束了回复.
+
+这样一来, 我们可以自己获取流式传输文本, 自己控制该怎么显示界面.
+
+例如, 假设我们让 AI 以 YAML 的形式发送对话, 流式过程中可能得到:
+
+- 角色: 络络
+  对话: 杂鱼喵
+- 角色: 青空莉
+  对话: 杂鱼哦
+- 角色: 络络
+  对
+我们可以在还没收到消息时就显示 Galgame 对话界面, 而只将格式已经完整的对话添加到界面中, 允许玩家在流式时就翻页阅读.
+
+我在 util/streaming.ts 中提供了一种流式楼层界面框架, 因此编写模板里的 AI 已经直接会怎么做了. 例如, 你可以直接要求:
+
+制作一个流式楼层界面，它使得楼层只会显示最新一段文本.
+对发送出的提示词进行修改
+除了通过 jquery 修改页面元素, 脚本也可以监听酒馆的提示词发送事件, 进而自行修改提示词.
+
+要做到这一点, 我们可以监听的事件有很多, 如: (按请求生成时事件发生先后顺序)
+
+tavern_events.GENERATE_AFTER_COMBINE_PROMPTS
+
+tavern_events.CHAT_COMPLETION_PROMPT_READY
+
+tavern_events.GENERATE_AFTER_DATA (提示词模板、酒馆助手宏发生在这里)
+
+tavern_events.CHAT_COMPLETION_SETTINGS_READY
+
+此处以 tavern_events.CHAT_COMPLETION_PROMPT_READY 为例:
+
+移除所有 user 提示词
+eventOn(
+  tavern_events.CHAT_COMPLETION_PROMPT_READY,
+  (event_data: Parameters<ListenerType['chat_completion_prompt_ready']>[0]) => {
+    _.remove(event_data.messages, (message => message.role === 'user'));
+  },
+);
+noass 等压缩相邻消息、合并消息的功能就是这么做的, 例如压缩相邻消息.
+
+注意修改方式
+
+不要用 event_data.chat = [{role: 'system', message: '你好'}] 之类的方法, 这是让 event_data.messages 指向一个新数组, 而不是修改 event_data.messages 原本指向的数组.
+
+你应该使用：
+
+lodash 中的某些原地修改函数
+
+数组的 splice、push 等原地修改函数

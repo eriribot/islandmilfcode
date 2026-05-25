@@ -17,6 +17,7 @@ import { normalizePhoneMessageStore } from './store';
 import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import { migrateSummaryStoreToMemoryDB } from '../memorydatabase/migrate';
+import type { IslandMemoryDB, MemoryBaseRow } from '../memorydatabase/types';
 
 const SAVE_INDEX_STORAGE_KEY = 'islandmilfcode:save-index:v2';
 const SAVE_PAYLOAD_STORAGE_PREFIX = 'islandmilfcode:save-payload:v2:';
@@ -130,6 +131,21 @@ function shouldHydrateMetaFromPayload(meta: SaveMeta): boolean {
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function markLegacyMigrationRowsInactive(memoryDB: IslandMemoryDB): boolean {
+  let changed = false;
+  const removableTables: Array<keyof IslandMemoryDB> = ['summaries', 'facts'];
+  for (const table of removableTables) {
+    const rows = memoryDB[table];
+    if (!Array.isArray(rows)) continue;
+    const nextRows = (rows as MemoryBaseRow[]).filter(row => (row as Record<string, unknown>).source !== 'migration');
+    if (nextRows.length !== rows.length) {
+      (memoryDB[table] as MemoryBaseRow[]) = nextRows;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 function getPayloadStorageKey(saveId: string) {
@@ -324,10 +340,28 @@ function readPayload(saveId: string): SavePayload | null {
   const runId = String(payload.runId || payload.gameState?.runId || '');
   if (!runId) return null;
 
-  const summaryStore = cloneJson(payload.summaryStore ?? createDefaultSummaryStore());
+  const rawSummaryStore = cloneJson(payload.summaryStore ?? createDefaultSummaryStore());
 
   // memoryDB：优先从存档读取，没有则从 summaryStore 迁移
-  const memoryDB = normalizeMemoryDB(payload.memoryDB, runId) ?? migrateSummaryStoreToMemoryDB(summaryStore, runId);
+  const memoryDB = normalizeMemoryDB(payload.memoryDB, runId) ?? migrateSummaryStoreToMemoryDB(rawSummaryStore, runId);
+  const summaryStore = {
+    ...createDefaultSummaryStore(),
+    lastSummarizedIndex: Math.max(
+      Number(rawSummaryStore.lastSummarizedIndex ?? 0) || 0,
+      Number(memoryDB.lastProcessedIndex ?? 0) || 0,
+    ),
+    consecutiveFailures: Math.max(0, Number(rawSummaryStore.consecutiveFailures ?? 0) || 0),
+    autoPaused: Boolean(rawSummaryStore.autoPaused),
+    lastError: rawSummaryStore.lastError ?? null,
+  };
+  const memoryChanged = markLegacyMigrationRowsInactive(memoryDB);
+  if (JSON.stringify(rawSummaryStore) !== JSON.stringify(summaryStore) || memoryChanged || !payload.memoryDB) {
+    safeWriteJson(getPayloadStorageKey(saveId), {
+      ...payload,
+      summaryStore,
+      memoryDB,
+    });
+  }
 
   return {
     saveId: String(payload.saveId || saveId),

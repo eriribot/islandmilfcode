@@ -99,7 +99,7 @@ function buildHomeEntries(db: IslandMemoryDB): HomeEntry[] {
     entries.push({
       kind: 'category',
       category: cat,
-      label: localizeCategory(cat) || cat,
+      label: getHomeCategoryLabel(cat),
       count: catCounts.get(cat) ?? 0,
     });
   }
@@ -228,6 +228,14 @@ export function restoreMemoryRow(db: IslandMemoryDB, table: MemoryTableName, id:
   return true;
 }
 
+export function deleteMemoryRow(db: IslandMemoryDB, table: MemoryTableName, id: string): boolean {
+  const rows = getTable(db, table);
+  const index = rows.findIndex(row => row.id === id);
+  if (index < 0) return false;
+  rows.splice(index, 1);
+  return true;
+}
+
 export function insertMemoryRow(
   db: IslandMemoryDB,
   table: MemoryTableName,
@@ -334,6 +342,11 @@ function localizeSource(source: string): string {
 
 function localizeCategory(category: string): string {
   return CATEGORY_LABELS[category] ?? category;
+}
+
+function getHomeCategoryLabel(category: string): string {
+  if (category === 'item') return '物品事实';
+  return localizeCategory(category) || category;
 }
 
 function localizeTaskStatus(status: string): string {
@@ -572,6 +585,7 @@ function renderTrashList(db: IslandMemoryDB, editor: MemoryEditorState): string 
               </div>
               <div class="memory-row-actions">
                 <button class="memory-action memory-action--primary" data-action="memory-restore-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">恢复</button>
+                <button class="memory-action memory-action--danger" data-action="memory-delete-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">永久删除</button>
               </div>
             </div>
           ` : ''}
