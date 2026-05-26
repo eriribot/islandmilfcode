@@ -586,6 +586,18 @@ export function getRelationshipAuditGuidance(target: TargetStatus | null) {
   return '';
 }
 
+// 把 TargetStatus 归一到 relationship/worldbook 共用的角色键。
+// 用于按 scenePresence 索引 CharacterCardLibrary（无别名/世界书别名命中时返回空字符串）。
+export function getTargetCharacterKey(target: TargetStatus | null): string {
+  if (!target) return '';
+  if (isMegumiTarget(target)) return 'megumi';
+  if (isEririTarget(target)) return 'eriri';
+  if (isUtahaTarget(target)) return 'utaha';
+  if (isIzumiTarget(target)) return 'izumi';
+  if (isMichiruTarget(target)) return 'michiru';
+  return '';
+}
+
 export function getRelationshipMiniPersona(target: TargetStatus | null) {
   if (!target) return '';
 

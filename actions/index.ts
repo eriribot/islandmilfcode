@@ -583,6 +583,7 @@ export async function submitMessage(
                 content: buildPrompt(state.statusData, promptHistory, userInput, ctx.summaryStore, {
                   playerProfile: state.playerProfile,
                   plotLibrary: state.plotLibrary,
+                  characterCardLibrary: state.characterCardLibrary,
                   skipProgress: !!ctx.summaryApiConfig,
                   suppressPhoneMessageContent: Boolean(phoneDirective),
                   phoneMessageTargetName: phoneDirective?.target.name,
@@ -601,6 +602,7 @@ export async function submitMessage(
             user_input: buildPrompt(state.statusData, promptHistory, userInput, ctx.summaryStore, {
               playerProfile: state.playerProfile,
               plotLibrary: state.plotLibrary,
+              characterCardLibrary: state.characterCardLibrary,
               skipProgress: !!ctx.summaryApiConfig,
               suppressPhoneMessageContent: Boolean(phoneDirective),
               phoneMessageTargetName: phoneDirective?.target.name,
@@ -1705,6 +1707,7 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
     summaryStore: ctx.summaryStore,
     playerProfile: state.playerProfile,
     plotLibrary: state.plotLibrary,
+    characterCardLibrary: state.characterCardLibrary,
     skipProgress: true,
     triggerEvent: triggerText,
     forceMessage: false,
@@ -1786,6 +1789,7 @@ async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: Phon
         summaryStore: ctx.summaryStore,
         playerProfile: state.playerProfile,
         plotLibrary: state.plotLibrary,
+        characterCardLibrary: state.characterCardLibrary,
         skipProgress: true,
       });
       const generationId = `phone-directive-${crypto.randomUUID()}`;
@@ -1914,6 +1918,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
         summaryStore: ctx.summaryStore,
         playerProfile: state.playerProfile,
         plotLibrary: state.plotLibrary,
+        characterCardLibrary: state.characterCardLibrary,
         skipProgress: true,
       });
 

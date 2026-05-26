@@ -1,4 +1,4 @@
-import type { PlotEventCard, PlotEventSchedule, PlotLibrary, StatusData, TargetStatus, TavernWindow, VolumeWritingProtocol, WorldbookEntry } from '../types';
+import type { CharacterCard, CharacterCardLibrary, PlotEventCard, PlotEventSchedule, PlotLibrary, StatusData, TargetStatus, TavernWindow, VolumeWritingProtocol, WorldbookEntry } from '../types';
 import { affinityStage, defaultTarget } from '../variables/normalize';
 
 const TARGET_KIND = 'islandmilfcode.target';
@@ -412,8 +412,8 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
 }
 
 function parseTargetEntry(entry: WorldbookEntry): TargetStatus | null {
-  // 中文注释：disable 才是硬关闭；enabled=false 常只是选择性世界书当前未激活，角色档案仍要进入 targets 才能在空档期更新好感。
-  if (entry.disable === true) return null;
+  // 中文注释：disable 不再当成硬关闭——用户会用它来停掉 SillyTavern 的关键词自动注入，
+  // 但 TS 一侧仍然需要把角色档案读进 targets，scenePresence 才能命中并按场景注入完整 0 层卡。
 
   const extraTarget =
     entry.extra && typeof entry.extra === 'object' ? parseJsonTarget(entry.extra as Record<string, unknown>, entry) : null;
@@ -426,6 +426,52 @@ function parseTargetEntry(entry: WorldbookEntry): TargetStatus | null {
   }
 
   return parseTextTarget(entry);
+}
+
+// 从世界书条目里识别"已知 0 层角色卡"，返回 relationship.ts 共用的角色键。
+// 优先用条目自身的身份字段（name/comment/key/extra），避免角色之间互相提到对方时被串到一起。
+function getCharacterCardKey(entry: WorldbookEntry, target: TargetStatus | null): string {
+  if (target) {
+    const fromTarget = getBuiltInTargetKeyFromIdentity(target);
+    if (fromTarget) return fromTarget;
+  }
+  const haystack = [
+    entry.name,
+    entry.comment,
+    ...(Array.isArray(entry.key) ? entry.key : []),
+    ...(entry.extra && typeof entry.extra === 'object'
+      ? [
+          (entry.extra as Record<string, unknown>).name,
+          (entry.extra as Record<string, unknown>).姓名,
+          (entry.extra as Record<string, unknown>).alias,
+          (entry.extra as Record<string, unknown>).别名,
+        ]
+      : []),
+  ]
+    .map(value => String(value ?? '').toLowerCase())
+    .join('\n');
+  if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
+  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
+  if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
+  if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
+  if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
+  return '';
+}
+
+function parseCharacterCard(entry: WorldbookEntry, target: TargetStatus | null): CharacterCard | null {
+  const key = getCharacterCardKey(entry, target);
+  if (!key) return null;
+  const content = String(entry.content ?? '').trim();
+  if (!content) return null;
+  const entryName = getWorldbookEntryName(entry);
+  const name = target?.name || normalizeBuiltInTargetName(entryName, entryName) || entryName;
+  return {
+    key,
+    name,
+    content,
+    sourceEntryUid: entry.uid,
+    sourceEntryName: entryName,
+  };
 }
 
 function getBuiltInTargetKeyFromIdentity(target: TargetStatus) {
@@ -520,14 +566,36 @@ function createPlotLibrary(
   };
 }
 
+export function createEmptyCharacterCardLibrary(): CharacterCardLibrary {
+  return { cards: {}, loadedAt: 0 };
+}
+
+function createCharacterCardLibrary(cards: CharacterCard[]): CharacterCardLibrary {
+  // 同一角色被多张条目命中时（例如别名条目 + 主条目），保留最长 content 那张，
+  // 避免触发摘要式条目把完整 0 层卡顶掉。
+  const byKey = new Map<string, CharacterCard>();
+  for (const card of cards) {
+    const existing = byKey.get(card.key);
+    if (!existing || existing.content.length < card.content.length) {
+      byKey.set(card.key, card);
+    }
+  }
+  return {
+    cards: Object.fromEntries(byKey),
+    loadedAt: Date.now(),
+  };
+}
+
 export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
   targets: TargetStatus[];
   plotLibrary: PlotLibrary;
+  characterCardLibrary: CharacterCardLibrary;
 }> {
   if (typeof win.getWorldbook !== 'function') {
     return {
       targets: [],
       plotLibrary: createPlotLibrary([]),
+      characterCardLibrary: createEmptyCharacterCardLibrary(),
     };
   }
 
@@ -535,6 +603,7 @@ export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
   const targets: TargetStatus[] = [];
   const plotEvents: PlotEventCard[] = [];
   const plotProtocols: Array<{ volumeId: string; protocol: VolumeWritingProtocol }> = [];
+  const characterCards: CharacterCard[] = [];
 
   for (const name of names) {
     try {
@@ -543,6 +612,10 @@ export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
         const target = parseTargetEntry(entry);
         if (target) {
           targets.push(target);
+        }
+        const card = parseCharacterCard(entry, target);
+        if (card) {
+          characterCards.push(card);
         }
         const plotResult = parsePlotEntry(entry);
         plotEvents.push(...plotResult.events);
@@ -560,6 +633,7 @@ export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
   return {
     targets: Array.from(byId.values()),
     plotLibrary: createPlotLibrary(plotEvents, plotProtocols),
+    characterCardLibrary: createCharacterCardLibrary(characterCards),
   };
 }
 

@@ -191,6 +191,23 @@ export type PlotLibrary = {
   writingProtocols?: Record<string, VolumeWritingProtocol>;
 };
 
+// 0 层角色卡：从世界书条目里抽出来、由 TS 主动按场景注入的角色档案。
+// 世界书条目可以 disable 关闭关键词触发，loader 仍然会把内容抓进来挂在这里。
+export type CharacterCard = {
+  // 与 targets/relationship.ts 共用的角色键（megumi/eriri/utaha/izumi/michiru/...）。
+  key: string;
+  name: string;
+  content: string;
+  sourceEntryUid: number;
+  sourceEntryName: string;
+};
+
+export type CharacterCardLibrary = {
+  // 按角色键索引，buildActiveCharacterCards 用 scenePresence 过滤后注入。
+  cards: Record<string, CharacterCard>;
+  loadedAt: number;
+};
+
 export type ScenePresence = {
   presentIds: string[];
   focusIds: string[];
@@ -290,6 +307,7 @@ export type AppState = {
   finalizedGenerationId: string;
   runtimeFlags: Record<string, unknown>;
   plotLibrary: PlotLibrary;
+  characterCardLibrary: CharacterCardLibrary;
   uiMessages: UiMessage[];
   statusData: StatusData;
   musicPlayer: MusicPlayerState;

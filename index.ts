@@ -31,7 +31,9 @@ import {
   createManualSave,
   createSave,
   deleteSave,
+  exportAllSavesAsJson,
   getAutosaveBranchSaveId,
+  importAllSavesFromJson,
   loadSave,
   setActiveRunId,
   setActiveSaveId,
@@ -294,9 +296,11 @@ function rebuildRuntimeAfterRestore() {
 }
 
 async function refreshCharacterWorldbookTargets() {
-  const { targets, plotLibrary } = await loadCharacterWorldbookData(win);
+  const { targets, plotLibrary, characterCardLibrary } = await loadCharacterWorldbookData(win);
   const previousPlotEventCount = Object.keys(state.plotLibrary.events).length;
+  const previousCardCount = Object.keys(state.characterCardLibrary.cards).length;
   state.plotLibrary = plotLibrary;
+  state.characterCardLibrary = characterCardLibrary;
 
   const previous = JSON.stringify(state.statusData.targets);
   if (targets.length) {
@@ -304,7 +308,8 @@ async function refreshCharacterWorldbookTargets() {
   }
   const targetsChanged = JSON.stringify(state.statusData.targets) !== previous;
   const plotChanged = Object.keys(plotLibrary.events).length !== previousPlotEventCount;
-  if (!targetsChanged && !plotChanged) return;
+  const cardsChanged = Object.keys(characterCardLibrary.cards).length !== previousCardCount;
+  if (!targetsChanged && !plotChanged && !cardsChanged) return;
 
   guardedAdapterSave(state.statusData);
   render();
@@ -1438,6 +1443,46 @@ function bindEvents() {
   root?.querySelector<HTMLButtonElement>('[data-action="manual-save"]')?.addEventListener('click', () => {
     persistManualSave();
     render();
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="export-saves"]')?.addEventListener('click', () => {
+    try {
+      const json = exportAllSavesAsJson();
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `islandmilfcode-saves-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // setTimeout 让浏览器有机会真正触发下载之后再回收 URL。
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      window.alert(`导出失败：${(error as Error).message}`);
+    }
+  });
+  const importFileInput = root?.querySelector<HTMLInputElement>('[data-field="import-saves-file"]') ?? null;
+  root?.querySelector<HTMLButtonElement>('[data-action="import-saves"]')?.addEventListener('click', () => {
+    importFileInput?.click();
+  });
+  importFileInput?.addEventListener('change', async () => {
+    const file = importFileInput.files?.[0];
+    if (!file) return;
+    const ok = window.confirm('导入会覆盖当前 localStorage 里同名存档键，确认继续？');
+    if (!ok) {
+      importFileInput.value = '';
+      return;
+    }
+    try {
+      const text = await file.text();
+      const result = importAllSavesFromJson(text);
+      window.alert(`导入完成：成功 ${result.imported} 条，跳过 ${result.skipped} 条。即将刷新页面。`);
+      location.reload();
+    } catch (error) {
+      window.alert(`导入失败：${(error as Error).message}`);
+    } finally {
+      importFileInput.value = '';
+    }
   });
   root?.querySelector<HTMLButtonElement>('[data-action="save-player-profile"]')?.addEventListener('click', () => {
     savePlayerProfileFromStatusPanel();

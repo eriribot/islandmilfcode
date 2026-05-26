@@ -243,9 +243,16 @@ function renderPhoneHome(state: AppState) {
       route: 'app:memory',
       icon: '🧠',
       label: '记忆库',
+      // 中文注释：首页活跃数 = 记忆库编辑器首页可见的所有 tile 之和。
+      // 7 个 fact category chip 共用 facts 表（一条 fact 命中一个 category，所以 facts 总数 = 全部 category 之和），
+      // 加上 USER_VISIBLE_TABLES 里的 5 张系统表（tasks/items/phoneMessages/summaries/attributes）。
+      // events 表是运行时日志、首页不显示，所以也不计入活跃数。
       meta: `${
         state.memoryDB.facts.filter(f => !f.expired).length +
-        state.memoryDB.events.filter(e => !e.expired).length +
+        state.memoryDB.tasks.filter(t => !t.expired).length +
+        state.memoryDB.items.filter(i => !i.expired).length +
+        state.memoryDB.phoneMessages.filter(p => !p.expired).length +
+        state.memoryDB.summaries.filter(s => !s.expired).length +
         state.memoryDB.attributes.filter(a => !a.expired).length
       } 条活跃`,
     },
@@ -823,6 +830,15 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
               <strong>返回标题</strong>
               <span>回到存档选择与角色创建。</span>
             </button>
+            <button class="settings-action" data-action="export-saves">
+              <strong>导出全部存档</strong>
+              <span>下载 JSON 备份，含所有存档、记忆库与摘要。</span>
+            </button>
+            <button class="settings-action" data-action="import-saves">
+              <strong>导入存档备份</strong>
+              <span>选择之前导出的 JSON 文件，会覆盖同名存档键。</span>
+            </button>
+            <input type="file" data-field="import-saves-file" accept="application/json,.json" hidden />
           </div>
           ${renderers.renderSummaryConfigSection(state)}
         </div>

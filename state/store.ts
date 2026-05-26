@@ -15,6 +15,7 @@ import { createDefaultMusicPlayerState } from '../phone/music';
 import { createDefaultMemoryDB } from '../memorydatabase/defaults';
 import { createDefaultMemoryEditorState } from '../memorydatabase/editor';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
+import { createEmptyCharacterCardLibrary } from '../worldbook';
 
 export const MESSAGE_MARKER = 'islandmilfcode';
 
@@ -278,6 +279,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     finalizedGenerationId: '',
     runtimeFlags: {},
     plotLibrary: createEmptyPlotLibrary(),
+    characterCardLibrary: createEmptyCharacterCardLibrary(),
     uiMessages: [createSystemMessage()],
     statusData: normalizeStatusData(defaultStatusData),
     musicPlayer: createDefaultMusicPlayerState(),

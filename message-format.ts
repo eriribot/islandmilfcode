@@ -3,10 +3,12 @@ import {
   getRelationshipAuditGuidance,
   getRelationshipGuidance,
   getRelationshipMiniPersona,
+  getTargetCharacterKey,
 } from './relationship';
 import type { KeyFact, KeyFactCategory, SummaryStore } from './summary/types';
 import { KEY_FACT_CATEGORY_LABEL } from './summary/types';
 import type {
+  CharacterCardLibrary,
   PhoneChatMessage,
   PlayerProfile,
   PlayerStats,
@@ -686,6 +688,46 @@ function buildLocalCharacterAuditList(
   return lines.length ? lines.join('\n\n') : '';
 }
 
+// 按 scenePresence 把世界书 0 层角色卡的原文注入 prompt。
+// 调用前提：用户已经把对应世界书条目 disable，关掉 SillyTavern 自身的关键词触发，
+// 角色卡内容只能由 TS 这一侧根据 present + focus 主动加载，避免每轮 5 张卡常驻。
+// 没有 scenePresence 或 allowedIds 为空时返回空字符串：宁可少一张卡，也不要再回到"全员常驻"。
+function buildActiveCharacterCards(
+  statusData: StatusData,
+  scenePresence: ScenePresence | null | undefined,
+  characterCardLibrary: CharacterCardLibrary | null | undefined,
+  options: { targetIds?: string[] } = {},
+) {
+  if (!characterCardLibrary || !Object.keys(characterCardLibrary.cards).length) return '';
+
+  // targetIds 优先级最高：手机聊天等单对象场景直接指定要注入的角色，绕过 scenePresence 判定。
+  const explicit = (options.targetIds ?? []).filter(Boolean);
+  const allowedIds: Set<string> | null = explicit.length
+    ? new Set(explicit)
+    : getSceneGuidanceTargetIds(scenePresence);
+  if (!allowedIds || !allowedIds.size) return '';
+
+  const blocks: string[] = [];
+  const seenKeys = new Set<string>();
+  for (const target of statusData.targets) {
+    if (!allowedIds.has(target.id)) continue;
+    const key = getTargetCharacterKey(target);
+    if (!key) continue;
+    if (seenKeys.has(key)) continue;
+    const card = characterCardLibrary.cards[key];
+    if (!card) continue;
+    seenKeys.add(key);
+    // 中文注释：原文整段注入，不做压缩；条目头加一个清晰的边界，避免世界书原文里没有标题时和上下文糊在一起。
+    blocks.push(`[角色 0 层卡 · ${card.name}]\n${card.content}`);
+  }
+
+  if (!blocks.length) return '';
+  return [
+    '【在场角色 0 层卡】下列条目仅本轮镜头内角色的完整档案；未列出的角色不要直接复刻其原作行为模板。',
+    ...blocks,
+  ].join('\n\n');
+}
+
 function buildPinnedKeyFactsInline(facts: KeyFact[] | undefined): string {
   if (!facts || !facts.length) return '';
   const active = facts.filter(f => !f.superseded);
@@ -734,6 +776,7 @@ export function buildPrompt(
     skipProgress?: boolean;
     playerProfile?: PlayerProfile | null;
     plotLibrary?: PlotLibrary | null;
+    characterCardLibrary?: CharacterCardLibrary | null;
     suppressPhoneMessageContent?: boolean;
     phoneMessageTargetName?: string;
     suppressUserInputLine?: boolean;
@@ -771,6 +814,11 @@ export function buildPrompt(
   const conversationHistory = buildConversationHistory(uiMessages, historyStartIndex);
   const scenePresenceContext = buildScenePresenceContext(statusData, options?.scenePresence);
   const relationshipGuidanceList = buildRelationshipGuidanceList(statusData, playerProfile, options?.scenePresence);
+  const activeCharacterCards = buildActiveCharacterCards(
+    statusData,
+    options?.scenePresence,
+    options?.characterCardLibrary,
+  );
   const recentSceneContext = uiMessages
     .slice(-4)
     .filter(message => message.role === 'user' || message.role === 'assistant')
@@ -802,6 +850,7 @@ export function buildPrompt(
     `当前位置：${statusData.world.currentLocation}`,
     mainEventsContext,
     scenePresenceContext,
+    activeCharacterCards,
     relationshipGuidanceList
       ? `角色局部关系指导：每一块只在描写对应角色时生效，禁止把某个角色的指导当成全局思考方式。\n${relationshipGuidanceList}`
       : '',
@@ -838,6 +887,7 @@ export function buildPhoneChatPrompt(input: {
   summaryStore?: SummaryStore | null;
   playerProfile?: PlayerProfile | null;
   plotLibrary?: PlotLibrary | null;
+  characterCardLibrary?: CharacterCardLibrary | null;
   skipProgress?: boolean;
   triggerEvent?: string;
   forceMessage?: boolean;
@@ -858,6 +908,13 @@ export function buildPhoneChatPrompt(input: {
   const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile });
   const recentEventsContext = buildRecentEventsContext(statusData);
   const mainEventsContext = buildMainEventsContext(statusData);
+  // 手机聊天天然只有一个聊天对象，绕过 scenePresence 直接指定 targetIds 注入这一张完整卡。
+  const activeCharacterCards = buildActiveCharacterCards(
+    statusData,
+    null,
+    input.characterCardLibrary,
+    { targetIds: [target.id] },
+  );
   const hasSummary =
     summaryStore &&
     (summaryStore.global ||
@@ -888,6 +945,7 @@ export function buildPhoneChatPrompt(input: {
     `当前时间：${statusData.world.currentTime}`,
     `当前位置：${statusData.world.currentLocation}`,
     mainEventsContext,
+    activeCharacterCards,
     `当前关系：${target.stage} · 好感度 ${target.affinity} · 执念 ${target.obsession}（${target.obsessionStage}）`,
     relationshipGuidance ? `当前关系反应：${relationshipGuidance}` : '',
     addressGuidance ? `称呼规则：${addressGuidance}` : '',
@@ -1074,8 +1132,8 @@ export function buildProgressPrompt(
         '  阅读本轮完整正文，不要只看最后一句。多人在场时，分别判断每个明确在场且对 User 产生情绪反应的角色。',
         '  普通友好互动或者逗乐大家的行动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4,重大事件的可靠+8；冒犯、越界、揭短、冷落通常 -1 到 -6。',
         '  不要因为变化很小就省略好感度；只有角色不在场、完全无互动、纯环境描写、或关系没有任何变化时，才不输出该角色好感度。',
-        '执念度判断规则（与好感度独立的旧情度，对伦也旧线的牵挂）：',
-        '  执念度表示角色对伦也这条旧线的牵引强度；它不是对 User 的好感度。',
+        '执念度判断规则（与好感度独立的对伦也旧情度，对伦也旧线的牵挂,对伦也的好感度）：',
+        '  执念度表示角色对伦也这条旧线的牵引强度(可以简单理解为对伦也的好感度)；它不是对 User 的好感度。',
         '  允许扣减的四个通道：',
         '    (a) 伦也直接出现并做出负面/低情商/失约/抛弃她的行为：-3 ~ -8；',
         '    (b) 对比戏：同回合既有伦也负面行为又有 user 正面行为：-3 ~ -8（同时好感度 +2 ~ +5）；',

@@ -48,7 +48,20 @@ const USER_VISIBLE_TABLES: MemoryTableName[] = [
   'items',
   'phoneMessages',
   'summaries',
+  'attributes',
 ];
+
+// 中文注释：这些是 AI 在 <key_facts> 里允许输出的全部分类，对应 summary/types.ts 的 KeyFactCategory。
+// 即使本存档当前没有对应行，首页也作为 placeholder chip 常驻渲染，跟 USER_VISIBLE_TABLES 的硬编码行为对齐。
+const CANONICAL_FACT_CATEGORIES = [
+  'event',
+  'profile',
+  'relation',
+  'secret',
+  'item',
+  'location',
+  'promise',
+] as const;
 
 type FactCategory = string;
 
@@ -89,13 +102,26 @@ function buildHomeEntries(db: IslandMemoryDB): HomeEntry[] {
 
   const entries: HomeEntry[] = [];
 
-  const sortedCats = [...catCounts.keys()].sort((a, b) => {
-    const ia = FACT_CATEGORY_ORDER.indexOf(a);
-    const ib = FACT_CATEGORY_ORDER.indexOf(b);
-    return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
-  });
+  // 第一段：CANONICAL_FACT_CATEGORIES 常驻 chip（即使 0 条），跟 table tile 的硬编码占位一致。
+  for (const cat of CANONICAL_FACT_CATEGORIES) {
+    entries.push({
+      kind: 'category',
+      category: cat,
+      label: getHomeCategoryLabel(cat),
+      count: catCounts.get(cat) ?? 0,
+    });
+  }
 
-  for (const cat of sortedCats) {
+  // 第二段：数据里出现了但不在 canonical 列表里的分类（custom 或未来扩展），按 FACT_CATEGORY_ORDER 排。
+  const canonicalSet = new Set<string>(CANONICAL_FACT_CATEGORIES);
+  const extras = [...catCounts.keys()]
+    .filter(cat => !canonicalSet.has(cat))
+    .sort((a, b) => {
+      const ia = FACT_CATEGORY_ORDER.indexOf(a);
+      const ib = FACT_CATEGORY_ORDER.indexOf(b);
+      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+    });
+  for (const cat of extras) {
     entries.push({
       kind: 'category',
       category: cat,

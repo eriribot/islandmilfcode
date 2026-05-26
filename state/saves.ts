@@ -17,7 +17,6 @@ import { normalizePhoneMessageStore } from './store';
 import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import { migrateSummaryStoreToMemoryDB } from '../memorydatabase/migrate';
-import type { IslandMemoryDB, MemoryBaseRow } from '../memorydatabase/types';
 
 const SAVE_INDEX_STORAGE_KEY = 'islandmilfcode:save-index:v2';
 const SAVE_PAYLOAD_STORAGE_PREFIX = 'islandmilfcode:save-payload:v2:';
@@ -131,21 +130,6 @@ function shouldHydrateMetaFromPayload(meta: SaveMeta): boolean {
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function markLegacyMigrationRowsInactive(memoryDB: IslandMemoryDB): boolean {
-  let changed = false;
-  const removableTables: Array<keyof IslandMemoryDB> = ['summaries', 'facts'];
-  for (const table of removableTables) {
-    const rows = memoryDB[table];
-    if (!Array.isArray(rows)) continue;
-    const nextRows = (rows as MemoryBaseRow[]).filter(row => (row as Record<string, unknown>).source !== 'migration');
-    if (nextRows.length !== rows.length) {
-      (memoryDB[table] as MemoryBaseRow[]) = nextRows;
-      changed = true;
-    }
-  }
-  return changed;
 }
 
 function getPayloadStorageKey(saveId: string) {
@@ -354,8 +338,9 @@ function readPayload(saveId: string): SavePayload | null {
     autoPaused: Boolean(rawSummaryStore.autoPaused),
     lastError: rawSummaryStore.lastError ?? null,
   };
-  const memoryChanged = markLegacyMigrationRowsInactive(memoryDB);
-  if (JSON.stringify(rawSummaryStore) !== JSON.stringify(summaryStore) || memoryChanged || !payload.memoryDB) {
+  // 中文注释：summaryStore 已经被收敛成空壳（只保留 cursor + 失败状态），这是 migration 幂等性的根本保障；
+  // 不再硬删 facts/summaries 里 source='migration' 的行 —— 迁移过来的 keyFacts 是真实数据，不应该每次读存档就被抹掉。
+  if (JSON.stringify(rawSummaryStore) !== JSON.stringify(summaryStore) || !payload.memoryDB) {
     safeWriteJson(getPayloadStorageKey(saveId), {
       ...payload,
       summaryStore,
@@ -623,4 +608,62 @@ export function setActiveSaveId(saveId: string | null): void {
 
 export function clearActiveSaveId(): void {
   setActiveSaveId(null);
+}
+
+// ── 全量导出/导入：把所有 islandmilfcode:* localStorage 打包为 JSON 备份 ──
+// 用途：跨电脑迁移；恢复被 markLegacyMigrationRowsInactive 误删的旧 keyFacts/摘要。
+// 只动 islandmilfcode: 前缀的键，不碰其它应用的 storage。
+
+export type SaveBackupPayload = {
+  version: number;
+  exportedAt: string;
+  entries: Record<string, unknown>;
+};
+
+const BACKUP_KEY_PREFIX = 'islandmilfcode:';
+
+export function exportAllSavesAsJson(): string {
+  const entries: Record<string, unknown> = {};
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(BACKUP_KEY_PREFIX)) continue;
+    const raw = localStorage.getItem(key);
+    if (raw == null) continue;
+    try {
+      entries[key] = JSON.parse(raw);
+    } catch {
+      // 不是 JSON 的就原样保留字符串，导入时再原样写回。
+      entries[key] = raw;
+    }
+  }
+  const backup: SaveBackupPayload = {
+    version: SAVE_VERSION,
+    exportedAt: new Date().toISOString(),
+    entries,
+  };
+  return JSON.stringify(backup, null, 2);
+}
+
+export function importAllSavesFromJson(json: string): { imported: number; skipped: number } {
+  const parsed = JSON.parse(json) as Partial<SaveBackupPayload>;
+  if (!parsed || typeof parsed !== 'object' || !parsed.entries || typeof parsed.entries !== 'object') {
+    throw new Error('备份文件格式不正确：缺少 entries 字段。');
+  }
+  let imported = 0;
+  let skipped = 0;
+  for (const [key, value] of Object.entries(parsed.entries)) {
+    // 只接受 islandmilfcode: 前缀的键，防止误覆盖其它应用 storage。
+    if (!key.startsWith(BACKUP_KEY_PREFIX)) {
+      skipped += 1;
+      continue;
+    }
+    try {
+      const text = typeof value === 'string' ? value : JSON.stringify(value);
+      localStorage.setItem(key, text);
+      imported += 1;
+    } catch {
+      skipped += 1;
+    }
+  }
+  return { imported, skipped };
 }
