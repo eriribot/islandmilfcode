@@ -830,13 +830,13 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
               <strong>返回标题</strong>
               <span>回到存档选择与角色创建。</span>
             </button>
-            <button class="settings-action" data-action="export-saves">
-              <strong>导出全部存档</strong>
-              <span>下载 JSON 备份，含所有存档、记忆库与摘要。</span>
+            <button class="settings-action" data-action="export-save" ${state.activeSaveId ? '' : 'disabled'}>
+              <strong>导出当前存档</strong>
+              <span>下载当前进度的 JSON 备份，含记录、记忆库与摘要。</span>
             </button>
             <button class="settings-action" data-action="import-saves">
               <strong>导入存档备份</strong>
-              <span>选择之前导出的 JSON 文件，会覆盖同名存档键。</span>
+              <span>选择之前导出的 JSON 文件，会合并或覆盖同名存档。</span>
             </button>
             <input type="file" data-field="import-saves-file" accept="application/json,.json" hidden />
           </div>

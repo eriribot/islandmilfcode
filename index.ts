@@ -31,7 +31,7 @@ import {
   createManualSave,
   createSave,
   deleteSave,
-  exportAllSavesAsJson,
+  exportSaveAsJson,
   getAutosaveBranchSaveId,
   importAllSavesFromJson,
   loadSave,
@@ -263,6 +263,24 @@ function persistManualSave() {
   });
   state.activeSaveId = meta.saveId;
   setActiveSaveId(meta.saveId);
+}
+
+function downloadSaveBackup(saveId: string) {
+  try {
+    const json = exportSaveAsJson(saveId);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `islandmilfcode-save-${saveId}-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // setTimeout 让浏览器有机会真正触发下载之后再回收 URL。
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) {
+    window.alert(`导出失败：${(error as Error).message}`);
+  }
 }
 
 function savePlayerProfileFromStatusPanel() {
@@ -1444,22 +1462,13 @@ function bindEvents() {
     persistManualSave();
     render();
   });
-  root?.querySelector<HTMLButtonElement>('[data-action="export-saves"]')?.addEventListener('click', () => {
-    try {
-      const json = exportAllSavesAsJson();
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `islandmilfcode-saves-${new Date().toISOString().slice(0, 10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      // setTimeout 让浏览器有机会真正触发下载之后再回收 URL。
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (error) {
-      window.alert(`导出失败：${(error as Error).message}`);
+  root?.querySelector<HTMLButtonElement>('[data-action="export-save"]')?.addEventListener('click', () => {
+    persistToSave();
+    if (!state.activeSaveId) {
+      window.alert('当前没有可导出的存档。');
+      return;
     }
+    downloadSaveBackup(state.activeSaveId);
   });
   const importFileInput = root?.querySelector<HTMLInputElement>('[data-field="import-saves-file"]') ?? null;
   root?.querySelector<HTMLButtonElement>('[data-action="import-saves"]')?.addEventListener('click', () => {
@@ -1659,6 +1668,9 @@ const titleCallbacks: TitleCallbacks = {
       setActiveRunId(null);
       clearActiveSaveId();
     }
+  },
+  exportSave: id => {
+    downloadSaveBackup(id);
   },
   render: () => render(),
 };

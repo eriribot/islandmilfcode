@@ -782,7 +782,7 @@
 .gal-save-pointer {
   position: absolute;
   top: 50%;
-  right: 54px;
+  right: 66px;
   z-index: 2;
   transform: translate(10px, -50%);
   color: #b85c6e;
@@ -803,10 +803,40 @@
   transform: translate(0, -50%);
 }
 
+.gal-save-actions {
+  flex: 0 0 66px;
+  width: 66px;
+  min-width: 66px;
+  display: grid;
+  grid-template-rows: 1fr 42px;
+  background: rgba(255, 248, 249, 0.9);
+  border-left: 1px solid rgba(220, 210, 195, 0.4);
+}
+
+.gal-save-export {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 8px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #d36a82;
+  cursor: pointer;
+  font-family: 'Klee One', serif;
+  font-size: 0.7rem;
+  font-weight: 700;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.gal-save-export:hover {
+  background: rgba(242, 181, 196, 0.1);
+  color: #c3536f;
+}
+
 .gal-save-delete {
-  flex: 0 0 42px;
-  width: 42px;
-  min-width: 42px;
+  width: 100%;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -814,7 +844,7 @@
   color: #b0a08a;
   cursor: pointer;
   font-size: 0.9rem;
-  border-left: 1px solid rgba(220, 210, 195, 0.4) !important;
+  border-top: 1px solid rgba(220, 210, 195, 0.4) !important;
   transition: all 0.15s ease;
 }
 
@@ -1350,6 +1380,13 @@
 
   .gal-save-load {
     padding: 12px 13px;
+  }
+
+  .gal-save-actions {
+    flex-basis: 58px;
+    width: 58px;
+    min-width: 58px;
+    grid-template-rows: 1fr 36px;
   }
 
   .gal-save-slot__topline {

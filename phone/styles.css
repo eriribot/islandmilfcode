@@ -1477,6 +1477,11 @@ body.floating-phone-dragging {
   cursor: pointer;
 }
 
+.settings-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .settings-action strong,
 .settings-action span {
   display: block;

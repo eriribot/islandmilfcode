@@ -620,6 +620,15 @@ export type SaveBackupPayload = {
   entries: Record<string, unknown>;
 };
 
+export type SingleSaveBackupPayload = {
+  version: number;
+  exportedAt: string;
+  kind: 'single-save';
+  saveId: string;
+  meta: SaveMeta;
+  payload: SavePayload;
+};
+
 const BACKUP_KEY_PREFIX = 'islandmilfcode:';
 
 export function exportAllSavesAsJson(): string {
@@ -644,8 +653,71 @@ export function exportAllSavesAsJson(): string {
   return JSON.stringify(backup, null, 2);
 }
 
+export function exportSaveAsJson(saveId: string): string {
+  const meta = ensureMeta(saveId);
+  const payload = readPayload(saveId);
+  if (!meta || !payload) {
+    throw new Error('当前存档不存在，无法导出。');
+  }
+  const backup: SingleSaveBackupPayload = {
+    version: SAVE_VERSION,
+    exportedAt: new Date().toISOString(),
+    kind: 'single-save',
+    saveId,
+    meta: cloneJson(meta),
+    payload: cloneJson(payload),
+  };
+  return JSON.stringify(backup, null, 2);
+}
+
+function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): { imported: number; skipped: number } {
+  const rawPayload = parsed.payload as Partial<SavePayload> | undefined;
+  const rawMeta = parsed.meta as Partial<SaveMeta> | undefined;
+  const saveId = String(parsed.saveId || rawPayload?.saveId || rawMeta?.saveId || '').trim();
+  const runId = String(rawPayload?.runId || rawPayload?.gameState?.runId || rawMeta?.runId || '').trim();
+  if (!saveId || !runId || !rawPayload) {
+    throw new Error('备份文件格式不正确：缺少单个存档数据。');
+  }
+
+  const payload: SavePayload = {
+    saveId,
+    runId,
+    gameState: normalizeGameState(rawPayload.gameState, runId),
+    chatLog: normalizePersistedMessages(rawPayload.chatLog),
+    summaryStore: cloneJson(rawPayload.summaryStore ?? createDefaultSummaryStore()),
+    memoryDB: rawPayload.memoryDB ? cloneJson(rawPayload.memoryDB) : undefined,
+    messageSnapshots: Array.isArray(rawPayload.messageSnapshots) ? cloneJson(rawPayload.messageSnapshots) : undefined,
+    version: Number(rawPayload.version ?? SAVE_VERSION) || SAVE_VERSION,
+  };
+  const baseMeta = createMetaFromPayload(payload, {
+    kind: rawMeta?.kind === 'manual' || rawMeta?.kind === 'autosave' ? rawMeta.kind : 'manual',
+    label: rawMeta?.label ? String(rawMeta.label) : '导入存档',
+    createdAt: Number(rawMeta?.createdAt ?? Date.now()) || Date.now(),
+  });
+  const meta: SaveMeta = normalizeSaveMeta({
+    ...baseMeta,
+    ...rawMeta,
+    saveId,
+    runId,
+    updatedAt: Number(rawMeta?.updatedAt ?? baseMeta.updatedAt) || baseMeta.updatedAt,
+    version: Number(rawMeta?.version ?? SAVE_VERSION) || SAVE_VERSION,
+  });
+
+  const index = readSaveIndex();
+  index[saveId] = meta;
+  writePayload(payload);
+  writeSaveIndex(index);
+  return { imported: 1, skipped: 0 };
+}
+
 export function importAllSavesFromJson(json: string): { imported: number; skipped: number } {
   const parsed = JSON.parse(json) as Partial<SaveBackupPayload>;
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('备份文件格式不正确。');
+  }
+  if ((parsed as Partial<SingleSaveBackupPayload>).kind === 'single-save') {
+    return importSingleSaveBackup(parsed as Partial<SingleSaveBackupPayload>);
+  }
   if (!parsed || typeof parsed !== 'object' || !parsed.entries || typeof parsed.entries !== 'object') {
     throw new Error('备份文件格式不正确：缺少 entries 字段。');
   }

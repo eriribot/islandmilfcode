@@ -30,7 +30,16 @@ function renderSaveSlot(save: SaveMeta, index: number) {
         <span class="gal-save-meta">${formatSaveTime(save.updatedAt)} · ${save.messageCount} 条记录</span>
       </button>
       <span class="gal-save-pointer" aria-hidden="true">☜</span>
-      <button class="gal-save-delete" data-action="delete-save" data-save-id="${escapeHtml(save.saveId)}" title="删除存档">×</button>
+      <div class="gal-save-actions" aria-label="存档操作">
+        <button
+          class="gal-save-export"
+          data-action="export-save"
+          data-save-id="${escapeHtml(save.saveId)}"
+          title="导出此存档"
+          aria-label="导出此存档"
+        >导出</button>
+        <button class="gal-save-delete" data-action="delete-save" data-save-id="${escapeHtml(save.saveId)}" title="删除存档" aria-label="删除存档">×</button>
+      </div>
     </article>
   `;
 }

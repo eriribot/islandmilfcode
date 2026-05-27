@@ -16,6 +16,7 @@ export type TitleCallbacks = {
     difficulty?: Difficulty;
   }) => void;
   deleteSave: (saveId: string) => void;
+  exportSave: (saveId: string) => void;
   render: () => void;
 };
 
@@ -98,6 +99,13 @@ export function bindTitleHomeEvents(root: HTMLElement | null, cb: TitleCallbacks
     btn.addEventListener('click', () => {
       const saveId = btn.dataset.saveId;
       if (saveId) cb.enterSave(saveId);
+    });
+  });
+
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="export-save"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const saveId = btn.dataset.saveId;
+      if (saveId) cb.exportSave(saveId);
     });
   });
 
