@@ -1,6 +1,81 @@
-import type { SummaryStore, KeyFact } from '../summary/types';
+import type { SummaryStore, KeyFact, SummaryEntry } from '../summary/types';
 import type { IslandMemoryDB, MemoryFactCategory } from './types';
 import { createDefaultMemoryDB } from './defaults';
+
+/**
+ * 从 IslandMemoryDB 水合摘要数据回 SummaryStore。
+ * 用于修复存档加载后摘要丢失的问题——让旧消费方（buildPrompt / UI）继续工作。
+ *
+ * 这是 migrateSummaryStoreToMemoryDB 的反向操作。
+ */
+export function hydrateSummaryStoreFromMemoryDB(
+  db: IslandMemoryDB,
+): Pick<SummaryStore, 'global' | 'major' | 'minor' | 'keyFacts'> {
+  const minor: SummaryEntry[] = [];
+  const major: SummaryEntry[] = [];
+  let global: string | null = null;
+  let globalCreatedAt = '';
+  const keyFacts: KeyFact[] = [];
+
+  // ── 从 summaries 表恢复摘要 ──
+  for (const row of db.summaries) {
+    if (row.expired) continue;
+
+    if (row.level === 'minor') {
+      minor.push({
+        range: row.range,
+        text: row.text,
+        createdAt: row.createdAt,
+      });
+    } else if (row.level === 'major') {
+      major.push({
+        range: row.range,
+        text: row.text,
+        createdAt: row.createdAt,
+      });
+    } else if (row.level === 'global') {
+      // 只保留最新的全局摘要（按 createdAt 比较）
+      if (!global || row.createdAt > globalCreatedAt) {
+        global = row.text;
+        globalCreatedAt = row.createdAt;
+      }
+    }
+  }
+
+  // ── 兜底：如果没有 global 但有 major，合并 major 作为临时 global ──
+  // 这修复了旧存档迁移后 global 丢失的问题
+  if (!global && major.length > 0) {
+    global = major.map(e => e.text).join('\n\n');
+  }
+
+  // ── 从 facts 表恢复关键事实 ──
+  for (const row of db.facts) {
+    if (row.expired) continue;
+
+    keyFacts.push({
+      id: row.id,
+      category: reverseMapFactCategory(row.category),
+      subject: row.subject,
+      content: row.content,
+      sourceRange: row.sourceRange ?? [0, 0],
+      createdAt: row.createdAt,
+      superseded: row.expired ?? false,
+    });
+  }
+
+  return {
+    global,
+    major,
+    minor,
+    keyFacts,
+  };
+}
+
+/** 新 MemoryFactCategory → 旧 KeyFactCategory 反向映射 */
+function reverseMapFactCategory(category: MemoryFactCategory): string {
+  // 直接返回，因为两边的值是一致的
+  return category;
+}
 
 /**
  * 从旧 SummaryStore 迁移到 IslandMemoryDB。

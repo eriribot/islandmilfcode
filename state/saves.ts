@@ -16,7 +16,7 @@ import type {
 import { normalizePhoneMessageStore } from './store';
 import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
-import { migrateSummaryStoreToMemoryDB } from '../memorydatabase/migrate';
+import { migrateSummaryStoreToMemoryDB, hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
 
 const SAVE_INDEX_STORAGE_KEY = 'islandmilfcode:save-index:v2';
 const SAVE_PAYLOAD_STORAGE_PREFIX = 'islandmilfcode:save-payload:v2:';
@@ -328,8 +328,14 @@ function readPayload(saveId: string): SavePayload | null {
 
   // memoryDB：优先从存档读取，没有则从 summaryStore 迁移
   const memoryDB = normalizeMemoryDB(payload.memoryDB, runId) ?? migrateSummaryStoreToMemoryDB(rawSummaryStore, runId);
+
+  // 从 memoryDB 把摘要/事实水合回 summaryStore，让旧消费方（buildPrompt / UI）继续工作。
+  // 这一步是为了修复存档加载后摘要丢失、全部历史被塞进 prompt 的问题。
+  const hydrated = hydrateSummaryStoreFromMemoryDB(memoryDB);
+
   const summaryStore = {
     ...createDefaultSummaryStore(),
+    ...hydrated,
     lastSummarizedIndex: Math.max(
       Number(rawSummaryStore.lastSummarizedIndex ?? 0) || 0,
       Number(memoryDB.lastProcessedIndex ?? 0) || 0,
