@@ -31,7 +31,14 @@
       "Bash(ls src/islandmilfcode/index.html)",
       "WebFetch(domain:music-api.gdstudio.xyz)",
       "Bash(del *)",
-      "Bash(pnpm run *)"
+      "Bash(pnpm run *)",
+      "Bash(Get-ChildItem *)",
+      "Bash(cat)",
+      "Read(//c/Users/eriri/.claude/plans/**)",
+      "Bash(cat *)",
+      "Bash(pnpm exec *)",
+      "PowerShell(git *)",
+      "PowerShell(Test-Path *)"
     ]
   }
 }

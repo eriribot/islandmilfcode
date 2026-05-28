@@ -15,6 +15,7 @@ export const MEMORY_TABLE_NAMES = [
   'phoneMessages',
   'summaries',
   'attributes',
+  'worldState',
 ] as const;
 
 export type MemoryTableName = (typeof MEMORY_TABLE_NAMES)[number];
@@ -31,6 +32,7 @@ const TABLE_LABELS: Record<MemoryTableName, string> = {
   phoneMessages: '手机消息',
   summaries: '摘要',
   attributes: '属性',
+  worldState: '世界状态',
 };
 
 const EDITABLE_TABLES = new Set<MemoryTableName>([
@@ -48,7 +50,6 @@ const USER_VISIBLE_TABLES: MemoryTableName[] = [
   'items',
   'phoneMessages',
   'summaries',
-  'attributes',
 ];
 
 // 中文注释：这些是 AI 在 <key_facts> 里允许输出的全部分类，对应 summary/types.ts 的 KeyFactCategory。

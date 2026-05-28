@@ -128,8 +128,8 @@ const MEGUMI_AUDIT_GUIDANCE = [
   '>> 语气限制（中好感度）：客观陈述事实进行吐槽（例：”User君刚才那句话，对其他女生说会引起误会哦。”）。',
   '>> 语气限制（高好感度）：不阻止玩家，但用平淡的语气施加愧疚感（例：”既然User君要去陪别人，那我就先回家了，毕竟我只是个路人呢。”）。',
   '>> 绝对禁止：惠只是一个普通人，她的吐槽和降温只能基于现实情况和对玩家的了解，不能无视玩家的反驳或直接否定玩家的行为；禁止把她写成一个随时能看穿玩家心思、预知未来、控制全局的全能角色；禁止把她写成一个无论玩家说什么做什么都能用一句话压回去的全能吐槽机。',
-  '【Rule 5: 破防阈值 (触发：极度幸福/误会彻底解开/被坚定选择)】',
-  '>> 动作指令：强制打破平淡设定的唯一时刻！出现低头、视线躲闪、抓紧衣角等微动作。',
+  '【Rule 5: 破防阈值 (触发：极度幸福/误会彻底解开/被坚定选择/看到少儿不宜的画面)】',
+  '>> 动作指令：强制打破平淡设定的唯一时刻！出现低头、视线躲闪、抓紧衣角等微动作,或脸红微微把头向一边移过去',
   '>> 语气限制：台词必须短暂结巴，或带有细微的颤音，但依然努力使用日常句式掩饰。',
   '>> 强制模板参考：”……真是的，User君总是……突然说出这种让人困扰的话呢。（移开泛红的视线）……我也，稍微有点期待了。”',
 ].join('\n');
@@ -617,4 +617,43 @@ export function getRelationshipMiniPersona(target: TargetStatus | null) {
     return MICHIRU_MINI_PERSONA;
   }
   return '';
+}
+
+// ── obsession 白名单策略层 ──
+//
+// "执念度（旧情度，对伦也旧线的牵挂）"是 V1/V2 围绕原作旧线设计的专属轴，
+// 只对原作里与伦也有过明确情感纠葛的五位女主生效。
+// 红坂朱音、丸户、其他 NPC 没有这条轴，AI 不应该输出 `执念度.角色名:±N` 字段。
+//
+// 白名单使用项目里已有的归一角色键 megumi/eriri/utaha/izumi/michiru，
+// 通过 getTargetCharacterKey() 间接查；不再单独维护一份名字正则。
+
+export const OBSESSION_TARGETS = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru'] as const;
+export type ObsessionTargetKey = (typeof OBSESSION_TARGETS)[number];
+
+const OBSESSION_TARGET_SET: ReadonlySet<string> = new Set(OBSESSION_TARGETS);
+
+/** 给 prompt 文案展示用的中文名清单（顺序与 OBSESSION_TARGETS 对齐）。 */
+export const OBSESSION_TARGET_DISPLAY_NAMES = '加藤惠 / 英梨梨 / 霞之丘诗羽 / 波岛出海 / 美智留';
+
+/** target 是否拥有 obsession 轴（属于五人白名单）。 */
+export function hasObsessionAxis(target: TargetStatus | null | undefined): boolean {
+  if (!target) return false;
+  const key = getTargetCharacterKey(target);
+  return OBSESSION_TARGET_SET.has(key);
+}
+
+/**
+ * 按角色名/别名/id 字符串判断是否在 obsession 白名单。
+ * 用于 AI 输出解析：AI 写出 `执念度.红坂朱音:+1` 时，要靠这个函数把它丢掉。
+ */
+export function hasObsessionAxisByName(nameOrId: string | null | undefined): boolean {
+  if (!nameOrId) return false;
+  const haystack = String(nameOrId).toLowerCase();
+  if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return true;
+  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return true;
+  if (/霞之丘|霞ヶ丘|诗羽|詩羽|霞诗子|utaha|kasumigaoka/.test(haystack)) return true;
+  if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return true;
+  if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return true;
+  return false;
 }

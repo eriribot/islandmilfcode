@@ -18,5 +18,6 @@ export function createDefaultMemoryDB(runId: string): IslandMemoryDB {
     phoneMessages: [],
     summaries: [],
     attributes: [],
+    worldState: [],
   };
 }

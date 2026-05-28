@@ -1,12 +1,20 @@
 import type {
   IslandMemoryDB,
+  MemoryAttributeRow,
   MemoryBaseRow,
+  MemoryEventRow,
+  MemoryItemRow,
+  MemoryWorldStateRow,
   MemoryWriteBatch,
 } from './types';
 
 /**
  * 应用一个写入批次到 MemoryDB。同步操作，直接修改传入的 db 对象。
  * 返回本次新插入的所有行 ID。
+ *
+ * 特殊处理：
+ * - facts 走 deduplicateFact，duplicate 跳过、supersede 把旧行 expired+supersededBy 后再插入
+ * - 其他表保持原始 push（个别表的 upsert 由调用方自行使用 upsertAttribute/upsertEvent/upsertItem）
  */
 export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string[] {
   const now = new Date().toISOString();
@@ -23,6 +31,38 @@ export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string
       if (!Array.isArray(table)) continue;
 
       for (const payload of payloads) {
+        // facts 走去重：同 subject+content 跳过；同 subject 不同 content 让旧行 expired。
+        if (tableName === 'facts') {
+          const factPayload = payload as unknown as {
+            category: string;
+            subject: string;
+            content: string;
+          };
+          const dedup = deduplicateFact(db, factPayload);
+          if (dedup.action === 'duplicate') {
+            continue;
+          }
+          const newId = generateId();
+          const row: MemoryBaseRow = {
+            id: newId,
+            createdAt: now,
+            updatedAt: now,
+            source: batch.source,
+            ...payload,
+          };
+          if (dedup.action === 'supersede' && dedup.existingId) {
+            const old = db.facts.find(f => f.id === dedup.existingId);
+            if (old) {
+              old.expired = true;
+              old.supersededBy = newId;
+              old.updatedAt = now;
+            }
+          }
+          table.push(row);
+          newIds.push(newId);
+          continue;
+        }
+
         const row: MemoryBaseRow = {
           id: generateId(),
           createdAt: now,
@@ -207,4 +247,291 @@ function generateId(): string {
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
+}
+
+// ── Upsert 系列：把流水账表改成快照表 ──
+
+export type UpsertAction = 'unchanged' | 'updated' | 'created';
+
+export type UpsertResult = {
+  action: UpsertAction;
+  rowId: string;
+};
+
+/**
+ * 属性快照写入：同 targetId+key 永远只保留 1 条活跃行。
+ * - value 不变 → 仅刷 lastSeenAt（unchanged）
+ * - value 变化 → 旧行 expired=true 并指向新行；新行带 previousValue + delta
+ * - 不存在 → 新建一行（created）
+ */
+export function upsertAttribute(
+  db: IslandMemoryDB,
+  patch: {
+    targetId: string;
+    key: string;
+    value: string;
+    valueType?: MemoryAttributeRow['valueType'];
+    reason?: string;
+    importance?: number;
+    sourceRange?: [number, number];
+    source?: MemoryBaseRow['source'];
+  },
+): UpsertResult {
+  const now = new Date().toISOString();
+  const active = db.attributes.filter(
+    a => !a.expired && a.targetId === patch.targetId && a.key === patch.key,
+  );
+  // 同 key 出现多条活跃行（旧 schema 残留）：按 createdAt 取最新一条，其余 expire。
+  active.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const latest = active[0];
+  for (let i = 1; i < active.length; i++) {
+    active[i].expired = true;
+    active[i].updatedAt = now;
+  }
+
+  if (latest && latest.value === patch.value) {
+    latest.lastSeenAt = now;
+    latest.updatedAt = now;
+    return { action: 'unchanged', rowId: latest.id };
+  }
+
+  const previousValue = latest?.value;
+  let delta: number | undefined;
+  if (patch.valueType === 'number') {
+    const prev = Number(previousValue);
+    const next = Number(patch.value);
+    if (Number.isFinite(prev) && Number.isFinite(next)) {
+      delta = next - prev;
+    }
+  }
+
+  const newRow: MemoryAttributeRow = {
+    id: generateId(),
+    createdAt: now,
+    updatedAt: now,
+    source: patch.source ?? 'progress-commit',
+    sourceRange: patch.sourceRange,
+    importance: patch.importance,
+    targetId: patch.targetId,
+    key: patch.key,
+    value: patch.value,
+    valueType: patch.valueType,
+    previousValue,
+    delta,
+    reason: patch.reason,
+    lastSeenAt: now,
+  };
+  db.attributes.push(newRow);
+
+  if (latest) {
+    latest.expired = true;
+    latest.supersededBy = newRow.id;
+    latest.updatedAt = now;
+    return { action: 'updated', rowId: newRow.id };
+  }
+
+  return { action: 'created', rowId: newRow.id };
+}
+
+/**
+ * 事件快照写入：按 relatedMainEventId（优先）或 title 去重。
+ * 已存在 → 合并 description/outcome/lastSeenAt，不新增行。
+ * 不存在 → 新建一行。
+ */
+export function upsertEvent(
+  db: IslandMemoryDB,
+  patch: {
+    title: string;
+    description?: string;
+    relatedMainEventId?: string;
+    outcome?: string;
+    gameTime?: string;
+    location?: string;
+    involvedTargetIds?: string[];
+    importance?: number;
+    sourceRange?: [number, number];
+    source?: MemoryBaseRow['source'];
+  },
+): UpsertResult {
+  const now = new Date().toISOString();
+  const matchKey = patch.relatedMainEventId || patch.title;
+  const existing = db.events.find(e => {
+    if (e.expired) return false;
+    if (patch.relatedMainEventId) return e.relatedMainEventId === patch.relatedMainEventId;
+    return e.title === patch.title;
+  });
+
+  if (existing) {
+    if (patch.description !== undefined) existing.description = patch.description;
+    if (patch.outcome !== undefined) existing.outcome = patch.outcome;
+    if (patch.gameTime !== undefined) existing.gameTime = patch.gameTime;
+    if (patch.location !== undefined) existing.location = patch.location;
+    if (patch.involvedTargetIds) existing.involvedTargetIds = patch.involvedTargetIds;
+    existing.lastSeenAt = now;
+    existing.updatedAt = now;
+    // matchKey 仅用于潜在调试输出，避免 unused 告警
+    void matchKey;
+    return { action: 'updated', rowId: existing.id };
+  }
+
+  const newRow: MemoryEventRow = {
+    id: generateId(),
+    createdAt: now,
+    updatedAt: now,
+    source: patch.source ?? 'progress-commit',
+    sourceRange: patch.sourceRange,
+    importance: patch.importance,
+    title: patch.title,
+    description: patch.description ?? '',
+    relatedMainEventId: patch.relatedMainEventId,
+    outcome: patch.outcome,
+    gameTime: patch.gameTime,
+    location: patch.location,
+    involvedTargetIds: patch.involvedTargetIds,
+    lastSeenAt: now,
+  };
+  db.events.push(newRow);
+  return { action: 'created', rowId: newRow.id };
+}
+
+/**
+ * 物品快照写入：按 name + ownerId 合并。
+ * - gained：count += incoming.count（默认 1），刷新 state
+ * - lost：count -= incoming.count（默认 1）；若 count <= 0 → expired
+ * - lost 但不存在：no-op，返回 unchanged
+ */
+export function upsertItem(
+  db: IslandMemoryDB,
+  patch: {
+    name: string;
+    ownerId?: string;
+    action: 'gained' | 'lost' | 'transformed' | 'noted';
+    count?: number;
+    state?: string;
+    holderId?: string;
+    location?: string;
+    sourceRange?: [number, number];
+    source?: MemoryBaseRow['source'];
+  },
+): UpsertResult {
+  const now = new Date().toISOString();
+  const owner = patch.ownerId ?? 'player';
+  const delta = patch.count ?? 1;
+
+  const existing = db.items.find(
+    i => !i.expired && i.name === patch.name && (i.ownerId ?? 'player') === owner,
+  );
+
+  if (patch.action === 'lost') {
+    if (!existing) return { action: 'unchanged', rowId: '' };
+    const next = (existing.count ?? 1) - delta;
+    if (next <= 0) {
+      existing.expired = true;
+      existing.count = 0;
+      existing.action = 'lost';
+    } else {
+      existing.count = next;
+      existing.action = 'lost';
+    }
+    existing.updatedAt = now;
+    existing.lastSeenAt = now;
+    return { action: 'updated', rowId: existing.id };
+  }
+
+  if (existing) {
+    if (patch.action === 'gained') {
+      existing.count = (existing.count ?? 1) + delta;
+    } else {
+      existing.count = patch.count ?? existing.count;
+    }
+    if (patch.state !== undefined) existing.state = patch.state;
+    if (patch.holderId !== undefined) existing.holderId = patch.holderId;
+    if (patch.location !== undefined) existing.location = patch.location;
+    existing.action = patch.action;
+    existing.updatedAt = now;
+    existing.lastSeenAt = now;
+    return { action: 'updated', rowId: existing.id };
+  }
+
+  const newRow: MemoryItemRow = {
+    id: generateId(),
+    createdAt: now,
+    updatedAt: now,
+    source: patch.source ?? 'progress-commit',
+    sourceRange: patch.sourceRange,
+    name: patch.name,
+    ownerId: owner,
+    holderId: patch.holderId,
+    location: patch.location,
+    state: patch.state,
+    action: patch.action,
+    count: delta,
+    lastSeenAt: now,
+  };
+  db.items.push(newRow);
+  return { action: 'created', rowId: newRow.id };
+}
+
+/**
+ * 世界状态写入：worldState 表始终只保留一条活跃行。
+ * 已存在 → 浅合并 patch；不存在 → 新建。
+ * 多余的活跃行（schema 残留）一并 expire。
+ */
+export function upsertWorldState(
+  db: IslandMemoryDB,
+  patch: Partial<Omit<MemoryWorldStateRow, keyof MemoryBaseRow>> & {
+    sourceRange?: [number, number];
+    source?: MemoryBaseRow['source'];
+  },
+): UpsertResult {
+  const now = new Date().toISOString();
+  const active = db.worldState.filter(w => !w.expired);
+  active.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  for (let i = 1; i < active.length; i++) {
+    active[i].expired = true;
+    active[i].updatedAt = now;
+  }
+  const row = active[0];
+
+  if (row) {
+    let changed = false;
+    const fields = [
+      'currentTime',
+      'currentLocation',
+      'currentMainEventId',
+      'storyStartDate',
+      'currentDay',
+    ] as const;
+    for (const f of fields) {
+      const next = patch[f];
+      if (next === undefined) continue;
+      if (row[f] !== next) {
+        (row as Record<string, unknown>)[f] = next;
+        changed = true;
+      }
+    }
+    if (changed) {
+      row.updatedAt = now;
+      row.lastSeenAt = now;
+      return { action: 'updated', rowId: row.id };
+    }
+    row.lastSeenAt = now;
+    return { action: 'unchanged', rowId: row.id };
+  }
+
+  const newRow: MemoryWorldStateRow = {
+    id: generateId(),
+    createdAt: now,
+    updatedAt: now,
+    source: patch.source ?? 'progress-commit',
+    sourceRange: patch.sourceRange,
+    currentTime: patch.currentTime,
+    currentLocation: patch.currentLocation,
+    currentMainEventId: patch.currentMainEventId,
+    storyStartDate: patch.storyStartDate,
+    currentDay: patch.currentDay,
+    lastSeenAt: now,
+  };
+  db.worldState.push(newRow);
+  return { action: 'created', rowId: newRow.id };
 }

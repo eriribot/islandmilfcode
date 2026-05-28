@@ -5,7 +5,7 @@ import { createDefaultMemoryDB } from './defaults';
 const KNOWN_TABLES = [
   'entities', 'events', 'facts', 'relations',
   'impressions', 'tasks', 'secrets', 'items',
-  'phoneMessages', 'summaries', 'attributes',
+  'phoneMessages', 'summaries', 'attributes', 'worldState',
 ] as const;
 
 /**

@@ -17,6 +17,7 @@ import { normalizePhoneMessageStore } from './store';
 import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import { migrateSummaryStoreToMemoryDB, hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
+import { sweepLegacyMemoryDB } from '../memorydatabase/sweep';
 
 const SAVE_INDEX_STORAGE_KEY = 'islandmilfcode:save-index:v2';
 const SAVE_PAYLOAD_STORAGE_PREFIX = 'islandmilfcode:save-payload:v2:';
@@ -329,6 +330,13 @@ function readPayload(saveId: string): SavePayload | null {
   // memoryDB：优先从存档读取，没有则从 summaryStore 迁移
   const memoryDB = normalizeMemoryDB(payload.memoryDB, runId) ?? migrateSummaryStoreToMemoryDB(rawSummaryStore, runId);
 
+  // 一次性 sweep：旧 schema 残留（流水账 attributes、伪 worldState 行）的清洗。幂等。
+  const sweepStats = sweepLegacyMemoryDB(memoryDB);
+  const sweepHadEffect =
+    sweepStats.worldRowsMigrated > 0
+    || sweepStats.duplicatesCollapsed > 0
+    || sweepStats.deltaRowsFolded > 0;
+
   // 从 memoryDB 把摘要/事实水合回 summaryStore，让旧消费方（buildPrompt / UI）继续工作。
   // 这一步是为了修复存档加载后摘要丢失、全部历史被塞进 prompt 的问题。
   const hydrated = hydrateSummaryStoreFromMemoryDB(memoryDB);
@@ -346,7 +354,7 @@ function readPayload(saveId: string): SavePayload | null {
   };
   // 中文注释：summaryStore 已经被收敛成空壳（只保留 cursor + 失败状态），这是 migration 幂等性的根本保障；
   // 不再硬删 facts/summaries 里 source='migration' 的行 —— 迁移过来的 keyFacts 是真实数据，不应该每次读存档就被抹掉。
-  if (JSON.stringify(rawSummaryStore) !== JSON.stringify(summaryStore) || !payload.memoryDB) {
+  if (JSON.stringify(rawSummaryStore) !== JSON.stringify(summaryStore) || !payload.memoryDB || sweepHadEffect) {
     safeWriteJson(getPayloadStorageKey(saveId), {
       ...payload,
       summaryStore,

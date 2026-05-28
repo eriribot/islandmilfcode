@@ -4,6 +4,9 @@ import {
   getRelationshipGuidance,
   getRelationshipMiniPersona,
   getTargetCharacterKey,
+  hasObsessionAxis,
+  hasObsessionAxisByName,
+  OBSESSION_TARGET_DISPLAY_NAMES,
 } from './relationship';
 import type { KeyFact, KeyFactCategory, SummaryStore } from './summary/types';
 import { KEY_FACT_CATEGORY_LABEL } from './summary/types';
@@ -362,8 +365,24 @@ function formatEventIndexLine(event: PlotEventCard) {
   return parts.join(' · ');
 }
 
-function buildPlotWhitelist(plotLibrary: PlotLibrary) {
-  const all = Object.values(plotLibrary.events);
+function buildPlotWhitelist(plotLibrary: PlotLibrary, statusData?: StatusData) {
+  const mainEvents = statusData?.world.mainEvents ?? {};
+  const currentId = statusData?.world.currentMainEventId ?? '';
+  const currentDate = getDatePart(statusData?.world.currentTime ?? '');
+  const all = Object.values(plotLibrary.events).filter(event => {
+    if (!statusData) return true;
+    if (event.id === currentId) return true;
+
+    const status = normalizeMainEventStatus(mainEvents[event.id]);
+    if (status === MAIN_EVENT_FINISHED) return false;
+
+    const eventEndDate = event.schedule?.endDate ?? event.schedule?.date ?? '';
+    if (currentDate && eventEndDate && eventEndDate < currentDate && status !== MAIN_EVENT_RUNNING) {
+      return false;
+    }
+
+    return true;
+  });
   if (!all.length) return '';
   const lines = all
     .slice()
@@ -374,9 +393,9 @@ function buildPlotWhitelist(plotLibrary: PlotLibrary) {
     })
     .map(formatEventIndexLine);
   return [
-    '合法主线事件 ID 白名单（仅限下列 ID 可出现在 <progress> 的 当前事件 / 主线事件 字段里）：',
+    '合法主线事件 ID 白名单（仅限下列未结束/可接续 ID 可出现在 <progress> 的 当前事件 / 主线事件 字段里）：',
     ...lines,
-    '硬约束：禁止在 <progress> 里使用白名单之外的任何事件 ID；禁止自造新的卷号/新的事件编号；不确定时把 当前事件 留空，不要发明 ID。',
+    '硬约束：已结束事件不要再写入 <progress> 的 当前事件 / 主线事件 字段；禁止使用白名单之外的任何事件 ID；禁止自造新的卷号/新的事件编号；不确定时把 当前事件 留空，不要发明 ID。',
   ].join('\n');
 }
 
@@ -392,8 +411,8 @@ function pickNextUpcomingEvent(statusData: StatusData, plotLibrary: PlotLibrary)
 }
 
 // 把事件卡 JSON 压缩成给 AI 写正文用的精简版本。
-// 砍掉:触发控制 / 结束控制 / 触发变量 / User介入参考 / 关键情节的 id 数组 — 这些是事件系统的元数据,AI 不需要。
-// 保留:标题 / 阶段摘要 / 阶段背景 / 关键人物 / 场景修饰(前2) / 人物状态(认知+心态+对白气质) / 关系变量引导(前4) / 叙事重点(前3)。
+// 砍掉:触发控制 / 结束控制 / 触发变量 / 关键情节的 id 数组 — 这些是事件系统的元数据,AI 不需要。
+// 保留:标题 / 阶段摘要 / 阶段背景 / 关键人物 / 场景修饰(前2) / 人物状态(认知+心态+对白气质) / User介入参考(前4) / 关系变量引导(前4) / 叙事重点(前3)。
 function compressPlotCardContent(rawContent: string): string {
   if (!rawContent) return '';
   let parsed: Record<string, unknown> | null = null;
@@ -448,6 +467,7 @@ function compressPlotCardContent(rawContent: string): string {
   }
 
   pushIf('关系变量引导', parsed['关系变量引导'], 4);
+  pushIf('User介入参考', parsed['User介入参考'], 4);
 
   // 关键情节:只取描述,不传 id 数组
   const plot = parsed['关键情节'];
@@ -487,7 +507,7 @@ function buildVolumeWritingProtocol(plotLibrary: PlotLibrary | null | undefined,
 
 function buildCurrentPlotContext(statusData: StatusData, plotLibrary?: PlotLibrary | null) {
   if (!plotLibrary || !Object.keys(plotLibrary.events).length) return '';
-  const whitelist = buildPlotWhitelist(plotLibrary);
+  const whitelist = buildPlotWhitelist(plotLibrary, statusData);
   const currentId = statusData.world.currentMainEventId;
   const currentEvent = currentId ? plotLibrary.events[currentId] : undefined;
 
@@ -608,7 +628,13 @@ function buildTargetStateList(statusData: StatusData) {
         .join('、');
       const className = String(target.meta?.className ?? '').trim();
       const classSegment = className ? `；班级/身份=${className}` : '';
-      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度（对 user）=${target.affinity}（${target.stage}）；执念度（旧情/对伦也）=${target.obsession}（${target.obsessionStage}）；更新键=好感度.${target.name}:±N / 执念度.${target.name}:±N`;
+      const obsessionSegment = hasObsessionAxis(target)
+        ? `；执念度（旧情/对伦也）=${target.obsession}（${target.obsessionStage}）`
+        : '';
+      const updateKeys = hasObsessionAxis(target)
+        ? `好感度.${target.name}:±N / 执念度.${target.name}:±N`
+        : `好感度.${target.name}:±N`;
+      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度（对 user）=${target.affinity}（${target.stage}）${obsessionSegment}；更新键=${updateKeys}`;
     })
     .join('\n');
 }
@@ -624,11 +650,12 @@ function buildAffinityUpdateExamples(statusData: StatusData) {
 
 function buildObsessionUpdateExamples(statusData: StatusData) {
   const examples = statusData.targets
+    .filter(target => hasObsessionAxis(target))
     .map(target => target.name || target.id)
     .filter(Boolean)
     .slice(0, 3)
     .map((name, index) => `执念度.${name}:${index === 1 ? '+1' : '-1'}`);
-  return examples.length ? examples.join(' / ') : '执念度.角色名:+1';
+  return examples.length ? examples.join(' / ') : '执念度.英梨梨:-1';
 }
 
 function normalizeForMentionMatch(value: unknown) {
@@ -1045,17 +1072,17 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
     '',
     '在可见正文之后，必须输出一个 <progress> 块记录变量变化。',
     '使用 key:value 格式，每行一个字段。只写发生变化的字段，未变化字段省略。',
-    '长场景结束后必须评估好感度；若本轮触发伦也/旧线/创作伤口，也要评估执念度。多人场景中，所有在场并明确对 User 有反应的角色都要分别评估。',
+    `长场景结束后必须评估好感度；若本轮触发伦也/旧线/创作伤口，也要评估执念度（仅限 ${OBSESSION_TARGET_DISPLAY_NAMES}，名单外角色禁止输出执念度字段）。多人场景中，所有在场并明确对 User 有反应的角色都要分别评估好感度。`,
     '普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。只有角色不在场、完全无互动、或关系没有变化时才省略该角色好感度。',
-    '执念度专指角色对伦也这条旧线的牵引强度；它可以与好感度同时变化，但不要把它当成对 User 的关系温度，。',
+    `执念度专指角色对伦也这条旧线的牵引强度；只对 ${OBSESSION_TARGET_DISPLAY_NAMES} 五人有效，不要把它当成对 User 的关系温度。其他在场角色（红坂朱音、丸户、伦也本人或任何 NPC）一律不输出执念度字段。`,
     '可用字段：',
     '  时间:YYYY-MM-DD HH:mm   — 仅当正文确实描写了时间流逝（进入次日/深夜，或明确跨过一个时段）时才输出，必须完整 YYYY-MM-DD HH:mm。正文未真正推进时间时整行省略；禁止使用 `4月16日`、`2012-04-16`（缺 HH:mm）、`明天` 这种非完整格式，也禁止仅凭玩家输入里的时间词就自行补一个新时间。',
     '  地点:新地点            — 角色实际移动到新地点时更新',
     target
       ? `  好感度:±N              — 旧格式好感变化，仅用于当前明确单对象：${target.name}`
       : '  好感度:±N              — 主场景禁用旧格式；必须改用 好感度.角色名或id:±N',
-    `  好感度.角色名或id:±N    — 指定角色好感变化；多人场景必须从下方“可更新角色列表”的更新键复制角色名或 id（例：${affinityExamples}）`,
-    `  执念度.角色名或id:±N    — 指定角色执念变化；语义是角色对伦也旧线/锚点的牵引（例：${obsessionExamples}）`,
+    `  好感度.角色名或id:±N    — 指定角色好感变化；多人场景必须从下方"可更新角色列表"的更新键复制角色名或 id（例：${affinityExamples}）`,
+    `  执念度.角色名或id:±N    — 仅限白名单（${OBSESSION_TARGET_DISPLAY_NAMES}），语义是角色对伦也旧线/锚点的牵引（例：${obsessionExamples}）。名单外角色（包括红坂朱音、泽村小百合、町田苑子、伦也本人）禁止输出。`,
     '  五维.能力名:±N          — 玩家五维变化（能力名: 知识/魅力/灵巧/体贴/勇气；例：五维.体贴:+1）',
     target
       ? `  着装.部位:描述          — 更新当前明确对象 ${target.name} 的某个部位着装（例：着装.上装:换上了黑色卫衣）`
@@ -1181,6 +1208,7 @@ export function buildProgressPrompt(
         '  普通友好互动或者逗乐大家的行动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4,重大事件的可靠+8；冒犯、越界、揭短、冷落通常 -1 到 -6。',
         '  不要因为变化很小就省略好感度；只有角色不在场、完全无互动、纯环境描写、或关系没有任何变化时，才不输出该角色好感度。',
         '执念度判断规则（与好感度独立的对伦也旧情度，对伦也旧线的牵挂,对伦也的好感度）：',
+        `  作用范围：仅限 ${OBSESSION_TARGET_DISPLAY_NAMES} 五人。其他角色（红坂朱音、丸户、伦也本人或任何 NPC）禁止输出执念度字段。`,
         '  执念度表示角色对伦也这条旧线的牵引强度(可以简单理解为对伦也的好感度)；它不是对 User 的好感度。',
         '  允许扣减的四个通道：',
         '    (a) 伦也直接出现并做出负面/低情商/失约/抛弃她的行为：-3 ~ -8；',
@@ -1282,7 +1310,7 @@ export function buildPhoneProgressPrompt(input: {
         }`,
         `  聊天对象: ${target.name}`,
         `  好感度: ${target.affinity} (${target.stage})`,
-        `  执念度: ${target.obsession} (${target.obsessionStage})`,
+        hasObsessionAxis(target) ? `  执念度: ${target.obsession} (${target.obsessionStage})` : '',
         '',
         '请用 <progress> 标签输出变化字段，每行一个 key:value。没有变化就输出空的 <progress></progress>。',
         '可用字段：',
@@ -1290,9 +1318,15 @@ export function buildPhoneProgressPrompt(input: {
         '  地点:新地点',
         `  好感度:±N（只更新当前聊天对象：${target.name}）`,
         `  好感度.${target.name}:±N（也可显式写当前聊天对象；例如 好感度.${target.name}:+1）`,
-        `  执念度:±N（旧情度，对伦也旧线的牵挂；只更新当前聊天对象：${target.name}）`,
-        `  执念度.${target.name}:±N（也可显式写当前聊天对象；例如 执念度.${target.name}:-1）`,
-        '  ※ 好感度与执念度（旧情度）是独立两条轴：好感对 user，执念对伦也。允许扣减执念的通道：伦也直接负面 / 对比戏 / user 替代位（user 替伦也完成她期待的事）/ 主动吐露旧事。日常戏只动其一；对比或替代位场景才允许同回合双动；禁止无脑同步 ±1。日常 ±1~2，明确事件 ±3~5，重大冲击 ±6~8。',
+        hasObsessionAxis(target)
+          ? `  执念度:±N（旧情度，对伦也旧线的牵挂；只更新当前聊天对象：${target.name}）`
+          : '',
+        hasObsessionAxis(target)
+          ? `  执念度.${target.name}:±N（也可显式写当前聊天对象；例如 执念度.${target.name}:-1）`
+          : '',
+        hasObsessionAxis(target)
+          ? '  ※ 好感度与执念度（旧情度）是独立两条轴：好感对 user，执念对伦也。允许扣减执念的通道：伦也直接负面 / 对比戏 / user 替代位（user 替伦也完成她期待的事）/ 主动吐露旧事。日常戏只动其一；对比或替代位场景才允许同回合双动；禁止无脑同步 ±1。日常 ±1~2，明确事件 ±3~5，重大冲击 ±6~8。'
+          : '',
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气）',
         '  着装.部位:描述',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
@@ -1450,8 +1484,15 @@ function parseStateBody(body: string): ProgressUpdate | null {
       trimmed.match(/^执念度[.．]\s*([^:：]+)[:：]\s*([+\-]?\d+)/) ??
       trimmed.match(/^执念度变化[:：]\s*([^:：]+)[:：]\s*([+\-]?\d+)/);
     if (targetedObsMatch) {
+      const obsTarget = targetedObsMatch[1].trim();
+      if (!hasObsessionAxisByName(obsTarget)) {
+        // 防御：AI 偶尔会写"执念度.红坂朱音:+1"等名单外角色，丢弃避免污染数据。
+        console.warn('[parseProgressUpdate] 丢弃非白名单 obsession 字段:', obsTarget);
+        hasAnyField = true;
+        continue;
+      }
       result.obsessionDeltas.push({
-        target: targetedObsMatch[1].trim(),
+        target: obsTarget,
         delta: parseInt(targetedObsMatch[2], 10) || 0,
       });
       hasAnyField = true;
@@ -1472,8 +1513,14 @@ function parseStateBody(body: string): ProgressUpdate | null {
     // 角色名或id.执念度:±N
     const prefixedObsMatch = trimmed.match(/^([^:：.．]+)[.．]\s*执念度[:：]\s*([+\-]?\d+)/);
     if (prefixedObsMatch) {
+      const obsTarget = prefixedObsMatch[1].trim();
+      if (!hasObsessionAxisByName(obsTarget)) {
+        console.warn('[parseProgressUpdate] 丢弃非白名单 obsession 字段:', obsTarget);
+        hasAnyField = true;
+        continue;
+      }
       result.obsessionDeltas.push({
-        target: prefixedObsMatch[1].trim(),
+        target: obsTarget,
         delta: parseInt(prefixedObsMatch[2], 10) || 0,
       });
       hasAnyField = true;

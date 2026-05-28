@@ -1,8 +1,24 @@
 import type { ProgressUpdate } from '../message-format';
 import type { KeyFact } from '../summary/types';
-import { commitBatch, deduplicateAttribute } from './upsert';
+import {
+  commitBatch,
+  upsertAttribute,
+  upsertEvent,
+  upsertItem,
+  upsertWorldState,
+} from './upsert';
 import type { IslandMemoryDB, MemoryFactCategory, MemoryWriteBatch } from './types';
 
+/**
+ * 把一次主回复的 ProgressUpdate 写入 memoryDB。
+ *
+ * 写入语义（不再是流水账）：
+ * - 数值属性（好感度/旧情度/五维）：写累计值快照到 attributes 表，旧行 expire；delta 字段保留变化量
+ * - 着装：按 targetId+key='outfit-{部位}' 写快照
+ * - 主线事件 / 事件名：按 relatedMainEventId 或 title 去重，不重复堆积
+ * - 物品获得/丢失：按 name+ownerId 合并 count
+ * - currentTime / currentLocation / currentMainEventId：写到单例 worldState 表
+ */
 export function commitProgressToMemoryDB(
   db: IslandMemoryDB | null | undefined,
   update: ProgressUpdate,
@@ -10,141 +26,139 @@ export function commitProgressToMemoryDB(
 ): void {
   if (!db) return;
 
-  const inserts: NonNullable<MemoryWriteBatch['inserts']> = {};
+  // ── 1. 世界状态：时间 / 地点 / 当前主线事件 → worldState 单例表 ──
+  const worldPatch: Parameters<typeof upsertWorldState>[1] = { sourceRange };
+  let worldHasPatch = false;
+  if (update.time) {
+    worldPatch.currentTime = update.time;
+    worldHasPatch = true;
+  }
+  if (update.location) {
+    worldPatch.currentLocation = update.location;
+    worldHasPatch = true;
+  }
+  if (update.currentMainEventId) {
+    worldPatch.currentMainEventId = update.currentMainEventId;
+    worldHasPatch = true;
+  }
+  if (worldHasPatch) {
+    upsertWorldState(db, worldPatch);
+  }
 
+  // ── 2. 角色属性：好感度 / 旧情度（累计值，不再用 -delta 键名） ──
   for (const item of update.affinityDeltas) {
     if (!item.delta) continue;
-    const isDuplicate = deduplicateAttribute(db, {
+    const previous = readNumericAttribute(db, item.target, 'affinity');
+    const next = previous + item.delta;
+    upsertAttribute(db, {
       targetId: item.target,
-      key: 'affinity-delta',
-      value: String(item.delta),
-    });
-    if (isDuplicate) continue;
-    inserts.attributes ??= [];
-    inserts.attributes.push({
-      targetId: item.target,
-      key: 'affinity-delta',
-      value: String(item.delta),
+      key: 'affinity',
+      value: String(next),
       valueType: 'number',
-      delta: item.delta,
+      sourceRange,
     });
   }
 
   for (const item of update.obsessionDeltas) {
     if (!item.delta) continue;
-    const isDuplicate = deduplicateAttribute(db, {
+    const previous = readNumericAttribute(db, item.target, 'obsession');
+    const next = previous + item.delta;
+    upsertAttribute(db, {
       targetId: item.target,
-      key: 'obsession-delta',
-      value: String(item.delta),
-    });
-    if (isDuplicate) continue;
-    inserts.attributes ??= [];
-    inserts.attributes.push({
-      targetId: item.target,
-      key: 'obsession-delta',
-      value: String(item.delta),
+      key: 'obsession',
+      value: String(next),
       valueType: 'number',
-      delta: item.delta,
+      sourceRange,
     });
   }
 
+  // ── 3. 玩家五维：累计值快照 ──
   for (const [statKey, delta] of Object.entries(update.statDeltas)) {
-    if (!delta) continue;
-    inserts.attributes ??= [];
-    inserts.attributes.push({
+    const numericDelta = Number(delta);
+    if (!numericDelta) continue;
+    const key = `stat-${statKey}`;
+    const previous = readNumericAttribute(db, 'player', key);
+    const next = previous + numericDelta;
+    upsertAttribute(db, {
       targetId: 'player',
-      key: `stat-${statKey}`,
-      value: String(delta),
+      key,
+      value: String(next),
       valueType: 'number',
-      delta: Number(delta),
+      sourceRange,
     });
   }
 
+  // ── 4. 着装：每个 targetId 一个 outfit 字符串快照 ──
   for (const [targetId, outfit] of Object.entries(update.outfitChanges)) {
     if (!outfit) continue;
-    const isDuplicate = deduplicateAttribute(db, {
+    upsertAttribute(db, {
       targetId,
       key: 'outfit',
-      value: outfit,
-    });
-    if (isDuplicate) continue;
-    inserts.attributes ??= [];
-    inserts.attributes.push({
-      targetId,
-      key: 'outfit',
-      value: outfit,
+      value: String(outfit),
       valueType: 'string',
+      sourceRange,
     });
   }
 
-  if (update.currentMainEventId) {
-    const isDuplicate = deduplicateAttribute(db, {
-      targetId: 'world',
-      key: 'currentMainEventId',
-      value: update.currentMainEventId,
-    });
-    if (!isDuplicate) {
-      inserts.attributes ??= [];
-      inserts.attributes.push({
-        targetId: 'world',
-        key: 'currentMainEventId',
-        value: update.currentMainEventId,
-        valueType: 'string',
-      });
-    }
-  }
-
+  // ── 5. 主线事件 / 事件名：去重写入 ──
   for (const [eventId, status] of Object.entries(update.mainEvents)) {
     if (!eventId) continue;
-    inserts.events ??= [];
-    inserts.events.push({
+    upsertEvent(db, {
       title: eventId,
-      description: `主线事件状态变更: ${status}`,
       relatedMainEventId: eventId,
+      description: `主线事件状态变更: ${status}`,
       outcome: status,
+      sourceRange,
     });
   }
 
   for (const [name, description] of Object.entries(update.events)) {
     if (!name) continue;
-    inserts.events ??= [];
-    inserts.events.push({
+    upsertEvent(db, {
       title: name,
       description: String(description ?? ''),
+      sourceRange,
     });
   }
 
+  // ── 6. 物品：合并语义 ──
   for (const item of update.itemsGained) {
     if (!item?.name) continue;
-    inserts.items ??= [];
-    inserts.items.push({
+    upsertItem(db, {
       name: item.name,
       ownerId: 'player',
       action: 'gained',
-      count: item.count,
+      count: item.count ?? 1,
       state: item.description,
+      sourceRange,
     });
   }
 
   for (const name of update.itemsLost) {
     if (!name) continue;
-    inserts.items ??= [];
-    inserts.items.push({
+    upsertItem(db, {
       name,
       ownerId: 'player',
       action: 'lost',
+      count: 1,
+      sourceRange,
     });
   }
 
-  const hasInserts = Object.values(inserts).some(arr => Array.isArray(arr) && arr.length > 0);
-  if (!hasInserts && sourceRange === undefined) return;
+  // ── 7. 推进游标 ──
+  if (sourceRange) {
+    db.lastProcessedIndex = Math.max(db.lastProcessedIndex, sourceRange[1]);
+  }
+}
 
-  const batch: MemoryWriteBatch = {
-    source: 'progress-commit',
-    inserts: hasInserts ? inserts : undefined,
-  };
-  if (sourceRange) batch.advanceCursor = sourceRange[1];
-  commitBatch(db, batch);
+/** 内部：读取某 targetId+key 的当前数值属性，缺省为 0。 */
+function readNumericAttribute(db: IslandMemoryDB, targetId: string, key: string): number {
+  const row = db.attributes.find(
+    a => !a.expired && a.targetId === targetId && a.key === key,
+  );
+  if (!row) return 0;
+  const n = Number(row.value);
+  return Number.isFinite(n) ? n : 0;
 }
 
 const SUMMARY_SOURCE_MAP = {

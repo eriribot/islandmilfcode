@@ -262,6 +262,28 @@ export type MemoryAttributeRow = MemoryBaseRow & {
   reason?: string;
 };
 
+// ── 世界状态表（单例：长度恒为 0 或 1） ──
+
+/**
+ * 全局世界状态。承载本应是单例的字段（当前时间、当前地点、当前主线事件等），
+ * 替代之前用 attributes 表 targetId='world' 伪装的 hack。
+ *
+ * 写入规则：worldState[0] 浅合并 patch；不存在时新建一行。
+ * 永远只保留一条活跃行（!expired）。
+ */
+export type MemoryWorldStateRow = MemoryBaseRow & {
+  /** 当前故事内时间（YYYY-MM-DD HH:mm） */
+  currentTime?: string;
+  /** 当前详细地点 */
+  currentLocation?: string;
+  /** 当前活跃主线事件 ID */
+  currentMainEventId?: string;
+  /** 故事开局日期（YYYY-MM-DD），初始化后禁止改动 */
+  storyStartDate?: string;
+  /** 当前天数（从 storyStartDate 起算第 1 天） */
+  currentDay?: number;
+};
+
 // ── 数据库容器 ──
 
 /** IslandMemoryDB：完整的内存数据库，跟存档一起序列化 */
@@ -285,6 +307,8 @@ export type IslandMemoryDB = {
   phoneMessages: MemoryPhoneMessageRow[];
   summaries: MemorySummaryRow[];
   attributes: MemoryAttributeRow[];
+  /** 单例世界状态：长度恒为 0 或 1。 */
+  worldState: MemoryWorldStateRow[];
 
   /** 扩展表注册位：未来新增表放这里，旧代码忽略，新代码 type-narrow 读取 */
   extensions?: Record<string, MemoryBaseRow[]>;

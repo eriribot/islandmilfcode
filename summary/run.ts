@@ -38,7 +38,9 @@ export type SummaryRunResult = {
   minorRan: boolean;
   minorAppliedProgress: boolean;
   majorRan: boolean;
+  majorAppliedProgress: boolean;
   globalRan: boolean;
+  globalAppliedProgress: boolean;
 };
 
 function normalizeFactKey(value: string): string {
@@ -170,7 +172,9 @@ export async function runSummary(
     minorRan: false,
     minorAppliedProgress: false,
     majorRan: false,
+    majorAppliedProgress: false,
     globalRan: false,
+    globalAppliedProgress: false,
   };
 
   const startTask = (detail: string) => {
@@ -265,6 +269,9 @@ export async function runSummary(
         });
         clearFailureState(store);
         commitSummaryToMemoryDB(ctx.memoryDB, 'major', text, [firstRange, lastRange]);
+        // 大摘要 prompt 也允许输出 <state_delta>（仅用于跨 minor 累积才看清的状态变化）。
+        // 99% 的 major 不会输出，但只要 AI 输出了就解析消费，省掉一次追加的 progress 副 API。
+        result.majorAppliedProgress = applyProgressFromMinorSummary(ctx, raw);
       } else {
         // 解析失败时恢复已消费的小摘要。
         store.minor.unshift(...consumed);
@@ -300,6 +307,8 @@ export async function runSummary(
         clearFailureState(store);
         const globalRange: [number, number] = [0, ctx.memoryDB?.lastProcessedIndex ?? store.lastSummarizedIndex];
         commitSummaryToMemoryDB(ctx.memoryDB, 'global', text, globalRange);
+        // 全局压缩 prompt 也允许输出 <state_delta>（仅用于跨 major 累积才看清的状态变化）。
+        result.globalAppliedProgress = applyProgressFromMinorSummary(ctx, raw);
       } else {
         store.major.unshift(...consumed);
       }
