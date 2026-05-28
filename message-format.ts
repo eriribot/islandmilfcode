@@ -91,11 +91,61 @@ function dedupeAdjacentReply(text: string) {
   return normalized;
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function hasClosingTagAfter(text: string, tagName: string, index: number) {
+  return new RegExp(`<\\/${escapeRegExp(tagName)}\\b[^>]*>`, 'i').test(text.slice(index));
+}
+
+function findNextSectionBoundary(text: string) {
+  const sectionNames = [PRIMARY_VISIBLE_TAG, ...FALLBACK_VISIBLE_TAGS].map(escapeRegExp).join('|');
+  const sectionTag = new RegExp(`<\\/?(${sectionNames})\\b[^>]*>`, 'gi');
+  let match: RegExpExecArray | null;
+
+  while ((match = sectionTag.exec(text))) {
+    const tagText = match[0];
+    const tagName = match[1] ?? '';
+
+    if (tagText.startsWith('</')) {
+      return match.index;
+    }
+
+    // 孤立的 <content> 常会出现在截断正文里；只有后面还能闭合时才把它当成下一段正文。
+    if (hasClosingTagAfter(text, tagName, sectionTag.lastIndex)) {
+      return match.index;
+    }
+  }
+
+  return -1;
+}
+
+function findClosedTaggedBody(raw: string, tagName: string) {
+  const tag = new RegExp(`<\\/?${escapeRegExp(tagName)}\\b[^>]*>`, 'gi');
+  let match: RegExpExecArray | null;
+
+  while ((match = tag.exec(raw))) {
+    if (match[0].startsWith('</')) continue;
+
+    const bodyStart = tag.lastIndex;
+    const next = tag.exec(raw);
+    if (!next) return null;
+
+    if (next[0].startsWith('</')) {
+      return raw.slice(bodyStart, next.index);
+    }
+
+    tag.lastIndex = next.index;
+  }
+
+  return null;
+}
+
 export function extractTaggedReply(raw: string, tagName: string, streaming: boolean) {
-  const closedTag = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i');
-  const closedMatch = raw.match(closedTag);
-  if (closedMatch) {
-    return dedupeAdjacentReply(stripMetaSubtags(closedMatch[1] ?? ''));
+  const closedBody = findClosedTaggedBody(raw, tagName);
+  if (closedBody != null) {
+    return dedupeAdjacentReply(stripMetaSubtags(closedBody));
   }
 
   if (streaming) {
@@ -111,9 +161,7 @@ export function extractTaggedReply(raw: string, tagName: string, streaming: bool
   if (openMatch?.index != null) {
     const afterOpen = raw.slice(openMatch.index + openMatch[0].length);
     // tucao / progress 等是正文内部的元标签，不能当成章节边界截断正文。
-    const nextSectionIndex = afterOpen.search(
-      /<\/?(?:content|正文|context|progress|current_event|roleplay_options)\b[^>]*>/i,
-    );
+    const nextSectionIndex = findNextSectionBoundary(afterOpen);
     const visible = nextSectionIndex >= 0 ? afterOpen.slice(0, nextSectionIndex) : afterOpen;
     return dedupeAdjacentReply(stripMetaSubtags(visible));
   }

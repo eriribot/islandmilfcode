@@ -268,7 +268,7 @@ function persistManualSave() {
 function downloadSaveBackup(saveId: string) {
   try {
     const json = exportSaveAsJson(saveId);
-    const blob = new Blob([json], { type: 'application/json' });
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1483,7 +1483,7 @@ function bindEvents() {
       return;
     }
     try {
-      const text = await file.text();
+      const text = new TextDecoder('utf-8').decode(await file.arrayBuffer());
       const result = importAllSavesFromJson(text);
       window.alert(`导入完成：成功 ${result.imported} 条，跳过 ${result.skipped} 条。即将刷新页面。`);
       location.reload();
