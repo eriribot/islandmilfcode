@@ -735,25 +735,16 @@ export async function submitMessage(
           );
         }
       } else if (ctx.summaryApiConfig && (postTurnMode === 'major' || postTurnMode === 'global')) {
-        // major/global 摘要也允许在同一发返回里输出 <state_delta>。
-        // 摘要 prompt 已注入 onProgressUpdate，applyFullProgressUpdate 会同步 statusData。
-        // 摘要解出 progress → 跳过追加 progress 副 API；没解出（绝大多数轮次）→ 兜底跑一次保证变量更新不丢。
-        const summaryResult = await runSummary(summaryCtx, postTurnMode).catch(() => null);
-        const appliedFromSummary = postTurnMode === 'major'
-          ? !!summaryResult?.majorAppliedProgress
-          : !!summaryResult?.globalAppliedProgress;
-        if (appliedFromSummary) {
-          summaryAppliedProgress = true;
-        }
-        if (!summaryAppliedProgress) {
-          await runSecondaryProgressUpdate(
-            ctx,
-            `progress-after-${postTurnMode}-${crypto.randomUUID()}`,
-            buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
-              includePhoneMessages: true,
-            }),
-          );
-        }
+        await runSummary(summaryCtx, postTurnMode).catch(() => {
+          /* 摘要错误在内部处理 */
+        });
+        await runSecondaryProgressUpdate(
+          ctx,
+          `progress-after-${postTurnMode}-${crypto.randomUUID()}`,
+          buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
+            includePhoneMessages: true,
+          }),
+        );
       } else if (ctx.summaryApiConfig) {
         await runSecondaryProgressUpdate(
           ctx,
