@@ -1,0 +1,80 @@
+import type { StatusData, TargetStatus } from './types';
+
+export const SAE_03_6 = 'SAE_03-6';
+export const SAE_03_7A = 'SAE_03-7A';
+export const SAE_03_7B = 'SAE_03-7B';
+export const SAE_03_8 = 'SAE_03-8';
+
+export type Sae0307Route = typeof SAE_03_7A | typeof SAE_03_7B | typeof SAE_03_8;
+
+function getTargetHaystack(target: TargetStatus) {
+  const metaName = typeof target.meta?.worldbookEntryName === 'string' ? target.meta.worldbookEntryName : '';
+  return [target.id, target.name, target.alias, metaName].filter(Boolean).join(' ');
+}
+
+export function findEririTarget(statusData: StatusData | null | undefined): TargetStatus | null {
+  return (
+    statusData?.targets.find(target => /英梨梨|泽村|澤村|eriri|sawamura/i.test(getTargetHaystack(target))) ?? null
+  );
+}
+
+function asScore(value: unknown, fallback: number) {
+  const score = Number(value);
+  return Number.isFinite(score) ? score : fallback;
+}
+
+export function getSae0307Route(statusData: StatusData | null | undefined): Sae0307Route {
+  const eriri = findEririTarget(statusData);
+  if (!eriri) return SAE_03_7A;
+
+  const affinity = asScore(eriri.affinity, 0);
+  const obsession = asScore(eriri.obsession, 80);
+
+  if (obsession >= 30) return SAE_03_7A;
+  if (affinity >= 60) return SAE_03_7B;
+  return SAE_03_8;
+}
+
+export function isSae0307BranchId(eventId: string) {
+  return eventId === SAE_03_7A || eventId === SAE_03_7B;
+}
+
+function getDatePart(value: string) {
+  return value.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
+}
+
+function isFinishedMainEventStatus(status: string | undefined) {
+  return /已结束|跳过|延后|已完成/.test(String(status ?? '').trim());
+}
+
+export function isSae0306Resolved(statusData: StatusData | null | undefined) {
+  return isFinishedMainEventStatus(statusData?.world.mainEvents?.[SAE_03_6]);
+}
+
+export function isPlotEventAllowedByRoute(eventId: string, statusData: StatusData | null | undefined) {
+  if (!statusData) return true;
+
+  const currentId = statusData.world.currentMainEventId ?? '';
+  if (eventId === currentId && !isSae0307BranchId(eventId) && eventId !== SAE_03_8) return true;
+
+  const route = getSae0307Route(statusData);
+  if (isSae0307BranchId(eventId)) {
+    return isSae0306Resolved(statusData) && eventId === route;
+  }
+
+  if (eventId === SAE_03_8) {
+    if (!isSae0306Resolved(statusData)) return false;
+    if (route === SAE_03_8) return true;
+    if (isSae0307BranchId(currentId)) return true;
+
+    const mainEvents = statusData.world.mainEvents ?? {};
+    if (isFinishedMainEventStatus(mainEvents[SAE_03_7A]) || isFinishedMainEventStatus(mainEvents[SAE_03_7B])) {
+      return true;
+    }
+
+    const currentDate = getDatePart(statusData.world.currentTime);
+    return Boolean(currentDate && currentDate >= '2012-08-13');
+  }
+
+  return true;
+}

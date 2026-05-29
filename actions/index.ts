@@ -53,6 +53,7 @@ import {
 import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
 import { indexPhoneMessage } from '../memorydatabase/phone-repository';
 import type { IslandMemoryDB } from '../memorydatabase/types';
+import { isPlotEventAllowedByRoute } from '../plot-routing';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
@@ -185,6 +186,7 @@ function applyLocalWorldHintsFromUserInput(ctx: ActionContext, userInput: string
 function sanitizeProgressAgainstPlotLibrary(
   update: ProgressUpdate,
   plotLibrary: PlotLibrary | null | undefined,
+  statusData?: StatusData | null,
 ): ProgressUpdate {
   const whitelist = plotLibrary ? new Set(Object.keys(plotLibrary.events)) : null;
   // 没有加载到剧情库（初始化中 / 世界书未挂载）时放行，避免误伤正常流程。
@@ -192,15 +194,20 @@ function sanitizeProgressAgainstPlotLibrary(
 
   const sanitizedMainEvents: Record<string, string> = {};
   for (const [id, status] of Object.entries(update.mainEvents)) {
-    if (whitelist.has(id)) {
+    if (whitelist.has(id) && isPlotEventAllowedByRoute(id, statusData)) {
       sanitizedMainEvents[id] = status;
+    } else if (whitelist.has(id)) {
+      console.warn('[progress-guard] drop route-blocked mainEvent id:', id);
     } else {
       console.warn('[progress-guard] drop unknown mainEvent id:', id);
     }
   }
 
   let sanitizedCurrentId = update.currentMainEventId;
-  if (sanitizedCurrentId && !whitelist.has(sanitizedCurrentId)) {
+  if (sanitizedCurrentId && !isPlotEventAllowedByRoute(sanitizedCurrentId, statusData)) {
+    console.warn('[progress-guard] drop route-blocked currentMainEventId:', sanitizedCurrentId);
+    sanitizedCurrentId = undefined;
+  } else if (sanitizedCurrentId && !whitelist.has(sanitizedCurrentId)) {
     console.warn('[progress-guard] drop unknown currentMainEventId:', sanitizedCurrentId);
     sanitizedCurrentId = undefined;
   }
@@ -430,7 +437,7 @@ function applyTargetedObsessionDeltas(ctx: ActionContext, update: ProgressUpdate
 
 function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | null, targetId?: string | null) {
   if (!update) return false;
-  const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary);
+  const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary, ctx.state.statusData);
   const legacyDelta = clampLegacyAffinityDelta(ctx, sanitized, targetId);
   // 主场景没有明确对象时，丢弃旧单目标着装更新，避免误写到 activeTargetId。
   const outfitChanges = targetId ? sanitized.outfitChanges : {};

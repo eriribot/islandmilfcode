@@ -11,28 +11,38 @@ import { createDefaultMemoryDB } from './defaults';
 export function hydrateSummaryStoreFromMemoryDB(
   db: IslandMemoryDB,
 ): Pick<SummaryStore, 'global' | 'major' | 'minor' | 'keyFacts'> {
-  const minor: SummaryEntry[] = [];
-  const major: SummaryEntry[] = [];
   let global: string | null = null;
   let globalCreatedAt = '';
   const keyFacts: KeyFact[] = [];
 
-  // ── 从 summaries 表恢复摘要 ──
+  // ── 第一遍：按 range[0] 去重，保留 createdAt 最新一条；同时收集 global ──
+  // db.summaries 里历史上可能堆积大量同范围的 minor / major（旧 bug：写时不 expire 旧条）。
+  // 这里用 Map<range[0], SummaryEntry> 取每个起点最新的一条，避免 UI 重复展示。
+  const minorByStart = new Map<number, SummaryEntry & { _ts: string }>();
+  const majorByStart = new Map<number, SummaryEntry & { _ts: string }>();
   for (const row of db.summaries) {
     if (row.expired) continue;
-
+    const startKey = Number(row.range?.[0] ?? 0);
     if (row.level === 'minor') {
-      minor.push({
-        range: row.range,
-        text: row.text,
-        createdAt: row.createdAt,
-      });
+      const prev = minorByStart.get(startKey);
+      if (!prev || row.createdAt > prev._ts) {
+        minorByStart.set(startKey, {
+          range: row.range,
+          text: row.text,
+          createdAt: row.createdAt,
+          _ts: row.createdAt,
+        });
+      }
     } else if (row.level === 'major') {
-      major.push({
-        range: row.range,
-        text: row.text,
-        createdAt: row.createdAt,
-      });
+      const prev = majorByStart.get(startKey);
+      if (!prev || row.createdAt > prev._ts) {
+        majorByStart.set(startKey, {
+          range: row.range,
+          text: row.text,
+          createdAt: row.createdAt,
+          _ts: row.createdAt,
+        });
+      }
     } else if (row.level === 'global') {
       // 只保留最新的全局摘要（按 createdAt 比较）
       if (!global || row.createdAt > globalCreatedAt) {
@@ -41,6 +51,25 @@ export function hydrateSummaryStoreFromMemoryDB(
       }
     }
   }
+
+  // ── 第二遍：剔除已被 major 覆盖范围的 minor（避免显示双份） ──
+  // 仅按相同 range[0] 去重 major，不做"包含关系"判断——
+  // 因为历史 bug 写出过 92-156 这种跨度异常大的怪物 major，如果按"被包含就丢弃"，
+  // 它会反过来把 82-101、102-121 这些正常 major 全吞掉，剩一条怪物。
+  // 保守做法：只折叠完全相同起点的重复条目。
+  const majorList = [...majorByStart.values()].sort((a, b) => a.range[0] - b.range[0]);
+  const minorList = [...minorByStart.values()]
+    .filter(m => !majorList.some(M => m.range[0] >= M.range[0] && m.range[1] <= M.range[1]))
+    .sort((a, b) => a.range[0] - b.range[0]);
+
+  const major: SummaryEntry[] = majorList.map(({ _ts, ...rest }) => {
+    void _ts;
+    return rest;
+  });
+  const minor: SummaryEntry[] = minorList.map(({ _ts, ...rest }) => {
+    void _ts;
+    return rest;
+  });
 
   // ── 兜底：如果没有 global 但有 major，合并 major 作为临时 global ──
   // 这修复了旧存档迁移后 global 丢失的问题

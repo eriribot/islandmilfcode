@@ -3,6 +3,28 @@ import { extractTucaoBlocks, getReaderMessages, getVisibleMessageText } from './
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
 import type { SummaryStore } from './summary/types';
 import type { AppState, BackgroundTaskState, ReaderContextMenuState, StatusData, UiMessage } from './types';
+
+/**
+ * 把摘要 range（对话序号，不含系统/streaming 楼层）映射成 UI 楼层号（getReaderMessages 渲染出的 #N）。
+ * 摘要内部存的 range 用对话序号是为了让 rerollSummaryEntry 能正确切片，不能改；
+ * 但展示给用户看的应当是 UI 上能看到的楼层号，否则 #155 与"消息 140-144"对不上。
+ */
+function mapConversationRangeToUiRange(
+  uiMessages: UiMessage[],
+  range: [number, number],
+): [number, number] {
+  // 与 summary/run.ts 的 getConversationMessages 保持一致：!streaming && (user|assistant)
+  const conversationUiIndices: number[] = [];
+  uiMessages.forEach((m, idx) => {
+    if (!m.streaming && (m.role === 'user' || m.role === 'assistant')) {
+      conversationUiIndices.push(idx);
+    }
+  });
+  // UI 楼层号从 1 开始（与渲染里 #${i+1} 对齐），所以 +1。
+  const startUi = (conversationUiIndices[range[0]] ?? range[0]) + 1;
+  const endUi = (conversationUiIndices[range[1]] ?? range[1]) + 1;
+  return [startUi, endUi];
+}
 import { formatDate, formatTime, getInventoryIcon } from './variables/normalize';
 
 export function paginateMessage(text: string, role: UiMessage['role']) {
@@ -515,13 +537,13 @@ export function renderSummaryPanel(state: AppState) {
           </div>
         </div>
 
-        ${renderMemorySummarySection(store, state.summarizing)}
+        ${renderMemorySummarySection(store, state.summarizing, state.uiMessages)}
       </div>
     </section>
   `;
 }
 
-function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): string {
+function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, uiMessages: UiMessage[]): string {
   let errorHtml = '';
   if (store.lastError) {
     errorHtml = `
@@ -552,17 +574,17 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
     ? `<div class="subsection">
         <div class="subsection-title">大总结 <span style="opacity:0.5;font-size:11px">(${store.major.length}条)</span></div>
         <div class="chip-list">${store.major
-          .map(
-            (e, i) =>
-              `<div class="chip-card" style="border-left:3px solid var(--accent-primary,#7c6ca8)">
+          .map((e, i) => {
+            const [uiStart, uiEnd] = mapConversationRangeToUiRange(uiMessages, e.range);
+            return `<div class="chip-card" style="border-left:3px solid var(--accent-primary,#7c6ca8)">
                 <div style="display:flex;justify-content:space-between;align-items:center">
-                  <strong>#${i + 1} · 消息 ${e.range[0]}-${e.range[1]}</strong>
+                  <strong>#${i + 1} · 楼层 ${uiStart}-${uiEnd}</strong>
                   <button class="mini-btn" data-action="summary-reroll" data-reroll-level="major" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>🎲</button>
                 </div>
                 <p>${escapeHtml(e.text)}</p>
                 <div style="font-size:10px;opacity:0.45;margin-top:4px">${escapeHtml(e.createdAt.slice(0, 16).replace('T', ' '))}</div>
-              </div>`,
-          )
+              </div>`;
+          })
           .join('')}
         </div>
       </div>`
@@ -572,29 +594,48 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean): 
     ? `<div class="subsection">
         <div class="subsection-title">小总结 <span style="opacity:0.5;font-size:11px">(${store.minor.length}条)</span></div>
         <div class="chip-list">${store.minor
-          .map(
-            (e, i) =>
-              `<div class="chip-card">
+          .map((e, i) => {
+            const [uiStart, uiEnd] = mapConversationRangeToUiRange(uiMessages, e.range);
+            return `<div class="chip-card">
                 <div style="display:flex;justify-content:space-between;align-items:center">
-                  <strong>#${i + 1} · 消息 ${e.range[0]}-${e.range[1]}</strong>
+                  <strong>#${i + 1} · 楼层 ${uiStart}-${uiEnd}</strong>
                   <button class="mini-btn" data-action="summary-reroll" data-reroll-level="minor" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>🎲</button>
                 </div>
                 <p>${escapeHtml(e.text)}</p>
                 <div style="font-size:10px;opacity:0.45;margin-top:4px">${escapeHtml(e.createdAt.slice(0, 16).replace('T', ' '))}</div>
-              </div>`,
-          )
+              </div>`;
+          })
           .join('')}
         </div>
       </div>`
     : '';
 
   const hasAny = store.global || store.major.length || store.minor.length;
-  const statusLine = `已总结到第 ${store.lastSummarizedIndex} 条 · 小总结 ${store.minor.length} · 大总结 ${store.major.length} · 全局 ${store.global ? '有' : '无'}`;
+  // lastSummarizedIndex 是对话序号，把它也映射成 UI 楼层号让用户能直接对上 #N。
+  const lastSummarizedUi = store.lastSummarizedIndex > 0
+    ? mapConversationRangeToUiRange(uiMessages, [store.lastSummarizedIndex - 1, store.lastSummarizedIndex - 1])[1]
+    : 0;
+  // 计算未总结的对话差额。conversationCount 是非 streaming 的 user/assistant 消息数。
+  // pending 是当前对话总数减去已总结进度。pending >= 5 时显示提醒，让用户能手动点小总结补救。
+  const conversationCount = uiMessages.filter(
+    m => !m.streaming && (m.role === 'user' || m.role === 'assistant'),
+  ).length;
+  const pendingCount = Math.max(0, conversationCount - store.lastSummarizedIndex);
+  const statusLine = `已总结到楼层 #${lastSummarizedUi} · 小总结 ${store.minor.length} · 大总结 ${store.major.length} · 全局 ${store.global ? '有' : '无'}`;
+  const pendingHint = pendingCount >= 5
+    ? `<div class="summary-pending" style="font-size:11px;color:#c97c5d;margin-bottom:8px;padding:4px 8px;background:rgba(201,124,93,0.08);border-radius:6px">还有 <strong>${pendingCount}</strong> 条对话未被小总结吞掉，可点下方「小总结」补救。</div>`
+    : '';
+  // 大总结补救提示：minor 堆到 4 条以上就该升级 major。
+  const majorPendingHint = store.minor.length >= 4
+    ? `<div class="summary-pending" style="font-size:11px;color:#7c6ca8;margin-bottom:8px;padding:4px 8px;background:rgba(124,108,168,0.08);border-radius:6px">小总结已堆 <strong>${store.minor.length}</strong> 条，可点下方「大总结」一次性消化。</div>`
+    : '';
 
   return `
     <div class="subsection">
       <div class="subsection-title">记忆摘要 ${summarizing ? '<span style="opacity:0.6">总结中…</span>' : ''}</div>
       <div class="summary-status" style="font-size:11px;opacity:0.7;margin-bottom:8px">${statusLine}</div>
+      ${pendingHint}
+      ${majorPendingHint}
       ${errorHtml}
       ${hasAny ? [globalHtml, majorHtml, minorHtml].filter(Boolean).join('') : '<div class="empty-card">还没有生成过摘要。</div>'}
       <div class="summary-actions" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">

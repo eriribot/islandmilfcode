@@ -5,6 +5,7 @@ import { renderCharacterArchivePanel } from './archive';
 import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute } from './types';
 import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
 import { renderMemoryEditor } from '../memorydatabase/editor';
+import { isPlotEventAllowedByRoute } from '../plot-routing';
 
 type PhoneCharacterThemeId = PhoneCharacterId;
 
@@ -430,6 +431,10 @@ function collectCalendarEvents(state: AppState): CalendarEventItem[] {
     .filter((event): event is PlotEventCard & { schedule: NonNullable<PlotEventCard['schedule']> } =>
       Boolean(event.schedule?.date),
     )
+    .filter(event => {
+      const status = state.statusData.world.mainEvents?.[event.id] ?? '';
+      return getCalendarStatusClass(status) === 'is-finished' || isPlotEventAllowedByRoute(event.id, state.statusData);
+    })
     .map(event => buildCalendarEventItem(event, state.statusData))
     .sort((a, b) => a.date.localeCompare(b.date) || a.endDate.localeCompare(b.endDate) || a.id.localeCompare(b.id));
 }

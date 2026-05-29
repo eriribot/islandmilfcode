@@ -18,6 +18,13 @@ import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import { migrateSummaryStoreToMemoryDB, hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
 import { sweepLegacyMemoryDB } from '../memorydatabase/sweep';
+import {
+  deletePayloadSync,
+  readPayloadSync,
+  readSaveIndexSync,
+  writePayloadSync,
+  writeSaveIndexSync,
+} from './save-store';
 
 const SAVE_INDEX_STORAGE_KEY = 'islandmilfcode:save-index:v2';
 const SAVE_PAYLOAD_STORAGE_PREFIX = 'islandmilfcode:save-payload:v2:';
@@ -149,8 +156,10 @@ function safeReadJson<T>(key: string, fallback: T): T {
 function safeWriteJson(key: string, value: unknown): void {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* 忽略容量限制错误 */
+  } catch (err) {
+    // payload/index 已迁到 IndexedDB；localStorage 现在只承载 active-id 等极小 key。
+    // 如果连这点都写不进去，多半 quota/隐私模式真有问题，把错暴出来。
+    console.error('[saves] localStorage.setItem failed:', key, err);
   }
 }
 
@@ -285,7 +294,7 @@ function migrateLegacySavesIfNeeded(): void {
 
 function readSaveIndex(): SaveIndexRecord {
   migrateLegacySavesIfNeeded();
-  const rawIndex = safeReadJson<SaveIndexRecord>(SAVE_INDEX_STORAGE_KEY, {});
+  const rawIndex = readSaveIndexSync() as unknown as SaveIndexRecord;
   const normalizedIndex: SaveIndexRecord = {};
   let changed = false;
   for (const [saveId, meta] of Object.entries(rawIndex)) {
@@ -311,15 +320,15 @@ function readSaveIndex(): SaveIndexRecord {
 }
 
 function writeSaveIndex(index: SaveIndexRecord): void {
-  safeWriteJson(SAVE_INDEX_STORAGE_KEY, index);
+  writeSaveIndexSync(index as unknown as Record<string, unknown>);
 }
 
 function writePayload(payload: SavePayload): void {
-  safeWriteJson(getPayloadStorageKey(payload.saveId), payload);
+  writePayloadSync(payload.saveId, payload as unknown as Record<string, unknown>);
 }
 
 function readPayload(saveId: string): SavePayload | null {
-  const payload = safeReadJson<SavePayload | null>(getPayloadStorageKey(saveId), null);
+  const payload = readPayloadSync(saveId) as unknown as SavePayload | null;
   if (!payload || typeof payload !== 'object') return null;
 
   const runId = String(payload.runId || payload.gameState?.runId || '');
@@ -574,7 +583,7 @@ export function deleteSave(saveId: string): void {
   const index = readSaveIndex();
   delete index[saveId];
   writeSaveIndex(index);
-  safeRemove(getPayloadStorageKey(saveId));
+  deletePayloadSync(saveId);
   if (getActiveSaveId() === saveId) {
     clearActiveSaveId();
   }

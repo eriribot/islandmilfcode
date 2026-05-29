@@ -8,6 +8,7 @@ import {
   hasObsessionAxisByName,
   OBSESSION_TARGET_DISPLAY_NAMES,
 } from './relationship';
+import { isPlotEventAllowedByRoute } from './plot-routing';
 import type { KeyFact, KeyFactCategory, SummaryStore } from './summary/types';
 import { KEY_FACT_CATEGORY_LABEL } from './summary/types';
 import type {
@@ -372,6 +373,7 @@ function buildPlotWhitelist(plotLibrary: PlotLibrary, statusData?: StatusData) {
   const all = Object.values(plotLibrary.events).filter(event => {
     if (!statusData) return true;
     if (event.id === currentId) return true;
+    if (!isPlotEventAllowedByRoute(event.id, statusData)) return false;
 
     const status = normalizeMainEventStatus(mainEvents[event.id]);
     if (status === MAIN_EVENT_FINISHED) return false;
@@ -404,6 +406,7 @@ function pickNextUpcomingEvent(statusData: StatusData, plotLibrary: PlotLibrary)
   const currentDate = getDatePart(statusData.world.currentTime);
   const candidates = Object.values(plotLibrary.events)
     .filter(event => Boolean(event.schedule?.date))
+    .filter(event => isPlotEventAllowedByRoute(event.id, statusData))
     .filter(event => normalizeMainEventStatus(mainEvents[event.id]) === MAIN_EVENT_NOT_STARTED)
     .filter(event => !currentDate || (event.schedule!.endDate ?? event.schedule!.date) >= currentDate)
     .sort((a, b) => a.schedule!.date.localeCompare(b.schedule!.date) || a.id.localeCompare(b.id));

@@ -1,4 +1,5 @@
 import type { ProgressUpdate } from '../message-format';
+import { SAE_03_8, isPlotEventAllowedByRoute, isSae0307BranchId } from '../plot-routing';
 import type { PlotEventCard, PlotLibrary, StatusData } from '../types';
 import { affinityStage, clamp, obsessionStage } from './format';
 
@@ -34,12 +35,13 @@ function normalizeMainEventStatus(status: string | undefined): string {
   return MAIN_EVENT_NOT_STARTED;
 }
 
-function buildSchedule(plotLibrary: PlotLibrary | null | undefined): ScheduledEvent[] {
+function buildSchedule(plotLibrary: PlotLibrary | null | undefined, statusData?: StatusData | null): ScheduledEvent[] {
   if (!plotLibrary) return [];
   const events = Object.values(plotLibrary.events)
     .filter((event): event is PlotEventCard & { schedule: NonNullable<PlotEventCard['schedule']> } =>
       Boolean(event.schedule?.date),
     )
+    .filter(event => !statusData || isPlotEventAllowedByRoute(event.id, statusData))
     .map(event => ({
       id: event.id,
       date: event.schedule.date,
@@ -282,7 +284,7 @@ function closeEarlierRunningMainEvents(
 }
 
 export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary | null): boolean {
-  const schedule = buildSchedule(plotLibrary);
+  const schedule = buildSchedule(plotLibrary, statusData);
   const mainEvents = (statusData.world.mainEvents ??= {});
   const currentDate = getDatePart(statusData.world.currentTime);
   let changed = false;
@@ -315,6 +317,18 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
     }
   }
 
+  for (const id of Object.keys(mainEvents)) {
+    if ((isSae0307BranchId(id) || id === SAE_03_8) && !isPlotEventAllowedByRoute(id, statusData)) {
+      if (normalizeMainEventStatus(mainEvents[id]) === MAIN_EVENT_RUNNING) {
+        mainEvents[id] = MAIN_EVENT_NOT_STARTED;
+        if (statusData.world.currentMainEventId === id) {
+          statusData.world.currentMainEventId = '';
+        }
+        changed = true;
+      }
+    }
+  }
+
   if (syncCurrentMainEvent(statusData, schedule)) {
     changed = true;
   }
@@ -334,7 +348,7 @@ export function applyProgressUpdate(
   targetId?: string | null,
   plotLibrary?: PlotLibrary | null,
 ): void {
-  const schedule = buildSchedule(plotLibrary);
+  const schedule = buildSchedule(plotLibrary, statusData);
 
   if (update.time) {
     statusData.world.currentTime = normalizeIncomingTime(update.time, statusData.world.currentTime);

@@ -39,6 +39,7 @@ import {
   setActiveSaveId,
   writeAutosave,
 } from './state/saves';
+import { flushSaveStore, initSaveStore } from './state/save-store';
 import {
   clampFocusedMessageIndex,
   createInitialState,
@@ -251,7 +252,7 @@ function persistToSave() {
   }
 }
 
-function persistManualSave() {
+async function persistManualSave() {
   if (!state.activeRunId) return;
   const meta = createManualSave({
     runId: state.activeRunId,
@@ -263,9 +264,13 @@ function persistManualSave() {
   });
   state.activeSaveId = meta.saveId;
   setActiveSaveId(meta.saveId);
+  // 用户主动存档：等 IndexedDB 落盘完成，避免下一秒刷新就丢。
+  await flushSaveStore();
 }
 
-function downloadSaveBackup(saveId: string) {
+async function downloadSaveBackup(saveId: string) {
+  // 导出前确保已入队的写入全部落盘，再去读。
+  await flushSaveStore();
   try {
     const json = exportSaveAsJson(saveId);
     const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
@@ -1458,8 +1463,8 @@ function bindEvents() {
   root?.querySelector<HTMLButtonElement>('[data-action="return-to-title"]')?.addEventListener('click', () => {
     returnToTitle();
   });
-  root?.querySelector<HTMLButtonElement>('[data-action="manual-save"]')?.addEventListener('click', () => {
-    persistManualSave();
+  root?.querySelector<HTMLButtonElement>('[data-action="manual-save"]')?.addEventListener('click', async () => {
+    await persistManualSave();
     render();
   });
   root?.querySelector<HTMLButtonElement>('[data-action="export-save"]')?.addEventListener('click', () => {
@@ -1531,27 +1536,59 @@ function bindEvents() {
     if (state.summarizing) return;
     state.summarizing = true;
     render();
-    runSummary(
-      {
-        win,
-        state,
-        summaryStore: state.summaryStore,
-        summaryApiConfig: state.summaryApiConfig,
-        uiMessages: state.uiMessages,
-        onTaskUpdated: () => render(),
-        onStoreUpdated: () => {
-          persistToSave();
-          state.summarizing = false;
-          render();
-        },
-        memoryDB: state.memoryDB,
-        getFactAnchor: () => buildFactAnchorFromStatus(state.statusData),
+    void runSummaryChain(mode);
+  }
+
+  // 一键补救：
+  // - 'minor'：循环跑到 pending < 5（吞掉所有未总结对话）
+  // - 'major'：循环跑到 minor.length < 4（消化所有可升级的小总结）
+  // - 'auto'：单次（保留 runSummary 内部的 auto 级联逻辑）
+  async function runSummaryChain(mode: 'auto' | 'minor' | 'major') {
+    const ctxArg = {
+      win,
+      state,
+      summaryStore: state.summaryStore,
+      summaryApiConfig: state.summaryApiConfig,
+      uiMessages: state.uiMessages,
+      onTaskUpdated: () => render(),
+      onStoreUpdated: () => {
+        persistToSave();
+        render();
       },
-      mode,
-    ).catch(() => {
+      memoryDB: state.memoryDB,
+      getFactAnchor: () => buildFactAnchorFromStatus(state.statusData),
+    };
+    try {
+      const result = await runSummary(ctxArg, mode);
+      if (mode === 'minor') {
+        let safety = 20;
+        while (safety-- > 0) {
+          if (countPendingConversations() < 5) break;
+          if (state.summaryStore.autoPaused) break;
+          await runSummary(ctxArg, 'minor');
+        }
+      } else if (mode === 'major') {
+        let safety = 10;
+        while (safety-- > 0) {
+          if (state.summaryStore.minor.length < 4) break;
+          if (state.summaryStore.autoPaused) break;
+          await runSummary(ctxArg, 'major');
+        }
+      }
+      void result;
+    } catch (err) {
+      console.warn('[triggerSummary] failed:', err);
+    } finally {
       state.summarizing = false;
       render();
-    });
+    }
+  }
+
+  function countPendingConversations() {
+    const total = state.uiMessages.filter(
+      m => !m.streaming && (m.role === 'user' || m.role === 'assistant'),
+    ).length;
+    return Math.max(0, total - state.summaryStore.lastSummarizedIndex);
   }
 
   root
@@ -1762,11 +1799,21 @@ window.addEventListener('keydown', event => {
 // ── Async init ──
 
 async function init() {
+  // 必须在任何同步存档读写（render 之前）完成；内部会一次性把 localStorage 旧数据迁到 IndexedDB。
+  await initSaveStore();
   adapter = await createVariableAdapter(win);
   state.summaryApiConfig = loadSummaryApiConfig();
   setupStreamingHooks(ctx, eventStops);
   setActiveRunId(null);
   clearActiveSaveId();
+  // 页面切到后台 / 关闭前尝试 flush 未落盘的写入。IndexedDB 写本身很快（毫秒级），通常都能完成。
+  if (typeof window !== 'undefined') {
+    window.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        flushSaveStore().catch(err => console.warn('[init] flush on hidden failed:', err));
+      }
+    });
+  }
   render();
 }
 init();

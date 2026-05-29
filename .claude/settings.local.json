@@ -38,7 +38,11 @@
       "Bash(cat *)",
       "Bash(pnpm exec *)",
       "PowerShell(git *)",
-      "PowerShell(Test-Path *)"
+      "PowerShell(Test-Path *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:l-s-secondbase.fandom.com)",
+      "WebSearch",
+      "Bash(node *)"
     ]
   }
 }
