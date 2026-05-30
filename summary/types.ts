@@ -152,6 +152,8 @@ function buildSexStatusForActiveTarget(statusData: {
   const counters: Array<{ field: string; value: number }> = [];
   if (rawCounters && typeof rawCounters === 'object') {
     for (const [field, value] of Object.entries(rawCounters as Record<string, unknown>)) {
+      // 经验人数（伴侣数）与“依恋感”设计意图冲突，旧存档残留也不回注 prompt。
+      if (field === '经验人数') continue;
       const n = Number(value);
       if (Number.isFinite(n) && n > 0) counters.push({ field, value: n });
     }

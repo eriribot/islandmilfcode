@@ -6,6 +6,8 @@ import { affinityStage, clamp, obsessionStage } from './format';
 export { defaultStatusData, defaultTarget } from './defaults';
 export {
   affinityStage,
+  attachmentStage,
+  attachmentValue,
   clamp,
   dependencyStage,
   formatDate,

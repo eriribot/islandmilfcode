@@ -129,8 +129,8 @@ export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnch
         '',
         '<key_facts> 行格式：`[类别] 主体 | 内容`（类别限定：承诺、秘密、关系、物品、事件、地点、设定）。',
         '  ⚠ [关系] 类别特殊规则：内容必须是简短的印象标签（2~10字），不要写完整句子。',
-        '  格式：`[关系] A → B | 标签`，表示 A 对 B 形成的印象。一条只写一个标签，多个印象分多行。',
-        '  示例：`[关系] 英梨梨 → User | 幽默`、`[关系] 英梨梨 → User | 懂得寻找乐趣的高中生`、`[关系] 加藤惠 → User | 话多`。',
+        '  格式：`[关系] A → B | 标签 | 极性`，表示 A 对 B 形成的印象。极性取 + / - / 0（正面好感 / 负面反感 / 中性观察），省略时按中性处理。一条只写一个标签，多个印象分多行。',
+        '  示例：`[关系] 英梨梨 → User | 幽默 | +`、`[关系] 英梨梨 → User | 太爱多管闲事 | -`、`[关系] 加藤惠 → User | 话多 | 0`。',
         '<state_delta> 可用字段（每行一个 key:value，只写变化字段，未变化省略）：',
         '  时间:YYYY-MM-DD HH:mm（必须完整，禁止 `4月16日` 或缺 HH:mm 的格式）',
         '  地点:新地点',
@@ -148,7 +148,7 @@ export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnch
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气；例：五维.体贴:+1）',
         '  着装.部位:描述（旧单目标格式；主场景没有明确对象时不要输出）',
         '  贞操.角色名:已失去（仅当正文明确发生破除时输出；无好感/旧情门槛，只看正文是否真的发生。单向不可逆，禁止写"完璧/处女"复位）',
-        '  X次数.角色名:+N（身体开发硬统计，X 为开放字段：经验人数/接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数；只在正文明确发生对应行为时 +N，禁止凭空累加）',
+        '  X次数.角色名:+N（亲密接触硬统计，X 为开放字段：接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数；只在正文明确发生对应行为时 +N，禁止凭空累加。不统计经验人数/伴侣数）',
         '  当前事件:事件ID（设置当前主线事件；清空用 当前事件:无）',
         '  主线事件.事件ID:状态（未触发/进行中/已结束/跳过/延后）',
         '  事件:本轮剧情=简短概括',
@@ -164,7 +164,7 @@ export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnch
         '</summary>',
         '<key_facts>',
         '[承诺] User → 英梨梨 | 下周一请她吃蛋包饭',
-        '[关系] 英梨梨 → User | 还算靠谱',
+        '[关系] 英梨梨 → User | 还算靠谱 | +',
         '[物品] 蛋包饭券 | User 答应下周一请英梨梨吃蛋包饭',
         '</key_facts>',
         '<state_delta>',
@@ -316,25 +316,42 @@ export function parseKeyFactsFromSummary(raw: string): Array<Pick<KeyFact, 'cate
     if (!match) continue;
     const categoryKey = match[1].trim();
     const subject = match[2].trim();
-    const content = match[3].trim();
+    let content = match[3].trim();
     if (!subject || !content) continue;
     const category = KEY_FACT_CATEGORY_MAP[categoryKey] ?? KEY_FACT_CATEGORY_MAP[categoryKey.toLowerCase()];
     if (!category) continue;
+    // 关系行的内容尾部可能带极性标记（`标签 | +`），facts 表只存标签本身，极性归 impressions 表用。
+    if (category === 'relation') content = content.split(/[|｜]/)[0].trim();
+    if (!content) continue;
     facts.push({ category, subject, content });
   }
   return facts;
 }
 
-/** 印象抽取结果：source 是持有印象的角色名，subject 是印象对象（通常 User），label 是简短印象标签。 */
+/** 印象抽取结果：source 是持有印象的角色名，subject 是印象对象（通常 User），label 是简短印象标签，polarity 是情感极性。 */
 export type ParsedImpression = {
   source: string;
   subject: string;
   label: string;
+  polarity: -1 | 0 | 1;
 };
 
+/** 把 `标签 | 极性` 尾部的极性标记拆出来；无标记按中性。兼容 +/正、-/负、0/中。 */
+function splitLabelPolarity(rawTail: string): { label: string; polarity: -1 | 0 | 1 } {
+  const segs = rawTail.split(/[|｜]/).map(s => s.trim()).filter(Boolean);
+  if (segs.length >= 2) {
+    const mark = segs[segs.length - 1];
+    if (/^[+＋]$|正|positive/i.test(mark)) return { label: segs.slice(0, -1).join(' ').trim(), polarity: 1 };
+    if (/^[-－—]$|负|negative/i.test(mark)) return { label: segs.slice(0, -1).join(' ').trim(), polarity: -1 };
+    if (/^0$|中性?|neutral/i.test(mark)) return { label: segs.slice(0, -1).join(' ').trim(), polarity: 0 };
+  }
+  // 没有可识别的极性段：整段当标签，按中性。
+  return { label: rawTail.trim(), polarity: 0 };
+}
+
 /**
- * 从 <key_facts> 块里抽取 [关系] 行，保留 `A → B | 标签` 的 A/B 拆分。
- * parseKeyFactsFromSummary 把 A→B 压成单 subject 进 facts 表，这里专门为 impressions 表保留方向。
+ * 从 <key_facts> 块里抽取 [关系] 行，保留 `A → B | 标签 | 极性` 的 A/B/极性拆分。
+ * parseKeyFactsFromSummary 把 A→B 压成单 subject 进 facts 表，这里专门为 impressions 表保留方向与极性。
  * source(A) 的名→id 归一由调用方（run.ts）处理，本函数只负责拆字段。
  */
 export function parseImpressionsFromSummary(raw: string): ParsedImpression[] {
@@ -344,12 +361,12 @@ export function parseImpressionsFromSummary(raw: string): ParsedImpression[] {
   for (const rawLine of tagged.split('\n')) {
     const line = rawLine.trim();
     if (!line) continue;
-    // 仅处理关系类别行：`[关系] A → B | 标签`
+    // 仅处理关系类别行：`[关系] A → B | 标签 | 极性`
     const match = line.match(/^[-•*]?\s*[\[【]\s*([^\]】]+?)\s*[\]】]\s*(.+?)\s*[|｜]\s*(.+)$/);
     if (!match) continue;
     const category = KEY_FACT_CATEGORY_MAP[match[1].trim()] ?? KEY_FACT_CATEGORY_MAP[match[1].trim().toLowerCase()];
     if (category !== 'relation') continue;
-    const label = match[3].trim();
+    const { label, polarity } = splitLabelPolarity(match[3].trim());
     // 拆 subject 里的 "A → B"（兼容 →/->/＞ 等箭头与"对/与"连接词）。
     const subjectRaw = match[2].trim();
     const arrowMatch = subjectRaw.match(/^(.+?)\s*(?:→|->|＞|对|与)\s*(.+)$/);
@@ -357,7 +374,7 @@ export function parseImpressionsFromSummary(raw: string): ParsedImpression[] {
     const source = arrowMatch[1].trim();
     const subject = arrowMatch[2].trim();
     if (!source || !subject || !label) continue;
-    impressions.push({ source, subject, label });
+    impressions.push({ source, subject, label, polarity });
   }
   return impressions;
 }

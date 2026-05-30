@@ -2085,8 +2085,8 @@ body.floating-phone-dragging {
   letter-spacing: 0.12em;
 }
 
-/* 已征服：印章点亮为暖玫瑰红，成就感的核心反馈。 */
-.archive-seal.is-conquered {
+/* 已结缘：印章点亮为暖玫瑰红，是“依恋感”的核心正反馈（非征服式战绩）。 */
+.archive-seal.is-bonded {
   border-style: solid;
   border-color: rgba(214, 90, 122, 0.7);
   background: linear-gradient(135deg, rgba(255, 224, 233, 0.95), rgba(255, 238, 243, 0.8));
@@ -2121,6 +2121,54 @@ body.floating-phone-dragging {
   color: #c0436a;
   font-size: 1.05rem;
   font-weight: 900;
+}
+
+/* ── 依恋值条：从亲密接触计数派生的暖向刻度（非征服战绩） ── */
+.archive-attachment {
+  display: grid;
+  gap: 6px;
+}
+
+.archive-attachment__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.archive-attachment__meta strong {
+  color: #b8536f;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.archive-attachment__meta em {
+  margin-left: 8px;
+  color: #a48390;
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
+.archive-attachment__meta b {
+  color: #c0436a;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.archive-bar__fill--attachment {
+  background: linear-gradient(90deg, #ffd9e0 0%, #f3a7c0 52%, #e07aa6 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32);
+}
+
+/* 深度依恋（>=75）：暖玫瑰加深 + 呼吸光，作为“彻底沦陷”的情绪强化。 */
+.archive-attachment[data-attach-level="deep"] .archive-bar__fill--attachment {
+  background: linear-gradient(90deg, #ffb1c8 0%, #ec74a2 50%, #cf4d83 100%);
+  animation: archive-affection-glow 2.6s ease-in-out infinite;
+}
+
+.archive-attachment[data-attach-level="deep"] .archive-attachment__meta em {
+  color: #c64388;
+  font-weight: 600;
 }
 
 .archive-profile p,

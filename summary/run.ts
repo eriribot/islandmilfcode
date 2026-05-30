@@ -126,8 +126,9 @@ function commitImpressionsFromSummary(ctx: SummaryContext, raw: string): void {
       targetId,
       subject: imp.subject,
       label: imp.label,
-      polarity: 0, // 首版默认中性；后续可让模型标注极性。
-      weight: 1,
+      polarity: imp.polarity,
+      // 权重用极性的绝对存在感表达：有倾向(±1)权重高于纯中性观察。
+      weight: imp.polarity === 0 ? 1 : 2,
     });
   }
   if (!inserts.length) return;

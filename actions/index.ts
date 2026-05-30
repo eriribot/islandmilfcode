@@ -1283,11 +1283,13 @@ async function runSecondaryProgressUpdate(
       apiConfig: ctx.summaryApiConfig,
     });
     const committed = commitProgressAnalysis(ctx, raw, targetId);
+    if (showTask) clearBackgroundTask(ctx.state, 'progress');
     if (committed.applied) {
-      if (showTask) clearBackgroundTask(ctx.state, 'progress');
+      // 成功路径也要重渲染：否则徽章在 state 里清了、变量也更新了，但 UI 不刷新，
+      // 一直卡在"变量更新中"直到玩家点手机触发别的渲染路径。
+      if (showTask) ctx.render();
       return true;
     }
-    if (showTask) clearBackgroundTask(ctx.state, 'progress');
   } catch (error) {
     console.warn('[progress] secondary analysis failed:', error);
     if (showTask) setBackgroundTaskFailed(ctx.state, 'progress', error);

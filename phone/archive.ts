@@ -1,6 +1,6 @@
 import { escapeHtml } from '../html';
 import type { TargetStatus } from '../types';
-import { affinityStage, obsessionStage } from '../variables/normalize';
+import { affinityStage, attachmentStage, attachmentValue, obsessionStage } from '../variables/normalize';
 import { getImpressionsForTarget } from '../memorydatabase/query';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import type { PhoneCharacterId } from './types';
@@ -28,8 +28,6 @@ type CharacterArchive = {
   portraitCode: string;
   foot: Array<{ label: string; value: string }>;
   tags: string[];
-  intro: string;
-  quote: string;
   details: Array<{ label: string; value: string }>;
   meters: ArchiveMeter[];
   note: string;
@@ -64,14 +62,9 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
       { label: '档案', value: '人物档案' },
     ],
     tags: ['低存在感', '温和', '可靠'],
-    intro:
-      '看起来平淡，却总能在关键处保持清醒。她的魅力不靠夸张表现，而是来自稳定的距离感、细腻的观察力和很少失衡的情绪。',
-    quote: '“我会听你说完的。”',
     details: [
       { label: '生日', value: '9月23日' },
       { label: '身高', value: '160cm' },
-      { label: '喜欢', value: '安静的谈话、散步、整理记录' },
-      { label: '不擅长', value: '被强行推到台前' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
     note: '该角色当前是开局变量档案；绑定酒馆世界书目标后会显示实时变量。',
@@ -91,14 +84,9 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
       { label: '档案', value: '人物档案' },
     ],
     tags: ['金发双马尾', '同人画师', '傲娇'],
-    intro:
-      '外表强势，真正认真时却比谁都在意细节。英梨梨的档案重点适合记录创作状态、关系拉扯、吃醋反应和偶尔坦率的瞬间。',
-    quote: '“才、才不是特地为了你画的！”',
     details: [
       { label: '生日', value: '3月20日' },
       { label: '身高', value: '158cm' },
-      { label: '喜欢', value: '绘画、社团作品、被认真看见' },
-      { label: '不擅长', value: '敷衍、落后、被当成小孩子' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
     note: '该角色当前是档案占位；绑定酒馆世界书目标后会显示实时变量。',
@@ -119,16 +107,9 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
       { label: '代表作', value: '《恋爱节拍器》' },
     ],
     tags: ['黑长直', '霞诗子', '毒舌学姐', '高攻低防'],
-    intro:
-      '表面是丰之崎学园高不可攀的优等生，私下是以“霞诗子”为笔名的超人气高中生轻小说作家。她擅长用从容、毒舌和成熟余裕掌控局面，但真正被触及感情时，会露出笨拙、患得患失和沉重占有欲。',
-    quote: '“所谓的创作者，就是要把自己的灵魂切碎了喂给读者吃的生物啊。”',
     details: [
       { label: '生日', value: '1995年1月31日' },
       { label: '身高', value: '168cm' },
-      { label: '三围', value: 'B89 W61 H88' },
-      { label: '身份', value: '轻小说作家 / 丰之崎两大美女之一' },
-      { label: '特质', value: '身份二象性、隐性病娇、高攻低防、双标毒舌' },
-      { label: '关系', value: '安艺伦也的头号读者关系与爱慕对象；英梨梨的情敌兼合作伙伴' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
     note: '开局为 2012 年 3 月 31 日，高二后升入私立丰之崎学园三年级 C 班。隐藏身份“霞诗子”与《恋爱节拍器》是她关系推进的核心变量。',
@@ -148,14 +129,9 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
       { label: '档案', value: '人物档案' },
     ],
     tags: ['后辈', '创作者', '行动派'],
-    intro:
-      '带着后辈式的明亮和不服输，认真追赶前辈们的创作者。出海的档案重点适合记录创作成长、竞争心、被认可的瞬间和对玩家评价的在意程度。',
-    quote: '“我也会画出让人心动的作品的！”',
     details: [
-      { label: '身份', value: '创作者后辈 / 社团相关竞争者' },
-      { label: '特质', value: '热情、努力、憧憬前辈但不愿只停在憧憬' },
-      { label: '状态', value: '变量档案已接入' },
-      { label: '关系核心', value: '评价、认可、竞争与共同创作' },
+      { label: '生日', value: '5月5日' },
+      { label: '身高', value: '157cm' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
     note: '该角色当前是内置变量档案；绑定酒馆世界书目标后会显示实时变量。',
@@ -175,14 +151,9 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
       { label: '档案', value: '人物档案' },
     ],
     tags: ['音乐', '表姐', '行动派'],
-    intro:
-      '外向、直觉敏锐、讨厌沉闷气氛的乐队少女。美智留的档案重点适合记录音乐状态、同伴意识、直球关心和她把玩家纳入行动半径的瞬间。',
-    quote: '“先把气氛炒起来吧！”',
     details: [
       { label: '生日', value: '1995年12月18日' },
-      { label: '身份', value: 'icy tail 乐队主唱 / 吉他手' },
       { label: '身高', value: '173cm' },
-      { label: '特质', value: '开朗直球、同伴至上、凭直觉行动' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
     note: '该角色当前是内置变量档案；绑定酒馆世界书目标后会显示实时变量。',
@@ -295,9 +266,8 @@ function renderMeter(meter: ArchiveMeter) {
   `;
 }
 
-// 中文注释：身体开发计数器的常见字段展示顺序；未列出的自定义字段（如 足交次数）追加在后面。
+// 中文注释：亲密接触计数器的常见字段展示顺序；未列出的自定义字段（如 足交次数）追加在后面。
 const COUNTER_FIELD_ORDER = [
-  '经验人数',
   '接吻次数',
   '口交次数',
   '乳交次数',
@@ -306,17 +276,22 @@ const COUNTER_FIELD_ORDER = [
   '肛交次数',
 ];
 
+// 中文注释：已废弃、不再展示的计数字段。设计意图是“加深依恋感”而非征服式统计，
+// 经验人数（伴侣数）与该意图冲突，旧存档里残留也一律不读取、不展示、不回注。
+const EXCLUDED_COUNTER_FIELDS = new Set<string>(['经验人数']);
+
 /** 从 target.meta 读取贞操状态；缺省视为 intact（完璧）。 */
 function readVirginity(target: TargetStatus | null): 'intact' | 'lost' {
   return target?.meta?.virginity === 'lost' ? 'lost' : 'intact';
 }
 
-/** 从 target.meta 读取身体开发计数器，按常见字段顺序排列，自定义字段追加在后。 */
+/** 从 target.meta 读取亲密接触计数器，按常见字段顺序排列，自定义字段追加在后；废弃字段（经验人数）一律剔除。 */
 function readBodyCounters(target: TargetStatus | null): Array<{ field: string; value: number }> {
   const raw = target?.meta?.bodyCounters;
   if (!raw || typeof raw !== 'object') return [];
   const entries = new Map<string, number>();
   for (const [field, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (EXCLUDED_COUNTER_FIELDS.has(field)) continue;
     const n = Number(value);
     if (Number.isFinite(n) && n > 0) entries.set(field, n);
   }
@@ -358,26 +333,41 @@ function renderImpressionChips(memoryDB: IslandMemoryDB | null | undefined, targ
   `;
 }
 
-/** 渲染性状态区：贞操印章徽章 + 身体开发计数器网格。只要 target 已载入就显示（哪怕全 0/处女）。 */
+/** 渲染亲密状态区：关系印章徽章 + 亲密接触计数器网格。只要 target 已载入就显示（哪怕全 0/完璧）。 */
 function renderSexStatusSection(target: TargetStatus | null): string {
   if (!target) return '';
   const virginity = readVirginity(target);
   const counters = readBodyCounters(target);
 
-  const conquered = virginity === 'lost';
+  // 设计意图：这是“依恋感”刻度，不是征服式战绩。已结缘=已与玩家确立亲密关系，措辞克制、暖色，不用“征服”这类词。
+  const bonded = virginity === 'lost';
   const badge = `
-    <div class="archive-seal ${conquered ? 'is-conquered' : ''}" aria-label="${conquered ? '已征服' : '完璧'}">
-      <span class="archive-seal__mark">${conquered ? '征服' : '完璧'}</span>
-      <span class="archive-seal__caption">${conquered ? '已确立亲密关系' : '尚未逾矩'}</span>
+    <div class="archive-seal ${bonded ? 'is-bonded' : ''}" aria-label="${bonded ? '已结缘' : '完璧'}">
+      <span class="archive-seal__mark">${bonded ? '结缘' : '完璧'}</span>
+      <span class="archive-seal__caption">${bonded ? '已确立亲密关系' : '尚未逾矩'}</span>
     </div>
   `;
 
-  // 常见 7 项始终显示（缺的补 0），让五小只一载入就有完整网格；自定义字段（如 足交次数）有值才追加。
+  // 常见项始终显示（缺的补 0），让五小只一载入就有完整网格；自定义字段（如 足交次数）有值才追加。
   const valueByField = new Map(counters.map(c => [c.field, c.value]));
   const displayCounters = [
     ...COUNTER_FIELD_ORDER.map(field => ({ field, value: valueByField.get(field) ?? 0 })),
     ...counters.filter(c => !COUNTER_FIELD_ORDER.includes(c.field)),
   ];
+
+  // 依恋值：从上面已剔除废弃字段的 counters + 结缘闩锁派生，单一真相源，无需单独存储。
+  const attachment = attachmentValue(Object.fromEntries(counters.map(c => [c.field, c.value])), bonded);
+  const attachmentBar = `
+    <div class="archive-attachment" data-attach-level="${attachment >= 75 ? 'deep' : attachment >= 25 ? 'mid' : 'early'}">
+      <div class="archive-attachment__meta">
+        <span><strong>依恋值</strong><em>${escapeHtml(attachmentStage(attachment))}</em></span>
+        <b>${attachment}</b>
+      </div>
+      <div class="archive-bar" style="--value:${attachment}%">
+        <span class="archive-bar__fill archive-bar__fill--attachment"></span>
+      </div>
+    </div>
+  `;
 
   const counterGrid = `
     <div class="archive-counter-grid">
@@ -398,10 +388,11 @@ function renderSexStatusSection(target: TargetStatus | null): string {
     <section class="archive-panel archive-sexstatus">
       <div class="archive-panel__head">
         <span>亲密档案</span>
-        <span>${conquered ? '已征服' : '未征服'}</span>
+        <span>${bonded ? '已结缘' : '完璧'}</span>
       </div>
       <div class="archive-sexstatus__body">
         ${badge}
+        ${attachmentBar}
         ${counterGrid}
       </div>
     </section>
@@ -456,8 +447,6 @@ export function renderCharacterArchivePanel(
           <span>${escapeHtml(archive.panelMark)}</span>
         </div>
         <div class="archive-profile__body">
-          <p>${escapeHtml(archive.intro)}</p>
-          <blockquote>${escapeHtml(archive.quote)}</blockquote>
           <div class="archive-info-grid">
             ${archive.details
               .map(

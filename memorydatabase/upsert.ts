@@ -63,6 +63,39 @@ export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string
           continue;
         }
 
+        // impressions 走去重：同 (targetId, subject, label) 不重复堆叠；极性变化时旧行 supersede。
+        if (tableName === 'impressions') {
+          const impPayload = payload as unknown as {
+            targetId: string;
+            subject: string;
+            label: string;
+            polarity: -1 | 0 | 1;
+          };
+          const dedup = deduplicateImpression(db, impPayload);
+          if (dedup.action === 'duplicate') {
+            continue;
+          }
+          const newId = generateId();
+          const row: MemoryBaseRow = {
+            id: newId,
+            createdAt: now,
+            updatedAt: now,
+            source: batch.source,
+            ...payload,
+          };
+          if (dedup.action === 'supersede' && dedup.existingId) {
+            const old = db.impressions.find(i => i.id === dedup.existingId);
+            if (old) {
+              old.expired = true;
+              old.supersededBy = newId;
+              old.updatedAt = now;
+            }
+          }
+          table.push(row);
+          newIds.push(newId);
+          continue;
+        }
+
         const row: MemoryBaseRow = {
           id: generateId(),
           createdAt: now,
@@ -145,6 +178,37 @@ export function deduplicateFact(
   }
 
   return { action: 'new' };
+}
+
+/**
+ * 印象去重：以 (targetId, subject, label) 为身份。
+ * - 同身份且同极性 → 只刷 lastSeenAt，返回 'duplicate'（避免同一印象反复堆叠成一长串 chip）
+ * - 同身份但极性变了（如"靠谱"从 + 转 -）→ supersede 旧行，返回 'supersede'
+ * - 无匹配 → 'new'
+ */
+export function deduplicateImpression(
+  db: IslandMemoryDB,
+  incoming: { targetId: string; subject: string; label: string; polarity: -1 | 0 | 1 },
+): { action: 'duplicate' | 'supersede' | 'new'; existingId?: string } {
+  const now = new Date().toISOString();
+  const active = db.impressions.filter(
+    i => !i.expired
+      && i.targetId === incoming.targetId
+      && i.subject === incoming.subject
+      && i.label === incoming.label,
+  );
+  if (!active.length) return { action: 'new' };
+
+  // 同身份 + 同极性：纯重复，刷新最近出现时间即可。
+  const samePolarity = active.find(i => i.polarity === incoming.polarity);
+  if (samePolarity) {
+    samePolarity.lastSeenAt = now;
+    samePolarity.updatedAt = now;
+    return { action: 'duplicate', existingId: samePolarity.id };
+  }
+
+  // 同身份不同极性：让最新的旧行被新行取代。
+  return { action: 'supersede', existingId: active[0].id };
 }
 
 /**
