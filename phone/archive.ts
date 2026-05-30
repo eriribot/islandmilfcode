@@ -1,6 +1,8 @@
 import { escapeHtml } from '../html';
 import type { TargetStatus } from '../types';
 import { affinityStage, obsessionStage } from '../variables/normalize';
+import { getImpressionsForTarget } from '../memorydatabase/query';
+import type { IslandMemoryDB } from '../memorydatabase/types';
 import type { PhoneCharacterId } from './types';
 
 const LEGACY_IZUMI_FILM_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg';
@@ -293,7 +295,124 @@ function renderMeter(meter: ArchiveMeter) {
   `;
 }
 
-export function renderCharacterArchivePanel(characterId: PhoneCharacterId, targets: TargetStatus[] = []) {
+// 中文注释：身体开发计数器的常见字段展示顺序；未列出的自定义字段（如 足交次数）追加在后面。
+const COUNTER_FIELD_ORDER = [
+  '经验人数',
+  '接吻次数',
+  '口交次数',
+  '乳交次数',
+  '性交次数',
+  '被内射次数',
+  '肛交次数',
+];
+
+/** 从 target.meta 读取贞操状态；缺省视为 intact（完璧）。 */
+function readVirginity(target: TargetStatus | null): 'intact' | 'lost' {
+  return target?.meta?.virginity === 'lost' ? 'lost' : 'intact';
+}
+
+/** 从 target.meta 读取身体开发计数器，按常见字段顺序排列，自定义字段追加在后。 */
+function readBodyCounters(target: TargetStatus | null): Array<{ field: string; value: number }> {
+  const raw = target?.meta?.bodyCounters;
+  if (!raw || typeof raw !== 'object') return [];
+  const entries = new Map<string, number>();
+  for (const [field, value] of Object.entries(raw as Record<string, unknown>)) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) entries.set(field, n);
+  }
+  if (!entries.size) return [];
+
+  const ordered: Array<{ field: string; value: number }> = [];
+  for (const field of COUNTER_FIELD_ORDER) {
+    if (entries.has(field)) {
+      ordered.push({ field, value: entries.get(field)! });
+      entries.delete(field);
+    }
+  }
+  // 剩余的自定义字段（特殊玩法）追加在后。
+  for (const [field, value] of entries) {
+    ordered.push({ field, value });
+  }
+  return ordered;
+}
+
+/** 渲染印象 chip：按极性着色。impressions 为空则返回空串（不显示该区）。 */
+function renderImpressionChips(memoryDB: IslandMemoryDB | null | undefined, targetId: string | undefined): string {
+  if (!memoryDB || !targetId) return '';
+  const impressions = getImpressionsForTarget(memoryDB, targetId);
+  if (!impressions.length) return '';
+  const chips = impressions
+    .map(imp => {
+      const polarity = imp.polarity > 0 ? 'pos' : imp.polarity < 0 ? 'neg' : 'neutral';
+      return `<span class="archive-impression-chip archive-impression-chip--${polarity}">${escapeHtml(imp.label)}</span>`;
+    })
+    .join('');
+  return `
+    <section class="archive-panel archive-impressions">
+      <div class="archive-panel__head">
+        <span>她对你的印象</span>
+        <span>${impressions.length}</span>
+      </div>
+      <div class="archive-impression-chips">${chips}</div>
+    </section>
+  `;
+}
+
+/** 渲染性状态区：贞操印章徽章 + 身体开发计数器网格。只要 target 已载入就显示（哪怕全 0/处女）。 */
+function renderSexStatusSection(target: TargetStatus | null): string {
+  if (!target) return '';
+  const virginity = readVirginity(target);
+  const counters = readBodyCounters(target);
+
+  const conquered = virginity === 'lost';
+  const badge = `
+    <div class="archive-seal ${conquered ? 'is-conquered' : ''}" aria-label="${conquered ? '已征服' : '完璧'}">
+      <span class="archive-seal__mark">${conquered ? '征服' : '完璧'}</span>
+      <span class="archive-seal__caption">${conquered ? '已确立亲密关系' : '尚未逾矩'}</span>
+    </div>
+  `;
+
+  // 常见 7 项始终显示（缺的补 0），让五小只一载入就有完整网格；自定义字段（如 足交次数）有值才追加。
+  const valueByField = new Map(counters.map(c => [c.field, c.value]));
+  const displayCounters = [
+    ...COUNTER_FIELD_ORDER.map(field => ({ field, value: valueByField.get(field) ?? 0 })),
+    ...counters.filter(c => !COUNTER_FIELD_ORDER.includes(c.field)),
+  ];
+
+  const counterGrid = `
+    <div class="archive-counter-grid">
+      ${displayCounters
+        .map(
+          c => `
+            <div class="archive-counter">
+              <span>${escapeHtml(c.field)}</span>
+              <strong>${c.value}</strong>
+            </div>
+          `,
+        )
+        .join('')}
+    </div>
+  `;
+
+  return `
+    <section class="archive-panel archive-sexstatus">
+      <div class="archive-panel__head">
+        <span>亲密档案</span>
+        <span>${conquered ? '已征服' : '未征服'}</span>
+      </div>
+      <div class="archive-sexstatus__body">
+        ${badge}
+        ${counterGrid}
+      </div>
+    </section>
+  `;
+}
+
+export function renderCharacterArchivePanel(
+  characterId: PhoneCharacterId,
+  targets: TargetStatus[] = [],
+  memoryDB?: IslandMemoryDB | null,
+) {
   const archive = resolveArchive(characterId, targets);
   const affection = archive.affinity;
   const obsession = archive.obsession;
@@ -373,6 +492,10 @@ export function renderCharacterArchivePanel(characterId: PhoneCharacterId, targe
         </div>
         <p>${escapeHtml(archive.note)}</p>
       </section>
+
+      ${renderImpressionChips(memoryDB, archive.loadedTarget?.id)}
+
+      ${renderSexStatusSection(archive.loadedTarget)}
 
     </div>
   `;

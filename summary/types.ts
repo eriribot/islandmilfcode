@@ -10,7 +10,10 @@ export type SummaryEntry = {
   keyFacts?: KeyFact[];
 };
 
-/** 关键事实类别：稳定事实沉淀层使用。 */
+/**
+ * 关键事实类别：稳定事实沉淀层使用。
+ * relation 类别特殊：content 为简短印象标签（2~10字），subject 格式为 "A → B"。
+ */
 export type KeyFactCategory = 'promise' | 'secret' | 'relation' | 'item' | 'event' | 'location' | 'profile';
 
 /** 中文类别名到内部类别键的映射（parse 用）。 */
@@ -89,6 +92,8 @@ export type FactAnchor = {
   affinities: Array<{ name: string; value: number; stage: string }>;
   obsessions: Array<{ name: string; value: number; stage: string }>;
   mainEvents: Array<{ id: string; status: string }>;
+  /** 当前对象的性状态（仅当前聊天/在场对象，回注用）。 */
+  sexStatus?: { name: string; virginity: 'intact' | 'lost'; counters: Array<{ field: string; value: number }> } | null;
 };
 
 /** 从 statusData 构造一个事实锚点，供摘要 prompt 使用。 */
@@ -99,7 +104,16 @@ export function buildFactAnchorFromStatus(statusData: {
     currentMainEventId?: string;
     mainEvents?: Record<string, string>;
   };
-  targets: Array<{ name: string; affinity?: number; stage?: string; obsession?: number; obsessionStage?: string }>;
+  activeTargetId?: string | null;
+  targets: Array<{
+    id: string;
+    name: string;
+    affinity?: number;
+    stage?: string;
+    obsession?: number;
+    obsessionStage?: string;
+    meta?: Record<string, unknown>;
+  }>;
 }): FactAnchor {
   return {
     time: statusData.world.currentTime,
@@ -119,7 +133,33 @@ export function buildFactAnchorFromStatus(statusData: {
       id,
       status: String(s),
     })),
+    sexStatus: buildSexStatusForActiveTarget(statusData),
   };
+}
+
+/** 仅取当前对象的性状态快照；无明确当前对象则返回 null（避免拿别人的状态串戏）。 */
+function buildSexStatusForActiveTarget(statusData: {
+  activeTargetId?: string | null;
+  targets: Array<{ id: string; name: string; meta?: Record<string, unknown> }>;
+}): FactAnchor['sexStatus'] {
+  const activeId = statusData.activeTargetId;
+  if (!activeId) return null;
+  const target = statusData.targets.find(t => t.id === activeId);
+  if (!target) return null;
+
+  const virginity = target.meta?.virginity === 'lost' ? 'lost' : 'intact';
+  const rawCounters = target.meta?.bodyCounters;
+  const counters: Array<{ field: string; value: number }> = [];
+  if (rawCounters && typeof rawCounters === 'object') {
+    for (const [field, value] of Object.entries(rawCounters as Record<string, unknown>)) {
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0) counters.push({ field, value: n });
+    }
+  }
+
+  // 处女 + 零开发：没有可回注的性状态，返回 null 让锚点省略此块。
+  if (virginity === 'intact' && !counters.length) return null;
+  return { name: target.name, virginity, counters };
 }
 
 /** 副 API 配置，用于将摘要/变量提取请求发往独立的模型。 */

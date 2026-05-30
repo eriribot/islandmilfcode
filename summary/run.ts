@@ -7,6 +7,7 @@ import {
   buildMajorSummaryPrompt,
   buildMinorSummaryPrompt,
   MINOR_THRESHOLD,
+  parseImpressionsFromSummary,
   parseKeyFactsFromSummary,
   parseSummaryResult,
   shouldRunGlobalCompression,
@@ -16,6 +17,7 @@ import {
 import { saveSummaryStore } from './store';
 import type { FactAnchor, KeyFact, SummaryApiConfig, SummaryStore } from './types';
 import { commitSummaryToMemoryDB } from '../memorydatabase/commit-points';
+import { commitBatch } from '../memorydatabase/upsert';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 
 /** 摘要运行所需的上下文。 */
@@ -105,6 +107,46 @@ function applyProgressFromMinorSummary(ctx: SummaryContext, raw: string): boolea
   if (!update) return false;
   ctx.onProgressUpdate?.(update);
   return true;
+}
+
+/** 把摘要里的 [关系] 印象行写入 memoryDB.impressions 表；source 名→target.id 归一后才写，否则丢弃。 */
+function commitImpressionsFromSummary(ctx: SummaryContext, raw: string): void {
+  const db = ctx.memoryDB;
+  const targets = ctx.state?.statusData.targets;
+  if (!db || !targets?.length) return;
+
+  const parsed = parseImpressionsFromSummary(raw);
+  if (!parsed.length) return;
+
+  const inserts: NonNullable<Parameters<typeof commitBatch>[1]['inserts']>['impressions'] = [];
+  for (const imp of parsed) {
+    const targetId = resolveImpressionTargetId(imp.source, targets);
+    if (!targetId) continue; // 无法归一到已知角色（如 User 自己持有印象）则跳过。
+    inserts.push({
+      targetId,
+      subject: imp.subject,
+      label: imp.label,
+      polarity: 0, // 首版默认中性；后续可让模型标注极性。
+      weight: 1,
+    });
+  }
+  if (!inserts.length) return;
+  commitBatch(db, { source: 'summary-minor', inserts: { impressions: inserts } });
+}
+
+/** 把印象持有者名字归一到 target.id；匹配 id/name/alias/世界书名。 */
+function resolveImpressionTargetId(source: string, targets: AppState['statusData']['targets']): string | null {
+  const needle = source.trim().toLowerCase();
+  if (!needle) return null;
+  for (const target of targets) {
+    const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
+      .map(v => String(v ?? '').toLowerCase())
+      .filter(Boolean);
+    if (haystack.some(h => h === needle || (h.length >= 2 && (h.includes(needle) || needle.includes(h))))) {
+      return target.id;
+    }
+  }
+  return null;
 }
 
 /** 记录摘要失败；连续失败 3 次后自动暂停。 */
@@ -220,6 +262,7 @@ export async function runSummary(
           store.lastSummarizedIndex = nextIndex;
           clearFailureState(store);
           commitSummaryToMemoryDB(ctx.memoryDB, 'minor', text, range, newFacts);
+          commitImpressionsFromSummary(ctx, raw);
           result.minorAppliedProgress = applyProgressFromMinorSummary(ctx, raw);
         }
       } catch (error) {

@@ -1090,6 +1090,8 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
     target
       ? `  着装.部位:描述          — 更新当前明确对象 ${target.name} 的某个部位着装（例：着装.上装:换上了黑色卫衣）`
       : '  着装.部位:描述          — 主场景禁用旧单目标着装格式；没有明确对象时不要输出',
+    '  贞操.角色名:已失去       — 仅当正文明确发生破除时输出；只看是否真的发生，单向不可逆，禁止写回"完璧/处女"',
+    '  X次数.角色名:+N          — 身体开发硬统计（X=接吻次数/口交次数/性交次数/被内射次数/肛交次数/经验人数等，特殊玩法可自定义如 足交次数）；只在正文明确发生时累加',
     '  当前事件:事件ID          — 设置手机状态页显示的唯一当前主线事件（例：当前事件:SAE_01-2；清空用 当前事件:无）',
     '  主线事件.事件ID:状态     — 更新主线事件状态（未触发/进行中/已结束/跳过/延后）',
     '  事件名:事件描述         — 添加或替换近期重要事件，可有多条',
@@ -1142,6 +1144,8 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
     `好感度.角色名:±N（必须从下方“可更新角色”的更新键复制角色名；例如 ${affinityExamples}）`,
     `执念度.角色名:±N（例：${obsessionExamples}）`,
     '五维.能力名:±N',
+    '贞操.角色名:已失去（仅正文明确发生破除时；单向不可逆，不写复位）',
+    'X次数.角色名:+N（身体开发硬统计，X 如 接吻次数/性交次数/足交次数；仅正文明确发生时累加）',
     '主线事件.事件ID:状态',
     '当前事件:事件ID',
     '</state_delta>',
@@ -1362,6 +1366,10 @@ export type ProgressUpdate = {
   mainEvents: Record<string, string>;
   itemsGained: Array<{ name: string; count: number; description: string }>;
   itemsLost: string[];
+  /** 贞操破除标记：单向闩锁，正文明确发生时由 AI 写 `贞操.角色名:已失去`。 */
+  virginityFlags: Array<{ target: string }>;
+  /** 身体开发计数器增量：开放字段名（性交次数/足交次数等），单调累加。 */
+  intimacyCounters: Array<{ field: string; target: string; delta: number }>;
 };
 
 function createEmptyProgressUpdate(): ProgressUpdate {
@@ -1374,6 +1382,8 @@ function createEmptyProgressUpdate(): ProgressUpdate {
     outfitChanges: {},
     itemsGained: [],
     itemsLost: [],
+    virginityFlags: [],
+    intimacyCounters: [],
   };
 }
 
@@ -1561,6 +1571,33 @@ function parseStateBody(body: string): ProgressUpdate | null {
     if (outfitMatch) {
       result.outfitChanges[outfitMatch[1].trim()] = outfitMatch[2].trim();
       hasAnyField = true;
+      continue;
+    }
+
+    // 贞操.角色名:已失去 —— 单向闩锁，只接受"破除"语义，不接受复位。
+    const virginityMatch = trimmed.match(/^贞操[.．]\s*([^:：]+)[:：]\s*(.+)/);
+    if (virginityMatch) {
+      const value = virginityMatch[2].trim();
+      // 仅当语义明确为"已破除"时记录；写"完璧/处女/intact"等复位语义一律忽略（前向不可回退）。
+      if (/已?失去|破除|非处女|lost|broken/i.test(value)) {
+        result.virginityFlags.push({ target: virginityMatch[1].trim() });
+        hasAnyField = true;
+      }
+      continue;
+    }
+
+    // 经验人数.角色名:+N / 性交次数.角色名:+N / 足交次数.角色名:+N（开放字段，次数/人数后缀区分）
+    const counterMatch = trimmed.match(/^(经验人数|[一-鿿]{1,8}次数)[.．]\s*([^:：]+)[:：]\s*([+\-]?\d+)/);
+    if (counterMatch) {
+      const delta = parseInt(counterMatch[3], 10) || 0;
+      if (delta > 0) {
+        result.intimacyCounters.push({
+          field: counterMatch[1].trim(),
+          target: counterMatch[2].trim(),
+          delta,
+        });
+        hasAnyField = true;
+      }
       continue;
     }
 

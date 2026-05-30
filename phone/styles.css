@@ -2018,6 +2018,111 @@ body.floating-phone-dragging {
   font-weight: 800;
 }
 
+/* ── 印象 chip：按极性着色（正面暖玫瑰 / 负面冷灰蓝 / 中性灰） ── */
+.archive-impression-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px;
+}
+
+.archive-impression-chip {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  border: 1px solid transparent;
+}
+
+.archive-impression-chip--pos {
+  color: #b8536f;
+  background: rgba(255, 228, 236, 0.9);
+  border-color: rgba(214, 130, 158, 0.4);
+}
+
+.archive-impression-chip--neutral {
+  color: #7d7287;
+  background: rgba(238, 236, 243, 0.9);
+  border-color: rgba(168, 160, 184, 0.36);
+}
+
+.archive-impression-chip--neg {
+  color: #5b6b86;
+  background: rgba(226, 232, 244, 0.9);
+  border-color: rgba(132, 150, 184, 0.4);
+}
+
+/* ── 性状态区：贞操印章徽章 + 身体开发计数器网格 ── */
+.archive-sexstatus__body {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.archive-seal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px;
+  border: 2px dashed rgba(168, 160, 184, 0.5);
+  border-radius: 12px;
+  background: rgba(244, 242, 247, 0.6);
+  color: #9a90a8;
+  opacity: 0.72;
+  transition: all 0.3s ease;
+}
+
+.archive-seal__mark {
+  font-size: 1.1rem;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+}
+
+.archive-seal__caption {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+}
+
+/* 已征服：印章点亮为暖玫瑰红，成就感的核心反馈。 */
+.archive-seal.is-conquered {
+  border-style: solid;
+  border-color: rgba(214, 90, 122, 0.7);
+  background: linear-gradient(135deg, rgba(255, 224, 233, 0.95), rgba(255, 238, 243, 0.8));
+  color: #c0436a;
+  opacity: 1;
+  box-shadow: 0 2px 12px rgba(214, 90, 122, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
+.archive-counter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.archive-counter {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 10px;
+  background: rgba(255, 250, 248, 0.82);
+  border: 1px solid rgba(214, 162, 178, 0.22);
+  border-radius: 8px;
+}
+
+.archive-counter span {
+  color: #a48390;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+.archive-counter strong {
+  color: #c0436a;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
 .archive-profile p,
 .archive-subpanel p {
   margin: 0;

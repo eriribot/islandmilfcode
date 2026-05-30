@@ -42,7 +42,15 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:l-s-secondbase.fandom.com)",
       "WebSearch",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(npm --version)",
+      "Bash(npm config *)",
+      "Bash(npm ls *)",
+      "Bash(claude --version)",
+      "Bash(npm view *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(claude update *)",
+      "PowerShell(Resolve-DnsName *)"
     ]
   }
 }

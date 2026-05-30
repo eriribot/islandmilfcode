@@ -803,7 +803,7 @@ function renderArchivePhonePage(state: AppState) {
     <section class="phone-route-page phone-app-page phone-app-page--archive" data-phone-route-view="app:archive">
       ${renderPhoneAppHeader(state, '人物档案', selectedCharacter.label)}
       <div class="phone-page-scroll archive-phone-scroll">
-        ${renderCharacterArchivePanel(state.phoneCharacterId, state.statusData.targets)}
+        ${renderCharacterArchivePanel(state.phoneCharacterId, state.statusData.targets, state.memoryDB)}
       </div>
     </section>
   `;

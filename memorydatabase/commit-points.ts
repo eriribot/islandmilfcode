@@ -72,6 +72,31 @@ export function commitProgressToMemoryDB(
     });
   }
 
+  // ── 2.5 贞操闩锁 / 身体开发计数器：随属性快照留痕（闩锁权威在 actions 层） ──
+  for (const flag of update.virginityFlags) {
+    upsertAttribute(db, {
+      targetId: flag.target,
+      key: 'virginity',
+      value: 'lost',
+      valueType: 'string',
+      sourceRange,
+    });
+  }
+
+  for (const item of update.intimacyCounters) {
+    if (item.delta <= 0) continue;
+    const key = `counter-${item.field}`;
+    const previous = readNumericAttribute(db, item.target, key);
+    const next = previous + item.delta;
+    upsertAttribute(db, {
+      targetId: item.target,
+      key,
+      value: String(next),
+      valueType: 'number',
+      sourceRange,
+    });
+  }
+
   // ── 3. 玩家五维：累计值快照 ──
   for (const [statKey, delta] of Object.entries(update.statDeltas)) {
     const numericDelta = Number(delta);

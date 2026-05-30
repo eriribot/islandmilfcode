@@ -3,6 +3,7 @@ import type {
   MemoryAttributeRow,
   MemoryFactCategory,
   MemoryFactRow,
+  MemoryImpressionRow,
   MemoryItemRow,
   MemorySecretRow,
   MemoryTaskRow,
@@ -93,6 +94,15 @@ export function getTasksForTarget(db: IslandMemoryDB, targetId: string): MemoryT
       && t.status === 'pending'
       && (t.targetId === targetId || t.ownerId === targetId),
   );
+}
+
+// ── impressions ──
+
+/** 取某角色持有的所有活跃印象（按权重绝对值降序，便于 UI 优先展示强印象）。 */
+export function getImpressionsForTarget(db: IslandMemoryDB, targetId: string): MemoryImpressionRow[] {
+  return db.impressions
+    .filter(i => !i.expired && i.targetId === targetId)
+    .sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight));
 }
 
 // ── items ──

@@ -435,6 +435,46 @@ function applyTargetedObsessionDeltas(ctx: ActionContext, update: ProgressUpdate
   return changed;
 }
 
+function applyVirginityFlags(ctx: ActionContext, update: ProgressUpdate) {
+  let changed = false;
+
+  for (const flag of update.virginityFlags) {
+    const target = findProgressTarget(ctx, flag.target);
+    if (!target) {
+      console.warn('[progress] unknown virginity target:', flag.target);
+      continue;
+    }
+    target.meta ??= {};
+    // 单向闩锁：一旦置为 lost 就不可前向复位；只有回滚快照（整体替换 statusData）能恢复。
+    if (target.meta.virginity === 'lost') continue;
+    target.meta.virginity = 'lost';
+    changed = true;
+  }
+
+  return changed;
+}
+
+function applyIntimacyCounters(ctx: ActionContext, update: ProgressUpdate) {
+  let changed = false;
+
+  for (const item of update.intimacyCounters) {
+    if (item.delta <= 0) continue;
+    const target = findProgressTarget(ctx, item.target);
+    if (!target) {
+      console.warn('[progress] unknown intimacy-counter target:', item.target);
+      continue;
+    }
+    target.meta ??= {};
+    const counters = (target.meta.bodyCounters ??= {}) as Record<string, number>;
+    const previous = Number(counters[item.field]) || 0;
+    // 单调递增：只接受正增量，拒绝任何回退。
+    counters[item.field] = previous + item.delta;
+    changed = true;
+  }
+
+  return changed;
+}
+
 function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | null, targetId?: string | null) {
   if (!update) return false;
   const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary, ctx.state.statusData);
@@ -445,10 +485,12 @@ function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | nu
   applyProgressUpdate(ctx.state.statusData, contextualized, targetId ?? null, ctx.state.plotLibrary);
   const targetedAffinityChanged = applyTargetedAffinityDeltas(ctx, contextualized, targetId);
   const targetedObsessionChanged = applyTargetedObsessionDeltas(ctx, contextualized, targetId);
+  const virginityChanged = applyVirginityFlags(ctx, contextualized);
+  const countersChanged = applyIntimacyCounters(ctx, contextualized);
   const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, contextualized);
   ctx.adapter.save(ctx.state.statusData);
   commitProgressToMemoryDB(ctx.memoryDB, contextualized);
-  return targetedAffinityChanged || targetedObsessionChanged || statsChanged || true;
+  return targetedAffinityChanged || targetedObsessionChanged || virginityChanged || countersChanged || statsChanged || true;
 }
 
 async function simulateGeneration(ctx: ActionContext, userInput: string) {
