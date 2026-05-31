@@ -1,5 +1,5 @@
 import type { ProgressUpdate } from '../message-format';
-import { SAE_03_8, isPlotEventAllowedByRoute, isSae0307BranchId } from '../plot-routing';
+import { SAE_03_8, isPlotEventAllowedByRoute, isSae0307BranchId, isSae0402BranchId } from '../plot-routing';
 import type { PlotEventCard, PlotLibrary, StatusData } from '../types';
 import { affinityStage, clamp, obsessionStage } from './format';
 
@@ -320,7 +320,7 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
   }
 
   for (const id of Object.keys(mainEvents)) {
-    if ((isSae0307BranchId(id) || id === SAE_03_8) && !isPlotEventAllowedByRoute(id, statusData)) {
+    if ((isSae0307BranchId(id) || isSae0402BranchId(id) || id === SAE_03_8) && !isPlotEventAllowedByRoute(id, statusData)) {
       if (normalizeMainEventStatus(mainEvents[id]) === MAIN_EVENT_RUNNING) {
         mainEvents[id] = MAIN_EVENT_NOT_STARTED;
         if (statusData.world.currentMainEventId === id) {

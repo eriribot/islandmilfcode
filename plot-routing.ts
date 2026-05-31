@@ -4,8 +4,11 @@ export const SAE_03_6 = 'SAE_03-6';
 export const SAE_03_7A = 'SAE_03-7A';
 export const SAE_03_7B = 'SAE_03-7B';
 export const SAE_03_8 = 'SAE_03-8';
+export const SAE_04_2A = 'SAE_04-2A';
+export const SAE_04_2B = 'SAE_04-2B';
 
 export type Sae0307Route = typeof SAE_03_7A | typeof SAE_03_7B | typeof SAE_03_8;
+export type Sae0402Route = typeof SAE_04_2A | typeof SAE_04_2B;
 
 function getTargetHaystack(target: TargetStatus) {
   const metaName = typeof target.meta?.worldbookEntryName === 'string' ? target.meta.worldbookEntryName : '';
@@ -15,6 +18,13 @@ function getTargetHaystack(target: TargetStatus) {
 export function findEririTarget(statusData: StatusData | null | undefined): TargetStatus | null {
   return (
     statusData?.targets.find(target => /英梨梨|泽村|澤村|eriri|sawamura/i.test(getTargetHaystack(target))) ?? null
+  );
+}
+
+export function findMichiruTarget(statusData: StatusData | null | undefined): TargetStatus | null {
+  return (
+    statusData?.targets.find(target => /冰堂|氷堂|美智留|michiru|hyodo|hyoudou/i.test(getTargetHaystack(target))) ??
+    null
   );
 }
 
@@ -39,6 +49,18 @@ export function isSae0307BranchId(eventId: string) {
   return eventId === SAE_03_7A || eventId === SAE_03_7B;
 }
 
+export function getSae0402Route(statusData: StatusData | null | undefined): Sae0402Route {
+  const michiru = findMichiruTarget(statusData);
+  if (!michiru) return SAE_04_2A;
+
+  const affinity = asScore(michiru.affinity, 0);
+  return affinity >= 60 ? SAE_04_2B : SAE_04_2A;
+}
+
+export function isSae0402BranchId(eventId: string) {
+  return eventId === SAE_04_2A || eventId === SAE_04_2B;
+}
+
 function getDatePart(value: string) {
   return value.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
 }
@@ -55,7 +77,9 @@ export function isPlotEventAllowedByRoute(eventId: string, statusData: StatusDat
   if (!statusData) return true;
 
   const currentId = statusData.world.currentMainEventId ?? '';
-  if (eventId === currentId && !isSae0307BranchId(eventId) && eventId !== SAE_03_8) return true;
+  if (eventId === currentId && !isSae0307BranchId(eventId) && !isSae0402BranchId(eventId) && eventId !== SAE_03_8) {
+    return true;
+  }
 
   const route = getSae0307Route(statusData);
   if (isSae0307BranchId(eventId)) {
@@ -74,6 +98,11 @@ export function isPlotEventAllowedByRoute(eventId: string, statusData: StatusDat
 
     const currentDate = getDatePart(statusData.world.currentTime);
     return Boolean(currentDate && currentDate >= '2012-08-13');
+  }
+
+  if (isSae0402BranchId(eventId)) {
+    const previousFinished = isFinishedMainEventStatus(statusData.world.mainEvents?.['SAE_04-1']);
+    return previousFinished && eventId === getSae0402Route(statusData);
   }
 
   return true;
