@@ -1,5 +1,7 @@
 import { listSaves } from '../state/saves';
 import { renderLoadSaveModal } from './loadsave';
+// 复用统一的 escapeHtml：用运行时构造的实体，避免发布时被 HTML 解码破坏（见 ../html.ts）。
+import { escapeHtml } from '../html';
 
 // 发布角色卡前，把这里替换为可直接访问的远程音频 URL。
 const TITLE_MUSIC_URL = 'https://eriribot.github.io/islandmilfcode/Aimer_星屑ビーナス.mp3';
@@ -16,10 +18,6 @@ const TITLE_FILM_IMAGES = [
   'https://eriribot.github.io/islandmilfcode/picresource/eriri_film2.jpg',
   'https://eriribot.github.io/islandmilfcode/picresource/utaha_film2.jpg',
 ];
-
-function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 /** 渲染单行属性分配控件 */
 function renderStatRow(key: string, label: string, defaultValue: number): string {

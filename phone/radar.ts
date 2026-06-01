@@ -1,5 +1,7 @@
 // -*- coding: utf-8 -*-
-import p5 from 'p5';
+// 仅作类型使用：`import type` 在编译期被擦除，不会产生运行时 import。
+// p5 的实际加载改为 mountRadarChart 内的动态 import()，详见下方说明。
+import type p5 from 'p5';
 
 /** 五维雷达图的维度标签（女神异闻录风格） */
 const LABELS = ['知识', '魅力', '灵巧', '体贴', '勇气'];
@@ -9,6 +11,12 @@ const GRID_RINGS = 4;
 
 /** 当前挂载的 p5 实例，用于防止重复挂载 */
 let activeSketch: p5 | null = null;
+
+/**
+ * 挂载请求序号。每次 mount/unmount 自增，用于丢弃 p5 异步加载期间已过期的挂载请求，
+ * 避免页面切走后又把 canvas 挂回去。
+ */
+let mountToken = 0;
 
 /** 漂浮粒子的数据结构 */
 interface Particle {
@@ -25,6 +33,11 @@ interface Particle {
  * 将雷达图挂载到指定容器。
  * 如果已有实例会先销毁再重建，避免 canvas 堆叠。
  *
+ * p5 通过动态 import() 异步加载（webpack 会把它打成 `https://.../p5/+esm` 的
+ * 外部模块）。一旦该 CDN 不可达，仅雷达图静默跳过，绝不阻塞整个前端界面的启动
+ * ——这正是把它从顶层静态 import 改成动态 import 的原因：顶层 import 失败会让
+ * 整个内联 module 中止执行，导致界面空白。
+ *
  * @param container  挂载目标 DOM 节点
  * @param values     五个维度的数值（0-100），顺序对应 LABELS
  * @param animate    是否播放入场动画（Persona 风格从中心涨出）
@@ -34,16 +47,44 @@ export function mountRadarChart(
   values: number[] = [50, 50, 50, 50, 50],
   animate: boolean = false,
 ) {
+  // 标记本次挂载请求；若在异步加载期间又发起新的挂载/卸载，旧请求作废。
+  const requestToken = ++mountToken;
+
   if (activeSketch) {
     activeSketch.remove();
     activeSketch = null;
   }
 
+  void (async () => {
+    let p5ctor: typeof p5;
+    try {
+      const mod = await import('p5');
+      p5ctor = (mod.default ?? mod) as typeof p5;
+    } catch (error) {
+      // CDN 不可达等情况：放弃雷达图，但不影响其余界面。
+      console.warn('[radar] p5 加载失败，跳过雷达图渲染', error);
+      return;
+    }
+
+    // 异步期间状态已变化（页面切走或重新挂载），放弃这次过期的渲染。
+    if (requestToken !== mountToken) return;
+
+    activeSketch = createSketch(p5ctor, container, values, animate);
+  })();
+}
+
+/** 真正构造 p5 实例的逻辑（与 p5 加载解耦）。 */
+function createSketch(
+  p5ctor: typeof p5,
+  container: HTMLElement,
+  values: number[],
+  animate: boolean,
+): p5 {
   const dims = 5;
   const angleStep = (Math.PI * 2) / dims;
   const startAngle = -Math.PI / 2;
 
-  activeSketch = new p5((p: p5) => {
+  return new p5ctor((p: p5) => {
     let size = 0;
     let cx = 0;
     let cy = 0;
@@ -156,6 +197,8 @@ export function mountRadarChart(
 
 /** 销毁当前雷达图实例（页面切走时调用） */
 export function unmountRadarChart() {
+  // 自增令牌，作废任何仍在等待 p5 加载的挂载请求。
+  mountToken++;
   if (activeSketch) {
     activeSketch.remove();
     activeSketch = null;

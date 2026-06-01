@@ -171,7 +171,7 @@ function renderReaderEditor(state: AppState) {
           <span class="reader-editor__meta">楼层 ${floorLabel} · ${speakerLabel}</span>
           <button class="reader-editor__close" data-action="reader-edit-cancel" aria-label="关闭">×</button>
         </header>
-        <p class="reader-editor__hint">显示的是楼层的原始文本（含 &lt;content&gt; 等标签）。修改后保存会同步回酒馆楼层。</p>
+        <p class="reader-editor__hint">显示的是楼层的原始文本（含 ${escapeHtml('<content>')} 等标签）。修改后保存会同步回酒馆楼层。</p>
         <textarea
           class="reader-editor__textarea"
           data-field="reader-edit-draft"

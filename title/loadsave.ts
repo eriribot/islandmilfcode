@@ -1,9 +1,7 @@
 import { listSaves } from '../state/saves';
 import type { SaveMeta } from '../types';
-
-function escapeHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+// 复用统一的 escapeHtml：用运行时构造的实体，避免发布时被 HTML 解码破坏（见 ../html.ts）。
+import { escapeHtml } from '../html';
 
 function formatSaveTime(updatedAt: number) {
   const date = new Date(updatedAt);
