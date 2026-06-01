@@ -632,7 +632,14 @@ function buildTargetStateList(statusData: StatusData) {
       const updateKeys = hasObsessionAxis(target)
         ? `好感度.${target.name}:±N / 执念度.${target.name}:±N`
         : `好感度.${target.name}:±N`;
-      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度（对 user）=${target.affinity}（${target.stage}）${obsessionSegment}；更新键=${updateKeys}`;
+      // 亲密档案摘要：贞操 + 非零计数器，让 AI 能看到当前追踪状态并在不一致时补写。
+      const virginity = target.meta?.virginity === 'lost' ? '已失去' : '完璧';
+      const rawCounters = target.meta?.bodyCounters as Record<string, number> | undefined;
+      const counterEntries = rawCounters
+        ? Object.entries(rawCounters).filter(([, v]) => Number(v) > 0).map(([k, v]) => `${k}${v}`).join('/')
+        : '';
+      const sexSegment = `；贞操=${virginity}${counterEntries ? `；计数=${counterEntries}` : ''}`;
+      return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度（对 user）=${target.affinity}（${target.stage}）${obsessionSegment}${sexSegment}；更新键=${updateKeys}`;
     })
     .join('\n');
 }
@@ -1085,8 +1092,8 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
     target
       ? `  着装.部位:描述          — 更新当前明确对象 ${target.name} 的某个部位着装（例：着装.上装:换上了黑色卫衣）`
       : '  着装.部位:描述          — 主场景禁用旧单目标着装格式；没有明确对象时不要输出',
-    '  贞操.角色名:已失去       — 仅当正文明确发生破除时输出；只看是否真的发生，单向不可逆，禁止写回"完璧/处女"',
-    '  X次数.角色名:+N          — 亲密接触硬统计（X=接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数）；只在正文明确发生时累加。不统计经验人数/伴侣数。',
+    '  贞操.角色名:已失去       — 仅当正文明确发生破除时输出；只看是否真的发生，单向不可逆，禁止写回"完璧/处女"。若上方角色列表显示"完璧"但聊天记录/摘要中已明确发生过性行为，本轮必须补写贞操标记和对应次数以修正数据。',
+    '  X次数.角色名:+N          — 亲密接触硬统计（X=接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数）；正文明确发生时累加，或当角色列表计数与已知事实不符时一次性补正。不统计经验人数/伴侣数。',
     '  当前事件:事件ID          — 设置手机状态页显示的唯一当前主线事件（例：当前事件:SAE_01-2；清空用 当前事件:无）',
     '  主线事件.事件ID:状态     — 更新主线事件状态（未触发/进行中/已结束/跳过/延后）',
     '  事件名:事件描述         — 添加或替换近期重要事件，可有多条',
@@ -1139,8 +1146,8 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
     `好感度.角色名:±N（必须从下方“可更新角色”的更新键复制角色名；例如 ${affinityExamples}）`,
     `执念度.角色名:±N（例：${obsessionExamples}）`,
     '五维.能力名:±N',
-    '贞操.角色名:已失去（仅正文明确发生破除时；单向不可逆，不写复位）',
-    'X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/性交次数/足交次数；仅正文明确发生时累加；不统计经验人数）',
+    '贞操.角色名:已失去（仅正文明确发生破除时，或角色列表显示完璧但已知事实不符时补写；单向不可逆，不写复位）',
+    'X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/性交次数/足交次数；正文明确发生时累加，或计数与已知事实不符时一次性补正；不统计经验人数）',
     '主线事件.事件ID:状态',
     '当前事件:事件ID',
     '</state_delta>',
@@ -1234,6 +1241,8 @@ export function buildProgressPrompt(
         `  执念度.角色名或id:±N（多人场景必须显式指定角色；例如 ${obsessionExamples}）`,
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
         '  着装.部位:描述（主场景禁用旧单目标着装格式；没有明确对象时不要输出）',
+        '  贞操.角色名:已失去（正文明确发生破除时，或角色列表显示完璧但已知事实不符时补写；单向不可逆）',
+        '  X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/性交次数/足交次数；正文明确发生时累加，或计数与已知事实不符时补正；不统计经验人数）',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
         '  主线事件.事件ID:状态（未触发/进行中/已结束）',
         '  事件名:事件描述',

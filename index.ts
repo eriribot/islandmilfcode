@@ -1490,6 +1490,8 @@ function bindEvents() {
     try {
       const text = new TextDecoder('utf-8').decode(await file.arrayBuffer());
       const result = importAllSavesFromJson(text);
+      // 等待 IndexedDB 写入全部落盘后再刷新，否则异步写入可能丢失。
+      await flushSaveStore();
       window.alert(`导入完成：成功 ${result.imported} 条，跳过 ${result.skipped} 条。即将刷新页面。`);
       location.reload();
     } catch (error) {

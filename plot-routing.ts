@@ -89,13 +89,16 @@ export function isPlotEventAllowedByRoute(eventId: string, statusData: StatusDat
   if (eventId === SAE_03_8) {
     if (!isSae0306Resolved(statusData)) return false;
     if (route === SAE_03_8) return true;
-    if (isSae0307BranchId(currentId)) return true;
+    // SAE_03-8 本身已经是当前事件（已被激活）
+    if (currentId === SAE_03_8) return true;
 
     const mainEvents = statusData.world.mainEvents ?? {};
+    // 7分支已结束 → SAE_03-8 解锁
     if (isFinishedMainEventStatus(mainEvents[SAE_03_7A]) || isFinishedMainEventStatus(mainEvents[SAE_03_7B])) {
       return true;
     }
 
+    // 日期已到 08-13 → SAE_03-8 解锁
     const currentDate = getDatePart(statusData.world.currentTime);
     return Boolean(currentDate && currentDate >= '2012-08-13');
   }

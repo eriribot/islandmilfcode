@@ -314,7 +314,9 @@ function readBodyCounters(target: TargetStatus | null): Array<{ field: string; v
 /** 渲染印象 chip：按极性着色。impressions 为空则返回空串（不显示该区）。 */
 function renderImpressionChips(memoryDB: IslandMemoryDB | null | undefined, targetId: string | undefined): string {
   if (!memoryDB || !targetId) return '';
-  const impressions = getImpressionsForTarget(memoryDB, targetId);
+  const allImpressions = getImpressionsForTarget(memoryDB, targetId);
+  // 只显示"对 User/玩家"的印象；对其他角色的印象不在"她对你的印象"里展示。
+  const impressions = allImpressions.filter(imp => /^(user|玩家|你)$/i.test(imp.subject.trim()));
   if (!impressions.length) return '';
   const chips = impressions
     .map(imp => {

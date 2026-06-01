@@ -321,7 +321,8 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
 
   for (const id of Object.keys(mainEvents)) {
     if ((isSae0307BranchId(id) || isSae0402BranchId(id) || id === SAE_03_8) && !isPlotEventAllowedByRoute(id, statusData)) {
-      if (normalizeMainEventStatus(mainEvents[id]) === MAIN_EVENT_RUNNING) {
+      const status = normalizeMainEventStatus(mainEvents[id]);
+      if (status === MAIN_EVENT_RUNNING || status === MAIN_EVENT_FINISHED) {
         mainEvents[id] = MAIN_EVENT_NOT_STARTED;
         if (statusData.world.currentMainEventId === id) {
           statusData.world.currentMainEventId = '';

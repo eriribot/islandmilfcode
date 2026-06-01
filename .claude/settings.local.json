@@ -59,7 +59,8 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "Read(//e/tmp/**)",
       "Bash(gh api *)",
-      "PowerShell($ProgressPreference='SilentlyContinue'; try { $r = Invoke-RestMethod \"https://api.github.com/repos/sstareven/coc-tavern\" -Headers @{ 'User-Agent'='claude' }; \"default_branch=$\\($r.default_branch\\)\"; \"desc=$\\($r.description\\)\"; \"pushed=$\\($r.pushed_at\\)\"; \"stars=$\\($r.stargazers_count\\)\" } catch { \"ERR: $\\($_.Exception.Message\\)\" })"
+      "PowerShell($ProgressPreference='SilentlyContinue'; try { $r = Invoke-RestMethod \"https://api.github.com/repos/sstareven/coc-tavern\" -Headers @{ 'User-Agent'='claude' }; \"default_branch=$\\($r.default_branch\\)\"; \"desc=$\\($r.description\\)\"; \"pushed=$\\($r.pushed_at\\)\"; \"stars=$\\($r.stargazers_count\\)\" } catch { \"ERR: $\\($_.Exception.Message\\)\" })",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

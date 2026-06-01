@@ -693,7 +693,7 @@ export function exportSaveAsJson(saveId: string): string {
   return JSON.stringify(backup, null, 2);
 }
 
-function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): { imported: number; skipped: number } {
+function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): { imported: number; skipped: number; saveId: string } {
   const rawPayload = parsed.payload as Partial<SavePayload> | undefined;
   const rawMeta = parsed.meta as Partial<SaveMeta> | undefined;
   const saveId = String(parsed.saveId || rawPayload?.saveId || rawMeta?.saveId || '').trim();
@@ -730,7 +730,10 @@ function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): { imp
   index[saveId] = meta;
   writePayload(payload);
   writeSaveIndex(index);
-  return { imported: 1, skipped: 0 };
+  // 导入后自动切换到该存档，确保刷新后加载的是导入的存档而非旧的。
+  setActiveSaveId(saveId);
+  setActiveRunId(runId);
+  return { imported: 1, skipped: 0, saveId };
 }
 
 export function importAllSavesFromJson(json: string): { imported: number; skipped: number } {
@@ -746,19 +749,52 @@ export function importAllSavesFromJson(json: string): { imported: number; skippe
   }
   let imported = 0;
   let skipped = 0;
+
+  // 全量备份的 entries 使用旧 localStorage key 格式。
+  // 现在存储已迁移到 IndexedDB，需要把 index/payload 写入 save-store 而非 localStorage。
+  let importedIndex: SaveIndexRecord | null = null;
+  const indexKey = SAVE_INDEX_STORAGE_KEY; // 'islandmilfcode:save-index:v2'
+  const payloadPrefix = SAVE_PAYLOAD_STORAGE_PREFIX; // 'islandmilfcode:save-payload:v2:'
+
   for (const [key, value] of Object.entries(parsed.entries)) {
-    // 只接受 islandmilfcode: 前缀的键，防止误覆盖其它应用 storage。
     if (!key.startsWith(BACKUP_KEY_PREFIX)) {
       skipped += 1;
       continue;
     }
     try {
-      const text = typeof value === 'string' ? value : JSON.stringify(value);
-      localStorage.setItem(key, text);
-      imported += 1;
+      if (key === indexKey) {
+        // save index → 写入 IndexedDB
+        const indexData = (typeof value === 'object' && value !== null ? value : JSON.parse(value as string)) as SaveIndexRecord;
+        // 合并到现有 index（覆盖同名 saveId）
+        const currentIndex = readSaveIndex();
+        importedIndex = { ...currentIndex, ...indexData };
+        writeSaveIndex(importedIndex);
+        imported += 1;
+      } else if (key.startsWith(payloadPrefix)) {
+        // save payload → 写入 IndexedDB
+        const saveId = key.slice(payloadPrefix.length);
+        const payloadData = (typeof value === 'object' && value !== null ? value : JSON.parse(value as string)) as Record<string, unknown>;
+        writePayloadSync(saveId, payloadData);
+        imported += 1;
+      } else {
+        // 其它 islandmilfcode: 前缀的小 key（如 active-run-id 等）仍写 localStorage
+        const text = typeof value === 'string' ? value : JSON.stringify(value);
+        localStorage.setItem(key, text);
+        imported += 1;
+      }
     } catch {
       skipped += 1;
     }
   }
+
+  // 如果导入了 index，自动切换到最新的存档
+  if (importedIndex) {
+    const saves = Object.values(importedIndex).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    if (saves.length > 0 && saves[0].saveId) {
+      setActiveSaveId(saves[0].saveId);
+      if (saves[0].runId) setActiveRunId(saves[0].runId);
+    }
+  }
+
   return { imported, skipped };
 }

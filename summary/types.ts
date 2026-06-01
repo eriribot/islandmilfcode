@@ -152,15 +152,14 @@ function buildSexStatusForActiveTarget(statusData: {
   const counters: Array<{ field: string; value: number }> = [];
   if (rawCounters && typeof rawCounters === 'object') {
     for (const [field, value] of Object.entries(rawCounters as Record<string, unknown>)) {
-      // 经验人数（伴侣数）与“依恋感”设计意图冲突，旧存档残留也不回注 prompt。
+      // 经验人数（伴侣数）与”依恋感”设计意图冲突，旧存档残留也不回注 prompt。
       if (field === '经验人数') continue;
       const n = Number(value);
       if (Number.isFinite(n) && n > 0) counters.push({ field, value: n });
     }
   }
 
-  // 处女 + 零开发：没有可回注的性状态，返回 null 让锚点省略此块。
-  if (virginity === 'intact' && !counters.length) return null;
+  // 始终返回状态（包括完璧+零计数），让 AI 能看到当前追踪值并在与已知事实不符时补正。
   return { name: target.name, virginity, counters };
 }
 
