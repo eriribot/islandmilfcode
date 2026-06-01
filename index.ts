@@ -921,6 +921,7 @@ function bindReaderDragEvents() {
       if (event.button !== 0) return;
       if ((event.target as HTMLElement).closest('[data-action="jump-message"]')) return;
       if ((event.target as HTMLElement).closest('[data-action="reader-edit"]')) return;
+      if ((event.target as HTMLElement).closest('[data-action="reader-actions-open"]')) return;
       readerDragState = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -1191,6 +1192,17 @@ function bindEvents() {
     button.addEventListener('click', event => {
       event.stopPropagation();
       openReaderEditor(Number(button.dataset.readerIndex ?? state.focusedMessageIndex));
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="reader-actions-open"]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      const rect = button.getBoundingClientRect();
+      openReaderContextMenu(
+        Number(button.dataset.readerIndex ?? state.focusedMessageIndex),
+        rect.left,
+        rect.bottom + READER_CONTEXT_MENU_GAP,
+      );
     });
   });
   root?.querySelectorAll<HTMLElement>('[data-action="reader-edit-cancel"]').forEach(element => {
@@ -1516,6 +1528,17 @@ function bindEvents() {
       void submitMessage(ctx);
     }),
   );
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="select-option"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const optionText = button.dataset.optionText;
+      if (!optionText) return;
+
+      state.draft = optionText;
+      render();
+
+      void submitMessage(ctx);
+    });
+  });
   root
     ?.querySelector<HTMLButtonElement>('[data-action="open-notification"]')
     ?.addEventListener('click', () => openNotification());

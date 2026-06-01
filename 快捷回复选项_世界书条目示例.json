@@ -1,0 +1,48 @@
+{
+  "comment": "快捷回复选项_世界书条目示例",
+  "description": "将此条目添加到角色卡的世界书中，启用快捷回复选项功能",
+  "worldbook_entry": {
+    "uid": 9999,
+    "key": ["输出格式", "快捷回复", "选项", "options"],
+    "keysecondary": [],
+    "comment": "快捷回复选项输出格式",
+    "content": "# 快捷回复选项输出格式\n\n在每次 assistant 回复的 <content> 正文之后，必须生成四个快捷回复选项供 user 选择，用 <options> 标签包裹。\n\n## 格式要求\n\n<options>\n>选项一：[提供一个谨慎、观察性的行动选项]\n>选项二：[提供一个积极、主动以推进任务的行动选项]\n>选项三：[提供一个侧重于人际关系或私人互动的行动选项]\n>选项四：[提供一个符合当下情景的，带有情色或挑逗意味的NSFW行动选项]\n</options>\n\n## 选项编写原则\n\n1. **符合人设**：每个选项都应该是 user 角色可能说的话或做的动作，符合其性格、背景和当前情绪\n2. **简洁明了**：每个选项控制在 20-40 字，让玩家能快速理解和选择\n3. **风格区分**：四个选项应该提供不同的互动方向和情绪色彩\n4. **场景适配**：选项应该紧密贴合当前场景和对话内容\n5. **尺度把控**：选项四可以根据场景氛围调整尺度，不适合时可以是幽默或调侃性质\n\n## 选项类型说明\n\n- **选项一（谨慎观察型）**：保守、被动、观察、等待、思考类行动\n- **选项二（积极推进型）**：主动、直接、行动、质问、推进剧情类行动\n- **选项三（人际互动型）**：关心、安慰、交流、建立关系、情感表达类行动\n- **选项四（情色/挑逗型）**：亲密、暧昧、挑逗、身体接触、NSFW 类行动（根据场景调整）\n\n## 示例\n\n### 场景：日常对话\n\n<options>\n>选项一：保持沉默，观察她的反应\n>选项二：直接问道："你到底想说什么？"\n>选项三：温柔地说："我会一直陪着你的"\n>选项四：轻轻握住她的手，凝视她的眼睛\n</options>\n\n### 场景：紧张冲突\n\n<options>\n>选项一：后退一步，评估当前局势\n>选项二：毫不犹豫地冲上前去\n>选项三：试图用言语缓和气氛\n>选项四：将她护在身后，用身体挡住危险\n</options>\n\n### 场景：亲密时刻\n\n<options>\n>选项一：移开视线，假装什么都没看到\n>选项二：打破沉默："我们该谈谈了"\n>选项三：温柔地抚摸她的脸颊\n>选项四：将她拉入怀中，吻住她的唇\n</options>\n\n## 注意事项\n\n- 选项必须在 </content> 之后生成，不要放在正文内部\n- 每次回复都必须生成选项，不要遗漏\n- 选项文本不要包含多余的标点符号或格式\n- 选项应该是第一人称视角（user 的行动）\n- 避免生成过于相似的选项",
+    "constant": true,
+    "selective": false,
+    "order": 100,
+    "position": "after_char",
+    "enabled": true,
+    "extensions": {
+      "position": 4,
+      "exclude_recursion": false,
+      "display_index": 9999,
+      "probability": 100,
+      "useProbability": true,
+      "depth": 4,
+      "selectiveLogic": 0,
+      "group": "",
+      "group_override": false,
+      "group_weight": 100,
+      "prevent_recursion": false,
+      "delayUntilRecursion": false,
+      "scanDepth": null,
+      "match_whole_words": null,
+      "use_group_scoring": false,
+      "case_sensitive": null,
+      "automation_id": "",
+      "role": 0,
+      "vectorized": false,
+      "sticky": 0,
+      "cooldown": 0,
+      "delay": 0
+    }
+  },
+  "usage_instructions": {
+    "step1": "复制上面的 worldbook_entry 对象",
+    "step2": "打开角色卡的世界书编辑器",
+    "step3": "创建新条目或导入 JSON",
+    "step4": "确保条目已启用（enabled: true）",
+    "step5": "保存角色卡",
+    "step6": "开始对话，AI 将在每次回复后生成选项"
+  }
+}

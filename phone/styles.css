@@ -75,7 +75,8 @@ body.floating-phone-dragging {
 .phone-shell {
   position: relative;
   z-index: 1;
-  width: min(100%, 380px);
+  width: min(100%, 380px, 52vh);
+  width: min(100%, 380px, 52dvh);
   aspect-ratio: 380 / 680;
   border-radius: 12px;
   padding: 10px;
@@ -261,7 +262,7 @@ body.floating-phone-dragging {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 10px 12px 12px;
+  padding: clamp(8px, 2.8vw, 10px) clamp(8px, 3vw, 12px) clamp(10px, 3.2vw, 12px);
 }
 
 .phone-route-page {
@@ -284,16 +285,21 @@ body.floating-phone-dragging {
 }
 
 .phone-home {
-  gap: 14px;
+  min-height: 0;
+  gap: clamp(8px, 2.8vw, 14px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .phone-home-hero {
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 12px;
-  min-height: 126px;
-  padding: 14px;
+  gap: clamp(8px, 2.8vw, 12px);
+  min-height: clamp(108px, 19dvh, 126px);
+  padding: clamp(10px, 3.2vw, 14px);
   border-radius: 12px;
   color: #fff8f6;
   background:
@@ -579,9 +585,10 @@ body.floating-phone-dragging {
 }
 
 .phone-app-grid {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px 10px;
+  gap: clamp(8px, 2.6vw, 12px) clamp(6px, 2.4vw, 10px);
   min-height: 0;
 }
 
@@ -590,7 +597,7 @@ body.floating-phone-dragging {
   padding: 0;
   display: grid;
   justify-items: center;
-  gap: 5px;
+  gap: clamp(3px, 1.4vw, 5px);
   color: var(--ink-dark);
   background: transparent;
   cursor: pointer;
@@ -598,8 +605,8 @@ body.floating-phone-dragging {
 
 .phone-app-icon__glyph,
 .phone-dock-btn {
-  width: 54px;
-  height: 54px;
+  width: clamp(40px, 14vw, 54px);
+  height: clamp(40px, 14vw, 54px);
   display: grid;
   place-items: center;
   border-radius: 8px;
@@ -648,11 +655,12 @@ body.floating-phone-dragging {
 }
 
 .phone-dock {
+  flex: 0 0 auto;
   margin-top: auto;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  padding: 10px 14px;
+  gap: clamp(6px, 2.8vw, 12px);
+  padding: clamp(8px, 2.8vw, 10px) clamp(10px, 3.6vw, 14px);
   border-radius: 8px;
   background: rgba(255, 252, 245, 0.62);
   border: 1px solid rgba(180, 160, 130, 0.18);
@@ -660,8 +668,8 @@ body.floating-phone-dragging {
 }
 
 .phone-dock-btn {
-  width: 48px;
-  height: 48px;
+  width: clamp(40px, 13vw, 48px);
+  height: clamp(40px, 13vw, 48px);
   justify-self: center;
   border: 0;
   cursor: pointer;
@@ -1433,8 +1441,12 @@ body.floating-phone-dragging {
   padding: 0 4px;
 }
 
+.paper-workspace--phone .reader-card__chrome {
+  gap: 6px;
+}
+
 .paper-workspace--phone .reader-card__hint-group {
-  min-width: 58px;
+  min-width: 48px;
 }
 
 .paper-workspace--phone .reader-card__hint {
@@ -1459,6 +1471,40 @@ body.floating-phone-dragging {
 .paper-workspace--phone .paper-composer-card {
   border-radius: 8px;
   padding: 10px 12px;
+}
+
+.paper-workspace--phone .paper-composer-card__label {
+  margin-bottom: 4px;
+  font-size: 0.76rem;
+}
+
+.paper-workspace--phone .composer-input {
+  min-height: 72px;
+  max-height: 45dvh;
+  padding: 2px 0;
+  resize: vertical;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  line-height: 1.75;
+}
+
+.paper-workspace--phone .composer-input:focus {
+  min-height: 108px;
+}
+
+.paper-workspace--phone .composer-actions {
+  margin-top: 6px;
+}
+
+.paper-workspace--phone .composer-floor-actions {
+  width: 34px;
+  height: 34px;
+  font-size: 1.18rem;
+}
+
+.paper-workspace--phone .send-btn {
+  min-width: 64px;
+  height: 34px;
 }
 
 .settings-actions {
@@ -1792,8 +1838,8 @@ body.floating-phone-dragging {
 }
 
 .phone-app-icon__image {
-  width: 32px;
-  height: 32px;
+  width: clamp(26px, 8.5vw, 32px);
+  height: clamp(26px, 8.5vw, 32px);
   display: block;
   object-fit: contain;
 }
@@ -2752,7 +2798,8 @@ body.floating-phone-dragging {
   }
 
   .phone-shell {
-    width: 100%;
+    width: min(100%, 380px, 52vh);
+    width: min(100%, 380px, 52dvh);
     border-radius: 10px;
     padding: 8px;
   }

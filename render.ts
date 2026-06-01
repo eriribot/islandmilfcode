@@ -1,5 +1,5 @@
 import { escapeHtml } from './html';
-import { extractTucaoBlocks, getReaderMessages, getVisibleMessageText } from './message-format';
+import { extractOptionsBlock, extractTucaoBlocks, getReaderMessages, getVisibleMessageText } from './message-format';
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
 import type { SummaryStore } from './summary/types';
 import type { AppState, BackgroundTaskState, ReaderContextMenuState, StatusData, UiMessage } from './types';
@@ -151,6 +151,35 @@ function renderTucaoPanel(message: UiMessage) {
   `;
 }
 
+function renderOptionsPanel(message: UiMessage) {
+  if (message.role !== 'assistant') return '';
+  if (message.streaming) return '';
+
+  const options = extractOptionsBlock(message.rawText || message.text, { streaming: false });
+  if (!options.length) return '';
+
+  return `
+    <aside class="reader-options" aria-label="快捷回复选项">
+      <div class="reader-options__list">
+        ${options
+          .map(
+            (option, index) => `
+              <button
+                class="reader-options__item"
+                data-action="select-option"
+                data-option-text="${escapeHtml(option)}"
+                data-option-index="${index}"
+              >
+                ${escapeHtml(option)}
+              </button>
+            `,
+          )
+          .join('')}
+      </div>
+    </aside>
+  `;
+}
+
 function renderReaderEditor(state: AppState) {
   const editing = state.readerEditing;
   if (!editing) return '';
@@ -189,18 +218,14 @@ function renderReaderEditor(state: AppState) {
 function renderReaderContextMenu(menu: ReaderContextMenuState | null, generating: boolean) {
   if (!menu) return '';
 
-  const floorLabel = String(menu.readerIndex + 1).padStart(2, '0');
   const hasRollbackSource = Boolean(menu.sourceUserText);
-  const promptPreview = hasRollbackSource
-    ? escapeHtml(menu.sourceUserText.slice(0, 54).trim() + (menu.sourceUserText.length > 54 ? '…' : ''))
-    : '该楼层暂时没有可回溯的输入。';
   const actionHtml = hasRollbackSource
     ? `
       <button
         class="reader-context-menu__action"
         data-action="reader-rollback"
       >
-        回溯楼层输入
+        回溯输出
       </button>
       <button
         class="reader-context-menu__action reader-context-menu__action--primary"
@@ -222,10 +247,43 @@ function renderReaderContextMenu(menu: ReaderContextMenuState | null, generating
 
   return `
     <div class="reader-context-menu" style="left:${menu.x}px;top:${menu.y}px;" data-reader-context-menu="true">
-      <div class="reader-context-menu__meta">楼层 ${floorLabel}</div>
-      <div class="reader-context-menu__preview">${promptPreview}</div>
       ${actionHtml}
     </div>
+  `;
+}
+
+function getRollbackSourceForReaderIndex(state: AppState, readerIndex: number) {
+  const readerMessages = getReaderMessages(state.uiMessages);
+  const targetMessage = readerMessages[readerIndex];
+  if (!targetMessage) return '';
+
+  const targetUiIndex = state.uiMessages.findIndex(message => message.id === targetMessage.id);
+  if (targetUiIndex < 0) return '';
+
+  if (targetMessage.role === 'user') return targetMessage.text.trim();
+
+  for (let cursor = targetUiIndex - 1; cursor >= 0; cursor -= 1) {
+    const candidate = state.uiMessages[cursor];
+    if (candidate?.role === 'user' && candidate.text.trim()) return candidate.text.trim();
+  }
+
+  return '';
+}
+
+function renderReaderActionsButton(state: AppState, readerIndex: number, className: string) {
+  const sourceUserText = getRollbackSourceForReaderIndex(state, readerIndex);
+  if (!sourceUserText) return '';
+
+  return `
+    <button
+      class="${className}"
+      data-action="reader-actions-open"
+      data-reader-index="${readerIndex}"
+      title="楼层操作"
+      aria-label="打开楼层操作"
+    >
+      +
+    </button>
   `;
 }
 
@@ -327,6 +385,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
         <div class="reader-card__body">
           <p class="reader-card__text">${pageText}</p>
         </div>
+        ${renderOptionsPanel(message)}
       </article>
 
       ${bottomLane}
@@ -368,6 +427,9 @@ function renderJournalHeader(state: AppState) {
 export function renderPaperWorkspace(state: AppState, flipDir: string = '', options: { embedded?: boolean } = {}) {
   const embedded = options.embedded ?? false;
   const composerId = embedded ? 'islandmilfcode-phone-composer' : 'islandmilfcode-composer';
+  const readerMessages = getReaderMessages(state.uiMessages);
+  const currentReaderIndex = Math.min(Math.max(state.focusedMessageIndex, 0), Math.max(readerMessages.length - 1, 0));
+  const composerActionsButton = renderReaderActionsButton(state, currentReaderIndex, 'composer-floor-actions');
   return `
     <section class="paper-workspace ${embedded ? 'paper-workspace--phone' : ''}">
       ${embedded ? '' : '<div class="washi-strip washi-strip--top" aria-hidden="true"></div>'}
@@ -397,6 +459,7 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
         >${escapeHtml(state.draft)}</textarea>
 
         <div class="composer-actions">
+          ${composerActionsButton}
           ${state.generating ? '<span class="composer-tip">写入中……</span>' : ''}
           <button class="send-btn" data-action="send" ${state.generating ? 'disabled' : ''}>记录</button>
         </div>

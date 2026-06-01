@@ -207,6 +207,52 @@ export function extractTucaoBlocks(text: string, { streaming = false }: { stream
   return blocks;
 }
 
+export function extractOptionsBlock(text: string, { streaming = false }: { streaming?: boolean } = {}) {
+  const raw = String(text ?? '');
+  if (!raw) return [];
+
+  const options: string[] = [];
+  const closedTag = /<options\b[^>]*>([\s\S]*?)<\/options>/gi;
+  const match = closedTag.exec(raw);
+
+  if (match) {
+    const content = (match[1] ?? '').trim();
+    // 解析每个选项，格式：>选项一：[内容]
+    const lines = content.split('\n').map(line => line.trim()).filter(Boolean);
+    for (const line of lines) {
+      const optionMatch = line.match(/^>(?:选项[一二三四]：)?\s*\[?(.+?)\]?$/);
+      if (optionMatch) {
+        options.push(optionMatch[1].trim());
+      }
+    }
+  }
+
+  // 流式模式下处理未闭合的标签
+  if (streaming && options.length === 0) {
+    const opens = Array.from(raw.matchAll(/<options\b[^>]*>/gi));
+    const closes = Array.from(raw.matchAll(/<\/options>/gi));
+    const lastOpen = opens[opens.length - 1];
+    const lastClose = closes[closes.length - 1];
+
+    if (lastOpen?.index != null && (!lastClose?.index || lastOpen.index > lastClose.index)) {
+      const start = lastOpen.index + lastOpen[0].length;
+      const content = raw
+        .slice(start)
+        .replace(/<[^>]*$/, '')
+        .trim();
+      const lines = content.split('\n').map(line => line.trim()).filter(Boolean);
+      for (const line of lines) {
+        const optionMatch = line.match(/^>(?:选项[一二三四]：)?\s*\[?(.+?)\]?$/);
+        if (optionMatch) {
+          options.push(optionMatch[1].trim());
+        }
+      }
+    }
+  }
+
+  return options;
+}
+
 export function extractContextReply(text: string, { streaming = false }: { streaming?: boolean } = {}) {
   const raw = String(text ?? '');
   if (!raw) {
