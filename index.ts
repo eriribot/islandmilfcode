@@ -93,6 +93,7 @@ let flipDirection: 'forward' | 'backward' | '' = '';
 let phoneBgmAudio: HTMLAudioElement | null = null;
 let phoneBgmResolvedUrl = '';
 let restoringSave = false;
+let quickReplyDelegationBound = false;
 
 let readerDragState: {
   pointerId: number;
@@ -483,6 +484,42 @@ function focusComposer(placeCursorAtEnd = true) {
       textarea.setSelectionRange(offset, offset);
     }
   });
+}
+
+function injectComposerDraft(text: string) {
+  state.draft = text;
+  const textareas = Array.from(root?.querySelectorAll<HTMLTextAreaElement>('.composer-input') ?? []);
+  if (!textareas.length) {
+    render();
+    focusComposer();
+    return;
+  }
+
+  textareas.forEach(textarea => {
+    textarea.value = text;
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  focusComposer();
+}
+
+function bindQuickReplyDelegation() {
+  if (!root || quickReplyDelegationBound) return;
+  quickReplyDelegationBound = true;
+  root.addEventListener(
+    'click',
+    event => {
+      const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>('[data-action="select-option"]');
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+
+      const optionText = button.dataset.optionText;
+      if (!optionText) return;
+
+      injectComposerDraft(optionText);
+    },
+    true,
+  );
 }
 
 function focusMessage(delta: number) {
@@ -922,6 +959,7 @@ function bindReaderDragEvents() {
       if ((event.target as HTMLElement).closest('[data-action="jump-message"]')) return;
       if ((event.target as HTMLElement).closest('[data-action="reader-edit"]')) return;
       if ((event.target as HTMLElement).closest('[data-action="reader-actions-open"]')) return;
+      if ((event.target as HTMLElement).closest('[data-action="select-option"]')) return;
       readerDragState = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -1127,6 +1165,14 @@ function bindReaderContextMenuEvents() {
 // ── Event binding ──
 
 function bindEvents() {
+  bindQuickReplyDelegation();
+
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="select-option"]').forEach(button => {
+    button.addEventListener('pointerdown', event => {
+      event.stopPropagation();
+    });
+  });
+
   root?.querySelectorAll<HTMLTextAreaElement>('.composer-input').forEach(textarea => {
     textarea.addEventListener('input', event => {
       state.draft = (event.target as HTMLTextAreaElement).value;
@@ -1528,17 +1574,6 @@ function bindEvents() {
       void submitMessage(ctx);
     }),
   );
-  root?.querySelectorAll<HTMLButtonElement>('[data-action="select-option"]').forEach(button => {
-    button.addEventListener('click', () => {
-      const optionText = button.dataset.optionText;
-      if (!optionText) return;
-
-      state.draft = optionText;
-      render();
-
-      void submitMessage(ctx);
-    });
-  });
   root
     ?.querySelector<HTMLButtonElement>('[data-action="open-notification"]')
     ?.addEventListener('click', () => openNotification());
