@@ -1,4 +1,4 @@
-import { getPromptMessageText, parseProgressUpdate, type ProgressUpdate } from '../message-format';
+import { getPromptMessageText } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
 import { runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
 import type { AppState, TavernWindow, UiMessage } from '../types';
@@ -29,7 +29,6 @@ export type SummaryContext = {
   uiMessages: UiMessage[];
   onStoreUpdated: () => void;
   onTaskUpdated?: () => void;
-  onProgressUpdate?: (update: ProgressUpdate) => void;
   /** 当前结构化状态快照，用作摘要 prompt 的事实锚点。缺省时不注入。 */
   getFactAnchor?: () => FactAnchor | null;
   /** memoryDB 引用，摘要成功后写入 summaries/facts 表。 */
@@ -38,7 +37,6 @@ export type SummaryContext = {
 
 export type SummaryRunResult = {
   minorRan: boolean;
-  minorAppliedProgress: boolean;
   majorRan: boolean;
   globalRan: boolean;
 };
@@ -100,13 +98,6 @@ async function callGenerateRaw(
     prompts,
     apiConfig,
   });
-}
-
-function applyProgressFromMinorSummary(ctx: SummaryContext, raw: string): boolean {
-  const update = parseProgressUpdate(raw);
-  if (!update) return false;
-  ctx.onProgressUpdate?.(update);
-  return true;
 }
 
 /** 把摘要里的 [关系] 印象行写入 memoryDB.impressions 表；source 名→target.id 归一后才写，否则丢弃。 */
@@ -211,7 +202,6 @@ export async function runSummary(
   let taskStarted = false;
   const result: SummaryRunResult = {
     minorRan: false,
-    minorAppliedProgress: false,
     majorRan: false,
     globalRan: false,
   };
@@ -264,7 +254,6 @@ export async function runSummary(
           clearFailureState(store);
           commitSummaryToMemoryDB(ctx.memoryDB, 'minor', text, range, newFacts);
           commitImpressionsFromSummary(ctx, raw);
-          result.minorAppliedProgress = applyProgressFromMinorSummary(ctx, raw);
         }
       } catch (error) {
         failTask(error);

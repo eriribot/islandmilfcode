@@ -66,6 +66,54 @@ function getDatePart(value: string) {
   return value.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
 }
 
+/** 把 "YYYY-MM-DD HH:mm" 折成可比较的分钟刻度；缺时分按 00:00。无法解析返回 null。 */
+function toComparableMinutes(value: string): number | null {
+  const date = getDatePart(value);
+  if (!date) return null;
+  const [y, m, d] = date.split('-').map(Number);
+  const minutes = getMinutesPart(value) ?? 0;
+  return Date.UTC(y, m - 1, d) / 60000 + minutes;
+}
+
+/**
+ * 时间单调防线：游戏时间只进不退。新时间严格早于当前时间时拒绝（返回当前时间）。
+ * 这是所有时间写入的统一兜底——无论来源是主 API、副 API 还是游标滞后的小摘要，
+ * 反向覆盖(把 8月13日 写回 8月12日 / SAE_03-8 退回 SAE_03-6)都在这里被挡住。
+ * 等值放行（同一时刻的重复写入无害）；无法比较时放行，避免误伤格式异常但合法的推进。
+ */
+function enforceMonotonicTime(nextTime: string, currentTime: string): string {
+  const next = toComparableMinutes(nextTime);
+  const current = toComparableMinutes(currentTime);
+  if (next === null || current === null) return nextTime;
+  if (next < current) {
+    console.warn('[time-guard] reject backward time write:', nextTime, '<', currentTime);
+    return currentTime;
+  }
+  return nextTime;
+}
+
+/**
+ * 统一时间提交门：任何把 world.currentTime 往前推的写入都应走这里，禁止裸写 `statusData.world.currentTime = ...`。
+ * 管线：normalizeIncomingTime（格式归一/中文日期/相对日期）→ enforceMonotonicTime（只进不退）。
+ * 返回 { changed, time }：time 始终是写入后（或保持原值）的权威时间；changed 表示是否真的前进了。
+ * 调用方负责在 changed 时落库/触发 syncMainEvents。倒叙/回忆等"不该推进世界游标"的内容不要调用本函数。
+ */
+export function commitWorldTimeCandidate(
+  statusData: StatusData,
+  rawTime: string,
+): { changed: boolean; time: string } {
+  const current = statusData.world.currentTime;
+  const raw = String(rawTime ?? '').trim();
+  if (!raw) return { changed: false, time: current };
+
+  const normalized = normalizeIncomingTime(raw, current);
+  const next = enforceMonotonicTime(normalized, current);
+  if (next === current) return { changed: false, time: current };
+
+  statusData.world.currentTime = next;
+  return { changed: true, time: next };
+}
+
 function getMinutesPart(value: string) {
   const match = value.match(/\b(\d{2}):(\d{2})\b/);
   if (!match) return null;
@@ -310,6 +358,17 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
       continue;
     }
 
+    // 时间闸自愈：被提前写成"进行中"的未来事件（当前日期尚未到达触发日且未过期）回退为"未进行"。
+    // 这能让已经"莫名跳到未来卷"的旧存档在重新载入时自动修正，与 sanitizeProgressAgainstPlotLibrary 的写入闸互为防线。
+    if (currentDate && normalizedStatus === MAIN_EVENT_RUNNING && compareDate(currentDate, event.date) < 0) {
+      mainEvents[event.id] = MAIN_EVENT_NOT_STARTED;
+      if (statusData.world.currentMainEventId === event.id) {
+        statusData.world.currentMainEventId = '';
+      }
+      changed = true;
+      continue;
+    }
+
     if (normalizedStatus !== MAIN_EVENT_NOT_STARTED) continue;
 
     if (eventMatchesCurrentDate(event, currentDate)) {
@@ -354,7 +413,8 @@ export function applyProgressUpdate(
   const schedule = buildSchedule(plotLibrary, statusData);
 
   if (update.time) {
-    statusData.world.currentTime = normalizeIncomingTime(update.time, statusData.world.currentTime);
+    // 走统一时间门（归一 + 单调闸），与 preflight 共用同一条井道，杜绝裸写。
+    commitWorldTimeCandidate(statusData, update.time);
   }
   if (update.location) {
     statusData.world.currentLocation = update.location;

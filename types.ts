@@ -216,6 +216,16 @@ export type ScenePresence = {
   absentIds: string[];
   uncertainIds: string[];
   evidence?: Record<string, string>;
+  /**
+   * 生成前预判的时间推进建议。仅当玩家/正文明确把世界游标推进到某日期或时段时给出；
+   * 倒叙/回忆/计划日期/被提及的旁人日期一律不产生 proposal。confidence='high' 才会被 commit。
+   */
+  timeProposal?: {
+    time: string;
+    confidence: 'high' | 'low';
+    source: string;
+    reason: string;
+  };
 };
 
 export type StatusData = {

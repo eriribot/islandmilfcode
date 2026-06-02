@@ -29,6 +29,7 @@ import type {
   PlayerStats,
   PlotLibrary,
   ScenePresence,
+  StatusData,
   TargetStatus,
   UiMessage,
 } from '../types';
@@ -37,8 +38,8 @@ import {
   affinityStage,
   applyProgressUpdate,
   clamp,
+  commitWorldTimeCandidate,
   formatTime,
-  normalizeIncomingTime,
   obsessionStage,
   syncMainEvents,
 } from '../variables/normalize';
@@ -117,19 +118,6 @@ const LOCAL_LOCATION_KEYWORDS = [
   '签名会现场',
 ];
 
-function detectLocalTimeFromUserInput(userInput: string, currentTime: string): string | null {
-  const text = userInput.trim();
-  if (!text) return null;
-
-  const hasExplicitDate =
-    /\d{4}\s*[-年\/]\s*\d{1,2}\s*[-月\/]\s*\d{1,2}/.test(text) || /\d{1,2}\s*月\s*\d{1,2}\s*日/.test(text);
-  const hasAdvanceIntent = /(推进|跳到|快进|到了|来到|转到|时间|次日|翌日|第二天|明天|后天)/.test(text);
-  if (!hasExplicitDate && !hasAdvanceIntent) return null;
-
-  const nextTime = normalizeIncomingTime(text, currentTime);
-  return nextTime !== currentTime ? nextTime : null;
-}
-
 function getScheduledLocationKeywords(plotLibrary: PlotLibrary | null | undefined): string[] {
   const values = new Set<string>();
   for (const event of Object.values(plotLibrary?.events ?? {})) {
@@ -155,16 +143,16 @@ function detectLocalLocationFromUserInput(
   return getScheduledLocationKeywords(plotLibrary).find(location => text.includes(location)) ?? null;
 }
 
+// 生成前只做地点 hint，不再推断时间。
+// 历史教训：旧的生成前时间推断把整段玩家叙事丢给 normalizeIncomingTime，其 cnShort 正则只取
+// 文本里第一个 "M月D日"，导致"提到 8月12日party、实际推进到 8月13日"被写成 12 日，且绕过
+// <state_delta>/<progress> 全部防线、在生成前就 save。时间推进统一交给生成后管线
+// （detectTimeAdvanceIntent → AI 读完整上下文输出 时间:YYYY-MM-DD HH:mm），写入再过 enforceMonotonicTime 单调闸。
 function applyLocalWorldHintsFromUserInput(ctx: ActionContext, userInput: string): boolean {
   const { statusData, plotLibrary } = ctx.state;
-  const nextTime = detectLocalTimeFromUserInput(userInput, statusData.world.currentTime);
   const nextLocation = detectLocalLocationFromUserInput(userInput, plotLibrary);
   let changed = false;
 
-  if (nextTime && nextTime !== statusData.world.currentTime) {
-    statusData.world.currentTime = nextTime;
-    changed = true;
-  }
   if (nextLocation && nextLocation !== statusData.world.currentLocation) {
     statusData.world.currentLocation = nextLocation;
     changed = true;
@@ -173,12 +161,34 @@ function applyLocalWorldHintsFromUserInput(ctx: ActionContext, userInput: string
   if (changed) {
     ctx.adapter.save(statusData);
     recordGenerationDebug(ctx, 'submit:local-world-hints', {
-      time: nextTime ?? '',
       location: nextLocation ?? '',
     });
   }
 
   return changed;
+}
+
+function getProgressDatePart(value: string | undefined): string {
+  return String(value ?? '').match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
+}
+
+// 主线事件激活（进行中 / 设为当前事件）必须等当前游戏日期到达事件触发日。
+// 终态（已结束/跳过/延后）对未来事件仍然放行——User 主动跳过本就需要把后续事件结算掉。
+// 这是 syncMainEvents 之外的第二道闸：模型把未来卷的事件写成"进行中"是
+// "莫名跳到第三卷 / 日历显示未来事件进行中"的根因，且一旦写入会强制结算前序事件、难以回退。
+function isMainEventActivatableByDate(
+  eventId: string,
+  plotLibrary: PlotLibrary,
+  currentDate: string,
+): boolean {
+  if (!currentDate) return true; // 没有可比对的当前日期时放行，避免误伤初始化流程。
+  const scheduleDate = getProgressDatePart(plotLibrary.events[eventId]?.schedule?.date);
+  if (!scheduleDate) return true; // 没有排期日期的事件不参与时间闸。
+  return currentDate >= scheduleDate;
+}
+
+function isActivatingStatus(status: string): boolean {
+  return String(status ?? '').trim() === '进行中';
 }
 
 // 把 AI 给的主线事件 id 跟剧情库（世界书里第一卷/第二卷/第三卷条目合并后的 plotLibrary.events）对一遍，
@@ -190,17 +200,26 @@ function sanitizeProgressAgainstPlotLibrary(
 ): ProgressUpdate {
   const whitelist = plotLibrary ? new Set(Object.keys(plotLibrary.events)) : null;
   // 没有加载到剧情库（初始化中 / 世界书未挂载）时放行，避免误伤正常流程。
-  if (!whitelist || whitelist.size === 0) return update;
+  if (!whitelist || whitelist.size === 0 || !plotLibrary) return update;
+
+  const currentDate = getProgressDatePart(statusData?.world.currentTime);
 
   const sanitizedMainEvents: Record<string, string> = {};
   for (const [id, status] of Object.entries(update.mainEvents)) {
-    if (whitelist.has(id) && isPlotEventAllowedByRoute(id, statusData)) {
-      sanitizedMainEvents[id] = status;
-    } else if (whitelist.has(id)) {
-      console.warn('[progress-guard] drop route-blocked mainEvent id:', id);
-    } else {
+    if (!whitelist.has(id)) {
       console.warn('[progress-guard] drop unknown mainEvent id:', id);
+      continue;
     }
+    if (!isPlotEventAllowedByRoute(id, statusData)) {
+      console.warn('[progress-guard] drop route-blocked mainEvent id:', id);
+      continue;
+    }
+    // 时间闸：未到触发日期的事件不允许被标记为"进行中"，但允许终态（跳过/延后/已结束）以支持主动跳关。
+    if (isActivatingStatus(status) && !isMainEventActivatableByDate(id, plotLibrary, currentDate)) {
+      console.warn('[progress-guard] drop premature mainEvent activation:', id, 'currentDate:', currentDate);
+      continue;
+    }
+    sanitizedMainEvents[id] = status;
   }
 
   let sanitizedCurrentId = update.currentMainEventId;
@@ -209,6 +228,18 @@ function sanitizeProgressAgainstPlotLibrary(
     sanitizedCurrentId = undefined;
   } else if (sanitizedCurrentId && !whitelist.has(sanitizedCurrentId)) {
     console.warn('[progress-guard] drop unknown currentMainEventId:', sanitizedCurrentId);
+    sanitizedCurrentId = undefined;
+  } else if (
+    sanitizedCurrentId &&
+    !isMainEventActivatableByDate(sanitizedCurrentId, plotLibrary, currentDate)
+  ) {
+    // 设为当前事件等价于激活：未到触发日期时丢弃，防止游标跳到未来卷。
+    console.warn(
+      '[progress-guard] drop premature currentMainEventId:',
+      sanitizedCurrentId,
+      'currentDate:',
+      currentDate,
+    );
     sanitizedCurrentId = undefined;
   }
 
@@ -576,6 +607,16 @@ export async function submitMessage(
 
   applyLocalWorldHintsFromUserInput(ctx, userInput);
 
+  // 生成前预判（preflight）：用在场判定那一发副 API 顺带判时间推进，结果只有 high 置信、且明确推进才采纳。
+  // 这一步必须在 syncMainEvents 之前——把世界游标推进到正确日期后，syncMainEvents 才能当场激活对应事件，
+  // 恢复“玩家明确跳到某天 → 本回合立刻触发事件”的手感；同时全程过统一时间门，杜绝旧正则被叙事多日期带偏。
+  let scenePresence: ScenePresence | null = null;
+  if (hasTavernGenerate) {
+    const preflightHistory = state.uiMessages.slice(0, -1);
+    scenePresence = await detectScenePresence(ctx, preflightHistory, userInput);
+    commitPreGenerationTimeProposal(ctx, scenePresence);
+  }
+
   // 生成前基于当前时间/地点刷新事件状态。即使上一轮 AI 没输出状态增量,
   // 只要时间/地点已经对齐某个未触发事件,这里也能自动标记进行中,
   // 避免出现"日期已到但事件不触发"的问题。
@@ -602,14 +643,12 @@ export async function submitMessage(
   }
 
   let generationSucceeded = false;
-  let deferProgressToMinorSummary = false;
-  let summaryAppliedProgress = false;
   try {
     ensureStreamingMessage(ctx);
     ctx.render();
 
+    // 流式占位助手消息已压入，正文 prompt 的历史要剔除它（preflight 用的是占位前的历史，二者一致）。
     const promptHistory = state.uiMessages.slice(0, -1);
-    const scenePresence = await detectScenePresence(ctx, promptHistory, userInput);
     const requestGenerationId = state.currentGenerationId;
     const generator = win.generate ?? win.generateRaw;
     const baseConfig: Record<string, unknown> = {
@@ -633,7 +672,8 @@ export async function submitMessage(
                   playerProfile: state.playerProfile,
                   plotLibrary: state.plotLibrary,
                   characterCardLibrary: state.characterCardLibrary,
-                  skipProgress: !!ctx.summaryApiConfig,
+                  // 正文永不内嵌 <progress>：变量更新统一由 finally 的合并 progress 负责（配/不配副 API 都是）。
+                  skipProgress: true,
                   suppressPhoneMessageContent: Boolean(phoneDirective),
                   phoneMessageTargetName: phoneDirective?.target.name,
                   suppressUserInputLine: true,
@@ -652,7 +692,8 @@ export async function submitMessage(
               playerProfile: state.playerProfile,
               plotLibrary: state.plotLibrary,
               characterCardLibrary: state.characterCardLibrary,
-              skipProgress: !!ctx.summaryApiConfig,
+              // 正文永不内嵌 <progress>：变量更新统一由 finally 的合并 progress 负责（配/不配副 API 都是）。
+              skipProgress: true,
               suppressPhoneMessageContent: Boolean(phoneDirective),
               phoneMessageTargetName: phoneDirective?.target.name,
               scenePresence,
@@ -666,16 +707,8 @@ export async function submitMessage(
     });
     finalizeStreamingText(ctx, String(result ?? ''), requestGenerationId);
 
-    // 配置了副 API 时，变量更新统一延后到 finally 的 post-turn 后台入口；
-    // 到小摘要阈值时由小摘要同一发请求顺手输出 state_delta，避免 progress + summary 连打。
-    if (!ctx.summaryApiConfig) {
-      // 主 API 的回复中已经包含 <progress>。
-      const mainRaw = String(result ?? '');
-      const progressUpdate = parseProgressUpdate(mainRaw);
-      if (progressUpdate) {
-        applyFullProgressUpdate(ctx, progressUpdate);
-      }
-    }
+    // 变量更新（含手机消息提取）统一移到 finally：正文后发一次合并 progress，配/不配副 API 都走同一条路。
+    // 不再依赖主 API 在正文里内嵌 <progress>（skipProgress 现恒为 true）。
 
     // 在最新助手消息上保存 statusData 快照，供回溯使用。
     const lastMsg = state.uiMessages[state.uiMessages.length - 1];
@@ -690,11 +723,7 @@ export async function submitMessage(
     generationSucceeded = true;
     state.generating = false;
     recordGenerationDebug(ctx, 'submit:main-success-before-phone', { requestGenerationId });
-    if (phoneDirective) {
-      await sendPhoneMessageFromDirective(ctx, phoneDirective);
-    } else {
-      await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
-    }
+    // 手机消息/主动手机 与 变量更新 的顺序依赖统一在 finally 处理（progress → phone → summary）。
   } catch (error) {
     recordGenerationDebug(ctx, 'submit:catch', {
       error: error instanceof Error ? error.message : String(error),
@@ -710,23 +739,13 @@ export async function submitMessage(
         lastMsg.statusSnapshot = createRollbackSnapshot(state);
         ctx.persistConversation();
       }
-      if (!ctx.summaryApiConfig && lastMsg?.role === 'assistant') {
-        const progressUpdate = parseProgressUpdate(lastMsg.text);
-        if (progressUpdate) {
-          applyFullProgressUpdate(ctx, progressUpdate);
-        }
-      }
       if (options.clearDraftOnSuccess) {
         state.draft = '';
       }
       generationSucceeded = true;
       state.generating = false;
       recordGenerationDebug(ctx, 'submit:catch-preserved-as-success');
-      if (phoneDirective) {
-        await sendPhoneMessageFromDirective(ctx, phoneDirective);
-      } else {
-        await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
-      }
+      // 变量更新 + 手机消息统一在 finally 处理（progress → phone → summary）。
     } else {
       state.draft = userInput;
       ctx.persistConversation();
@@ -743,13 +762,37 @@ export async function submitMessage(
     recordGenerationDebug(ctx, 'submit:finally-before-render', { generationSucceeded });
     ctx.render();
 
-    // 正文和主动小手机都结束后再顺序执行摘要，避免后台 generateRaw 抢占正文流。
+    // 正文结束后统一顺序执行：① 变量更新(含手机消息提取) → ② 消费手机消息 → ③ 总结历史。
+    // 顺序是关键：合并版 progress 必须先于 maybeQueueProactivePhoneMessage 跑，才能填好
+    // lastProgressPhoneMessages 供其消费——旧代码把 progress 放在 phone 之后，导致 phone 永远读到 null、
+    // 退回独立的 phone-scene-extract 副 API，形成"正文 + 手机提取 + 含手机的progress"三发请求。
     if (generationSucceeded && (typeof win.generateRaw === 'function' || typeof win.generate === 'function')) {
       recordGenerationDebug(ctx, 'submit:summary-start');
+
+      // ① 变量更新：配/不配副 API 都走同一条合并 progress（无副 API 时 runSecondaryTask 回落主 API）。
+      //    含 includePhoneMessages，结果里的 <phone_messages> 暂存到 lastProgressPhoneMessages。
+      await runSecondaryProgressUpdate(
+        ctx,
+        `progress-after-text-${crypto.randomUUID()}`,
+        buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
+          includePhoneMessages: true,
+        }),
+      );
+
+      // ② 手机消息：directive 走专用聊天流；否则消费上一步暂存的 phone_messages（无则正则兜底）。
+      if (phoneDirective) {
+        await sendPhoneMessageFromDirective(ctx, phoneDirective);
+      } else {
+        await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
+      }
+
+      // ③ 总结历史：按优先级单选触发（global > major > minor），不回写变量；没到阈值不触发。
+      //    历史教训：旧设计让 minor 分支用小总结回写变量，但小总结读的是滞后历史块
+      //    （lastSummarizedIndex+5），把几轮前的旧时间/旧事件写回权威状态（8月13日退回8月11日 /
+      //    SAE_03-8 退回 SAE_03-6）。现在总结链路只压缩历史，变量永远由上面 ① 的最新回合 progress 负责。
       const postTurnMode = ctx.summaryApiConfig
         ? pickPostTurnBackgroundMode(ctx.summaryStore, countCompletedConversationMessages(state.uiMessages))
         : 'auto';
-      deferProgressToMinorSummary = postTurnMode === 'minor';
       const summaryCtx: SummaryContext = {
         win,
         state,
@@ -763,46 +806,14 @@ export async function submitMessage(
         },
         memoryDB: ctx.memoryDB,
         getFactAnchor: () => buildFactAnchorFromStatus(ctx.state.statusData),
-        onProgressUpdate: update => {
-          if (!deferProgressToMinorSummary) return;
-          applyFullProgressUpdate(ctx, update);
-          summaryAppliedProgress = true;
-        },
       };
       if (postTurnMode === 'minor') {
-        const summaryResult = await runSummary(summaryCtx, 'minor').catch(() => null);
-        if (summaryResult?.minorAppliedProgress) {
-          summaryAppliedProgress = true;
-        }
-        if (!summaryAppliedProgress) {
-          await runSecondaryProgressUpdate(
-            ctx,
-            `progress-fallback-${crypto.randomUUID()}`,
-            buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
-              includePhoneMessages: true,
-            }),
-          );
-        }
+        await runSummary(summaryCtx, 'minor').catch(() => null);
       } else if (ctx.summaryApiConfig && (postTurnMode === 'major' || postTurnMode === 'global')) {
         await runSummary(summaryCtx, postTurnMode).catch(() => {
           /* 摘要错误在内部处理 */
         });
-        await runSecondaryProgressUpdate(
-          ctx,
-          `progress-after-${postTurnMode}-${crypto.randomUUID()}`,
-          buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
-            includePhoneMessages: true,
-          }),
-        );
-      } else if (ctx.summaryApiConfig) {
-        await runSecondaryProgressUpdate(
-          ctx,
-          `progress-${crypto.randomUUID()}`,
-          buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
-            includePhoneMessages: true,
-          }),
-        );
-      } else {
+      } else if (!ctx.summaryApiConfig) {
         await runSummary(summaryCtx).catch(() => {
           /* 摘要错误在内部处理 */
         });
@@ -991,12 +1002,6 @@ function scenePhoneMessageIsExplicitlyBoundToTarget(
   return sceneTextMentionsOutgoingPhoneToTarget(target, sceneText);
 }
 
-function hasScenePhoneMessageHint(sceneText: string) {
-  const normalizedText = normalizeForDirectiveMatch(sceneText);
-  if (!normalizedText) return false;
-  return /(手机|line|短信|私聊|消息|通知|未读|发来|发给|回复|屏幕亮起|弹出)/i.test(normalizedText);
-}
-
 function findScenePhoneMessage(ctx: ActionContext, text: string): ScenePhoneMessage | null {
   const target =
     ctx.state.statusData.targets.find(item => sceneExplicitlyReceivedPhoneMessage(item, text)) ??
@@ -1161,17 +1166,31 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     .join('\n');
 
   const systemPrompt = [
-    '现在需要对目前的场景进行判断,在正文开始生成时”哪些角色处于当前镜头内',
+    '现在需要对目前的场景进行预判：① 哪些角色处于当前镜头内；② 玩家这一步是否明确推进了世界时间。',
     '只做判定，不续写剧情，不扮演角色，不输出思考过程。',
     '',
     '角色名单：',
     targets || '无',
     '',
-    '判定定义：',
+    `当前世界时间（时间锚点）：${ctx.state.statusData.world.currentTime}`,
+    '',
+    '判定定义（在场）：',
     '- present：角色明确处于当前镜头内，能立刻说话、行动、沉默、吃醋或产生即时反应。',
     '- focus：玩家当前输入正在追上、寻找、靠近、转向或当面处理该角色；下一轮正文允许转场到她。',
     '- absent：角色已明确离开、不在场、没来、无法即时反应。',
     '- uncertain：只是被提到、回忆、议论或出现在旧信息里，不能证明当前在镜头内。',
+    '',
+    '判定定义（时间推进 timeProposal）：',
+    '- 只有当玩家输入或其叙述明确把场景【推进/跳转】到某个新日期或新时段时，才输出 timeProposal。',
+    '- 触发词例：跳到/快进到/来到/到了/隔天/翌日/次日/第二天/第二天早上/当天夜里转入次日 等明确推进。',
+    '- 「隔天/第二天/次日」必须以上面的“当前世界时间”为锚点 +1 天推算出具体日期。',
+    '- 多个日期同时出现时（例如同时提到某个 party 日期和实际推进到的日期），只取【玩家实际把场景推进到】的那个目标日期；',
+    '  被提及的 party 日期、计划日期、回忆日期、别人生日等一律【不是】目标，不要被先出现的日期带偏。',
+    '- 倒叙/闪回/回忆/做梦【不改世界游标】：这类内容不要输出 timeProposal。',
+    '- 纯粹提到时间词但没有真正跨日/跨时段（如对话里说“都傍晚了”而场景没推进），不输出。',
+    '- time 必须是完整 `YYYY-MM-DD HH:mm`（HH:mm 按剧情合理给，缺信息给该时段的代表时刻）。',
+    '- confidence：目标日期/时段非常明确取 "high"；含糊、需要猜测、多日期无法确定目标时取 "low"。只有 high 会被系统采纳。',
+    '- 没有任何明确时间推进时，省略 timeProposal 或给 null。',
     '',
     '硬规则：',
     '1. 只能使用角色名单里的 id。',
@@ -1191,8 +1210,8 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
         '',
         `玩家当前输入：${userInput || '（无）'}`,
         '',
-        '请输出 JSON，格式如下：',
-        '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"}}',
+        '请输出 JSON，格式如下（无时间推进时省略 timeProposal 或置 null）：',
+        '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"},"timeProposal":{"time":"YYYY-MM-DD HH:mm","confidence":"high|low","source":"explicit_player_transition|narrative_transition|none","reason":"一句话依据"}}',
       ].join('\n'),
     },
   ];
@@ -1220,11 +1239,28 @@ function parseScenePresenceResult(ctx: ActionContext, rawResult: string): SceneP
       absentIds: normalizeScenePresenceIds(parsed.absent, allowedIds),
       uncertainIds: normalizeScenePresenceIds(parsed.uncertain, allowedIds),
       evidence,
+      timeProposal: parseTimeProposal(parsed.timeProposal),
     };
   } catch (error) {
     console.warn('[scene-presence] parse failed:', error);
     return fallback;
   }
+}
+
+/** 解析 preflight 的 timeProposal；只接受带完整日期的对象，其余（null/缺字段/格式不符）一律丢弃返回 undefined。 */
+function parseTimeProposal(raw: unknown): ScenePresence['timeProposal'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const time = String(obj.time ?? '').trim();
+  // 至少要有 YYYY-MM-DD 才算有效建议；没有日期的（仅时段）不在 preflight 处理，留给生成后 progress。
+  if (!/\d{4}-\d{2}-\d{2}/.test(time)) return undefined;
+  const confidence = String(obj.confidence ?? '').trim().toLowerCase() === 'high' ? 'high' : 'low';
+  return {
+    time,
+    confidence,
+    source: String(obj.source ?? '').trim() || 'unknown',
+    reason: String(obj.reason ?? '').trim(),
+  };
 }
 
 function commitScenePresenceAnalysis(ctx: ActionContext, raw: string): { presence: ScenePresence } {
@@ -1260,6 +1296,32 @@ async function detectScenePresence(
     uncertainIds: presence.uncertainIds,
   });
   return presence;
+}
+
+// preflight 时间建议的统一提交：只收 high 置信的明确推进，过统一时间门（normalize + 单调闸），
+// 真正前进了才落库 + 记 debug。low 置信、缺失、被单调闸挡回都不写——剩下交给生成后的 progress 兜底。
+function commitPreGenerationTimeProposal(ctx: ActionContext, presence: ScenePresence | null): void {
+  const proposal = presence?.timeProposal;
+  if (!proposal || proposal.confidence !== 'high' || !proposal.time) return;
+
+  const before = ctx.state.statusData.world.currentTime;
+  const { changed, time } = commitWorldTimeCandidate(ctx.state.statusData, proposal.time);
+  if (!changed) {
+    recordGenerationDebug(ctx, 'submit:preflight-time-rejected', {
+      proposed: proposal.time,
+      current: before,
+      source: proposal.source,
+      reason: proposal.reason,
+    });
+    return;
+  }
+  ctx.adapter.save(ctx.state.statusData);
+  recordGenerationDebug(ctx, 'submit:preflight-time-committed', {
+    from: before,
+    to: time,
+    source: proposal.source,
+    reason: proposal.reason,
+  });
 }
 
 async function runSecondaryProgressUpdate(
@@ -1352,58 +1414,6 @@ async function detectPhoneDirectiveWithLlm(ctx: ActionContext, userInput: string
   return directive;
 }
 
-function buildScenePhoneMessageExtractorPrompts(ctx: ActionContext, sceneText: string): RawPrompt[] {
-  const contacts = ctx.state.statusData.targets
-    .map(target => {
-      const aliases = getPhoneTargetSearchTerms(target)
-        .filter(term => term !== target.id && term !== target.name)
-        .join('、');
-      return `- id=${target.id}；姓名=${target.name}${target.alias ? `；别名=${target.alias}` : ''}${
-        aliases ? `；可匹配线索=${aliases}` : ''
-      }`;
-    })
-    .join('\n');
-
-  const systemPrompt = [
-    '你是一个正文手机消息提取器。只判断“最新正文”里是否已经出现手机/LINE/短信/私聊消息，并把已出现的消息结构化输出。',
-    '不要续写剧情，不要扮演角色，不要解释，不要自行创造正文没有出现或没有明确描述的消息。',
-    '',
-    '可聊天联系人：',
-    contacts || '无',
-    '',
-    '提取规则：',
-    '1. incoming 表示联系人发给玩家的消息，例如“英梨梨发来 LINE 消息：【...】”“收到来自诗羽的短信：...”。',
-    '2. outgoing 表示玩家在正文中发给联系人的消息，例如“我给加藤发消息：【...】”“玩家用手机告诉英梨梨...”。',
-    '3. target_id 必须是正文明确关联这条手机消息的联系人 id；不能因为联系人列表存在某人就猜测归属。',
-    '4. 如果正文只写“她/对方/有人/手机弹出消息”等，无法确定联系人时就不要输出该条；不要硬选一个 target_id。',
-    '5. message 优先使用正文里明确写出的消息正文（引号、【】、冒号后的内容）。如果正文只明确概括了消息内容，可以用一句自然手机文本重构；如果连内容也不明确，就不要输出。',
-    '6. 只提取手机/LINE/短信/私聊等远程消息；面对面对话、旁白、心理活动、系统通知、普通叙述都不要输出。',
-    '7. 可以输出多条，按正文发生顺序排列。没有可提取消息时输出空的 <phone_messages></phone_messages>。',
-    '',
-    '输出格式：',
-    '<phone_messages>',
-    'direction: incoming|outgoing',
-    'target_id: 联系人id',
-    'message: 消息正文',
-    '---',
-    'direction: incoming|outgoing',
-    'target_id: 联系人id',
-    'message: 消息正文',
-    '</phone_messages>',
-  ].join('\n');
-
-  return [
-    {
-      role: 'system',
-      content: systemPrompt,
-    },
-    {
-      role: 'user',
-      content: `最新正文：\n${sceneText}`,
-    },
-  ];
-}
-
 function parseScenePhoneMessageExtractorResult(
   ctx: ActionContext,
   rawResult: string,
@@ -1444,41 +1454,6 @@ function parseScenePhoneMessageExtractorResult(
       return { target, role, text: message } satisfies ScenePhoneMessage;
     })
     .filter((item): item is ScenePhoneMessage => Boolean(item));
-}
-
-function commitScenePhoneMessageAnalysis(
-  ctx: ActionContext,
-  raw: string,
-  sceneText: string,
-): { messages: ScenePhoneMessage[] } {
-  return {
-    messages: parseScenePhoneMessageExtractorResult(ctx, raw, sceneText),
-  };
-}
-
-async function extractScenePhoneMessagesWithLlm(ctx: ActionContext, sceneText: string): Promise<ScenePhoneMessage[]> {
-  if (!sceneText.trim()) {
-    debugPhoneFlow(ctx, 'scene-extract-llm:skip-empty-scene');
-    return [];
-  }
-  if (!ctx.state.statusData.targets.length) {
-    debugPhoneFlow(ctx, 'scene-extract-llm:skip-no-targets');
-    return [];
-  }
-
-  const prompts = buildScenePhoneMessageExtractorPrompts(ctx, sceneText);
-  const generationId = `phone-scene-extract-${crypto.randomUUID()}`;
-  debugPhoneFlow(ctx, 'scene-extract-llm:start', { generationId, sceneLength: sceneText.length });
-  const rawResult = await generateSilentAnalysis(ctx, generationId, prompts, 'phone-scene-extract');
-
-  const committed = commitScenePhoneMessageAnalysis(ctx, rawResult, sceneText);
-  const { messages } = committed;
-  debugPhoneFlow(ctx, messages.length ? 'scene-extract-llm:matched' : 'scene-extract-llm:no-match', {
-    generationId,
-    rawLength: String(rawResult ?? '').length,
-    count: messages.length,
-  });
-  return messages;
 }
 
 function extractPhoneMessageDirective(ctx: ActionContext, userInput: string): PhoneDirective | null {
@@ -1671,7 +1646,9 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
   const latestSceneText = getLatestAssistantSceneText(ctx);
   const hasTavernGenerate = typeof win.generateRaw === 'function' || typeof win.generate === 'function';
 
-  // 优先消费合并版 progress 已经一并解析出来的 phone_messages，跳过单独的 phone-scene-extract 副 API 调用。
+  // 手机消息提取统一由合并版 progress（buildProgressPrompt includePhoneMessages）一并完成，
+  // 结果暂存在 lastProgressPhoneMessages，这里消费即可。已删除独立的 phone-scene-extract 副 API。
+  // 消费不到时（如 dev/mock 路径无 progress），退回正则兜底 findScenePhoneMessage。
   const prefilled = lastProgressPhoneMessages;
   lastProgressPhoneMessages = null;
 
@@ -1679,20 +1656,6 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
   if (prefilled && prefilled.length) {
     extractedMessages = prefilled;
     debugPhoneFlow(ctx, 'scene-extract:reuse-from-progress', { count: prefilled.length });
-  } else {
-    const shouldRunPhoneExtractor = hasTavernGenerate && hasScenePhoneMessageHint(latestSceneText);
-    debugPhoneFlow(ctx, 'scene-extract:gate', {
-      hasTavernGenerate,
-      hasPhoneHint: hasScenePhoneMessageHint(latestSceneText),
-      willRun: shouldRunPhoneExtractor,
-      sceneLength: latestSceneText.length,
-    });
-    extractedMessages = shouldRunPhoneExtractor
-      ? await extractScenePhoneMessagesWithLlm(ctx, latestSceneText).catch(error => {
-          console.warn('[phone-scene-extract] detector failed:', error);
-          return [] as ScenePhoneMessage[];
-        })
-      : [];
   }
   let appendedFromScene = false;
 

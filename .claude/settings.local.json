@@ -65,7 +65,8 @@
       "Bash(cmd /c node node_modules/typescript/bin/tsc --noEmit src/islandmilfcode/phone/radar.ts)",
       "Bash(echo \"=== exit: $? ===\")",
       "Bash(echo \"=== tsc exit: $? ===\")",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(awk -F: '$1>1430 && $1<1650')"
     ]
   }
 }
