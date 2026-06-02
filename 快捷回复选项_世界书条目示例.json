@@ -1,7 +1,50 @@
 {
-  "comment": "快捷回复选项_世界书条目示例",
-  "description": "将此条目添加到角色卡的世界书中，启用快捷回复选项功能",
-  "worldbook_entry": {
+  "comment": "快捷回复选项_世界书条目示例（提供完整版和简化版）",
+  "description": "将对应版本的条目添加到角色卡的世界书中，启用快捷回复选项功能",
+
+  "简化版_适合易掉格式模型": {
+    "说明": "适用于 DeepSeek V4 PRO、Gemini 3.0 Pro 等容易掉格式的模型",
+    "worldbook_entry": {
+      "uid": 9998,
+      "key": ["选项", "options", "快捷回复"],
+      "keysecondary": [],
+      "comment": "快捷回复选项（简化版）",
+      "content": "在 </content> 后必须生成：\n\n<options>\n>选项一：观察等待\n>选项二：主动行动\n>选项三：关心互动\n>选项四：亲密接触\n</options>\n\n每个15-35字，符合user性格和场景。",
+      "constant": true,
+      "selective": false,
+      "order": 100,
+      "position": "after_char",
+      "enabled": true,
+      "extensions": {
+        "position": 4,
+        "exclude_recursion": false,
+        "display_index": 9998,
+        "probability": 100,
+        "useProbability": true,
+        "depth": 4,
+        "selectiveLogic": 0,
+        "group": "",
+        "group_override": false,
+        "group_weight": 100,
+        "prevent_recursion": false,
+        "delayUntilRecursion": false,
+        "scanDepth": null,
+        "match_whole_words": null,
+        "use_group_scoring": false,
+        "case_sensitive": null,
+        "automation_id": "",
+        "role": 0,
+        "vectorized": false,
+        "sticky": 0,
+        "cooldown": 0,
+        "delay": 0
+      }
+    }
+  },
+
+  "完整版_适合稳定模型": {
+    "说明": "适用于 GPT-4、Claude、高质量稳定模型",
+    "worldbook_entry": {
     "uid": 9999,
     "key": ["输出格式", "快捷回复", "选项", "options"],
     "keysecondary": [],

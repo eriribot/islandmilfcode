@@ -1,3 +1,15 @@
+// crypto.randomUUID polyfill: iOS HTTP 环境下不可用，降级到 Math.random
+if (typeof crypto !== 'undefined' && typeof crypto.randomUUID !== 'function') {
+  // @ts-ignore
+  crypto.randomUUID = function(): string {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  };
+}
+
 import './styles.css';
 import './phone/styles.css';
 import './title/styles.css';
