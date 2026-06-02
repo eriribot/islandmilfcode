@@ -290,10 +290,19 @@ async function downloadSaveBackup(saveId: string) {
 }
 
 function savePlayerProfileFromStatusPanel() {
+  const familyName = root?.querySelector<HTMLInputElement>('[data-field="player-family-name"]')?.value ?? '';
+  const givenName = root?.querySelector<HTMLInputElement>('[data-field="player-given-name"]')?.value ?? '';
   const personality = root?.querySelector<HTMLTextAreaElement>('[data-field="player-personality"]')?.value ?? '';
   const appearance = root?.querySelector<HTMLTextAreaElement>('[data-field="player-appearance"]')?.value ?? '';
+
+  const trimmedFamilyName = familyName.trim();
+  const trimmedGivenName = givenName.trim();
+
   state.playerProfile = {
     ...state.playerProfile,
+    familyName: trimmedFamilyName,
+    givenName: trimmedGivenName,
+    name: trimmedFamilyName + trimmedGivenName,
     personality: personality.trim(),
     appearance: appearance.trim(),
   };

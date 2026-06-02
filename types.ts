@@ -47,6 +47,8 @@ export type Difficulty = 'easy' | 'normal' | 'hard';
 
 export type PlayerProfile = {
   name: string;
+  familyName: string;
+  givenName: string;
   gender?: string;
   personality: string;
   appearance: string;

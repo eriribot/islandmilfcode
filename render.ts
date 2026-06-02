@@ -782,6 +782,8 @@ export function renderStatusPanel(state: AppState) {
     ([, eventStatus]) => eventStatus === '进行中',
   );
   const playerName = state.playerProfile.name.trim() || '主角';
+  const playerFamilyName = state.playerProfile.familyName || '';
+  const playerGivenName = state.playerProfile.givenName || '';
   const playerClass = state.playerProfile.className || '未记录';
   const playerGender = state.playerProfile.gender || '未记录';
   const playerPersonality = state.playerProfile.personality.trim() || '未记录';
@@ -789,6 +791,30 @@ export function renderStatusPanel(state: AppState) {
   const profileEditing = state.playerProfileEditing;
   const profileBody = profileEditing
     ? `
+      <div class="chip-card">
+        <label>
+          <strong>姓氏</strong>
+          <input
+            class="profile-edit-field"
+            data-field="player-family-name"
+            type="text"
+            value="${escapeHtml(playerFamilyName)}"
+            placeholder="例：八云"
+          />
+        </label>
+      </div>
+      <div class="chip-card">
+        <label>
+          <strong>名字</strong>
+          <input
+            class="profile-edit-field"
+            data-field="player-given-name"
+            type="text"
+            value="${escapeHtml(playerGivenName)}"
+            placeholder="例：紫"
+          />
+        </label>
+      </div>
       <div class="chip-card">
         <label>
           <strong>主角性格</strong>
@@ -815,6 +841,14 @@ export function renderStatusPanel(state: AppState) {
       </div>
     `
     : `
+      <div class="chip-card">
+        <strong>姓氏</strong>
+        <p>${escapeHtml(playerFamilyName || '未记录')}</p>
+      </div>
+      <div class="chip-card">
+        <strong>名字</strong>
+        <p>${escapeHtml(playerGivenName || '未记录')}</p>
+      </div>
       <div class="chip-card">
         <strong>主角性格</strong>
         <p>${escapeHtml(playerPersonality)}</p>

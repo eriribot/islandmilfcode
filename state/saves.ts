@@ -68,8 +68,44 @@ function normalizeDifficulty(input: unknown): Difficulty {
 
 function normalizePlayerProfile(input: unknown): PlayerProfile {
   const raw = typeof input === 'object' && input ? (input as Partial<PlayerProfile>) : {};
+
+  // 旧存档兼容：如果没有 familyName/givenName，从 name 自动拆分
+  let familyName = raw.familyName ? String(raw.familyName) : '';
+  let givenName = raw.givenName ? String(raw.givenName) : '';
+  const name = String(raw.name ?? '');
+
+  if (!familyName || !givenName) {
+    // 自动拆分逻辑
+    const normalized = name.trim().replace(/\s+/g, ' ');
+    if (normalized) {
+      const parts = normalized.split(' ').filter(Boolean);
+      if (parts.length >= 2) {
+        // 有空格：第一部分是姓
+        familyName = parts[0];
+        givenName = parts.slice(1).join(' ');
+      } else {
+        // 无空格：中文姓名拆分
+        const compact = normalized.replace(/[・·]/g, '');
+        if (/^[一-鿿]{2,4}$/.test(compact)) {
+          const familyLength = compact.length >= 4 ? 2 : 1;
+          familyName = compact.slice(0, familyLength);
+          givenName = compact.slice(familyLength) || compact;
+        } else {
+          // 其他情况：全名作为姓和名
+          familyName = normalized;
+          givenName = normalized;
+        }
+      }
+    }
+  }
+
+  // name 字段自动拼接
+  const fullName = familyName + givenName;
+
   return {
-    name: String(raw.name ?? ''),
+    name: fullName,
+    familyName,
+    givenName,
     gender: raw.gender ? String(raw.gender) : '男',
     personality: String(raw.personality ?? ''),
     appearance: String(raw.appearance ?? ''),
@@ -386,7 +422,8 @@ function readPayload(saveId: string): SavePayload | null {
 function buildInitialPayload(opts: {
   saveId: string;
   runId: string;
-  characterName: string;
+  familyName: string;
+  givenName: string;
   personality: string;
   appearance: string;
   gender?: string;
@@ -397,6 +434,7 @@ function buildInitialPayload(opts: {
   label: string;
 }): SavePayload {
   const statusData = normalizeStatusData(defaultStatusData);
+  const characterName = opts.familyName + opts.givenName;
 
   return {
     saveId: opts.saveId,
@@ -408,7 +446,9 @@ function buildInitialPayload(opts: {
       runtimeFlags: {
         saveKind: opts.kind,
         playerProfile: normalizePlayerProfile({
-          name: opts.characterName,
+          name: characterName,
+          familyName: opts.familyName,
+          givenName: opts.givenName,
           gender: opts.gender,
           personality: opts.personality,
           appearance: opts.appearance,
@@ -455,7 +495,8 @@ export function getAutosaveBranchSaveId(input: { activeSaveId?: string | null; r
 }
 
 export function createSave(opts: {
-  characterName: string;
+  familyName: string;
+  givenName: string;
   gender?: string;
   personality: string;
   appearance: string;

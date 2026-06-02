@@ -7,7 +7,8 @@ export type TitleCallbacks = {
   showSaves: () => void;
   hideSaves: () => void;
   createAndEnter: (opts: {
-    characterName: string;
+    familyName: string;
+    givenName: string;
     gender: string;
     personality: string;
     appearance: string;
@@ -134,8 +135,9 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
   form?.addEventListener('submit', e => {
     e.preventDefault();
     const fd = new FormData(form);
-    const characterName = (fd.get('characterName') as string)?.trim();
-    if (!characterName) return;
+    const familyName = (fd.get('familyName') as string)?.trim();
+    const givenName = (fd.get('givenName') as string)?.trim();
+    if (!familyName || !givenName) return;
 
     const difficulty = normalizeDifficulty(fd.get('difficulty'));
     const config = DIFFICULTY_CONFIG[difficulty] ?? DIFFICULTY_CONFIG.normal;
@@ -149,7 +151,8 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
     const normalizedStats = normalizeStatsForConfig(stats, config);
 
     cb.createAndEnter({
-      characterName,
+      familyName,
+      givenName,
       gender: (fd.get('gender') as string)?.trim() || '男',
       personality: (fd.get('personality') as string)?.trim() || '',
       appearance: (fd.get('appearance') as string)?.trim() || '',

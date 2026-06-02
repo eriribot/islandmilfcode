@@ -970,8 +970,9 @@ function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
 
 export function renderPhone(state: AppState, renderers: PhoneRenderers) {
   const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
+  const isGenerating = state.generating || state.phoneMessages.generating;
   return `
-    <div class="phone-modal ${state.phoneOpen ? 'is-open' : ''}" aria-hidden="${state.phoneOpen ? 'false' : 'true'}">
+    <div class="phone-modal ${state.phoneOpen ? 'is-open' : ''} ${isGenerating ? 'generating' : ''}" aria-hidden="${state.phoneOpen ? 'false' : 'true'}">
       <button class="phone-backdrop" data-action="close-phone" aria-label="关闭手帐"></button>
       <section class="phone-shell">
         <div class="phone-notch"></div>

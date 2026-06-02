@@ -64,7 +64,8 @@
       "WebFetch(domain:stagedog.github.io)",
       "Bash(cmd /c node node_modules/typescript/bin/tsc --noEmit src/islandmilfcode/phone/radar.ts)",
       "Bash(echo \"=== exit: $? ===\")",
-      "Bash(echo \"=== tsc exit: $? ===\")"
+      "Bash(echo \"=== tsc exit: $? ===\")",
+      "Bash(npm run *)"
     ]
   }
 }

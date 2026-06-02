@@ -204,10 +204,19 @@ export function renderCharacterCreation() {
         </header>
 
         <form class="gal-create-form" data-action="create-form">
-          <div class="gal-field">
-            <label class="gal-field__label" for="gal-char-name">主角名</label>
-            <input class="gal-field__input" id="gal-char-name" name="characterName"
-              type="text" placeholder="输入你的主角名称" required autocomplete="off" />
+          <div class="gal-field" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+            <div>
+              <label class="gal-field__label" for="gal-char-family">姓氏 *</label>
+              <input class="gal-field__input" id="gal-char-family" name="familyName"
+                type="text" placeholder="例：八云" required autocomplete="off" />
+            </div>
+            <div>
+              <label class="gal-field__label" for="gal-char-given">名字 *</label>
+              <input class="gal-field__input" id="gal-char-given" name="givenName"
+                type="text" placeholder="例：紫" required autocomplete="off" />
+            </div>
+          </div>
+          <div class="gal-field__hint" style="margin-top: -0.5rem; font-size: 0.85rem; color: #888;">
           </div>
 
           <div class="gal-field">

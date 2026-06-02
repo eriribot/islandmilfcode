@@ -94,6 +94,15 @@ body.floating-phone-dragging {
   transform: translateY(0) scale(1);
 }
 
+/* Disable transitions during text generation to prevent flickering */
+.phone-modal.generating .phone-shell {
+  transition: none;
+}
+
+.phone-modal.generating .phone-route-page {
+  animation: none;
+}
+
 .phone-shell::before {
   content: '';
   position: absolute;
