@@ -20,6 +20,7 @@ export type SecondaryTaskCall = {
   generationId: string;
   prompts: SecondaryPrompt[];
   apiConfig: SummaryApiConfig | null;
+  allowEmpty?: boolean;
 };
 
 export async function generateSecondaryRaw(input: {
@@ -27,12 +28,47 @@ export async function generateSecondaryRaw(input: {
   generationId: string;
   prompts: SecondaryPrompt[];
   apiConfig: SummaryApiConfig | null;
+  kind?: SecondaryTaskKind;
+  allowEmpty?: boolean;
 }): Promise<string> {
-  const { win, generationId, prompts, apiConfig } = input;
+  const { win, generationId, prompts, apiConfig, kind = 'custom', allowEmpty = false } = input;
 
   if (apiConfig && typeof win.generateRaw !== 'function') {
     throw new Error('generateRaw not available for secondary API');
   }
+
+  const extractText = (raw: unknown): string => {
+    if (typeof raw === 'string') return raw;
+    if (raw == null) return '';
+    if (typeof raw !== 'object') return String(raw);
+
+    const record = raw as Record<string, unknown>;
+    if (typeof record.content === 'string') return record.content;
+
+    const message = record.message as Record<string, unknown> | undefined;
+    if (message && typeof message.content === 'string') return message.content;
+
+    const choices = Array.isArray(record.choices) ? record.choices : [];
+    const firstChoice = choices[0] as Record<string, unknown> | undefined;
+    const choiceMessage = firstChoice?.message as Record<string, unknown> | undefined;
+    if (choiceMessage && typeof choiceMessage.content === 'string') return choiceMessage.content;
+
+    const delta = firstChoice?.delta as Record<string, unknown> | undefined;
+    if (delta && typeof delta.content === 'string') return delta.content;
+
+    const text = firstChoice?.text;
+    if (typeof text === 'string') return text;
+
+    return String(raw);
+  };
+
+  const normalizeResult = (raw: unknown) => {
+    const text = extractText(raw);
+    if (!allowEmpty && !text.trim()) {
+      throw new Error(`secondary API returned empty content (${kind}, ${generationId})`);
+    }
+    return text;
+  };
 
   if (typeof win.generateRaw === 'function') {
     const config: Record<string, unknown> = {
@@ -51,17 +87,17 @@ export async function generateSecondaryRaw(input: {
       };
     }
 
-    return String((await win.generateRaw(config)) ?? '');
+    return normalizeResult(await win.generateRaw(config));
   }
 
   if (typeof win.generate === 'function') {
-    return String(
-      (await win.generate({
+    return normalizeResult(
+      await win.generate({
         should_silence: true,
         should_stream: false,
         generation_id: generationId,
         user_input: prompts.map(prompt => prompt.content).join('\n\n'),
-      })) ?? '',
+      }),
     );
   }
 

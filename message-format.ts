@@ -8,7 +8,7 @@ import {
   hasObsessionAxisByName,
   OBSESSION_TARGET_DISPLAY_NAMES,
 } from './relationship';
-import { isPlotEventAllowedByRoute } from './plot-routing';
+import { isPlotEventAllowedByRoute, isPlotEventVisibleByRoute } from './plot-routing';
 import type { KeyFact, KeyFactCategory, SummaryStore } from './summary/types';
 import { KEY_FACT_CATEGORY_LABEL } from './summary/types';
 import type {
@@ -419,7 +419,7 @@ function buildPlotWhitelist(plotLibrary: PlotLibrary, statusData?: StatusData) {
   const all = Object.values(plotLibrary.events).filter(event => {
     if (!statusData) return true;
     if (event.id === currentId) return true;
-    if (!isPlotEventAllowedByRoute(event.id, statusData)) return false;
+    if (!isPlotEventVisibleByRoute(event.id, statusData)) return false;
 
     const status = normalizeMainEventStatus(mainEvents[event.id]);
     if (status === MAIN_EVENT_FINISHED) return false;
@@ -1299,7 +1299,7 @@ export function buildProgressPrompt(
         options?.includePhoneMessages
           ? [
               '',
-              '── 手机消息提取（同回合附加任务，节省 API 调用） ──',
+              '── 手机消息提取 ──',
               '在判断变量之外，请同时检查"最新正文"里是否出现攻略对象用手机/LINE/短信/私聊给玩家发消息、或玩家在正文里用手机给攻略对象发消息。如有，按下方格式补充输出 <phone_messages> 标签，没有就输出空标签。',
               '提取规则：',
               '  1. incoming = 攻略对象发给玩家；outgoing = 玩家发给攻略对象。',

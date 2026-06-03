@@ -1,5 +1,5 @@
 import type { ProgressUpdate } from '../message-format';
-import { SAE_03_8, isPlotEventAllowedByRoute, isSae0307BranchId, isSae0402BranchId } from '../plot-routing';
+import { SAE_03_8, SAE_04_3, isPlotEventAllowedByRoute, isSae0307BranchId, isSae0402BranchId } from '../plot-routing';
 import type { PlotEventCard, PlotLibrary, StatusData } from '../types';
 import { affinityStage, clamp, obsessionStage } from './format';
 
@@ -268,7 +268,28 @@ function eventHasExpired(event: ScheduledEvent, currentDate: string) {
 
 function getScheduledCurrentMainEventId(statusData: StatusData, schedule: ScheduledEvent[]) {
   const currentDate = getDatePart(statusData.world.currentTime);
-  return schedule.find(event => eventMatchesCurrentDate(event, currentDate))?.id ?? '';
+  const mainEvents = statusData.world.mainEvents ?? {};
+
+  // 找到所有匹配当前日期的事件
+  const candidates = schedule.filter(event => eventMatchesCurrentDate(event, currentDate));
+
+  // 优先选择尚未结束且符合路由条件的事件
+  for (const event of candidates) {
+    const status = normalizeMainEventStatus(mainEvents[event.id]);
+    if (status === MAIN_EVENT_RUNNING) {
+      return event.id; // 已经在进行中的优先
+    }
+  }
+
+  // 其次选择未开始但符合条件的
+  for (const event of candidates) {
+    const status = normalizeMainEventStatus(mainEvents[event.id]);
+    if (status !== MAIN_EVENT_FINISHED && isPlotEventAllowedByRoute(event.id, statusData)) {
+      return event.id;
+    }
+  }
+
+  return '';
 }
 
 function syncCurrentMainEvent(statusData: StatusData, schedule: ScheduledEvent[]): boolean {
@@ -379,7 +400,10 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
   }
 
   for (const id of Object.keys(mainEvents)) {
-    if ((isSae0307BranchId(id) || isSae0402BranchId(id) || id === SAE_03_8) && !isPlotEventAllowedByRoute(id, statusData)) {
+    if (
+      (isSae0307BranchId(id) || isSae0402BranchId(id) || id === SAE_03_8 || id === SAE_04_3) &&
+      !isPlotEventAllowedByRoute(id, statusData)
+    ) {
       const status = normalizeMainEventStatus(mainEvents[id]);
       if (status === MAIN_EVENT_RUNNING || status === MAIN_EVENT_FINISHED) {
         mainEvents[id] = MAIN_EVENT_NOT_STARTED;

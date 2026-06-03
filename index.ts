@@ -107,6 +107,12 @@ let phoneBgmResolvedUrl = '';
 let restoringSave = false;
 let quickReplyDelegationBound = false;
 
+type ReaderBodyScrollSnapshot = {
+  readerIndex: number;
+  scrollTop: number;
+  wasAtBottom: boolean;
+};
+
 let readerDragState: {
   pointerId: number;
   startX: number;
@@ -139,6 +145,34 @@ function resetReaderCardTransform(reader: HTMLElement) {
   card.style.transition = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.3s ease';
   card.style.transform = '';
   card.style.opacity = '';
+}
+
+function captureReaderBodyScroll(): ReaderBodyScrollSnapshot | null {
+  const body = root?.querySelector<HTMLElement>('.reader-card__body');
+  const card = body?.closest<HTMLElement>('.reader-card[data-reader-index]');
+  const readerIndex = Number(card?.dataset.readerIndex);
+  if (!body || !Number.isFinite(readerIndex)) return null;
+  const distanceFromBottom = body.scrollHeight - body.scrollTop - body.clientHeight;
+  return {
+    readerIndex,
+    scrollTop: body.scrollTop,
+    wasAtBottom: distanceFromBottom <= 24,
+  };
+}
+
+function restoreReaderBodyScroll(snapshot: ReaderBodyScrollSnapshot | null) {
+  if (!snapshot) return;
+  const body = root?.querySelector<HTMLElement>(
+    `.reader-card[data-reader-index="${snapshot.readerIndex}"] .reader-card__body`,
+  );
+  if (!body) return;
+  const restore = () => {
+    body.scrollTop = snapshot.wasAtBottom
+      ? body.scrollHeight
+      : Math.min(snapshot.scrollTop, Math.max(0, body.scrollHeight - body.clientHeight));
+  };
+  restore();
+  window.requestAnimationFrame(restore);
 }
 
 // ── State & adapter ──
@@ -1795,6 +1829,7 @@ const titleCallbacks: TitleCallbacks = {
 
 function render() {
   if (!root) return;
+  const readerBodyScroll = captureReaderBodyScroll();
   if (state.activeRunId) {
     // 游戏界面。
     if (syncMainEvents(state.statusData, state.plotLibrary)) {
@@ -1804,6 +1839,7 @@ function render() {
     syncFocusedMessage(state);
     root.innerHTML = renderApp(state, flipDirection);
     bindEvents();
+    restoreReaderBodyScroll(readerBodyScroll);
 
     // 状态页打开时挂载 P5 雷达图
     const radarEl = root.querySelector<HTMLElement>('#status-radar');
@@ -1868,6 +1904,8 @@ window.addEventListener('keydown', event => {
     return;
   }
   if (event.target instanceof HTMLTextAreaElement) return;
+  const keyTarget = event.target instanceof HTMLElement ? event.target : null;
+  if (keyTarget?.closest('.reader-card__body') && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) return;
   if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
     event.preventDefault();
     focusMessage(-1);

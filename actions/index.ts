@@ -40,6 +40,7 @@ import {
   clamp,
   commitWorldTimeCandidate,
   formatTime,
+  normalizeIncomingTime,
   obsessionStage,
   syncMainEvents,
 } from '../variables/normalize';
@@ -191,6 +192,80 @@ function isActivatingStatus(status: string): boolean {
   return String(status ?? '').trim() === '进行中';
 }
 
+function findRouteCheckTarget(statusData: StatusData, targetHint: string): TargetStatus | null {
+  const normalizedHint = normalizeForDirectiveMatch(targetHint);
+  if (!normalizedHint) return null;
+
+  return (
+    statusData.targets.find(target => target.id === targetHint) ??
+    statusData.targets.find(target =>
+      getPhoneTargetSearchTerms(target)
+        .map(term => normalizeForDirectiveMatch(term))
+        .filter(Boolean)
+        .some(term => term === normalizedHint),
+    ) ??
+    statusData.targets.find(target =>
+      getPhoneTargetSearchTerms(target)
+        .map(term => normalizeForDirectiveMatch(term))
+        .filter(term => term.length >= 2)
+        .some(term => term.includes(normalizedHint) || normalizedHint.includes(term)),
+    ) ??
+    null
+  );
+}
+
+function buildRouteCheckTargets(statusData: StatusData, update: ProgressUpdate): TargetStatus[] {
+  const targets = statusData.targets.map(target => ({
+    ...target,
+    titles: { ...target.titles },
+    outfits: { ...target.outfits },
+    meta: target.meta ? { ...target.meta } : undefined,
+  }));
+  const routeStatusData: StatusData = { ...statusData, targets };
+
+  for (const item of update.affinityDeltas) {
+    if (!item.delta) continue;
+    const target = findRouteCheckTarget(routeStatusData, item.target);
+    if (!target) continue;
+    target.affinity = clamp((target.affinity ?? 0) + item.delta, 0, 100);
+  }
+
+  for (const item of update.obsessionDeltas) {
+    if (!item.delta) continue;
+    const target = findRouteCheckTarget(routeStatusData, item.target);
+    if (!target) continue;
+    target.obsession = clamp((target.obsession ?? 0) + item.delta, 0, 100);
+  }
+
+  return targets;
+}
+
+function buildRouteCheckStatus(
+  statusData: StatusData | null | undefined,
+  update: ProgressUpdate,
+): StatusData | null | undefined {
+  if (!statusData) return statusData;
+
+  return {
+    ...statusData,
+    targets: buildRouteCheckTargets(statusData, update),
+    world: {
+      ...statusData.world,
+      currentTime: update.time
+        ? normalizeIncomingTime(update.time, statusData.world.currentTime)
+        : statusData.world.currentTime,
+      mainEvents: {
+        ...(statusData.world.mainEvents ?? {}),
+        ...(update.mainEvents ?? {}),
+      },
+      currentMainEventId:
+        update.currentMainEventId !== undefined
+          ? update.currentMainEventId
+          : statusData.world.currentMainEventId,
+    },
+  };
+}
+
 // 把 AI 给的主线事件 id 跟剧情库（世界书里第一卷/第二卷/第三卷条目合并后的 plotLibrary.events）对一遍，
 // 不在白名单里的整条丢掉。这样即使模型在空档期自造 SAE_2-1 之类的野 id，也只会影响正文叙述，不会污染 statusData。
 function sanitizeProgressAgainstPlotLibrary(
@@ -202,7 +277,8 @@ function sanitizeProgressAgainstPlotLibrary(
   // 没有加载到剧情库（初始化中 / 世界书未挂载）时放行，避免误伤正常流程。
   if (!whitelist || whitelist.size === 0 || !plotLibrary) return update;
 
-  const currentDate = getProgressDatePart(statusData?.world.currentTime);
+  const routeStatusData = buildRouteCheckStatus(statusData, update);
+  const currentDate = getProgressDatePart(routeStatusData?.world.currentTime);
 
   const sanitizedMainEvents: Record<string, string> = {};
   for (const [id, status] of Object.entries(update.mainEvents)) {
@@ -210,7 +286,7 @@ function sanitizeProgressAgainstPlotLibrary(
       console.warn('[progress-guard] drop unknown mainEvent id:', id);
       continue;
     }
-    if (!isPlotEventAllowedByRoute(id, statusData)) {
+    if (!isPlotEventAllowedByRoute(id, routeStatusData)) {
       console.warn('[progress-guard] drop route-blocked mainEvent id:', id);
       continue;
     }
@@ -223,7 +299,7 @@ function sanitizeProgressAgainstPlotLibrary(
   }
 
   let sanitizedCurrentId = update.currentMainEventId;
-  if (sanitizedCurrentId && !isPlotEventAllowedByRoute(sanitizedCurrentId, statusData)) {
+  if (sanitizedCurrentId && !isPlotEventAllowedByRoute(sanitizedCurrentId, routeStatusData)) {
     console.warn('[progress-guard] drop route-blocked currentMainEventId:', sanitizedCurrentId);
     sanitizedCurrentId = undefined;
   } else if (sanitizedCurrentId && !whitelist.has(sanitizedCurrentId)) {

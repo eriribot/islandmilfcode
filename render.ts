@@ -303,7 +303,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
               ${renderReaderHint('next', false)}
             </div>
           </div>
-          <div class="reader-card__body">
+          <div class="reader-card__body" tabindex="0">
             <p class="reader-card__text">等待着你的故事开始。</p>
           </div>
         </article>
@@ -346,7 +346,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
               ${renderReaderHint('next', Boolean(model.nextMessage))}
             </div>
           </div>
-          <div class="reader-card__body">
+          <div class="reader-card__body" tabindex="0">
             <p class="reader-card__text reader-card__text--empty">这条楼层没有可显示的正文，点右上角✎查看或修复原文。</p>
           </div>
         </article>
@@ -382,7 +382,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
             ${renderReaderHint('next', Boolean(model.nextMessage))}
           </div>
         </div>
-        <div class="reader-card__body">
+        <div class="reader-card__body" tabindex="0">
           <p class="reader-card__text">${pageText}</p>
         </div>
         ${renderOptionsPanel(message)}

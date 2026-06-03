@@ -118,6 +118,15 @@ export const defaultStatusData: StatusData = {
     mainEvents: {
       'SAE_01-1': '未进行',
       'SAE_01-2': '未进行',
+      'SAE_04-1': '未进行',
+      'SAE_04-2A': '未进行',
+      'SAE_04-2B': '未进行',
+      'SAE_04-3': '未进行',
+      'SAE_04-4': '未进行',
+      'SAE_04-5': '未进行',
+      'SAE_04-6': '未进行',
+      'SAE_04-7': '未进行',
+      'SAE_04-8': '未进行',
     },
     recentEvents: {
       初始记录: '新的记录已经建立，等待攻略对象资料载入。',
