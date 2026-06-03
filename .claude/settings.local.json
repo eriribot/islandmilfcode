@@ -66,7 +66,8 @@
       "Bash(echo \"=== exit: $? ===\")",
       "Bash(echo \"=== tsc exit: $? ===\")",
       "Bash(npm run *)",
-      "Bash(awk -F: '$1>1430 && $1<1650')"
+      "Bash(awk -F: '$1>1430 && $1<1650')",
+      "Bash(npm test *)"
     ]
   }
 }
