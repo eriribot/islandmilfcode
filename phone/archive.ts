@@ -108,7 +108,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     ],
     tags: ['黑长直', '霞诗子', '毒舌学姐', '高攻低防'],
     details: [
-      { label: '生日', value: '1995年1月31日' },
+      { label: '生日', value: '1月31日' },
       { label: '身高', value: '168cm' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
@@ -152,7 +152,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     ],
     tags: ['音乐', '表姐', '行动派'],
     details: [
-      { label: '生日', value: '1995年12月18日' },
+      { label: '生日', value: '12月18日' },
       { label: '身高', value: '173cm' },
     ],
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],

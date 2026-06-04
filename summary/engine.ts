@@ -2,12 +2,11 @@ import { extractTaggedReply, getPromptMessageText } from '../message-format';
 import type { UiMessage } from '../types';
 import type { FactAnchor, KeyFact, KeyFactCategory, SummaryEntry, SummaryStore } from './types';
 import { KEY_FACT_CATEGORY_LABEL, KEY_FACT_CATEGORY_MAP } from './types';
+import { loadSummaryTriggerConfig } from '../memory-config';
 
-// 小摘要：每累积 5 条新消息触发一次。
+// 默认阈值（当 localStorage 无配置时使用）
 export const MINOR_THRESHOLD = 5;
-// 大摘要：每累积 4 条小摘要触发一次。
 const MAJOR_THRESHOLD = 4;
-// 全局压缩：每累积 4 条大摘要触发一次。
 const GLOBAL_THRESHOLD = 4;
 
 // ── 阈值判断 ──
@@ -15,17 +14,23 @@ const GLOBAL_THRESHOLD = 4;
 /** 是否应运行小摘要：未暂停且新消息数达到阈值。 */
 export function shouldRunMinorSummary(store: SummaryStore, messageCount: number): boolean {
   if (store.autoPaused) return false;
-  return messageCount - store.lastSummarizedIndex >= MINOR_THRESHOLD;
+  const config = loadSummaryTriggerConfig();
+  const threshold = config.minorThreshold ?? MINOR_THRESHOLD;
+  return messageCount - store.lastSummarizedIndex >= threshold;
 }
 
 /** 是否应运行大摘要：小摘要条数达到阈值。 */
 export function shouldRunMajorSummary(store: SummaryStore): boolean {
-  return store.minor.length >= MAJOR_THRESHOLD;
+  const config = loadSummaryTriggerConfig();
+  const threshold = config.majorThreshold ?? MAJOR_THRESHOLD;
+  return store.minor.length >= threshold;
 }
 
 /** 是否应运行全局压缩：大摘要条数达到阈值。 */
 export function shouldRunGlobalCompression(store: SummaryStore): boolean {
-  return store.major.length >= GLOBAL_THRESHOLD;
+  const config = loadSummaryTriggerConfig();
+  const threshold = config.globalThreshold ?? GLOBAL_THRESHOLD;
+  return store.major.length >= threshold;
 }
 
 // ── Prompt 构建 ──

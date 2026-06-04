@@ -160,6 +160,15 @@ export function finalizeStreamingText(
       targetTab: 'summary',
       timestamp: formatTime(state.statusData.world.currentTime),
     });
+
+    // 生成完成后回顶
+    if (typeof document !== 'undefined') {
+      const readerContainer = document.querySelector('.reader-container');
+      if (readerContainer) {
+        readerContainer.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
+
     return;
   }
 

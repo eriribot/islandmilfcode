@@ -3,6 +3,7 @@ import { extractOptionsBlock, extractTucaoBlocks, getReaderMessages, getVisibleM
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
 import type { SummaryStore } from './summary/types';
 import type { AppState, BackgroundTaskState, ReaderContextMenuState, StatusData, UiMessage } from './types';
+import { loadFullMemoryConfig } from './memory-config';
 
 /**
  * 把摘要 range（对话序号，不含系统/streaming 楼层）映射成 UI 楼层号（getReaderMessages 渲染出的 #N）。
@@ -709,134 +710,149 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
 }
 
 export function renderSummaryConfigSection(state: AppState): string {
-  const config = state.summaryApiConfig;
-  const useCustom = config !== null;
-  const modelFetch = state.summaryModelFetch;
-  const models = modelFetch.models;
-  const selectedModel = config?.model ?? '';
-  const modelOptions = models
-    .map(model => {
-      const selected = model.id === selectedModel ? 'selected' : '';
-      const label = model.ownedBy ? `${model.id} (${model.ownedBy})` : model.id;
-      return `<option value="${escapeHtml(model.id)}" ${selected}>${escapeHtml(label)}</option>`;
-    })
-    .join('');
-  const modelSelector = models.length
-    ? `
-            <select data-field="summary-model-select" style="width:100%;box-sizing:border-box;margin-top:8px">
-              <option value="">Select fetched model...</option>
-              ${modelOptions}
-            </select>
-          `
-    : '';
-  const modelFetchStatus = modelFetch.error
-    ? `<p style="color:#c0392b;font-size:11px;margin:6px 0 0">${escapeHtml(modelFetch.error)}</p>`
-    : modelFetch.fetchedAt
-      ? `<p style="font-size:11px;opacity:0.65;margin:6px 0 0">Fetched ${models.length} model(s)</p>`
-      : '';
+  const memoryConfig = loadFullMemoryConfig();
 
   return `
     <div class="subsection">
-      <div class="subsection-title">总结 API 设置</div>
+      <div class="subsection-title">摘要触发配置</div>
       <div class="chip-list">
         <div class="chip-card">
+          <label>
+            Minor 摘要触发阈值（条消息）<br>
+            <input type="number" data-trigger-field="minorThreshold" value="${memoryConfig.summaryTrigger.minorThreshold}" min="1" max="20" style="width:100%;box-sizing:border-box">
+          </label>
+          <p style="font-size:11px;opacity:0.65;margin:6px 0 0">默认 5 条，每累积 N 条新消息触发一次 minor 摘要</p>
+        </div>
+
+        <div class="chip-card">
+          <label>
+            Major 摘要触发阈值（条 minor）<br>
+            <input type="number" data-trigger-field="majorThreshold" value="${memoryConfig.summaryTrigger.majorThreshold}" min="2" max="10" style="width:100%;box-sizing:border-box">
+          </label>
+          <p style="font-size:11px;opacity:0.65;margin:6px 0 0">默认 4 条，每累积 N 条 minor 摘要触发一次 major 摘要</p>
+        </div>
+
+        <div class="chip-card">
+          <label>
+            Global 压缩触发阈值（条 major）<br>
+            <input type="number" data-trigger-field="globalThreshold" value="${memoryConfig.summaryTrigger.globalThreshold}" min="2" max="10" style="width:100%;box-sizing:border-box">
+          </label>
+          <p style="font-size:11px;opacity:0.65;margin:6px 0 0">默认 4 条，每累积 N 条 major 摘要触发一次 global 压缩</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-title">记忆注入配置</div>
+      <div class="chip-list">
+        <div class="chip-card">
+          <label>
+            Token 预算<br>
+            <input type="number" data-injection-field="tokenBudget" value="${memoryConfig.injection.tokenBudget}" min="5000" max="50000" step="1000" style="width:100%;box-sizing:border-box">
+          </label>
+          <p style="font-size:11px;opacity:0.65;margin:6px 0 0">默认 15000，约 22500 字符，控制注入到 prompt 的记忆总量</p>
+        </div>
+
+        <div class="chip-card">
+          <label>
+            Minor 摘要注入窗口<br>
+            <input type="number" data-injection-field="minorWindowSize" value="${memoryConfig.injection.minorWindowSize}" min="3" max="20" style="width:100%;box-sizing:border-box">
+          </label>
+          <p style="font-size:11px;opacity:0.65;margin:6px 0 0">默认 8 条，注入到 prompt 时保留最近多少条 minor 摘要</p>
+        </div>
+
+        <div class="chip-card">
+          <label>
+            Major 摘要注入窗口<br>
+            <input type="number" data-injection-field="majorWindowSize" value="${memoryConfig.injection.majorWindowSize}" min="2" max="10" style="width:100%;box-sizing:border-box">
+          </label>
+          <p style="font-size:11px;opacity:0.65;margin:6px 0 0">默认 5 条，注入到 prompt 时保留最近多少条 major 摘要</p>
+        </div>
+
+        <div class="chip-card">
           <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" data-action="summary-toggle-custom" ${useCustom ? 'checked' : ''}>
-            <span>使用独立 API</span>
+            <input type="checkbox" data-injection-field="includeFacts" ${memoryConfig.injection.includeFacts ? 'checked' : ''}>
+            <span>注入关键事实</span>
           </label>
         </div>
-        ${
-          useCustom
-            ? `
-          <div class="chip-card">
-            <label>API URL<br><input type="text" data-field="summary-apiurl" value="${escapeHtml(config?.apiurl ?? '')}" style="width:100%;box-sizing:border-box" placeholder="https://..."></label>
-          </div>
-          <div class="chip-card">
-            <label>API Key<br><input type="password" data-field="summary-key" value="${escapeHtml(config?.key ?? '')}" style="width:100%;box-sizing:border-box" placeholder="sk-..."></label>
-          </div>
-          <div class="chip-card">
-            <label>Model<br><input type="text" data-field="summary-model" value="${escapeHtml(config?.model ?? '')}" style="width:100%;box-sizing:border-box" placeholder="gpt-4o-mini"></label>
-            ${modelSelector}
-            <button class="mini-btn" data-action="summary-fetch-models" style="width:100%;margin-top:8px;font-size:12px" ${modelFetch.loading ? 'disabled' : ''}>
-              ${modelFetch.loading ? 'Fetching models...' : 'Fetch models'}
-            </button>
-            ${modelFetchStatus}
-·          </div>
-          <div class="chip-card">
-            <label>Source<br><input type="text" data-field="summary-source" value="${escapeHtml(config?.source ?? 'openai')}" style="width:100%;box-sizing:border-box" placeholder="openai"></label>
-          </div>
-          <button class="summary-config-save" data-action="summary-save-config">保存配置</button>
-        `
-            : ''
-        }
+
+        <div class="chip-card">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" data-injection-field="includeTasks" ${memoryConfig.injection.includeTasks ? 'checked' : ''}>
+            <span>注入待办任务</span>
+          </label>
+        </div>
+
+        <div class="chip-card">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" data-injection-field="includeSecrets" ${memoryConfig.injection.includeSecrets ? 'checked' : ''}>
+            <span>注入保密事项</span>
+          </label>
+        </div>
+
+        <div class="chip-card">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" data-injection-field="includeImpressions" ${memoryConfig.injection.includeImpressions ? 'checked' : ''}>
+            <span>注入角色印象</span>
+          </label>
+        </div>
+
+        <button class="summary-config-save" data-action="memory-config-save">保存记忆配置</button>
+        <button class="mini-btn" data-action="memory-config-reset" style="width:100%;margin-top:8px">重置为默认</button>
       </div>
     </div>`;
 }
 
-export function renderStatusPanel(state: AppState) {
-  const statusData = state.statusData;
+export function renderStatusPanel(state: AppState): string {
+  const { statusData, playerProfile } = state;
+  const playerName = playerProfile.name.trim() || '主角';
+  const playerClass = playerProfile.className || '未知';
+  const playerGender = playerProfile.gender || '未知';
+  const playerFamilyName = playerProfile.familyName;
+  const playerGivenName = playerProfile.givenName;
+  const playerPersonality = playerProfile.personality || '待补充';
+  const playerAppearance = playerProfile.appearance || '待补充';
+  const profileEditing = state.playerProfileEditing || false;
   const currentMainEventId = statusData.world.currentMainEventId;
-  const currentMainEventStatus = currentMainEventId ? statusData.world.mainEvents?.[currentMainEventId] : '';
-  // 中文注释：状态面板只展示正在进行的主线，未进行和已结束都不占界面。
-  const mainEvents = Object.entries(statusData.world.mainEvents ?? {}).filter(
-    ([, eventStatus]) => eventStatus === '进行中',
-  );
-  const playerName = state.playerProfile.name.trim() || '主角';
-  const playerFamilyName = state.playerProfile.familyName || '';
-  const playerGivenName = state.playerProfile.givenName || '';
-  const playerClass = state.playerProfile.className || '未记录';
-  const playerGender = state.playerProfile.gender || '未记录';
-  const playerPersonality = state.playerProfile.personality.trim() || '未记录';
-  const playerAppearance = state.playerProfile.appearance.trim() || '未记录';
-  const profileEditing = state.playerProfileEditing;
+  const currentMainEventStatus = statusData.world.mainEvents[currentMainEventId];
+
+  // 过滤掉已结束的事件，但保留当前进行中的事件
+  const mainEvents = Object.entries(statusData.world.mainEvents || {})
+    .filter(([id, status]) => {
+      // 如果是当前事件，总是显示（即使只有一轮）
+      if (id === currentMainEventId) return true;
+      // 否则只显示未进行或进行中的事件（排除已结束）
+      return status !== '已结束';
+    });
+
   const profileBody = profileEditing
     ? `
       <div class="chip-card">
         <label>
-          <strong>姓氏</strong>
-          <input
-            class="profile-edit-field"
-            data-field="player-family-name"
-            type="text"
-            value="${escapeHtml(playerFamilyName)}"
-            placeholder="例：八云"
-          />
+          姓氏<br>
+          <input type="text" data-profile-field="familyName" value="${escapeHtml(playerFamilyName || '')}" style="width:100%;box-sizing:border-box">
         </label>
       </div>
       <div class="chip-card">
         <label>
-          <strong>名字</strong>
-          <input
-            class="profile-edit-field"
-            data-field="player-given-name"
-            type="text"
-            value="${escapeHtml(playerGivenName)}"
-            placeholder="例：紫"
-          />
+          名字<br>
+          <input type="text" data-profile-field="givenName" value="${escapeHtml(playerGivenName || '')}" style="width:100%;box-sizing:border-box">
         </label>
       </div>
       <div class="chip-card">
         <label>
-          <strong>主角性格</strong>
-          <textarea
-            class="profile-edit-field"
-            data-field="player-personality"
-            rows="3"
-          >${escapeHtml(playerPersonality === '未记录' ? '' : playerPersonality)}</textarea>
+          主角性格<br>
+          <textarea data-profile-field="personality" style="width:100%;box-sizing:border-box;min-height:60px">${escapeHtml(playerPersonality)}</textarea>
         </label>
       </div>
       <div class="chip-card">
         <label>
-          <strong>主角相貌</strong>
-          <textarea
-            class="profile-edit-field"
-            data-field="player-appearance"
-            rows="3"
-          >${escapeHtml(playerAppearance === '未记录' ? '' : playerAppearance)}</textarea>
+          主角相貌<br>
+          <textarea data-profile-field="appearance" style="width:100%;box-sizing:border-box;min-height:60px">${escapeHtml(playerAppearance)}</textarea>
         </label>
       </div>
-      <div class="profile-edit-actions">
-        <button class="summary-config-save" data-action="save-player-profile">保存</button>
+      <div class="chip-card" style="display:flex;gap:8px">
+        <button class="profile-save-btn" data-action="save-player-profile-edit">保存</button>
         <button class="profile-cancel-btn" data-action="cancel-player-profile-edit">取消</button>
       </div>
     `

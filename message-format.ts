@@ -873,7 +873,27 @@ function buildPinnedKeyFactsInline(facts: KeyFact[] | undefined): string {
   return lines.join('\n');
 }
 
-function buildSummaryContextInline(store: SummaryStore): string {
+function buildSummaryContextInline(
+  store: SummaryStore | null,
+  memoryDB?: import('./memorydatabase/types').IslandMemoryDB | null,
+  context?: {
+    currentTime: string;
+    currentLocation: string;
+    currentTargetIds: string[];
+    currentMainEventId?: string;
+    recentUserInput?: string;
+    tokenBudget?: number;
+  }
+): string {
+  // 优先使用 memoryDB 的结构化注入（新系统）
+  if (memoryDB && context) {
+    const { buildMemoryPromptInjection } = require('./memorydatabase/prompt-injection');
+    return buildMemoryPromptInjection(memoryDB, context);
+  }
+
+  // 降级到旧的 SummaryStore（兼容旧存档或 memoryDB 未启用时）
+  if (!store) return '';
+
   const parts: string[] = [];
   const pinned = buildPinnedKeyFactsInline(store.keyFacts);
   if (pinned) parts.push(pinned);
@@ -907,6 +927,7 @@ export function buildPrompt(
     phoneMessageTargetName?: string;
     suppressUserInputLine?: boolean;
     scenePresence?: ScenePresence | null;
+    memoryDB?: import('./memorydatabase/types').IslandMemoryDB | null;
   },
 ) {
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
@@ -929,7 +950,42 @@ export function buildPrompt(
       summaryStore.major.length ||
       summaryStore.minor.length ||
       summaryStore.keyFacts.some(f => !f.superseded));
-  const summaryContext = hasSummary ? buildSummaryContextInline(summaryStore) : '';
+
+  // 构建记忆注入上下文
+  const memoryContext = options?.memoryDB
+    ? {
+        currentTime: statusData.world.currentTime,
+        currentLocation: statusData.world.currentLocation,
+        currentTargetIds: options.scenePresence?.presentIds ||
+                         statusData.targets.map(t => t.id),
+        currentMainEventId: statusData.world.currentMainEventId,
+        recentUserInput: userInput,
+        config: (() => {
+          try {
+            // 从 localStorage 读取用户配置
+            const { loadMemoryConfig } = require('./memory-config');
+            return loadMemoryConfig();
+          } catch {
+            // 降级到默认配置
+            return {
+              tokenBudget: 15000,
+              minorWindowSize: 8,
+              majorWindowSize: 5,
+              includeFacts: true,
+              includeTasks: true,
+              includeSecrets: true,
+              includeImpressions: true,
+            };
+          }
+        })(),
+      }
+    : undefined;
+
+  const summaryContext = options?.memoryDB && memoryContext
+    ? buildSummaryContextInline(summaryStore, options.memoryDB, memoryContext)
+    : hasSummary
+    ? buildSummaryContextInline(summaryStore)
+    : '';
   const mainEventsContext = buildMainEventsContext(statusData);
   const plotContext = buildCurrentPlotContext(statusData, options?.plotLibrary);
   // 取 lastSummarizedIndex 和「总消息数 - 保留窗口」中较小的那个，
@@ -1140,7 +1196,7 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
       : '  着装.部位:描述          — 主场景禁用旧单目标着装格式；没有明确对象时不要输出',
     '  贞操.角色名:已失去       — 仅当正文明确发生破除时输出；只看是否真的发生，单向不可逆，禁止写回"完璧/处女"。若上方角色列表显示"完璧"但聊天记录/摘要中已明确发生过性行为，本轮必须补写贞操标记和对应次数以修正数据。',
     '  X次数.角色名:+N          — 亲密接触硬统计（X=接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数）；正文明确发生时累加，或当角色列表计数与已知事实不符时一次性补正。不统计经验人数/伴侣数。',
-    '  当前事件:事件ID          — 设置手机状态页显示的唯一当前主线事件（例：当前事件:SAE_01-2；清空用 当前事件:无）',
+    '  当前事件:事件ID          — 当有事件进行中时，每轮都必须输出该字段（例：当前事件:SAE_01-2）；事件结束时才输出 当前事件:无 清空',
     '  主线事件.事件ID:状态     — 更新主线事件状态（未触发/进行中/已结束/跳过/延后）',
     '  事件名:事件描述         — 添加或替换近期重要事件，可有多条',
     '  物品+物品名:数量:描述    — 获得物品（例：物品+匕首:1:从地上捡到的）',

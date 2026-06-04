@@ -44,14 +44,24 @@ function buildSchedule(plotLibrary: PlotLibrary | null | undefined, statusData?:
       Boolean(event.schedule?.date),
     )
     .filter(event => !statusData || isPlotEventAllowedByRoute(event.id, statusData))
-    .map(event => ({
-      id: event.id,
-      date: event.schedule.date,
-      endDate:
-        event.schedule.endDate && event.schedule.endDate >= event.schedule.date
-          ? event.schedule.endDate
-          : event.schedule.date,
-    }));
+    .map(event => {
+      // 如果没有配置 endDate，默认延长3天，避免单日事件在当天推进时就失效
+      let endDate: string;
+      if (event.schedule.endDate && event.schedule.endDate >= event.schedule.date) {
+        endDate = event.schedule.endDate;
+      } else {
+        // 默认给单日事件延长3天的有效期
+        const startDate = new Date(event.schedule.date);
+        startDate.setDate(startDate.getDate() + 3);
+        endDate = startDate.toISOString().split('T')[0];
+      }
+
+      return {
+        id: event.id,
+        date: event.schedule.date,
+        endDate,
+      };
+    });
   events.sort(
     (a, b) => a.date.localeCompare(b.date) || a.endDate.localeCompare(b.endDate) || a.id.localeCompare(b.id),
   );
@@ -270,18 +280,19 @@ function getScheduledCurrentMainEventId(statusData: StatusData, schedule: Schedu
   const currentDate = getDatePart(statusData.world.currentTime);
   const mainEvents = statusData.world.mainEvents ?? {};
 
-  // 找到所有匹配当前日期的事件
-  const candidates = schedule.filter(event => eventMatchesCurrentDate(event, currentDate));
-
-  // 优先选择尚未结束且符合路由条件的事件
-  for (const event of candidates) {
+  // 优先保持已经在进行中的事件，即使日期超出了 endDate
+  // 这样可以确保事件一旦开始就持续到手动结束，而不是因为时间推进就自动消失
+  for (const event of schedule) {
     const status = normalizeMainEventStatus(mainEvents[event.id]);
     if (status === MAIN_EVENT_RUNNING) {
-      return event.id; // 已经在进行中的优先
+      return event.id; // 已经在进行中的事件，无论日期如何都继续保持
     }
   }
 
-  // 其次选择未开始但符合条件的
+  // 找到所有匹配当前日期的事件（用于启动新事件）
+  const candidates = schedule.filter(event => eventMatchesCurrentDate(event, currentDate));
+
+  // 选择未开始但符合条件的事件来启动
   for (const event of candidates) {
     const status = normalizeMainEventStatus(mainEvents[event.id]);
     if (status !== MAIN_EVENT_FINISHED && isPlotEventAllowedByRoute(event.id, statusData)) {

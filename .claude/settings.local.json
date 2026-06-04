@@ -69,7 +69,18 @@
       "Bash(awk -F: '$1>1430 && $1<1650')",
       "Bash(npm test *)",
       "Bash(npx pnpm *)",
-      "PowerShell(New-Item *)"
+      "PowerShell(New-Item *)",
+      "Bash(xargs grep -l \"renderSummaryConfigSection.*function\\\\|function.*renderSummaryConfigSection\")",
+      "Bash(pnpm build *)",
+      "Bash(awk NR==1455,NR==1465 *)",
+      "Bash(awk '/^export function renderSummaryConfigSection/,/^export function renderStatusPanel/' render.ts)",
+      "Bash(awk NR==710 *)",
+      "PowerShell(Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' | Select-Object -Skip 680 -First 80 | ForEach-Object -Begin {$i=681} -Process {\"$i`t$_\"; $i++})",
+      "PowerShell(Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' | Select-Object -Skip 630 -First 100 | ForEach-Object -Begin {$i=631} -Process {\"$i`t$_\"; $i++})",
+      "PowerShell(Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' | Select-Object -Skip 600 -First 40 | ForEach-Object -Begin {$i=601} -Process {\"$i`t$_\"; $i++})",
+      "PowerShell($content = Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' -Encoding UTF8 -Raw; $lines = $content -split \"`n\"; for\\($i=550; $i -lt 565; $i++\\) { \"$\\($i+1\\)`t$\\($lines[$i]\\)\" })",
+      "PowerShell($content = Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' -Encoding UTF8 -Raw; $lines = $content -split \"`n\"; for\\($i=554; $i -lt 630; $i++\\) { \"$\\($i+1\\)`t$\\($lines[$i]\\)\" })",
+      "PowerShell($content = Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' -Encoding UTF8 -Raw; $lines = $content -split \"`n\"; for\\($i=770; $i -lt 830; $i++\\) { \"$\\($i+1\\)`t$\\($lines[$i]\\)\" })"
     ]
   }
 }

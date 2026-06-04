@@ -754,6 +754,7 @@ export async function submitMessage(
                   phoneMessageTargetName: phoneDirective?.target.name,
                   suppressUserInputLine: true,
                   scenePresence,
+                  memoryDB: ctx.memoryDB,
                 }),
               },
               {
@@ -773,6 +774,7 @@ export async function submitMessage(
               suppressPhoneMessageContent: Boolean(phoneDirective),
               phoneMessageTargetName: phoneDirective?.target.name,
               scenePresence,
+              memoryDB: ctx.memoryDB,
             }),
           },
     );

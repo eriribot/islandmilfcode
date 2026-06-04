@@ -92,6 +92,7 @@ import {
   insertMemoryRow,
   type MemoryTableName,
 } from './memorydatabase/editor';
+import { loadMemoryConfig, saveMemoryConfig, resetMemoryConfig } from './memory-config';
 
 const win = window as TavernWindow;
 const root = document.querySelector<HTMLDivElement>('#app');
@@ -1419,9 +1420,46 @@ function bindEvents() {
     const scrollEl = root?.querySelector<HTMLElement>('.memory-phone-scroll');
     const scrollTop = scrollEl?.scrollTop ?? 0;
     render();
-    const restored = root?.querySelector<HTMLElement>('.memory-phone-scroll');
-    if (restored) restored.scrollTop = scrollTop;
+    requestAnimationFrame(() => {
+      const scrollEl = root?.querySelector<HTMLElement>('.memory-phone-scroll');
+      if (scrollEl) scrollEl.scrollTop = scrollTop;
+    });
   }
+
+  // ── Memory config events ──
+  root?.querySelector('[data-action="memory-config-save"]')?.addEventListener('click', () => {
+    const getInjectionValue = (field: string) => root?.querySelector<HTMLInputElement>(`[data-injection-field="${field}"]`);
+    const getTriggerValue = (field: string) => root?.querySelector<HTMLInputElement>(`[data-trigger-field="${field}"]`);
+
+    const { saveFullMemoryConfig } = require('./memory-config');
+    saveFullMemoryConfig({
+      injection: {
+        tokenBudget: parseInt(getInjectionValue('tokenBudget')?.value ?? '15000'),
+        minorWindowSize: parseInt(getInjectionValue('minorWindowSize')?.value ?? '8'),
+        majorWindowSize: parseInt(getInjectionValue('majorWindowSize')?.value ?? '5'),
+        includeFacts: getInjectionValue('includeFacts')?.checked ?? true,
+        includeTasks: getInjectionValue('includeTasks')?.checked ?? true,
+        includeSecrets: getInjectionValue('includeSecrets')?.checked ?? true,
+        includeImpressions: getInjectionValue('includeImpressions')?.checked ?? true,
+      },
+      summaryTrigger: {
+        minorThreshold: parseInt(getTriggerValue('minorThreshold')?.value ?? '5'),
+        majorThreshold: parseInt(getTriggerValue('majorThreshold')?.value ?? '4'),
+        globalThreshold: parseInt(getTriggerValue('globalThreshold')?.value ?? '4'),
+      },
+    });
+
+    alert('记忆配置已保存');
+    render();
+  });
+
+  root?.querySelector('[data-action="memory-config-reset"]')?.addEventListener('click', () => {
+    if (confirm('确定要重置为默认配置吗？')) {
+      resetMemoryConfig();
+      alert('已重置为默认配置');
+      render();
+    }
+  });
 
   root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-open-table"]').forEach(button => {
     button.addEventListener('click', () => {
