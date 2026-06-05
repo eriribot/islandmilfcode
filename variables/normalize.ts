@@ -45,16 +45,10 @@ function buildSchedule(plotLibrary: PlotLibrary | null | undefined, statusData?:
     )
     .filter(event => !statusData || isPlotEventAllowedByRoute(event.id, statusData))
     .map(event => {
-      // 如果没有配置 endDate，默认延长3天，避免单日事件在当天推进时就失效
-      let endDate: string;
-      if (event.schedule.endDate && event.schedule.endDate >= event.schedule.date) {
-        endDate = event.schedule.endDate;
-      } else {
-        // 默认给单日事件延长3天的有效期
-        const startDate = new Date(event.schedule.date);
-        startDate.setDate(startDate.getDate() + 3);
-        endDate = startDate.toISOString().split('T')[0];
-      }
+      const endDate =
+        event.schedule.endDate && event.schedule.endDate >= event.schedule.date
+          ? event.schedule.endDate
+          : event.schedule.date;
 
       return {
         id: event.id,

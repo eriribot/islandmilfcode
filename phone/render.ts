@@ -430,10 +430,6 @@ function collectCalendarEvents(state: AppState): CalendarEventItem[] {
     .filter((event): event is PlotEventCard & { schedule: NonNullable<PlotEventCard['schedule']> } =>
       Boolean(event.schedule?.date),
     )
-    .filter(event => {
-      const status = state.statusData.world.mainEvents?.[event.id] ?? '';
-      return getCalendarStatusClass(status) !== 'is-upcoming';
-    })
     .map(event => buildCalendarEventItem(event, state.statusData))
     .sort((a, b) => a.date.localeCompare(b.date) || a.endDate.localeCompare(b.endDate) || a.id.localeCompare(b.id));
 }
