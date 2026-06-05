@@ -5,7 +5,6 @@ import { renderCharacterArchivePanel } from './archive';
 import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute } from './types';
 import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
 import { renderMemoryEditor } from '../memorydatabase/editor';
-import { isPlotEventVisibleByRoute } from '../plot-routing';
 
 type PhoneCharacterThemeId = PhoneCharacterId;
 
@@ -433,7 +432,7 @@ function collectCalendarEvents(state: AppState): CalendarEventItem[] {
     )
     .filter(event => {
       const status = state.statusData.world.mainEvents?.[event.id] ?? '';
-      return getCalendarStatusClass(status) === 'is-finished' || isPlotEventVisibleByRoute(event.id, state.statusData);
+      return getCalendarStatusClass(status) !== 'is-upcoming';
     })
     .map(event => buildCalendarEventItem(event, state.statusData))
     .sort((a, b) => a.date.localeCompare(b.date) || a.endDate.localeCompare(b.endDate) || a.id.localeCompare(b.id));

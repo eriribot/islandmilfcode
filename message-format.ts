@@ -1036,7 +1036,6 @@ export function buildPrompt(
     relationshipGuidanceList
       ? `角色局部关系指导：每一块只在描写对应角色时生效，禁止把某个角色的指导当成全局思考方式。\n${relationshipGuidanceList}`
       : '',
-    topEvent ? `最新事件：${topEvent[0]} - ${topEvent[1]}` : '',
     playerProfileText,
     phoneMessageBoundary,
     plotContext,

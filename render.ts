@@ -711,8 +711,80 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
 
 export function renderSummaryConfigSection(state: AppState): string {
   const memoryConfig = loadFullMemoryConfig();
+  const secondaryApiConfig = state.summaryApiConfig;
+  const secondaryApiEnabled = !!secondaryApiConfig;
+  const secondaryApiUrl = secondaryApiConfig?.apiurl ?? '';
+  const secondaryApiKey = secondaryApiConfig?.key ?? '';
+  const secondaryApiModel = secondaryApiConfig?.model ?? '';
+  const secondaryApiSource = secondaryApiConfig?.source ?? 'openai';
+  const modelFetch = state.summaryModelFetch;
+  const modelOptions = modelFetch.models
+    .map(model => {
+      const label = model.ownedBy ? `${model.id} · ${model.ownedBy}` : model.id;
+      return `<option value="${escapeHtml(model.id)}" ${model.id === secondaryApiModel ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    })
+    .join('');
+  const modelFetchHint = modelFetch.error
+    ? `<p style="font-size:11px;color:#b85c6e;margin:6px 0 0">${escapeHtml(modelFetch.error)}</p>`
+    : modelFetch.fetchedAt
+      ? `<p style="font-size:11px;opacity:0.65;margin:6px 0 0">已获取 ${modelFetch.models.length} 个模型。</p>`
+      : '<p style="font-size:11px;opacity:0.65;margin:6px 0 0">可从兼容 OpenAI /models 的端点拉取模型列表。</p>';
 
   return `
+    <div class="subsection">
+      <div class="subsection-title">副 API 配置</div>
+      <div class="chip-list">
+        <div class="chip-card">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" data-action="summary-toggle-custom" ${secondaryApiEnabled ? 'checked' : ''}>
+            <span>启用副 API 处理摘要、变量与手机后台分析</span>
+          </label>
+          <p style="font-size:11px;opacity:0.65;margin:6px 0 0">关闭时会回落到主 API；开启后后台任务走这里配置的模型。</p>
+        </div>
+
+        <div class="chip-card">
+          <label>
+            API URL<br>
+            <input type="text" data-field="summary-apiurl" value="${escapeHtml(secondaryApiUrl)}" placeholder="https://api.openai.com/v1/chat/completions" ${secondaryApiEnabled ? '' : 'disabled'} style="width:100%;box-sizing:border-box">
+          </label>
+        </div>
+
+        <div class="chip-card">
+          <label>
+            API Key<br>
+            <input type="password" data-field="summary-key" value="${escapeHtml(secondaryApiKey)}" placeholder="sk-..." ${secondaryApiEnabled ? '' : 'disabled'} style="width:100%;box-sizing:border-box">
+          </label>
+        </div>
+
+        <div class="chip-card">
+          <label>
+            Source<br>
+            <input type="text" data-field="summary-source" value="${escapeHtml(secondaryApiSource)}" placeholder="openai" ${secondaryApiEnabled ? '' : 'disabled'} style="width:100%;box-sizing:border-box">
+          </label>
+          <p style="font-size:11px;opacity:0.65;margin:6px 0 0">通常填 openai；保持和酒馆 custom_api source 约定一致。</p>
+        </div>
+
+        <div class="chip-card">
+          <label>
+            Model<br>
+            <input type="text" data-field="summary-model" value="${escapeHtml(secondaryApiModel)}" placeholder="gpt-4.1-mini" ${secondaryApiEnabled ? '' : 'disabled'} style="width:100%;box-sizing:border-box">
+          </label>
+          ${
+            modelOptions
+              ? `<select data-field="summary-model-select" ${secondaryApiEnabled ? '' : 'disabled'} style="width:100%;box-sizing:border-box;margin-top:8px">
+                  <option value="">选择已获取的模型</option>
+                  ${modelOptions}
+                </select>`
+              : ''
+          }
+          ${modelFetchHint}
+          <button class="mini-btn" data-action="summary-fetch-models" ${secondaryApiEnabled || modelFetch.loading ? '' : 'disabled'} style="width:100%;margin-top:8px">${modelFetch.loading ? '获取中...' : '获取模型列表'}</button>
+        </div>
+
+        <button class="summary-config-save" data-action="summary-save-config" ${secondaryApiEnabled ? '' : 'disabled'}>保存副 API 配置</button>
+      </div>
+    </div>
+
     <div class="subsection">
       <div class="subsection-title">摘要触发配置</div>
       <div class="chip-list">
@@ -815,15 +887,16 @@ export function renderStatusPanel(state: AppState): string {
   const profileEditing = state.playerProfileEditing || false;
   const currentMainEventId = statusData.world.currentMainEventId;
   const currentMainEventStatus = statusData.world.mainEvents[currentMainEventId];
+  const isRunningMainEventStatus = (status: string) => {
+    const normalized = String(status ?? '').trim();
+    return normalized === '进行中';
+  };
+  const visibleCurrentMainEventId = isRunningMainEventStatus(currentMainEventStatus) ? currentMainEventId : '';
 
-  // 过滤掉已结束的事件，但保留当前进行中的事件
-  const mainEvents = Object.entries(statusData.world.mainEvents || {})
-    .filter(([id, status]) => {
-      // 如果是当前事件，总是显示（即使只有一轮）
-      if (id === currentMainEventId) return true;
-      // 否则只显示未进行或进行中的事件（排除已结束）
-      return status !== '已结束';
-    });
+  // 手机状态页只展示正在进行的主线；已结束、未触发、延后/跳过都不占页面。
+  const mainEvents = Object.entries(statusData.world.mainEvents || {}).filter(
+    ([id, status]) => id !== visibleCurrentMainEventId && isRunningMainEventStatus(status),
+  );
 
   const profileBody = profileEditing
     ? `
@@ -913,7 +986,7 @@ export function renderStatusPanel(state: AppState): string {
           <div class="chip-list">
             <div class="chip-card">
               <strong>当前事件</strong>
-              <p>${escapeHtml(currentMainEventId ? `${currentMainEventId}：${currentMainEventStatus || '状态未知'}` : '无')}</p>
+              <p>${escapeHtml(visibleCurrentMainEventId ? `${visibleCurrentMainEventId}：进行中` : '无')}</p>
             </div>
             ${
               mainEvents.length
@@ -922,12 +995,12 @@ export function renderStatusPanel(state: AppState): string {
                       ([id, eventStatus]) => `
                         <div class="chip-card">
                           <strong>${escapeHtml(id)}</strong>
-                          <p>${escapeHtml(eventStatus)}${id === currentMainEventId ? ' · 当前' : ''}</p>
+                          <p>${escapeHtml(eventStatus)}${id === visibleCurrentMainEventId ? ' · 当前' : ''}</p>
                         </div>
                       `,
                     )
                     .join('')
-                : '<div class="empty-card">还没有主线事件记录。</div>'
+                : ''
             }
           </div>
         </section>
