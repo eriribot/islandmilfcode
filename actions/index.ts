@@ -192,6 +192,58 @@ function isActivatingStatus(status: string): boolean {
   return String(status ?? '').trim() === '进行中';
 }
 
+function isTerminalMainEventStatus(status: string): boolean {
+  return /已结束|跳过|延后|已完成/.test(String(status ?? '').trim());
+}
+
+function getMainEventWindowEndDate(eventId: string, plotLibrary: PlotLibrary): string {
+  const schedule = plotLibrary.events[eventId]?.schedule;
+  return getProgressDatePart(schedule?.endDate) || getProgressDatePart(schedule?.date);
+}
+
+function isMainEventClosableByDate(eventId: string, plotLibrary: PlotLibrary, currentDate: string): boolean {
+  if (!currentDate) return true; // 没有可比对的当前日期时放行，避免误伤初始化流程。
+  const endDate = getMainEventWindowEndDate(eventId, plotLibrary);
+  if (!endDate) return true; // 没有排期日期的事件不参与时间闸。
+  return currentDate > endDate;
+}
+
+function hasActivatableRouteSuccessor(
+  currentEventId: string,
+  plotLibrary: PlotLibrary,
+  statusData: StatusData | null | undefined,
+  currentDate: string,
+): boolean {
+  if (!statusData || !currentDate) return false;
+  const nextIds = plotLibrary.events[currentEventId]?.nextIds ?? [];
+  if (!nextIds.length) return false;
+  const nextIdSet = new Set(nextIds);
+
+  return Object.values(plotLibrary.events).some(event => {
+    if (event.id === currentEventId) return false;
+    if (!nextIdSet.has(event.id)) return false;
+    if (!event.schedule?.date) return false;
+    if (!isMainEventActivatableByDate(event.id, plotLibrary, currentDate)) return false;
+
+    const successorEndDate = getMainEventWindowEndDate(event.id, plotLibrary);
+    if (successorEndDate && currentDate > successorEndDate) return false;
+
+    return isPlotEventAllowedByRoute(event.id, statusData);
+  });
+}
+
+function canCloseCurrentMainEventByScheduleOrRoute(
+  eventId: string,
+  plotLibrary: PlotLibrary,
+  statusData: StatusData | null | undefined,
+  currentDate: string,
+): boolean {
+  return (
+    isMainEventClosableByDate(eventId, plotLibrary, currentDate) ||
+    hasActivatableRouteSuccessor(eventId, plotLibrary, statusData, currentDate)
+  );
+}
+
 function findRouteCheckTarget(statusData: StatusData, targetHint: string): TargetStatus | null {
   const normalizedHint = normalizeForDirectiveMatch(targetHint);
   if (!normalizedHint) return null;
@@ -295,10 +347,39 @@ function sanitizeProgressAgainstPlotLibrary(
       console.warn('[progress-guard] drop premature mainEvent activation:', id, 'currentDate:', currentDate);
       continue;
     }
+    // 日期 + 路由闸：仍处在事件日期/持续至当天，且没有可激活后续事件时，当前事件不能被正文后 progress 提前结算。
+    // 例如 SAE_04-8 是 2012-10-27 的单日事件，10-27 当天没有后续可接，始终保持进行中；
+    // 但 SAE_03-7A/7B 到 2012-08-13 时，plot-routing 已解锁 SAE_03-8，可以同日收束并接续。
+    if (
+      id === statusData?.world.currentMainEventId &&
+      isTerminalMainEventStatus(status) &&
+      !canCloseCurrentMainEventByScheduleOrRoute(id, plotLibrary, routeStatusData, currentDate)
+    ) {
+      console.warn('[progress-guard] drop same-window terminal current mainEvent:', id, status, 'currentDate:', currentDate);
+      continue;
+    }
     sanitizedMainEvents[id] = status;
   }
 
   let sanitizedCurrentId = update.currentMainEventId;
+  if (
+    sanitizedCurrentId === '' &&
+    statusData?.world.currentMainEventId &&
+    !canCloseCurrentMainEventByScheduleOrRoute(
+      statusData.world.currentMainEventId,
+      plotLibrary,
+      routeStatusData,
+      currentDate,
+    )
+  ) {
+    console.warn(
+      '[progress-guard] drop same-window currentMainEvent clear:',
+      statusData.world.currentMainEventId,
+      'currentDate:',
+      currentDate,
+    );
+    sanitizedCurrentId = undefined;
+  }
   if (sanitizedCurrentId && !isPlotEventAllowedByRoute(sanitizedCurrentId, routeStatusData)) {
     console.warn('[progress-guard] drop route-blocked currentMainEventId:', sanitizedCurrentId);
     sanitizedCurrentId = undefined;
