@@ -9,6 +9,8 @@ import {
   OBSESSION_TARGET_DISPLAY_NAMES,
 } from './relationship';
 import { isPlotEventAllowedByRoute, isPlotEventVisibleByRoute } from './plot-routing';
+import { buildCharacterDataImportPrompt, stripCharacterDataImportText } from './plugins/character-data-import';
+import { buildImageGenerationPrompt, stripImageGenerationTags } from './plugins/image-generation';
 import type { KeyFact, KeyFactCategory, SummaryStore } from './summary/types';
 import { KEY_FACT_CATEGORY_LABEL } from './summary/types';
 import type {
@@ -16,6 +18,7 @@ import type {
   PhoneChatMessage,
   PlayerProfile,
   PlayerStats,
+  DrawingSettings,
   PlotEventCard,
   PlotLibrary,
   ScenePresence,
@@ -254,7 +257,7 @@ export function extractOptionsBlock(text: string, { streaming = false }: { strea
 }
 
 export function extractContextReply(text: string, { streaming = false }: { streaming?: boolean } = {}) {
-  const raw = String(text ?? '');
+  const raw = stripImageGenerationTags(stripCharacterDataImportText(String(text ?? '')));
   if (!raw) {
     return '';
   }
@@ -928,6 +931,7 @@ export function buildPrompt(
     suppressUserInputLine?: boolean;
     scenePresence?: ScenePresence | null;
     memoryDB?: import('./memorydatabase/types').IslandMemoryDB | null;
+    drawingSettings?: DrawingSettings | null;
   },
 ) {
   const topEvent = Object.entries(statusData.world.recentEvents)[0];
@@ -1038,6 +1042,8 @@ export function buildPrompt(
       : '',
     playerProfileText,
     phoneMessageBoundary,
+    buildCharacterDataImportPrompt(options?.drawingSettings),
+    buildImageGenerationPrompt(options?.drawingSettings),
     plotContext,
     summaryContext,
     conversationHistory,

@@ -57,6 +57,7 @@ import {
   createInitialState,
   deleteReaderMessage,
   deserializeMessages,
+  normalizeDrawingSettings,
   getReaderMessageByIndex,
   getSourceUserTextForReaderIndex,
   replaceConversationMessages,
@@ -79,7 +80,7 @@ import { renderCharacterCreation, renderTitleHome } from './title/render';
 import type { GameState, NotificationState, StatusData, TabKey, TavernWindow } from './types';
 import type { MusicTrack, PhoneCharacterId, PhoneRoute } from './phone/types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
-import { clamp, syncMainEvents } from './variables/normalize';
+import { clamp, formatTime, syncMainEvents } from './variables/normalize';
 import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
 import {
   createMemoryDraft,
@@ -93,6 +94,7 @@ import {
   type MemoryTableName,
 } from './memorydatabase/editor';
 import { loadMemoryConfig, saveMemoryConfig, resetMemoryConfig } from './memory-config';
+import { requestImageGeneration } from './plugins/image-generation';
 
 const win = window as TavernWindow;
 const root = document.querySelector<HTMLDivElement>('#app');
@@ -277,6 +279,7 @@ function buildGameState(statusData: StatusData = state.statusData): GameState {
       ...JSON.parse(JSON.stringify(state.runtimeFlags)),
       playerProfile: JSON.parse(JSON.stringify(state.playerProfile)),
       phoneMessages: JSON.parse(JSON.stringify(state.phoneMessages)),
+      drawingSettings: JSON.parse(JSON.stringify(state.drawingSettings)),
     },
   };
 }
@@ -418,6 +421,7 @@ function enterSave(saveId: string) {
     className: save.meta.playerProfile?.className ?? '2年A班',
   };
   state.runtimeFlags = JSON.parse(JSON.stringify(save.payload.gameState.runtimeFlags ?? {}));
+  state.drawingSettings = normalizeDrawingSettings(state.runtimeFlags.drawingSettings);
   state.summaryStore = save.payload.summaryStore;
   if (save.payload.memoryDB) {
     state.memoryDB = save.payload.memoryDB;
@@ -858,6 +862,120 @@ function quickSearchCharacterSong(characterId: PhoneCharacterId) {
   const keyword = CHARACTER_QUICK_SEARCH[characterId];
   if (!keyword) return;
   void submitMusicSearch(keyword);
+}
+
+function updateDrawingSettingsFromControls(shouldRender = false) {
+  const settings = state.drawingSettings;
+  settings.enabled =
+    root?.querySelector<HTMLInputElement>('[data-field="drawing-enabled"]')?.checked ?? settings.enabled;
+  settings.qualityPrompt =
+    root?.querySelector<HTMLInputElement>('[data-field="drawing-quality-prompt"]')?.value ?? settings.qualityPrompt;
+  settings.manualPrompt =
+    root?.querySelector<HTMLTextAreaElement>('[data-field="drawing-manual-prompt"]')?.value ?? settings.manualPrompt;
+  settings.width = clamp(
+    Number(root?.querySelector<HTMLInputElement>('[data-field="drawing-width"]')?.value ?? settings.width) || settings.width,
+    256,
+    2048,
+  );
+  settings.height = clamp(
+    Number(root?.querySelector<HTMLInputElement>('[data-field="drawing-height"]')?.value ?? settings.height) || settings.height,
+    256,
+    2048,
+  );
+  settings.contextMessageCount = clamp(
+    Number(root?.querySelector<HTMLInputElement>('[data-field="drawing-context-count"]')?.value ?? settings.contextMessageCount) || 0,
+    0,
+    20,
+  );
+  settings.systemPrompt =
+    root?.querySelector<HTMLTextAreaElement>('[data-field="drawing-system-prompt"]')?.value ?? settings.systemPrompt;
+
+  root?.querySelectorAll<HTMLElement>('[data-drawing-anchor-id]').forEach(row => {
+    const id = row.dataset.drawingAnchorId;
+    const anchor = settings.characterAnchors.find(item => item.id === id);
+    if (!anchor) return;
+    anchor.name = row.querySelector<HTMLInputElement>('[data-field="drawing-anchor-name"]')?.value.trim() ?? anchor.name;
+    anchor.prompt = row.querySelector<HTMLTextAreaElement>('[data-field="drawing-anchor-prompt"]')?.value.trim() ?? anchor.prompt;
+  });
+
+  state.drawingSettings = normalizeDrawingSettings(settings);
+  persistToSave();
+  if (shouldRender) render();
+}
+
+function addDrawingAnchor() {
+  updateDrawingSettingsFromControls(false);
+  state.drawingSettings.characterAnchors = [
+    ...state.drawingSettings.characterAnchors,
+    {
+      id: crypto.randomUUID(),
+      name: '',
+      prompt: '',
+    },
+  ];
+  persistToSave();
+  render();
+}
+
+async function generateDrawingNow() {
+  updateDrawingSettingsFromControls(false);
+  const settings = state.drawingSettings;
+  const anchorPrompt = settings.characterAnchors
+    .map(anchor => [anchor.name.trim(), anchor.prompt.trim()].filter(Boolean).join(': '))
+    .filter(Boolean)
+    .join(', ');
+  const prompt = [
+    settings.qualityPrompt.trim(),
+    settings.manualPrompt.trim(),
+    anchorPrompt,
+    settings.systemPrompt.trim(),
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+  if (!prompt.trim()) {
+    ctx.showNotification({
+      kind: 'message',
+      title: '没有生图需求',
+      preview: '先写一点本次生图需求。',
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+      phoneRoute: 'app:drawing',
+    });
+    return;
+  }
+
+  ctx.showNotification({
+    kind: 'message',
+    title: '正在发送给智绘姬',
+    preview: '',
+    targetTab: 'summary',
+    timestamp: formatTime(state.statusData.world.currentTime),
+    phoneRoute: 'app:drawing',
+  });
+
+  const result = await requestImageGeneration(win, prompt, settings);
+  ctx.showNotification({
+    kind: 'message',
+    title: result.sent && !result.error ? '生图请求已发送' : '生图失败',
+    preview:
+      result.error ||
+      (result.reason === 'image-plugin-event-api-not-available'
+        ? '请先安装并启用智绘姬/生图插件。'
+        : result.reason === 'timeout'
+          ? '智绘姬生成较慢，请到插件图片面板查看。'
+          : ''),
+    targetTab: 'summary',
+    timestamp: formatTime(state.statusData.world.currentTime),
+    phoneRoute: 'app:drawing',
+  });
+}
+
+function removeDrawingAnchor(anchorId: string) {
+  updateDrawingSettingsFromControls(false);
+  state.drawingSettings.characterAnchors = state.drawingSettings.characterAnchors.filter(anchor => anchor.id !== anchorId);
+  persistToSave();
+  render();
 }
 
 function switchPhoneCharacter(characterId: PhoneCharacterId, bgmUrl?: string) {
@@ -1383,6 +1501,45 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="music-next"]').forEach(button => {
     button.addEventListener('click', () => void playNextSearchTrack());
   });
+
+  root
+    ?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+      '[data-field="drawing-enabled"], [data-field="drawing-quality-prompt"], [data-field="drawing-system-prompt"], [data-field="drawing-anchor-name"], [data-field="drawing-anchor-prompt"]',
+    )
+    .forEach(input => {
+      input.addEventListener('input', () => updateDrawingSettingsFromControls(false));
+      input.addEventListener('change', () => updateDrawingSettingsFromControls(true));
+    });
+  root?.querySelector<HTMLInputElement>('[data-field="drawing-context-count"]')?.addEventListener('input', event => {
+    updateDrawingSettingsFromControls(false);
+    const input = event.target as HTMLInputElement;
+    const label = root?.querySelector<HTMLLabelElement>('label[for="drawing-context-count"]');
+    if (label) label.textContent = `生图上下文层数: ${input.value}`;
+  });
+  root?.querySelector<HTMLInputElement>('[data-field="drawing-context-count"]')?.addEventListener('change', () => {
+    updateDrawingSettingsFromControls(true);
+  });
+  root
+    ?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
+      '[data-field="drawing-manual-prompt"], [data-field="drawing-width"], [data-field="drawing-height"]',
+    )
+    .forEach(input => {
+      input.addEventListener('input', () => updateDrawingSettingsFromControls(false));
+      input.addEventListener('change', () => updateDrawingSettingsFromControls(true));
+    });
+  root?.querySelector<HTMLButtonElement>('[data-action="drawing-generate-now"]')?.addEventListener('click', () => {
+    void generateDrawingNow();
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="drawing-add-anchor"]')?.addEventListener('click', () => {
+    addDrawingAnchor();
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="drawing-remove-anchor"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const anchorId = button.dataset.anchorId;
+      if (anchorId) removeDrawingAnchor(anchorId);
+    });
+  });
+
   // 进度条 seek：mousedown/touchstart 期间 timeupdate 不再写回 slider 值，避免抢手感。
   root?.querySelectorAll<HTMLInputElement>('[data-action="music-seek"]').forEach(slider => {
     const onPointerDown = () => { seekDragging = true; };

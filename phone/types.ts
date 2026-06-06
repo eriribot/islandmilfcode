@@ -9,6 +9,7 @@ export type PhoneRoute =
   | 'app:inventory'
   | 'app:memory'
   | 'app:music'
+  | 'app:drawing'
   | 'app:settings';
 
 export type PhoneCharacterId = 'megumi' | 'eriri' | 'utaha' | 'izumi' | 'michiru';

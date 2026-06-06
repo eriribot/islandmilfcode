@@ -56,6 +56,8 @@ import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
 import { indexPhoneMessage } from '../memorydatabase/phone-repository';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import { isPlotEventAllowedByRoute } from '../plot-routing';
+import { emitCharacterDataImportFromResponse } from '../plugins/character-data-import';
+import { extractImageGenerationPrompts, requestImageGeneration } from '../plugins/image-generation';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
@@ -462,6 +464,96 @@ function getLatestAssistantSceneText(ctx: ActionContext) {
   return '';
 }
 
+function buildDrawingHistoryContext(ctx: ActionContext, userInput: string) {
+  const count = ctx.state.drawingSettings.contextMessageCount;
+  const completed = ctx.state.uiMessages.filter(
+    message => !message.streaming && (message.role === 'user' || message.role === 'assistant'),
+  );
+  const lines = completed
+    .slice(-Math.max(0, count))
+    .map(message => {
+      const speaker = message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User');
+      const text = getPromptMessageText(message).trim();
+      return text ? `[${speaker}]\n${text}` : '';
+    })
+    .filter(Boolean);
+  if (userInput.trim() && !lines.some(line => line.includes(userInput.trim()))) {
+    lines.push(`[玩家当前输入]\n${userInput.trim()}`);
+  }
+  return lines.join('\n\n');
+}
+
+function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
+  if (!ctx.state.drawingSettings.enabled) return;
+  const latest = ctx.state.uiMessages[ctx.state.uiMessages.length - 1];
+  if (!latest || latest.role !== 'assistant') return;
+
+  const rawText = String(latest.rawText || latest.text || '');
+  const historyContext = buildDrawingHistoryContext(ctx, userInput);
+  const metadata = {
+    generationContext: historyContext || userInput,
+    generationWorldBook: [
+      `时间: ${ctx.state.statusData.world.currentTime}`,
+      `地点: ${ctx.state.statusData.world.currentLocation}`,
+      `当前事件: ${ctx.state.statusData.world.currentMainEventId || '无'}`,
+      ctx.state.drawingSettings.qualityPrompt ? `画风/质量: ${ctx.state.drawingSettings.qualityPrompt}` : '',
+      ctx.state.drawingSettings.characterAnchors.length
+        ? [
+            '角色外貌锚定:',
+            ...ctx.state.drawingSettings.characterAnchors.map(anchor => `- ${anchor.name}: ${anchor.prompt}`),
+          ].join('\n')
+        : '',
+      ctx.state.drawingSettings.systemPrompt ? `系统指令: ${ctx.state.drawingSettings.systemPrompt}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  };
+
+  void emitCharacterDataImportFromResponse(ctx.win, rawText, metadata)
+    .then(result => {
+      if (result.blockCount > 0) {
+        recordGenerationDebug(ctx, 'character-data-import:emit', result);
+      }
+    })
+    .catch(error => {
+      console.warn('[character-data-import] emit failed:', error);
+      recordGenerationDebug(ctx, 'character-data-import:error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+
+  const imagePrompts = extractImageGenerationPrompts(rawText);
+  if (!imagePrompts.length) return;
+
+  const prompt = imagePrompts[0]!;
+  void requestImageGeneration(ctx.win, prompt.prompt, ctx.state.drawingSettings, prompt.change)
+    .then(result => {
+      recordGenerationDebug(ctx, 'image-generation:request', {
+        sent: result.sent,
+        reason: result.reason ?? '',
+        error: result.error ?? '',
+        prompt: result.prompt ?? prompt.prompt,
+        hasImageData: Boolean(result.imageData),
+      });
+
+      if (!result.sent) return;
+      ctx.showNotification({
+        kind: 'message',
+        title: result.error ? '生图失败' : '生图请求已发送',
+        preview: result.error || (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
+        targetTab: 'summary',
+        timestamp: formatTime(ctx.state.statusData.world.currentTime),
+      });
+      ctx.render();
+    })
+    .catch(error => {
+      console.warn('[image-generation] emit failed:', error);
+      recordGenerationDebug(ctx, 'image-generation:error', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+}
+
 function getLatestCompletedTurnMessages(messages: UiMessage[]) {
   let latestAssistantIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -836,6 +928,7 @@ export async function submitMessage(
                   suppressUserInputLine: true,
                   scenePresence,
                   memoryDB: ctx.memoryDB,
+                  drawingSettings: state.drawingSettings,
                 }),
               },
               {
@@ -856,6 +949,7 @@ export async function submitMessage(
               phoneMessageTargetName: phoneDirective?.target.name,
               scenePresence,
               memoryDB: ctx.memoryDB,
+              drawingSettings: state.drawingSettings,
             }),
           },
     );
@@ -875,6 +969,7 @@ export async function submitMessage(
       lastMsg.statusSnapshot = createRollbackSnapshot(state);
       ctx.persistConversation();
     }
+    queueDrawingPluginTasks(ctx, userInput);
 
     if (options.clearDraftOnSuccess) {
       state.draft = '';
@@ -898,6 +993,7 @@ export async function submitMessage(
         lastMsg.statusSnapshot = createRollbackSnapshot(state);
         ctx.persistConversation();
       }
+      queueDrawingPluginTasks(ctx, userInput);
       if (options.clearDraftOnSuccess) {
         state.draft = '';
       }

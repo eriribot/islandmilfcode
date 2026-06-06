@@ -87,6 +87,32 @@ function renderFloatingPhoneStyle(position: FloatingPhonePosition) {
   return `left:${position.x}px;top:${position.y}px;`;
 }
 
+function renderResponsivePhoneFrameStyle() {
+  if (typeof window === 'undefined') return '';
+
+  const viewportWidth = Math.max(0, window.innerWidth || 0);
+  const viewportHeight = Math.max(0, window.innerHeight || 0);
+  const modalPad = viewportWidth <= 720 ? 8 : Math.max(6, Math.min(24, Math.min(viewportWidth, viewportHeight) * 0.024));
+  const safeWidth = Math.max(0, viewportWidth - modalPad * 2);
+  const safeHeight = Math.max(0, viewportHeight - modalPad * 2);
+  const maxWidth = 380;
+  const maxHeight = 680;
+  const aspectWidth = 380;
+  const aspectHeight = 680;
+
+  let height = Math.min(maxHeight, safeHeight);
+  let width = height * (aspectWidth / aspectHeight);
+  const widthCap = Math.min(maxWidth, safeWidth);
+  if (width > widthCap) {
+    width = widthCap;
+    height = width * (aspectHeight / aspectWidth);
+  }
+
+  width = Math.max(0, Math.floor(width));
+  height = Math.max(0, Math.floor(height));
+  return `--phone-shell-width:${width}px;--phone-shell-height:${height}px;`;
+}
+
 function renderPhoneAppHeader(state: AppState, title: string, subtitle = '') {
   const canGoBack = state.phoneRoute !== 'home';
 
@@ -262,6 +288,12 @@ function renderPhoneHome(state: AppState) {
       meta: state.musicPlayer.currentTrack
         ? `${state.musicPlayer.playing ? '正在播放' : '已暂停'} · ${state.musicPlayer.currentTrack.name}`
         : '搜索想听的曲子',
+    },
+    {
+      route: 'app:drawing',
+      icon: '🎨',
+      label: '画图',
+      meta: state.drawingSettings.enabled ? '独立生图已启用' : '手动控制',
     },
     {
       route: 'app:settings',
@@ -933,6 +965,139 @@ function renderMusicPhonePage(state: AppState) {
   `;
 }
 
+function renderDrawingPhonePage(state: AppState) {
+  const settings = state.drawingSettings;
+  const anchorRows = settings.characterAnchors.length
+    ? settings.characterAnchors
+        .map(
+          anchor => `
+            <article class="phone-drawing-anchor" data-drawing-anchor-id="${escapeHtml(anchor.id)}">
+              <button class="phone-drawing-anchor__remove" data-action="drawing-remove-anchor" data-anchor-id="${escapeHtml(anchor.id)}" aria-label="删除角色">×</button>
+              <input
+                class="phone-drawing-input"
+                data-field="drawing-anchor-name"
+                value="${escapeHtml(anchor.name)}"
+                placeholder="角色名，例如 英梨梨"
+              />
+              <textarea
+                class="phone-drawing-textarea phone-drawing-textarea--small"
+                data-field="drawing-anchor-prompt"
+                placeholder="固定外貌标签，例如 blonde twintails, blue eyes, petite body"
+              >${escapeHtml(anchor.prompt)}</textarea>
+            </article>
+          `,
+        )
+        .join('')
+    : '<div class="phone-drawing-empty">还没有固定角色外貌。</div>';
+
+  return `
+    <section class="phone-route-page phone-app-page phone-app-page--drawing" data-phone-route-view="app:drawing">
+      ${renderPhoneAppHeader(state, '独立生图', settings.enabled ? '已启用' : '未启用')}
+      <div class="phone-page-scroll phone-drawing-scroll">
+        <section class="phone-drawing-card">
+          <label class="phone-drawing-toggle">
+            <span>
+              <strong>启用独立生图</strong>
+              <small>需要安装智绘姬/生图插件；开启后剧情会自动递交插图请求</small>
+            </span>
+            <input type="checkbox" data-field="drawing-enabled" ${settings.enabled ? 'checked' : ''} />
+          </label>
+        </section>
+
+        <section class="phone-drawing-card">
+          <label class="phone-drawing-label" for="drawing-manual-prompt">本次生图需求</label>
+          <textarea
+            id="drawing-manual-prompt"
+            class="phone-drawing-textarea phone-drawing-textarea--manual"
+            data-field="drawing-manual-prompt"
+            placeholder="例如: 英梨梨在夕阳教室里脸红回头，轻小说插画风格"
+          >${escapeHtml(settings.manualPrompt)}</textarea>
+          <button class="phone-drawing-primary" data-action="drawing-generate-now" type="button">🎨 发送给智绘姬</button>
+          <p class="phone-drawing-help">手动发送会使用下面的画风、宽高和角色锚定。</p>
+        </section>
+
+        <section class="phone-drawing-card">
+          <label class="phone-drawing-label" for="drawing-quality-prompt">画风/质量提示词</label>
+          <input
+            id="drawing-quality-prompt"
+            class="phone-drawing-input phone-drawing-input--large"
+            data-field="drawing-quality-prompt"
+            value="${escapeHtml(settings.qualityPrompt)}"
+            placeholder="例如: masterpiece, anime style"
+          />
+          <p class="phone-drawing-help">这些词会自动添加到每次生图请求中。</p>
+        </section>
+
+        <section class="phone-drawing-card">
+          <label class="phone-drawing-label" for="drawing-context-count">生图上下文层数: ${settings.contextMessageCount}</label>
+          <input
+            id="drawing-context-count"
+            class="phone-drawing-range"
+            data-field="drawing-context-count"
+            type="range"
+            min="0"
+            max="20"
+            step="1"
+            value="${settings.contextMessageCount}"
+          />
+          <p class="phone-drawing-help">发送给生图 AI 的历史对话数量。</p>
+        </section>
+
+        <section class="phone-drawing-card">
+          <div class="phone-drawing-grid">
+            <label>
+              <span class="phone-drawing-label">宽度</span>
+              <input
+                class="phone-drawing-input"
+                data-field="drawing-width"
+                type="number"
+                min="256"
+                max="2048"
+                step="64"
+                value="${settings.width}"
+              />
+            </label>
+            <label>
+              <span class="phone-drawing-label">高度</span>
+              <input
+                class="phone-drawing-input"
+                data-field="drawing-height"
+                type="number"
+                min="256"
+                max="2048"
+                step="64"
+                value="${settings.height}"
+              />
+            </label>
+          </div>
+          <p class="phone-drawing-help">默认竖图适合轻小说插画；实际尺寸由智绘姬后端模型决定。</p>
+        </section>
+
+        <section class="phone-drawing-card">
+          <div class="phone-drawing-section-head">
+            <strong>角色外貌锚定</strong>
+            <small>确保同一角色在不同插图中外观一致。</small>
+          </div>
+          <div class="phone-drawing-anchor-list">
+            ${anchorRows}
+          </div>
+          <button class="phone-drawing-link" data-action="drawing-add-anchor" type="button">+ 添加角色</button>
+        </section>
+
+        <section class="phone-drawing-card">
+          <label class="phone-drawing-label" for="drawing-system-prompt">系统指令（高级）</label>
+          <textarea
+            id="drawing-system-prompt"
+            class="phone-drawing-textarea"
+            data-field="drawing-system-prompt"
+            placeholder="可选：给生图识别器的额外规则"
+          >${escapeHtml(settings.systemPrompt)}</textarea>
+        </section>
+      </div>
+    </section>
+  `;
+}
+
 function renderMemoryPhonePage(state: AppState) {
   const subtitle = state.memoryEditor.selectedTable === null
     ? ''
@@ -959,6 +1124,7 @@ function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:inventory') return renderInventoryPhonePage(state.statusData, state, renderers);
   if (state.phoneRoute === 'app:memory') return renderMemoryPhonePage(state);
   if (state.phoneRoute === 'app:music') return renderMusicPhonePage(state);
+  if (state.phoneRoute === 'app:drawing') return renderDrawingPhonePage(state);
   if (state.phoneRoute === 'app:settings') return renderSettingsPhonePage(state, renderers);
   return renderPhoneHome(state);
 }
@@ -966,10 +1132,11 @@ function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
 export function renderPhone(state: AppState, renderers: PhoneRenderers) {
   const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
   const isGenerating = state.generating || state.phoneMessages.generating;
+  const frameStyle = renderResponsivePhoneFrameStyle();
   return `
     <div class="phone-modal ${state.phoneOpen ? 'is-open' : ''} ${isGenerating ? 'generating' : ''}" aria-hidden="${state.phoneOpen ? 'false' : 'true'}">
       <button class="phone-backdrop" data-action="close-phone" aria-label="关闭手帐"></button>
-      <section class="phone-shell">
+      <section class="phone-shell" style="${frameStyle}">
         <div class="phone-notch"></div>
         <div
           class="phone-inner"

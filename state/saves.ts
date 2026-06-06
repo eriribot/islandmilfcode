@@ -7,6 +7,7 @@ import type {
   PersistedMessage,
   PlayerProfile,
   PlayerStats,
+  RollbackSnapshot,
   SaveKind,
   SaveMeta,
   SavePayload,
@@ -207,6 +208,36 @@ function safeRemove(key: string): void {
   }
 }
 
+function isStatusDataLike(input: unknown): input is Partial<StatusData> {
+  if (!input || typeof input !== 'object') return false;
+  const raw = input as Record<string, unknown>;
+  return Boolean(raw.world || raw.targets || raw.player);
+}
+
+function normalizePersistedStatusSnapshot(input: unknown): RollbackSnapshot | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  if (isStatusDataLike(input)) {
+    return { statusData: normalizeStatusData(input) };
+  }
+
+  const raw = input as Partial<RollbackSnapshot>;
+  return {
+    statusData: normalizeStatusData(raw.statusData ?? defaultStatusData),
+    ...(raw.playerProfile ? { playerProfile: normalizePlayerProfile(raw.playerProfile) } : {}),
+  };
+}
+
+function hasHeavyStatusSnapshot(input: unknown): boolean {
+  if (!input || typeof input !== 'object' || isStatusDataLike(input)) return false;
+  const raw = input as Record<string, unknown>;
+  return Boolean(raw.phoneMessages || raw.summaryStore || raw.memoryDB);
+}
+
+function shouldCompactPersistedMessages(messages: unknown): boolean {
+  if (!Array.isArray(messages)) return false;
+  return messages.some(message => hasHeavyStatusSnapshot((message as Partial<PersistedMessage> | null)?.statusSnapshot));
+}
+
 function normalizePersistedMessages(messages: PersistedMessage[] | undefined): PersistedMessage[] {
   if (!Array.isArray(messages)) return [];
   return messages
@@ -216,13 +247,16 @@ function normalizePersistedMessages(messages: PersistedMessage[] | undefined): P
         (message.role === 'user' || message.role === 'assistant') &&
         !isFrontendHtmlShell(String(message.rawText || message.text || '')),
     )
-    .map(message => ({
-      role: message.role,
-      speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
-      text: String(message.text ?? ''),
-      ...(message.rawText ? { rawText: String(message.rawText) } : {}),
-      ...(message.statusSnapshot ? { statusSnapshot: cloneJson(message.statusSnapshot) } : {}),
-    }));
+    .map(message => {
+      const statusSnapshot = normalizePersistedStatusSnapshot(message.statusSnapshot);
+      return {
+        role: message.role,
+        speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
+        text: String(message.text ?? ''),
+        ...(message.rawText ? { rawText: String(message.rawText) } : {}),
+        ...(statusSnapshot ? { statusSnapshot } : {}),
+      };
+    });
 }
 
 function normalizeGameState(gameState: Partial<GameState> | undefined, fallbackRunId: string): GameState {
@@ -385,6 +419,7 @@ function readPayload(saveId: string): SavePayload | null {
   // 从 memoryDB 把摘要/事实水合回 summaryStore，让旧消费方（buildPrompt / UI）继续工作。
   // 这一步是为了修复存档加载后摘要丢失、全部历史被塞进 prompt 的问题。
   const hydrated = hydrateSummaryStoreFromMemoryDB(memoryDB);
+  const chatLog = normalizePersistedMessages(payload.chatLog);
 
   const summaryStore = {
     ...createDefaultSummaryStore(),
@@ -399,19 +434,25 @@ function readPayload(saveId: string): SavePayload | null {
   };
   // 中文注释：summaryStore 已经被收敛成空壳（只保留 cursor + 失败状态），这是 migration 幂等性的根本保障；
   // 不再硬删 facts/summaries 里 source='migration' 的行 —— 迁移过来的 keyFacts 是真实数据，不应该每次读存档就被抹掉。
-  if (JSON.stringify(rawSummaryStore) !== JSON.stringify(summaryStore) || !payload.memoryDB || sweepHadEffect) {
-    safeWriteJson(getPayloadStorageKey(saveId), {
+  if (
+    JSON.stringify(rawSummaryStore) !== JSON.stringify(summaryStore) ||
+    !payload.memoryDB ||
+    sweepHadEffect ||
+    shouldCompactPersistedMessages(payload.chatLog)
+  ) {
+    writePayloadSync(saveId, {
       ...payload,
+      chatLog,
       summaryStore,
       memoryDB,
-    });
+    } as unknown as Record<string, unknown>);
   }
 
   return {
     saveId: String(payload.saveId || saveId),
     runId,
     gameState: normalizeGameState(payload.gameState, runId),
-    chatLog: normalizePersistedMessages(payload.chatLog),
+    chatLog,
     summaryStore,
     memoryDB,
     messageSnapshots: Array.isArray(payload.messageSnapshots) ? cloneJson(payload.messageSnapshots) : undefined,
@@ -697,18 +738,19 @@ const BACKUP_KEY_PREFIX = 'islandmilfcode:';
 
 export function exportAllSavesAsJson(): string {
   const entries: Record<string, unknown> = {};
-  for (let i = 0; i < localStorage.length; i += 1) {
-    const key = localStorage.key(i);
-    if (!key || !key.startsWith(BACKUP_KEY_PREFIX)) continue;
-    const raw = localStorage.getItem(key);
-    if (raw == null) continue;
-    try {
-      entries[key] = JSON.parse(raw);
-    } catch {
-      // 不是 JSON 的就原样保留字符串，导入时再原样写回。
-      entries[key] = raw;
-    }
+  const index = readSaveIndex();
+
+  entries[SAVE_INDEX_STORAGE_KEY] = cloneJson(index);
+  for (const saveId of Object.keys(index)) {
+    const payload = readPayload(saveId);
+    if (payload) entries[getPayloadStorageKey(saveId)] = payload;
   }
+
+  for (const key of [ACTIVE_RUN_ID_STORAGE_KEY, ACTIVE_SAVE_ID_STORAGE_KEY]) {
+    const raw = localStorage.getItem(key);
+    if (raw != null) entries[key] = raw;
+  }
+
   const backup: SaveBackupPayload = {
     version: SAVE_VERSION,
     exportedAt: new Date().toISOString(),

@@ -297,6 +297,23 @@ export type ReaderEditingState = {
   draft: string;
 };
 
+export type DrawingCharacterAnchor = {
+  id: string;
+  name: string;
+  prompt: string;
+};
+
+export type DrawingSettings = {
+  enabled: boolean;
+  qualityPrompt: string;
+  contextMessageCount: number;
+  width: number;
+  height: number;
+  manualPrompt: string;
+  characterAnchors: DrawingCharacterAnchor[];
+  systemPrompt: string;
+};
+
 export type AppState = {
   activeRunId: string | null;
   activeSaveId: string | null;
@@ -323,6 +340,7 @@ export type AppState = {
   uiMessages: UiMessage[];
   statusData: StatusData;
   musicPlayer: MusicPlayerState;
+  drawingSettings: DrawingSettings;
   notification: NotificationState | null;
   backgroundTasks: BackgroundTaskState[];
   readerContextMenu: ReaderContextMenuState | null;
@@ -398,6 +416,8 @@ export type TavernWindow = Window &
     getCharWorldbookNames?: (characterName: 'current' | string) => CharWorldbooks;
     getWorldbook?: (worldbookName: string) => Promise<WorldbookEntry[]>;
     eventOn?: (eventType: string, listener: (...args: any[]) => void) => { stop: () => void };
+    eventEmit?: (eventType: string, ...args: any[]) => Promise<void> | void;
+    eventRemoveListener?: (eventType: string, listener: (...args: any[]) => void) => void;
     iframe_events?: Record<string, string>;
     tavern_events?: Record<string, string>;
   };

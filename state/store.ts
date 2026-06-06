@@ -3,6 +3,7 @@ import { createDefaultSummaryStore, deserializeSummaryStore } from '../summary/t
 import type { FloatingPhonePosition } from '../phone/types';
 import type {
   AppState,
+  DrawingSettings,
   PersistedMessage,
   PhoneMessageStore,
   PlotLibrary,
@@ -166,11 +167,46 @@ export function createRollbackSnapshot(
   return {
     statusData: cloneJson(state.statusData),
     playerProfile: cloneJson(state.playerProfile),
-    phoneMessages: clonePhoneMessagesForSnapshot(state.phoneMessages),
-    summaryStore: deserializeSummaryStore(cloneJson(state.summaryStore)),
-    memoryDB: cloneMemoryDBForSnapshot(state.memoryDB),
   };
 }
+
+export function createDefaultDrawingSettings(): DrawingSettings {
+  return {
+    enabled: false,
+    qualityPrompt: 'masterpiece, best quality, anime style, light novel illustration',
+    contextMessageCount: 0,
+    width: 832,
+    height: 1216,
+    manualPrompt: '',
+    characterAnchors: [],
+    systemPrompt: '',
+  };
+}
+
+export function normalizeDrawingSettings(input: unknown): DrawingSettings {
+  const fallback = createDefaultDrawingSettings();
+  const raw = typeof input === 'object' && input ? (input as Partial<DrawingSettings>) : {};
+  const anchors = Array.isArray(raw.characterAnchors)
+    ? raw.characterAnchors
+        .map(anchor => ({
+          id: String(anchor?.id || crypto.randomUUID()),
+          name: String(anchor?.name ?? '').trim(),
+          prompt: String(anchor?.prompt ?? '').trim(),
+        }))
+        .filter(anchor => anchor.name || anchor.prompt)
+    : [];
+
+    return {
+      enabled: Boolean(raw.enabled),
+      qualityPrompt: String(raw.qualityPrompt ?? fallback.qualityPrompt),
+      contextMessageCount: Math.max(0, Math.min(20, Math.round(Number(raw.contextMessageCount ?? 0) || 0))),
+      width: Math.max(256, Math.min(2048, Math.round(Number(raw.width ?? fallback.width) || fallback.width))),
+      height: Math.max(256, Math.min(2048, Math.round(Number(raw.height ?? fallback.height) || fallback.height))),
+      manualPrompt: String(raw.manualPrompt ?? ''),
+      characterAnchors: anchors,
+      systemPrompt: String(raw.systemPrompt ?? ''),
+    };
+  }
 
 function restoreRollbackSnapshot(state: AppState, snapshot: RollbackSnapshot) {
   state.statusData = cloneJson(snapshot.statusData);
@@ -226,7 +262,7 @@ export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
         base.rawText = String(message.rawText);
       }
       if (message.statusSnapshot) {
-        base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot);
+        base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false });
       }
       return base;
     });
@@ -246,7 +282,7 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
         rawText: msg.rawText ? String(msg.rawText) : undefined,
       };
       if (msg.statusSnapshot) {
-        ui.statusSnapshot = normalizeRollbackSnapshot(msg.statusSnapshot);
+        ui.statusSnapshot = normalizeRollbackSnapshot(msg.statusSnapshot, { includeSideWindows: false });
       }
       return ui;
     });
@@ -283,6 +319,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     uiMessages: [createSystemMessage()],
     statusData: normalizeStatusData(defaultStatusData),
     musicPlayer: createDefaultMusicPlayerState(),
+    drawingSettings: createDefaultDrawingSettings(),
     notification: null,
     backgroundTasks: [],
     readerContextMenu: null,
