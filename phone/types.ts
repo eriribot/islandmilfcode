@@ -12,7 +12,15 @@ export type PhoneRoute =
   | 'app:drawing'
   | 'app:settings';
 
-export type PhoneCharacterId = 'megumi' | 'eriri' | 'utaha' | 'izumi' | 'michiru';
+export const PHONE_THEME_CHARACTER_IDS = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru'] as const;
+
+export type PhoneThemeCharacterId = (typeof PHONE_THEME_CHARACTER_IDS)[number];
+
+export type PhoneCharacterId = PhoneThemeCharacterId | 'sayuri';
+
+export function isPhoneThemeCharacterId(value: string | null | undefined): value is PhoneThemeCharacterId {
+  return Boolean(value && (PHONE_THEME_CHARACTER_IDS as readonly string[]).includes(value));
+}
 
 export type FloatingPhonePosition = {
   x: number;

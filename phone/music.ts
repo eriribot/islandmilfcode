@@ -1,4 +1,4 @@
-import type { MusicPlayerState, MusicSearchState, MusicSource, MusicTrack, PhoneCharacterId } from './types';
+import type { MusicPlayerState, MusicSearchState, MusicSource, MusicTrack, PhoneThemeCharacterId } from './types';
 
 const API_BASE = 'https://music-api.gdstudio.xyz/api.php';
 
@@ -40,7 +40,7 @@ export function createDefaultMusicPlayerState(): MusicPlayerState {
 
 // 五小只默认歌单：女主头像点击仍走原有 BGM；这里给搜索页提供一个推荐入口，
 // 点一下就把网易云上对应的角色歌作为搜索结果填进去。关键词随便改。
-export const CHARACTER_QUICK_SEARCH: Record<PhoneCharacterId, string> = {
+export const CHARACTER_QUICK_SEARCH: Record<PhoneThemeCharacterId, string> = {
   megumi: '冴えない彼女の育てかた',
   eriri: '澤村·斯賓塞·英梨梨',
   utaha: '霞ヶ丘詩羽',
@@ -50,7 +50,7 @@ export const CHARACTER_QUICK_SEARCH: Record<PhoneCharacterId, string> = {
 
 // 角色 BGM 在 hero 卡上的展示元数据。展示用名字与艺人保持作品内观感，封面复用头像。
 export const CHARACTER_BGM_META: Record<
-  PhoneCharacterId,
+  PhoneThemeCharacterId,
   { name: string; artist: string; album: string; picUrl: string }
 > = {
   megumi: {
@@ -85,7 +85,7 @@ export const CHARACTER_BGM_META: Record<
   },
 };
 
-export function makeCharacterBgmTrack(characterId: PhoneCharacterId, bgmUrl: string): MusicTrack {
+export function makeCharacterBgmTrack(characterId: PhoneThemeCharacterId, bgmUrl: string): MusicTrack {
   const meta = CHARACTER_BGM_META[characterId];
   return {
     id: `bgm:${characterId}`,

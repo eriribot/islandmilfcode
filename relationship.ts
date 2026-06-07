@@ -457,13 +457,17 @@ function getTargetHaystack(target: TargetStatus) {
     .join('\n');
 }
 
+function isSayuriHaystack(haystack: string) {
+  return /泽村小百合|澤村小百合|小百合|sayuri/.test(haystack);
+}
+
 function getStageReactions(target: TargetStatus) {
   const haystack = getTargetHaystack(target);
 
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) {
     return MEGUMI_STAGE_REACTIONS;
   }
-  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) {
+  if (!isSayuriHaystack(haystack) && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) {
     return ERIRI_STAGE_REACTIONS;
   }
   if (/霞之丘|霞ヶ丘|诗羽|詩羽|霞诗子|utaha|kasumigaoka/.test(haystack)) {
@@ -480,7 +484,7 @@ function getStageReactions(target: TargetStatus) {
 
 function isEririTarget(target: TargetStatus) {
   const haystack = getTargetHaystack(target);
-  return /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
+  return !isSayuriHaystack(haystack) && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
 }
 
 function isMegumiTarget(target: TargetStatus) {
@@ -699,6 +703,7 @@ export function hasObsessionAxis(target: TargetStatus | null | undefined): boole
 export function hasObsessionAxisByName(nameOrId: string | null | undefined): boolean {
   if (!nameOrId) return false;
   const haystack = String(nameOrId).toLowerCase();
+  if (isSayuriHaystack(haystack)) return false;
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return true;
   if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return true;
   if (/霞之丘|霞ヶ丘|诗羽|詩羽|霞诗子|utaha|kasumigaoka/.test(haystack)) return true;

@@ -78,7 +78,8 @@ import type { SummaryApiConfig, SummaryModelOption } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
 import type { GameState, NotificationState, StatusData, TabKey, TavernWindow } from './types';
-import type { MusicTrack, PhoneCharacterId, PhoneRoute } from './phone/types';
+import { isPhoneThemeCharacterId } from './phone/types';
+import type { MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './phone/types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp, formatTime, syncMainEvents } from './variables/normalize';
 import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
@@ -673,6 +674,8 @@ function playPhoneCharacterBgm(characterId: PhoneCharacterId, bgmUrl: string | u
     return;
   }
 
+  if (!isPhoneThemeCharacterId(characterId)) return;
+
   // 音频播放必须从用户点击事件里触发，不能放进 render() 这类自动渲染流程里。
   // 这里复用一个 Audio 实例，切换女主时先停掉上一首，避免多首 BGM 同时叠在一起。
   const resolvedUrl = new URL(nextUrl, window.location.href).href;
@@ -861,7 +864,7 @@ async function submitMusicSearch(query: string) {
   }
 }
 
-function quickSearchCharacterSong(characterId: PhoneCharacterId) {
+function quickSearchCharacterSong(characterId: PhoneThemeCharacterId) {
   const keyword = CHARACTER_QUICK_SEARCH[characterId];
   if (!keyword) return;
   void submitMusicSearch(keyword);
@@ -1566,7 +1569,7 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="music-quick-search"]').forEach(button => {
     button.addEventListener('click', () => {
       const characterId = button.dataset.characterId as PhoneCharacterId | undefined;
-      if (characterId) quickSearchCharacterSong(characterId);
+      if (isPhoneThemeCharacterId(characterId)) quickSearchCharacterSong(characterId);
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="music-play-track"]').forEach(button => {

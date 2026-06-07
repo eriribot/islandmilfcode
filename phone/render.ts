@@ -2,11 +2,11 @@ import { escapeHtml } from '../html';
 import type { AppState, NotificationState, PhoneChatThread, PlotEventCard, StatusData, TargetStatus } from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
 import { renderCharacterArchivePanel } from './archive';
-import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute } from './types';
+import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './types';
 import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
 import { renderMemoryEditor } from '../memorydatabase/editor';
 
-type PhoneCharacterThemeId = PhoneCharacterId;
+type PhoneCharacterThemeId = PhoneThemeCharacterId;
 
 const PHONE_CHARACTER_THEMES: Record<
   PhoneCharacterThemeId,
@@ -52,9 +52,17 @@ const PHONE_CHARACTER_THEMES: Record<
 };
 
 // 手机首页头像切换按钮的显示顺序；新增女主时需要把 id 放进这里。
-const PHONE_CHARACTER_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru'];
+const PHONE_CHARACTER_ORDER: PhoneThemeCharacterId[] = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru'];
 
 function getPhoneCharacterTheme(characterId: PhoneCharacterId) {
+  if (characterId === 'sayuri') {
+    return {
+      label: '泽村小百合',
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/sayuri_phone.jpg',
+      wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/sayuri_phone.jpg',
+      bgmUrl: '',
+    };
+  }
   return PHONE_CHARACTER_THEMES[characterId] ?? PHONE_CHARACTER_THEMES.megumi;
 }
 
@@ -911,7 +919,7 @@ function renderMusicTrackRow(track: MusicTrack, isCurrent: boolean, isLoading: b
 
 function renderMusicQuickEntries(currentCharacter: PhoneCharacterId) {
   // 五小只角色歌快捷搜索：点一下就把对应作品/角色名填进搜索框并触发搜索。
-  const labels: Array<{ id: PhoneCharacterId; label: string }> = [
+  const labels: Array<{ id: PhoneThemeCharacterId; label: string }> = [
     { id: 'megumi', label: '加藤惠' },
     { id: 'eriri', label: '英梨梨' },
     { id: 'utaha', label: '霞之丘诗羽' },

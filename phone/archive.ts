@@ -30,6 +30,7 @@ type CharacterArchive = {
   tags: string[];
   details: Array<{ label: string; value: string }>;
   meters: ArchiveMeter[];
+  usesObsessionAxis?: boolean;
   note: string;
 };
 
@@ -43,6 +44,7 @@ type ResolvedArchive = CharacterArchive & {
   obsession: number;
   stage: string;
   obsStage: string;
+  usesObsessionAxis: boolean;
 };
 
 const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
@@ -158,10 +160,33 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
     note: '该角色当前是内置变量档案；绑定酒馆世界书目标后会显示实时变量。',
   },
+  sayuri: {
+    id: 'sayuri',
+    archiveLabel: '特别档案',
+    name: '泽村小百合',
+    romanName: 'Sawamura Sayuri',
+    panelMark: '小百合',
+    imageUrl: 'https://eriribot.github.io/islandmilfcode/picresource/sayuri_phone.jpg',
+    imageAlt: '泽村小百合头像',
+    portraitCode: 'sawamura family matriarch',
+    foot: [
+      { label: '定位', value: '人妻 / 外交官夫人' },
+      { label: '类型', value: '资深腐女 / 尽情欢闹的神秘大姐 / 人妻' },
+      { label: '档案', value: '特别人物档案' },
+    ],
+    tags: ['外交官夫人', '人妻', '特别档案'],
+    details: [
+      { label: '身份', value: '英梨梨的母亲' },
+      { label: '变量', value: '独立轴待设计' },
+    ],
+    meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
+    usesObsessionAxis: false,
+    note: '小百合不属于五小只角色歌与旧情度轴；成人角色的独立关系变量等红坂朱音、町田苑子一起设计后再接入。',
+  },
 };
 
 // 中文注释：档案页顶部角色标签的显示顺序；新增角色必须同步到这里，档案页才会出现。
-const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru'];
+const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru', 'sayuri'];
 
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -183,11 +208,12 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
     .map(value => String(value ?? '').toLowerCase())
     .join('\n');
 
-  if (archive.id === 'eriri') return /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
+  if (archive.id === 'eriri') return !/小百合|sayuri/.test(haystack) && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
   if (archive.id === 'megumi') return /加藤|惠|恵|megumi|katou|kato/.test(haystack);
   if (archive.id === 'utaha') return /霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack);
   if (archive.id === 'izumi') return /波岛|波島|出海|izumi|hashima/.test(haystack);
   if (archive.id === 'michiru') return /冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack);
+  if (archive.id === 'sayuri') return /泽村小百合|澤村小百合|小百合|sayuri/.test(haystack);
   return false;
 }
 
@@ -205,9 +231,28 @@ function resolveArchive(characterId: PhoneCharacterId, targets: TargetStatus[]):
   const archive = getArchive(characterId);
   const target = getTargetForArchive(characterId, targets);
   const affinity = clampPercent(target?.affinity ?? 0);
-  const obsession = clampPercent(target?.obsession ?? 0);
+  const usesObsessionAxis = archive.usesObsessionAxis !== false;
+  const obsession = usesObsessionAxis ? clampPercent(target?.obsession ?? 0) : 0;
   const stage = target?.stage || affinityStage(affinity);
-  const obsStage = target?.obsessionStage || obsessionStage(obsession);
+  const obsStage = usesObsessionAxis ? target?.obsessionStage || obsessionStage(obsession) : '';
+  const meters: ArchiveMeter[] = [
+    {
+      label: '好感度',
+      caption: target ? stage : '资料占位',
+      value: affinity,
+      tone: 'affection',
+    },
+    ...(usesObsessionAxis
+      ? [
+          {
+            label: '旧情度',
+            caption: target ? obsStage : '资料占位',
+            value: obsession,
+            tone: 'obsession' as const,
+          },
+        ]
+      : []),
+  ];
 
   return {
     ...archive,
@@ -220,21 +265,13 @@ function resolveArchive(characterId: PhoneCharacterId, targets: TargetStatus[]):
     obsession,
     stage,
     obsStage,
-    meters: [
-      {
-        label: '好感度',
-        caption: target ? stage : '资料占位',
-        value: affinity,
-        tone: 'affection',
-      },
-      {
-        label: '旧情度',
-        caption: target ? obsStage : '资料占位',
-        value: obsession,
-        tone: 'obsession',
-      },
-    ],
-    note: target ? `当前关系阶段为「${stage}」，对伦也的旧情度为「${obsStage}」。` : archive.note,
+    usesObsessionAxis,
+    meters,
+    note: target
+      ? usesObsessionAxis
+        ? `当前关系阶段为「${stage}」，对伦也的旧情度为「${obsStage}」。`
+        : `当前关系阶段为「${stage}」；该档案不使用旧情度/执念轴。`
+      : archive.note,
   };
 }
 
@@ -409,6 +446,15 @@ export function renderCharacterArchivePanel(
   const archive = resolveArchive(characterId, targets);
   const affection = archive.affinity;
   const obsession = archive.obsession;
+  const obsessionBlock = archive.usesObsessionAxis
+    ? `
+        <div class="archive-obsession-head">
+          <span class="archive-obsession-icon" aria-hidden="true"></span>
+          <span>当前执念</span>
+          <strong>${obsession}%</strong>
+        </div>
+      `
+    : '';
   return `
     <div class="archive-page">
       <div class="archive-character-tabs" aria-label="切换档案">
@@ -473,11 +519,7 @@ export function renderCharacterArchivePanel(
         <div class="archive-hearts" aria-hidden="true">
           ${Array.from({ length: 5 }, (_, index) => `<span class="${index < Math.max(0, Math.min(5, Math.ceil(affection / 20))) ? 'is-active' : ''}"></span>`).join('')}
         </div>
-        <div class="archive-obsession-head">
-          <span class="archive-obsession-icon" aria-hidden="true"></span>
-          <span>当前执念</span>
-          <strong>${obsession}%</strong>
-        </div>
+        ${obsessionBlock}
         <div class="archive-meter-stack">
           ${archive.meters.map(renderMeter).join('')}
         </div>
