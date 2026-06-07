@@ -1714,9 +1714,11 @@ function parseScenePhoneMessageExtractorResult(
   sceneText: string,
 ): ScenePhoneMessage[] {
   const tagged = extractTaggedReply(rawResult, 'phone_messages', false);
-  if (!tagged) return [];
+  const rawFallback = /^target_id[:：]/im.test(rawResult) && /^message[:：]/im.test(rawResult) ? rawResult : '';
+  const sourceText = (tagged || rawFallback).trim();
+  if (!sourceText) return [];
 
-  return tagged
+  return sourceText
     .split(/\n\s*---\s*\n/g)
     .map(block => block.trim())
     .filter(Boolean)
@@ -1727,21 +1729,15 @@ function parseScenePhoneMessageExtractorResult(
           ?.trim()
           .toLowerCase() ?? '';
       const targetHint = block.match(/^target_id[:：]\s*(.+)$/im)?.[1]?.trim() ?? '';
-      const message = stripDirectiveQuotes(block.match(/^message[:：]\s*([\s\S]*)$/im)?.[1] ?? '');
-      const role = direction === 'outgoing' ? 'user' : direction === 'incoming' ? 'assistant' : null;
+      const message = stripDirectiveQuotes(
+        block.match(/^message[:：]\s*([\s\S]*?)(?=\n(?:direction|target_id|message)[:：]|\s*$)/im)?.[1] ?? '',
+      );
+      const role = direction === 'outgoing' ? 'user' : 'assistant';
       if (isMissingPhoneTargetHint(targetHint) || !role || !message) return null;
 
-      const target = getPhoneThreadTarget(ctx, targetHint);
+      const target = getPhoneThreadTarget(ctx, targetHint) ?? findPhoneDirectiveTarget(ctx, targetHint);
       if (!target) {
         debugPhoneFlow(ctx, 'scene-extract:drop-non-id-target', { targetHint, direction });
-        return null;
-      }
-      if (!scenePhoneMessageIsExplicitlyBoundToTarget(target, sceneText, role)) {
-        debugPhoneFlow(ctx, 'scene-extract:drop-unbound-target', {
-          targetId: target.id,
-          direction,
-          messagePreview: message.slice(0, 80),
-        });
         return null;
       }
 

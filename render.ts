@@ -950,9 +950,9 @@ export function renderStatusPanel(state: AppState): string {
           <textarea data-profile-field="appearance" style="width:100%;box-sizing:border-box;min-height:60px">${escapeHtml(playerAppearance)}</textarea>
         </label>
       </div>
-      <div class="chip-card" style="display:flex;gap:8px">
-        <button class="profile-save-btn" data-action="save-player-profile-edit">保存</button>
-        <button class="profile-cancel-btn" data-action="cancel-player-profile-edit">取消</button>
+      <div class="chip-card profile-edit-actions">
+        <button class="profile-save-btn" data-action="save-player-profile-edit" type="button">保存</button>
+        <button class="profile-cancel-btn" data-action="cancel-player-profile-edit" type="button">取消</button>
       </div>
     `
     : `

@@ -1503,25 +1503,74 @@ button {
 }
 
 .profile-edit-actions {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 12px;
+  background: linear-gradient(180deg, rgba(255, 253, 247, 0.54), rgba(255, 250, 240, 0.82));
+}
+
+.profile-save-btn {
+  min-height: 36px;
+  min-width: 86px;
+  padding: 9px 18px;
+  border: 1px solid rgba(84, 58, 139, 0.24);
+  border-radius: 8px;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(135deg, #7b5fc5 0%, #5f458f 100%);
+  box-shadow:
+    0 8px 18px rgba(95, 69, 143, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  font-size: 0.88rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  transition:
+    background 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+.profile-save-btn:hover {
+  background: linear-gradient(135deg, #8468cf 0%, #654b98 100%);
+  box-shadow:
+    0 10px 22px rgba(95, 69, 143, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px);
+}
+
+.profile-save-btn:active,
+.profile-cancel-btn:active {
+  transform: translateY(0);
+}
+
+.profile-save-btn:focus-visible,
+.profile-cancel-btn:focus-visible {
+  outline: 2px solid rgba(107, 78, 158, 0.34);
+  outline-offset: 2px;
 }
 
 .profile-cancel-btn {
   min-height: 34px;
   padding: 8px 12px;
+  border: 1px solid rgba(123, 104, 80, 0.1);
   border-radius: 8px;
   cursor: pointer;
   color: var(--ink-soft);
   background: rgba(0, 0, 0, 0.04);
   font-size: 0.86rem;
   font-weight: 800;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
 }
 
 .profile-cancel-btn:hover {
   background: rgba(0, 0, 0, 0.07);
+  border-color: rgba(123, 104, 80, 0.16);
+  transform: translateY(-1px);
 }
 
 .inventory-item {

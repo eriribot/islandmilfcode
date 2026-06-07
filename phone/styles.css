@@ -1706,15 +1706,63 @@ body.floating-phone-dragging {
 }
 
 .phone-chat-bubble {
+  position: relative;
   max-width: 78%;
   display: grid;
   gap: 4px;
-  padding: 9px 11px;
+  padding: 9px 30px 9px 11px;
   border-radius: 8px;
   line-height: 1.45;
   font-size: 13px;
   word-break: break-word;
   box-shadow: 0 4px 10px rgba(80, 60, 30, 0.08);
+}
+
+.phone-chat-delete {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: currentColor;
+  background: rgba(255, 255, 255, 0.18);
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.42;
+  cursor: pointer;
+  transition:
+    background 0.16s ease,
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.phone-chat-delete:hover {
+  background: rgba(180, 72, 72, 0.18);
+  opacity: 0.95;
+  transform: scale(1.08);
+}
+
+.phone-chat-delete:active {
+  transform: scale(0.94);
+}
+
+.phone-chat-delete:focus-visible {
+  outline: 2px solid rgba(107, 78, 158, 0.34);
+  outline-offset: 2px;
+  opacity: 0.95;
+}
+
+.phone-chat-delete:disabled {
+  cursor: default;
+  opacity: 0.24;
+  transform: none;
+}
+
+.phone-chat-bubble--assistant .phone-chat-delete {
+  background: rgba(80, 60, 30, 0.06);
 }
 
 .phone-chat-bubble small {

@@ -340,10 +340,13 @@ async function downloadSaveBackup(saveId: string) {
 }
 
 function savePlayerProfileFromStatusPanel() {
-  const familyName = root?.querySelector<HTMLInputElement>('[data-field="player-family-name"]')?.value ?? '';
-  const givenName = root?.querySelector<HTMLInputElement>('[data-field="player-given-name"]')?.value ?? '';
-  const personality = root?.querySelector<HTMLTextAreaElement>('[data-field="player-personality"]')?.value ?? '';
-  const appearance = root?.querySelector<HTMLTextAreaElement>('[data-field="player-appearance"]')?.value ?? '';
+  const getProfileFieldValue = (field: string) =>
+    root?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-profile-field="${field}"]`)?.value ?? '';
+
+  const familyName = getProfileFieldValue('familyName');
+  const givenName = getProfileFieldValue('givenName');
+  const personality = getProfileFieldValue('personality');
+  const appearance = getProfileFieldValue('appearance');
 
   const trimmedFamilyName = familyName.trim();
   const trimmedGivenName = givenName.trim();
@@ -1046,6 +1049,38 @@ function openPhoneThread(targetId: string) {
   navigatePhone('app:chat');
 }
 
+function deletePhoneMessage(targetId: string, messageId: string) {
+  if (state.phoneMessages.generating) return;
+
+  const thread = state.phoneMessages.threads[targetId];
+  if (!thread) return;
+
+  const nextMessages = thread.messages.filter(message => message.id !== messageId);
+  if (nextMessages.length === thread.messages.length) return;
+
+  thread.messages = nextMessages;
+  thread.updatedAt = Date.now();
+  if (!thread.messages.length) {
+    thread.unread = 0;
+  } else {
+    thread.unread = Math.min(thread.unread, thread.messages.length);
+  }
+
+  state.memoryDB.phoneMessages.forEach(row => {
+    if (row.messageId === messageId) {
+      row.expired = true;
+      row.updatedAt = new Date().toISOString();
+    }
+  });
+
+  if (state.notification?.targetId === targetId) {
+    state.notification = null;
+  }
+
+  persistToSave();
+  render();
+}
+
 function openNotification() {
   if (!state.notification) return;
   const notification = state.notification;
@@ -1435,6 +1470,14 @@ function bindEvents() {
     button.addEventListener('click', () => {
       const targetId = button.dataset.targetId ?? state.phoneMessages.activeThreadId;
       if (targetId) void submitPhoneMessage(ctx, targetId);
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="delete-phone-message"]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      const targetId = button.dataset.targetId;
+      const messageId = button.dataset.messageId;
+      if (targetId && messageId) deletePhoneMessage(targetId, messageId);
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="phone-back"]').forEach(button => {
@@ -1849,9 +1892,13 @@ function bindEvents() {
       importFileInput.value = '';
     }
   });
-  root?.querySelector<HTMLButtonElement>('[data-action="save-player-profile"]')?.addEventListener('click', () => {
-    savePlayerProfileFromStatusPanel();
-  });
+  root
+    ?.querySelectorAll<HTMLButtonElement>('[data-action="save-player-profile"], [data-action="save-player-profile-edit"]')
+    .forEach(button => {
+      button.addEventListener('click', () => {
+        savePlayerProfileFromStatusPanel();
+      });
+    });
   root?.querySelector<HTMLButtonElement>('[data-action="edit-player-profile"]')?.addEventListener('click', () => {
     setPlayerProfileEditing(true);
   });

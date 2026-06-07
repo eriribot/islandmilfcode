@@ -778,6 +778,15 @@ function renderPhoneChatPage(state: AppState) {
                 .map(
                   message => `
                     <div class="phone-chat-bubble phone-chat-bubble--${message.role}">
+                      <button
+                        class="phone-chat-delete"
+                        data-action="delete-phone-message"
+                        data-target-id="${escapeHtml(target.id)}"
+                        data-message-id="${escapeHtml(message.id)}"
+                        title="删除短信"
+                        aria-label="删除短信"
+                        ${chatLocked ? 'disabled' : ''}
+                      >×</button>
                       <span>${escapeHtml(message.text)}</span>
                       <small>${escapeHtml(message.timestamp)}</small>
                     </div>

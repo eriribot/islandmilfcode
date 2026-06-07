@@ -167,6 +167,9 @@ export function createRollbackSnapshot(
   return {
     statusData: cloneJson(state.statusData),
     playerProfile: cloneJson(state.playerProfile),
+    phoneMessages: clonePhoneMessagesForSnapshot(state.phoneMessages),
+    summaryStore: deserializeSummaryStore(state.summaryStore),
+    memoryDB: cloneMemoryDBForSnapshot(state.memoryDB),
   };
 }
 
