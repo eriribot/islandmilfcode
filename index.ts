@@ -930,15 +930,18 @@ function toggleDrawingEnabled(input: HTMLInputElement) {
 }
 
 function addDrawingAnchor() {
+  console.log('[addDrawingAnchor] 开始添加角色，当前数量:', state.drawingSettings.characterAnchors.length);
   updateDrawingSettingsFromControls(false);
+  const newAnchor = {
+    id: crypto.randomUUID(),
+    name: '',
+    prompt: '',
+  };
   state.drawingSettings.characterAnchors = [
     ...state.drawingSettings.characterAnchors,
-    {
-      id: crypto.randomUUID(),
-      name: '',
-      prompt: '',
-    },
+    newAnchor,
   ];
+  console.log('[addDrawingAnchor] 添加完成，新数量:', state.drawingSettings.characterAnchors.length, '新角色ID:', newAnchor.id);
   persistToSave();
   render();
 }

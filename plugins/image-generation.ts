@@ -53,11 +53,16 @@ function getEventApi(win: TavernWindow): TavernEventApi {
 
 export function isImageGenerationPluginAvailable(win: TavernWindow) {
   const api = getEventApi(win);
-  return (
-    typeof api.eventEmit === 'function' &&
-    typeof api.eventOn === 'function' &&
-    typeof api.eventRemoveListener === 'function'
-  );
+  if (
+    typeof api.eventEmit !== 'function' ||
+    typeof api.eventOn !== 'function' ||
+    typeof api.eventRemoveListener !== 'function'
+  ) {
+    return false;
+  }
+  // 检查智绘姬插件特有的标记
+  const globalScope = globalThis as { chatu8ImagePluginInstalled?: boolean };
+  return globalScope.chatu8ImagePluginInstalled === true;
 }
 
 function createImageRequestId() {
