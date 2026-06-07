@@ -94,7 +94,7 @@ import {
   type MemoryTableName,
 } from './memorydatabase/editor';
 import { loadMemoryConfig, saveMemoryConfig, resetMemoryConfig } from './memory-config';
-import { requestImageGeneration } from './plugins/image-generation';
+import { isImageGenerationPluginAvailable, requestImageGeneration } from './plugins/image-generation';
 
 const win = window as TavernWindow;
 const root = document.querySelector<HTMLDivElement>('#app');
@@ -866,8 +866,9 @@ function quickSearchCharacterSong(characterId: PhoneCharacterId) {
 
 function updateDrawingSettingsFromControls(shouldRender = false) {
   const settings = state.drawingSettings;
-  settings.enabled =
-    root?.querySelector<HTMLInputElement>('[data-field="drawing-enabled"]')?.checked ?? settings.enabled;
+  const enabledInput = root?.querySelector<HTMLInputElement>('[data-field="drawing-enabled"]');
+  const nextEnabled = enabledInput?.checked ?? settings.enabled;
+  settings.enabled = nextEnabled && isImageGenerationPluginAvailable(win);
   settings.qualityPrompt =
     root?.querySelector<HTMLInputElement>('[data-field="drawing-quality-prompt"]')?.value ?? settings.qualityPrompt;
   settings.manualPrompt =
@@ -903,6 +904,31 @@ function updateDrawingSettingsFromControls(shouldRender = false) {
   if (shouldRender) render();
 }
 
+function showDrawingPluginMissingNotification() {
+  ctx.showNotification({
+    kind: 'message',
+    title: '未检测到生图插件',
+    preview: '请先安装并启用智绘姬/生图插件。',
+    targetTab: 'summary',
+    timestamp: formatTime(state.statusData.world.currentTime),
+    phoneRoute: 'app:drawing',
+  });
+}
+
+function toggleDrawingEnabled(input: HTMLInputElement) {
+  if (input.checked && !isImageGenerationPluginAvailable(win)) {
+    input.checked = false;
+    state.drawingSettings.enabled = false;
+    persistToSave();
+    showDrawingPluginMissingNotification();
+    return;
+  }
+
+  state.drawingSettings.enabled = input.checked;
+  persistToSave();
+  render();
+}
+
 function addDrawingAnchor() {
   updateDrawingSettingsFromControls(false);
   state.drawingSettings.characterAnchors = [
@@ -919,6 +945,13 @@ function addDrawingAnchor() {
 
 async function generateDrawingNow() {
   updateDrawingSettingsFromControls(false);
+  if (!isImageGenerationPluginAvailable(win)) {
+    state.drawingSettings.enabled = false;
+    persistToSave();
+    showDrawingPluginMissingNotification();
+    return;
+  }
+
   const settings = state.drawingSettings;
   const anchorPrompt = settings.characterAnchors
     .map(anchor => [anchor.name.trim(), anchor.prompt.trim()].filter(Boolean).join(': '))
@@ -954,7 +987,9 @@ async function generateDrawingNow() {
     phoneRoute: 'app:drawing',
   });
 
-  const result = await requestImageGeneration(win, prompt, settings);
+  const result = await requestImageGeneration(win, prompt, settings, '', {
+    summaryApiConfig: state.summaryApiConfig,
+  });
   ctx.showNotification({
     kind: 'message',
     title: result.sent && !result.error ? '生图请求已发送' : '生图失败',
@@ -1504,12 +1539,15 @@ function bindEvents() {
 
   root
     ?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-      '[data-field="drawing-enabled"], [data-field="drawing-quality-prompt"], [data-field="drawing-system-prompt"], [data-field="drawing-anchor-name"], [data-field="drawing-anchor-prompt"]',
+      '[data-field="drawing-quality-prompt"], [data-field="drawing-system-prompt"], [data-field="drawing-anchor-name"], [data-field="drawing-anchor-prompt"]',
     )
     .forEach(input => {
       input.addEventListener('input', () => updateDrawingSettingsFromControls(false));
       input.addEventListener('change', () => updateDrawingSettingsFromControls(true));
     });
+  root?.querySelector<HTMLInputElement>('[data-field="drawing-enabled"]')?.addEventListener('change', event => {
+    toggleDrawingEnabled(event.target as HTMLInputElement);
+  });
   root?.querySelector<HTMLInputElement>('[data-field="drawing-context-count"]')?.addEventListener('input', event => {
     updateDrawingSettingsFromControls(false);
     const input = event.target as HTMLInputElement;

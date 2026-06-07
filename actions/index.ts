@@ -57,7 +57,11 @@ import { indexPhoneMessage } from '../memorydatabase/phone-repository';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import { isPlotEventAllowedByRoute } from '../plot-routing';
 import { emitCharacterDataImportFromResponse } from '../plugins/character-data-import';
-import { extractImageGenerationPrompts, requestImageGeneration } from '../plugins/image-generation';
+import {
+  extractImageGenerationPrompts,
+  isImageGenerationPluginAvailable,
+  requestImageGeneration,
+} from '../plugins/image-generation';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
@@ -483,12 +487,33 @@ function buildDrawingHistoryContext(ctx: ActionContext, userInput: string) {
   return lines.join('\n\n');
 }
 
+function attachIllustrationToMessage(ctx: ActionContext, messageId: string, imageData: string, prompt?: string) {
+  const message = ctx.state.uiMessages.find(item => item.id === messageId);
+  if (!message || message.role !== 'assistant' || !imageData.trim()) return false;
+
+  const illustrations = message.illustrations ?? [];
+  if (illustrations.some(illustration => illustration.imageData === imageData)) return false;
+  message.illustrations = [
+    ...illustrations,
+    {
+      id: crypto.randomUUID(),
+      imageData,
+      prompt,
+      createdAt: Date.now(),
+    },
+  ];
+  ctx.persistConversation();
+  return true;
+}
+
 function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
   if (!ctx.state.drawingSettings.enabled) return;
+  if (!isImageGenerationPluginAvailable(ctx.win)) return;
   const latest = ctx.state.uiMessages[ctx.state.uiMessages.length - 1];
   if (!latest || latest.role !== 'assistant') return;
 
   const rawText = String(latest.rawText || latest.text || '');
+  const sceneText = getVisibleMessageText(latest).trim();
   const historyContext = buildDrawingHistoryContext(ctx, userInput);
   const metadata = {
     generationContext: historyContext || userInput,
@@ -523,10 +548,21 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
     });
 
   const imagePrompts = extractImageGenerationPrompts(rawText);
+  if (!imagePrompts.length && (sceneText || userInput.trim())) {
+    imagePrompts.push({ prompt: '' });
+  }
   if (!imagePrompts.length) return;
 
   const prompt = imagePrompts[0]!;
-  void requestImageGeneration(ctx.win, prompt.prompt, ctx.state.drawingSettings, prompt.change)
+  const targetMessageId = latest.id;
+  void requestImageGeneration(ctx.win, prompt.prompt, ctx.state.drawingSettings, prompt.change, {
+    sceneText,
+    rawText,
+    generationContext: metadata.generationContext,
+    generationWorldBook: metadata.generationWorldBook,
+    userInput,
+    summaryApiConfig: ctx.summaryApiConfig,
+  })
     .then(result => {
       recordGenerationDebug(ctx, 'image-generation:request', {
         sent: result.sent,
@@ -537,6 +573,9 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
       });
 
       if (!result.sent) return;
+      if (!result.error && result.imageData) {
+        attachIllustrationToMessage(ctx, targetMessageId, result.imageData, result.prompt ?? prompt.prompt);
+      }
       ctx.showNotification({
         kind: 'message',
         title: result.error ? '生图失败' : '生图请求已发送',

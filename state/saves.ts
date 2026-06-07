@@ -254,6 +254,18 @@ function normalizePersistedMessages(messages: PersistedMessage[] | undefined): P
         speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
         text: String(message.text ?? ''),
         ...(message.rawText ? { rawText: String(message.rawText) } : {}),
+        ...(Array.isArray(message.illustrations) && message.illustrations.length
+          ? {
+              illustrations: message.illustrations
+                .map(illustration => ({
+                  id: String(illustration.id || crypto.randomUUID()),
+                  imageData: String(illustration.imageData || ''),
+                  prompt: illustration.prompt ? String(illustration.prompt) : undefined,
+                  createdAt: Number(illustration.createdAt) || Date.now(),
+                }))
+                .filter(illustration => illustration.imageData),
+            }
+          : {}),
         ...(statusSnapshot ? { statusSnapshot } : {}),
       };
     });

@@ -181,6 +181,30 @@ function renderOptionsPanel(message: UiMessage) {
   `;
 }
 
+function renderIllustrationPanel(message: UiMessage) {
+  const illustrations = message.illustrations?.filter(illustration => illustration.imageData.trim()) ?? [];
+  if (!illustrations.length) return '';
+
+  return `
+    <div class="reader-illustrations">
+      ${illustrations
+        .map(
+          illustration => `
+            <figure class="reader-illustration">
+              <img
+                class="reader-illustration__image"
+                src="${escapeHtml(illustration.imageData)}"
+                alt="${escapeHtml(illustration.prompt || 'generated illustration')}"
+                loading="lazy"
+              />
+            </figure>
+          `,
+        )
+        .join('')}
+    </div>
+  `;
+}
+
 function renderReaderEditor(state: AppState) {
   const editing = state.readerEditing;
   if (!editing) return '';
@@ -315,6 +339,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
 
   const message = model.currentMessage;
   const visibleText = getVisibleMessageText(message);
+  const illustrationHtml = renderIllustrationPanel(message);
 
   const topLane = `
     <div class="paper-reader__lane paper-reader__lane--top">
@@ -327,7 +352,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
     </div>
   `;
 
-  if (!visibleText && !message.streaming) {
+  if (!visibleText && !illustrationHtml && !message.streaming) {
     return `
       <section class="paper-reader">
         ${topLane}
@@ -385,6 +410,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
         </div>
         <div class="reader-card__body" tabindex="0">
           <p class="reader-card__text">${pageText}</p>
+          ${illustrationHtml}
         </div>
         ${renderOptionsPanel(message)}
       </article>

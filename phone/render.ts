@@ -989,21 +989,8 @@ function renderDrawingPhonePage(state: AppState) {
         )
         .join('')
     : '<div class="phone-drawing-empty">还没有固定角色外貌。</div>';
-
-  return `
-    <section class="phone-route-page phone-app-page phone-app-page--drawing" data-phone-route-view="app:drawing">
-      ${renderPhoneAppHeader(state, '独立生图', settings.enabled ? '已启用' : '未启用')}
-      <div class="phone-page-scroll phone-drawing-scroll">
-        <section class="phone-drawing-card">
-          <label class="phone-drawing-toggle">
-            <span>
-              <strong>启用独立生图</strong>
-              <small>需要安装智绘姬/生图插件；开启后剧情会自动递交插图请求</small>
-            </span>
-            <input type="checkbox" data-field="drawing-enabled" ${settings.enabled ? 'checked' : ''} />
-          </label>
-        </section>
-
+  const drawingControls = settings.enabled
+    ? `
         <section class="phone-drawing-card">
           <label class="phone-drawing-label" for="drawing-manual-prompt">本次生图需求</label>
           <textarea
@@ -1093,6 +1080,23 @@ function renderDrawingPhonePage(state: AppState) {
             placeholder="可选：给生图识别器的额外规则"
           >${escapeHtml(settings.systemPrompt)}</textarea>
         </section>
+      `
+    : '';
+
+  return `
+    <section class="phone-route-page phone-app-page phone-app-page--drawing" data-phone-route-view="app:drawing">
+      ${renderPhoneAppHeader(state, '独立生图', settings.enabled ? '已启用' : '未启用')}
+      <div class="phone-page-scroll phone-drawing-scroll">
+        <section class="phone-drawing-card">
+          <label class="phone-drawing-toggle">
+            <span>
+              <strong>启用独立生图</strong>
+              <small>需要安装智绘姬/生图插件；开启后剧情会自动递交插图请求</small>
+            </span>
+            <input type="checkbox" data-field="drawing-enabled" ${settings.enabled ? 'checked' : ''} />
+          </label>
+        </section>
+        ${drawingControls}
       </div>
     </section>
   `;

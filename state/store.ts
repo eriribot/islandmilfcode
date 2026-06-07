@@ -261,6 +261,14 @@ export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
       if (message.rawText) {
         base.rawText = String(message.rawText);
       }
+      if (message.illustrations?.length) {
+        base.illustrations = message.illustrations.map(illustration => ({
+          id: String(illustration.id || crypto.randomUUID()),
+          imageData: String(illustration.imageData || ''),
+          prompt: illustration.prompt ? String(illustration.prompt) : undefined,
+          createdAt: Number(illustration.createdAt) || Date.now(),
+        })).filter(illustration => illustration.imageData);
+      }
       if (message.statusSnapshot) {
         base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false });
       }
@@ -280,6 +288,16 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
         speaker: String(msg.speaker || (msg.role === 'assistant' ? 'Assistant' : 'User')),
         text: String(msg.text ?? ''),
         rawText: msg.rawText ? String(msg.rawText) : undefined,
+        illustrations: Array.isArray(msg.illustrations)
+          ? msg.illustrations
+              .map(illustration => ({
+                id: String(illustration.id || crypto.randomUUID()),
+                imageData: String(illustration.imageData || ''),
+                prompt: illustration.prompt ? String(illustration.prompt) : undefined,
+                createdAt: Number(illustration.createdAt) || Date.now(),
+              }))
+              .filter(illustration => illustration.imageData)
+          : undefined,
       };
       if (msg.statusSnapshot) {
         ui.statusSnapshot = normalizeRollbackSnapshot(msg.statusSnapshot, { includeSideWindows: false });

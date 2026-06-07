@@ -573,6 +573,26 @@ button {
   color: var(--ink-dark);
 }
 
+.reader-illustrations {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.reader-illustration {
+  margin: 0;
+}
+
+.reader-illustration__image {
+  display: block;
+  width: 100%;
+  max-height: min(58vh, 520px);
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(48, 37, 66, 0.16);
+  background: rgba(255, 255, 255, 0.58);
+}
+
 .reader-tucao {
   margin: 0;
 }

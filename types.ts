@@ -89,7 +89,15 @@ export type PersistedMessage = {
   speaker: string;
   text: string;
   rawText?: string;
+  illustrations?: MessageIllustration[];
   statusSnapshot?: RollbackSnapshot;
+};
+
+export type MessageIllustration = {
+  id: string;
+  imageData: string;
+  prompt?: string;
+  createdAt: number;
 };
 
 export type PhoneChatMessage = {
@@ -258,6 +266,7 @@ export type UiMessage = {
   speaker: string;
   text: string;
   rawText?: string;
+  illustrations?: MessageIllustration[];
   streaming?: boolean;
   tavernMessageId?: number;
   statusSnapshot?: RollbackSnapshot;
