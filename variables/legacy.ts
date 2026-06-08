@@ -33,11 +33,18 @@ function normalizeTarget(raw: Record<string, any>, fallback: TargetStatus): Targ
   const builtInFallback = builtInTargetSeeds.find(seed => getBuiltInTargetKey(seed) === identityKey);
   const obsessionFallback = builtInFallback?.obsession ?? fallback.obsession ?? 0;
   const rawMeta = normalizeTargetMeta(raw?.meta);
+  const hasExplicitObsession = Object.prototype.hasOwnProperty.call(raw ?? {}, 'obsession');
   const shouldSeedObsession =
     Boolean(builtInFallback) &&
+    !hasExplicitObsession &&
     rawMeta?.obsessionSeedVersion !== OBSESSION_SEED_VERSION &&
-    Number(raw?.obsession ?? 0) === 0;
-  const obsession = clamp(Number(shouldSeedObsession ? obsessionFallback : (raw?.obsession ?? obsessionFallback)) || 0, 0, 100);
+    rawMeta?.source !== 'character-worldbook';
+  const obsessionSource = hasExplicitObsession
+    ? raw?.obsession
+    : shouldSeedObsession
+      ? obsessionFallback
+      : fallback.obsession;
+  const obsession = clamp(Number(obsessionSource ?? obsessionFallback) || 0, 0, 100);
   const titlesInput = raw?.titles ?? {};
   const outfitsInput = raw?.outfits ?? {};
 

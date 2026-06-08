@@ -14,7 +14,7 @@ import type {
   SaveTargetMeta,
   StatusData,
 } from '../types';
-import { normalizePhoneMessageStore } from './store';
+import { normalizeDrawingSettings, normalizePhoneMessageStore } from './store';
 import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import { migrateSummaryStoreToMemoryDB, hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
@@ -224,6 +224,7 @@ function normalizePersistedStatusSnapshot(input: unknown): RollbackSnapshot | un
   return {
     statusData: normalizeStatusData(raw.statusData ?? defaultStatusData),
     ...(raw.playerProfile ? { playerProfile: normalizePlayerProfile(raw.playerProfile) } : {}),
+    ...(raw.drawingSettings ? { drawingSettings: normalizeDrawingSettings(raw.drawingSettings) } : {}),
   };
 }
 

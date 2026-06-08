@@ -52,6 +52,7 @@ import {
   type StreamingContext,
   updateStreamingText,
 } from './streaming';
+import { getCharacterCanonicalClass, getCharacterRelationToTomoya } from '../relationship';
 import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
 import { indexPhoneMessage } from '../memorydatabase/phone-repository';
 import type { IslandMemoryDB } from '../memorydatabase/types';
@@ -659,16 +660,25 @@ function classifyAffinityVerdict(
   ctx: ActionContext,
   target: TargetStatus,
   forcedTargetId?: string | null,
+  scenePresence?: ScenePresence | null,
 ): AffinityVerdict {
   if (forcedTargetId) return target.id === forcedTargetId ? 'forced' : 'absent';
 
   const latestSceneText = getLatestAssistantSceneText(ctx);
-  if (!latestSceneText) return 'unmentioned';
+  if (latestSceneText) {
+    // 发声反证优先级最高：哪怕后半段写了"离开"，只要目标前半段有发声，依然判在场。
+    if (textContainsTargetActiveSignals(latestSceneText, target)) return 'mention';
+    if (textMarksTargetFirmlyAbsent(latestSceneText, target)) return 'absent';
+    if (textMentionsTarget(latestSceneText, target)) return 'mention';
+  }
 
-  // 发声反证优先级最高：哪怕后半段写了"离开"，只要目标前半段有发声，依然判在场。
-  if (textContainsTargetActiveSignals(latestSceneText, target)) return 'mention';
-  if (textMarksTargetFirmlyAbsent(latestSceneText, target)) return 'absent';
-  if (textMentionsTarget(latestSceneText, target)) return 'mention';
+  if (scenePresence?.presentIds?.includes(target.id) || scenePresence?.focusIds?.includes(target.id)) {
+    return 'mention';
+  }
+  if (scenePresence?.absentIds?.includes(target.id)) {
+    return 'absent';
+  }
+
   return 'unmentioned';
 }
 
@@ -694,7 +704,12 @@ function clampLegacyAffinityDelta(
   return undefined;
 }
 
-function applyTargetedAffinityDeltas(ctx: ActionContext, update: ProgressUpdate, forcedTargetId?: string | null) {
+function applyTargetedAffinityDeltas(
+  ctx: ActionContext,
+  update: ProgressUpdate,
+  forcedTargetId?: string | null,
+  scenePresence?: ScenePresence | null,
+) {
   let changed = false;
 
   for (const item of update.affinityDeltas) {
@@ -705,7 +720,7 @@ function applyTargetedAffinityDeltas(ctx: ActionContext, update: ProgressUpdate,
       continue;
     }
 
-    const verdict = classifyAffinityVerdict(ctx, target, forcedTargetId);
+    const verdict = classifyAffinityVerdict(ctx, target, forcedTargetId, scenePresence);
     if (verdict === 'absent') {
       console.warn('[progress] drop affinity for absent target:', item.target);
       continue;
@@ -725,7 +740,12 @@ function applyTargetedAffinityDeltas(ctx: ActionContext, update: ProgressUpdate,
   return changed;
 }
 
-function applyTargetedObsessionDeltas(ctx: ActionContext, update: ProgressUpdate, forcedTargetId?: string | null) {
+function applyTargetedObsessionDeltas(
+  ctx: ActionContext,
+  update: ProgressUpdate,
+  forcedTargetId?: string | null,
+  scenePresence?: ScenePresence | null,
+) {
   let changed = false;
 
   for (const item of update.obsessionDeltas) {
@@ -736,7 +756,7 @@ function applyTargetedObsessionDeltas(ctx: ActionContext, update: ProgressUpdate
       continue;
     }
 
-    const verdict = classifyAffinityVerdict(ctx, target, forcedTargetId);
+    const verdict = classifyAffinityVerdict(ctx, target, forcedTargetId, scenePresence);
     if (verdict === 'absent') {
       console.warn('[progress] drop obsession for absent target:', item.target);
       continue;
@@ -794,7 +814,12 @@ function applyIntimacyCounters(ctx: ActionContext, update: ProgressUpdate) {
   return changed;
 }
 
-function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | null, targetId?: string | null) {
+function applyFullProgressUpdate(
+  ctx: ActionContext,
+  update: ProgressUpdate | null,
+  targetId?: string | null,
+  scenePresence?: ScenePresence | null,
+) {
   if (!update) return false;
   const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary, ctx.state.statusData);
   const legacyDelta = clampLegacyAffinityDelta(ctx, sanitized, targetId);
@@ -802,8 +827,8 @@ function applyFullProgressUpdate(ctx: ActionContext, update: ProgressUpdate | nu
   const outfitChanges = targetId ? sanitized.outfitChanges : {};
   const contextualized: ProgressUpdate = { ...sanitized, affinityDelta: legacyDelta, outfitChanges };
   applyProgressUpdate(ctx.state.statusData, contextualized, targetId ?? null, ctx.state.plotLibrary);
-  const targetedAffinityChanged = applyTargetedAffinityDeltas(ctx, contextualized, targetId);
-  const targetedObsessionChanged = applyTargetedObsessionDeltas(ctx, contextualized, targetId);
+  const targetedAffinityChanged = applyTargetedAffinityDeltas(ctx, contextualized, targetId, scenePresence);
+  const targetedObsessionChanged = applyTargetedObsessionDeltas(ctx, contextualized, targetId, scenePresence);
   const virginityChanged = applyVirginityFlags(ctx, contextualized);
   const countersChanged = applyIntimacyCounters(ctx, contextualized);
   const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, contextualized);
@@ -1071,6 +1096,8 @@ export async function submitMessage(
         buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
           includePhoneMessages: true,
         }),
+        null,
+        { scenePresence },
       );
 
       // ② 手机消息：directive 走专用聊天流；否则消费上一步暂存的 phone_messages（无则正则兜底）。
@@ -1453,11 +1480,15 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
       const aliases = getPhoneTargetSearchTerms(target)
         .filter(term => term !== target.id && term !== target.name)
         .join('、');
+      const charClass = getCharacterCanonicalClass(target);
+      const relation = getCharacterRelationToTomoya(target);
       return `- id=${target.id}；姓名=${target.name}${target.alias ? `；别名=${target.alias}` : ''}${
         aliases ? `；可匹配线索=${aliases}` : ''
-      }`;
+      }${charClass ? `；班级=${charClass}` : ''}${relation ? `；原作关系=${relation}` : ''}`;
     })
     .join('\n');
+
+  const playerClass = String(ctx.state.playerProfile?.className ?? '').trim();
 
   const systemPrompt = [
     '现在需要对目前的场景进行预判：① 哪些角色处于当前镜头内；② 玩家这一步是否明确推进了世界时间。',
@@ -1465,6 +1496,8 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     '',
     '角色名单：',
     targets || '无',
+    '',
+    `玩家(user)班级：${playerClass || '未知'}`,
     '',
     `当前世界时间（时间锚点）：${ctx.state.statusData.world.currentTime}`,
     '',
@@ -1492,6 +1525,8 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     '3. 不要因为角色好感度、剧情常识、世界书设定或你觉得她应该在场而加入 present。',
     '4. 玩家当前输入若明确“追上去安慰她/去找某人/转向某人/和某人说话”，该角色进入 focus。',
     '5. 输出必须是一个 JSON 对象，不要使用 Markdown 代码块。',
+    '6. 班级消歧：玩家输入若用班级/学年指人（如“去G班”“找同班同学”“B班那个”），用上面的“玩家班级”和角色“班级”做匹配——同字符串=同班；只有班级里的角色才算同班。仅“同班/同年级”这类泛指、又能唯一对应到名单里某个角色时，才把该角色判为 focus；对应不唯一就不要硬塞。',
+    '7. 原作关系只锚定到“安艺伦也”：名单里的“原作关系”（青梅竹马/学姐/表姐等）描述的是该角色与伦也的关系，不是与 user 的关系。不要因为这些原作关系就默认该角色与 user 亲近、在场或应进入 focus；user 与角色的关系以实际剧情与好感度为准。',
   ].join('\n');
 
   return [
@@ -1623,7 +1658,7 @@ async function runSecondaryProgressUpdate(
   generationId: string,
   prompts: RawPrompt[],
   targetId?: string | null,
-  options: { showTask?: boolean } = {},
+  options: { showTask?: boolean; scenePresence?: ScenePresence | null } = {},
 ): Promise<boolean> {
   const showTask = options.showTask ?? true;
   if (showTask) {
@@ -1638,7 +1673,7 @@ async function runSecondaryProgressUpdate(
       prompts,
       apiConfig: ctx.summaryApiConfig,
     });
-    const committed = commitProgressAnalysis(ctx, raw, targetId);
+    const committed = commitProgressAnalysis(ctx, raw, targetId, options.scenePresence);
     if (showTask) clearBackgroundTask(ctx.state, 'progress');
     if (committed.applied) {
       // 成功路径也要重渲染：否则徽章在 state 里清了、变量也更新了，但 UI 不刷新，
@@ -1658,6 +1693,7 @@ function commitProgressAnalysis(
   ctx: ActionContext,
   raw: string,
   targetId?: string | null,
+  scenePresence?: ScenePresence | null,
 ): { applied: boolean; update: ProgressUpdate | null } {
   // 主回合 progress 现在合并了 phone_messages 提取；如果 raw 里带 <phone_messages> 块，
   // 解析并暂存，由 maybeQueueProactivePhoneMessage 接力消费、跳过原本 phone-scene-extract 副 API。
@@ -1673,7 +1709,7 @@ function commitProgressAnalysis(
 
   const update = parseProgressUpdate(raw);
   if (!update) return { applied: false, update: null };
-  applyFullProgressUpdate(ctx, update, targetId);
+  applyFullProgressUpdate(ctx, update, targetId, scenePresence);
   return { applied: true, update };
 }
 

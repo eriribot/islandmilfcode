@@ -38,7 +38,7 @@ export type ImageGenerationResult = {
 };
 
 type TavernEventApi = Pick<TavernWindow, 'eventEmit' | 'eventOn' | 'eventRemoveListener'>;
-type ImageGenerationSettings = Pick<DrawingSettings, 'width' | 'height'> &
+type ImageGenerationSettings = Pick<DrawingSettings, 'width' | 'height' | 'negativePrompt'> &
   Partial<Pick<DrawingSettings, 'qualityPrompt' | 'manualPrompt' | 'characterAnchors' | 'systemPrompt'>>;
 type ImagePromptMessage = { role: string; content: string };
 
@@ -60,9 +60,90 @@ export function isImageGenerationPluginAvailable(win: TavernWindow) {
   ) {
     return false;
   }
-  // 检查智绘姬插件特有的标记
-  const globalScope = globalThis as { chatu8ImagePluginInstalled?: boolean };
-  return globalScope.chatu8ImagePluginInstalled === true;
+
+  // 检查 SillyTavern 的扩展系统
+  const globalScope = globalThis as {
+    chatu8ImagePluginInstalled?: boolean;
+    extensions?: string[];
+    extensionNames?: string[];
+    getContext?: () => { extensionNames?: string[]; extensions?: Record<string, unknown> };
+    SillyTavern?: {
+      extensions?: string[] | Record<string, unknown>;
+      getContext?: () => { extensionNames?: string[]; extensions?: Record<string, unknown> };
+    };
+  };
+
+  // 优先检查插件特有的标记
+  if (globalScope.chatu8ImagePluginInstalled === true) {
+    return true;
+  }
+
+  // 检查扩展名称数组
+  const extensionNames =
+    globalScope.extensions ||
+    globalScope.extensionNames ||
+    globalScope.getContext?.()?.extensionNames ||
+    globalScope.SillyTavern?.extensions ||
+    (Array.isArray(globalScope.SillyTavern?.getContext?.()?.extensionNames)
+      ? globalScope.SillyTavern.getContext().extensionNames
+      : []);
+
+  // 智绘姬插件可能的扩展名
+  const possibleNames = [
+    'chatu8',
+    'st-chatu8',
+    'third-party-chatu8',
+    'SillyTavern-Chatu8',
+    'third-party/chatu8',
+  ];
+
+  if (Array.isArray(extensionNames)) {
+    const found = possibleNames.some(name =>
+      extensionNames.some(ext =>
+        typeof ext === 'string' && ext.toLowerCase().includes(name.toLowerCase())
+      )
+    );
+    if (found) return true;
+  }
+
+  // 检查扩展对象
+  if (typeof extensionNames === 'object' && extensionNames !== null) {
+    const extensionKeys = Object.keys(extensionNames);
+    const found = possibleNames.some(name =>
+      extensionKeys.some(key => key.toLowerCase().includes(name.toLowerCase()))
+    );
+    if (found) return true;
+  }
+
+  // 方法 2: 检查 DOM 中的扩展元素
+  try {
+    const extensionElements = document.querySelectorAll('[data-extension-name], .extension-block, [id*="chatu8"]');
+    for (const element of extensionElements) {
+      const extensionName = (
+        element.getAttribute('data-extension-name') ||
+        element.id ||
+        element.className ||
+        element.textContent
+      )?.toLowerCase();
+
+      if (extensionName && possibleNames.some(name => extensionName.includes(name.toLowerCase()))) {
+        return true;
+      }
+    }
+
+    // 检查扩展列表容器
+    const extensionContainers = document.querySelectorAll('#extensions_list, .extensions-list, [class*="extensions"]');
+    for (const container of extensionContainers) {
+      const text = container.textContent?.toLowerCase() || '';
+      if (possibleNames.some(name => text.includes(name.toLowerCase()))) {
+        return true;
+      }
+    }
+  } catch (e) {
+    console.warn('[image-generation] DOM 检测失败:', e);
+  }
+
+  return false;
 }
 
 function createImageRequestId() {
@@ -360,6 +441,7 @@ export async function requestImageGeneration(
   const requestData = {
     id,
     prompt: cleanPrompt,
+    negative_prompt: settings.negativePrompt?.trim() || '',
     change: change.trim(),
     width: Number.isFinite(width) && width > 0 ? Math.round(width) : null,
     height: Number.isFinite(height) && height > 0 ? Math.round(height) : null,

@@ -1,4 +1,5 @@
 import {
+  getCharacterAnchorGuidance,
   getRelationshipAddressGuidance,
   getRelationshipAuditGuidance,
   getRelationshipGuidance,
@@ -786,8 +787,14 @@ function buildRelationshipGuidanceList(
     .map(target => {
       const guidance = getRelationshipGuidance(target);
       const address = getRelationshipAddressGuidance({ target, playerProfile });
-      if (!guidance && !address) return '';
-      return [`[${target.name}]`, guidance ? `关系反应：${guidance}` : '', address ? `称呼：${address}` : '']
+      const anchor = getCharacterAnchorGuidance({ target, playerProfile });
+      if (!guidance && !address && !anchor) return '';
+      return [
+        `[${target.name}]`,
+        anchor ? `身份锚点：${anchor}` : '',
+        guidance ? `关系反应：${guidance}` : '',
+        address ? `称呼：${address}` : '',
+      ]
         .filter(Boolean)
         .join('\n');
     })
@@ -1093,6 +1100,7 @@ export function buildPhoneChatPrompt(input: {
   const miniPersona = getRelationshipMiniPersona(target);
   const relationshipGuidance = getRelationshipGuidance(target);
   const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile });
+  const anchorGuidance = getCharacterAnchorGuidance({ target, playerProfile });
   const recentEventsContext = buildRecentEventsContext(statusData);
   const mainEventsContext = buildMainEventsContext(statusData);
   // 手机聊天天然只有一个聊天对象，绕过 scenePresence 直接指定 targetIds 注入这一张完整卡。
@@ -1133,6 +1141,7 @@ export function buildPhoneChatPrompt(input: {
     `当前位置：${statusData.world.currentLocation}`,
     mainEventsContext,
     activeCharacterCards,
+    anchorGuidance ? `身份锚点（原作关系 + 班级换算 + 情感现状）：\n${anchorGuidance}` : '',
     `当前关系：${target.stage} · 好感度 ${target.affinity} · 执念 ${target.obsession}（${target.obsessionStage}）`,
     relationshipGuidance ? `当前关系反应：${relationshipGuidance}` : '',
     addressGuidance ? `称呼规则：${addressGuidance}` : '',

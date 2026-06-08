@@ -96,6 +96,7 @@ import {
 } from './memorydatabase/editor';
 import { loadMemoryConfig, saveMemoryConfig, resetMemoryConfig } from './memory-config';
 import { isImageGenerationPluginAvailable, requestImageGeneration } from './plugins/image-generation';
+import { isChatu8PluginAvailable, openChatu8Plugin } from './plugins/chatu8-integration';
 
 const win = window as TavernWindow;
 const root = document.querySelector<HTMLDivElement>('#app');
@@ -271,7 +272,13 @@ const ctx: ActionContext = {
 
 // ── Save system ──
 
+function commitDrawingSettingsToRuntimeFlags() {
+  state.drawingSettings = normalizeDrawingSettings(state.drawingSettings);
+  state.runtimeFlags.drawingSettings = JSON.parse(JSON.stringify(state.drawingSettings));
+}
+
 function buildGameState(statusData: StatusData = state.statusData): GameState {
+  commitDrawingSettingsToRuntimeFlags();
   return {
     runId: state.activeRunId ?? crypto.randomUUID(),
     statusData: JSON.parse(JSON.stringify(statusData)),
@@ -426,6 +433,7 @@ function enterSave(saveId: string) {
   };
   state.runtimeFlags = JSON.parse(JSON.stringify(save.payload.gameState.runtimeFlags ?? {}));
   state.drawingSettings = normalizeDrawingSettings(state.runtimeFlags.drawingSettings);
+  commitDrawingSettingsToRuntimeFlags();
   state.summaryStore = save.payload.summaryStore;
   if (save.payload.memoryDB) {
     state.memoryDB = save.payload.memoryDB;
@@ -642,10 +650,12 @@ async function deleteReaderFloor(readerIndex: number) {
 }
 
 function navigatePhone(route: PhoneRoute) {
+  syncDrawingSettingsFromMountedControls();
   navigatePhoneRoute(state, route, ctx);
 }
 
 function navigatePhoneBack() {
+  syncDrawingSettingsFromMountedControls();
   navigatePhoneBackRoute(state, ctx);
 }
 
@@ -658,6 +668,7 @@ function openPhone(targetRoute?: PhoneRoute) {
 }
 
 function closePhone() {
+  syncDrawingSettingsFromMountedControls();
   closePhoneRoute(state, ctx);
 }
 
@@ -874,9 +885,11 @@ function updateDrawingSettingsFromControls(shouldRender = false) {
   const settings = state.drawingSettings;
   const enabledInput = root?.querySelector<HTMLInputElement>('[data-field="drawing-enabled"]');
   const nextEnabled = enabledInput?.checked ?? settings.enabled;
-  settings.enabled = nextEnabled && isImageGenerationPluginAvailable(win);
+  settings.enabled = nextEnabled;
   settings.qualityPrompt =
     root?.querySelector<HTMLInputElement>('[data-field="drawing-quality-prompt"]')?.value ?? settings.qualityPrompt;
+  settings.negativePrompt =
+    root?.querySelector<HTMLInputElement>('[data-field="drawing-negative-prompt"]')?.value ?? settings.negativePrompt;
   settings.manualPrompt =
     root?.querySelector<HTMLTextAreaElement>('[data-field="drawing-manual-prompt"]')?.value ?? settings.manualPrompt;
   settings.width = clamp(
@@ -906,8 +919,16 @@ function updateDrawingSettingsFromControls(shouldRender = false) {
   });
 
   state.drawingSettings = normalizeDrawingSettings(settings);
+  commitDrawingSettingsToRuntimeFlags();
   persistToSave();
   if (shouldRender) render();
+}
+
+function syncDrawingSettingsFromMountedControls() {
+  if (!root?.querySelector('[data-field="drawing-negative-prompt"], [data-field="drawing-quality-prompt"], [data-field="drawing-manual-prompt"]')) {
+    return;
+  }
+  updateDrawingSettingsFromControls(false);
 }
 
 function showDrawingPluginMissingNotification() {
@@ -1588,7 +1609,7 @@ function bindEvents() {
 
   root
     ?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-      '[data-field="drawing-quality-prompt"], [data-field="drawing-system-prompt"], [data-field="drawing-anchor-name"], [data-field="drawing-anchor-prompt"]',
+      '[data-field="drawing-quality-prompt"], [data-field="drawing-negative-prompt"], [data-field="drawing-system-prompt"], [data-field="drawing-anchor-name"], [data-field="drawing-anchor-prompt"]',
     )
     .forEach(input => {
       input.addEventListener('input', () => updateDrawingSettingsFromControls(false));
@@ -2115,6 +2136,7 @@ const titleCallbacks: TitleCallbacks = {
 
 function render() {
   if (!root) return;
+  syncDrawingSettingsFromMountedControls();
   const readerBodyScroll = captureReaderBodyScroll();
   if (state.activeRunId) {
     // 游戏界面。
@@ -2215,8 +2237,12 @@ async function init() {
   if (typeof window !== 'undefined') {
     window.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
+        syncDrawingSettingsFromMountedControls();
         flushSaveStore().catch(err => console.warn('[init] flush on hidden failed:', err));
       }
+    });
+    window.addEventListener('beforeunload', () => {
+      syncDrawingSettingsFromMountedControls();
     });
   }
   render();

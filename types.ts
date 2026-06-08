@@ -126,6 +126,7 @@ export type PhoneMessageStore = {
 export type RollbackSnapshot = {
   statusData: StatusData;
   playerProfile?: PlayerProfile;
+  drawingSettings?: DrawingSettings;
   phoneMessages?: PhoneMessageStore;
   summaryStore?: SummaryStore;
   memoryDB?: IslandMemoryDB;
@@ -315,6 +316,7 @@ export type DrawingCharacterAnchor = {
 export type DrawingSettings = {
   enabled: boolean;
   qualityPrompt: string;
+  negativePrompt: string;
   contextMessageCount: number;
   width: number;
   height: number;

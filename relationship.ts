@@ -586,6 +586,136 @@ export function getRelationshipGuidance(target: TargetStatus | null) {
   return [reaction?.guidance ?? '', obsessionHint, crossCharacterProtocol].filter(Boolean).join(' ');
 }
 
+// ── 身份锚点层（原作关系 + 班级换算）──
+//
+// 镜头判定（scenePresence）只决定“谁在场”，它从不告诉模型“他们到底是什么关系”。
+// 缺这一层时，AI 会凭原作常识脑补：把英梨梨写成 user 的青梅竹马、把不同班的人说成同班、
+// 在年级相同的情况下仍叫诗羽“学姐”。下面用玩家选择的 className 和角色原作班级做硬换算，
+// 把“原作锚点 + 同班/同级/学姐学妹”的结论直接喂给正文，覆盖模型的脑补。
+
+type CharacterCanonicalProfile = {
+  /** 原作班级（玩家档案里没有角色班级时的权威值）。 */
+  canonicalClass: string;
+  /** 原作里与安艺伦也的关系，必须显式声明，避免被错配到 user 头上。 */
+  relationToTomoya: string;
+  /** 是否和玩家就读同一所学校（私立丰之崎学园）。跨校的人不参与同班/同级换算。 */
+  sameSchoolAsPlayer: boolean;
+};
+
+const CHARACTER_CANONICAL_PROFILES: Record<string, CharacterCanonicalProfile> = {
+  eriri: {
+    canonicalClass: '2年G班',
+    relationToTomoya: '安艺伦也的青梅竹马（从小一起长大）',
+    sameSchoolAsPlayer: true,
+  },
+  megumi: {
+    canonicalClass: '2年B班',
+    relationToTomoya: '安艺伦也的同班同学（2年B班）',
+    sameSchoolAsPlayer: true,
+  },
+  utaha: {
+    canonicalClass: '3年C班',
+    relationToTomoya: '安艺伦也的学姐（高一届），原作中以“伦理君”称呼伦也',
+    sameSchoolAsPlayer: true,
+  },
+  izumi: {
+    canonicalClass: '',
+    relationToTomoya: '安艺伦也认识的后辈创作者，比伦也低年级',
+    sameSchoolAsPlayer: false,
+  },
+  michiru: {
+    canonicalClass: '',
+    relationToTomoya: '安艺伦也的表姐（年长），就读县立椿姬女子高校',
+    sameSchoolAsPlayer: false,
+  },
+};
+
+/** 从 "2年G班" / "3年C班" 这类字符串里取出年级数字；取不到返回 null。 */
+function parseGradeNumber(className: string): number | null {
+  const match = String(className ?? '').match(/([1-9]\d?)\s*年/);
+  if (!match) return null;
+  const grade = Number(match[1]);
+  return Number.isFinite(grade) ? grade : null;
+}
+
+/** 角色原作班级：优先世界书 meta.className，回退到内置原作锚点。 */
+export function getCharacterCanonicalClass(target: TargetStatus): string {
+  const metaClass = String(target.meta?.className ?? '').trim();
+  if (metaClass) return metaClass;
+  const key = getTargetCharacterKey(target);
+  return CHARACTER_CANONICAL_PROFILES[key]?.canonicalClass ?? '';
+}
+
+/** 角色与安艺伦也的原作关系（用于在场判定/正文消歧）；非五人白名单返回空。 */
+export function getCharacterRelationToTomoya(target: TargetStatus): string {
+  const key = getTargetCharacterKey(target);
+  return CHARACTER_CANONICAL_PROFILES[key]?.relationToTomoya ?? '';
+}
+
+/**
+ * 用玩家班级和角色班级做硬换算，给正文一句不可被脑补覆盖的“同班/同级/学姐学妹”结论。
+ * 玩家或角色任一方缺班级、或角色跨校时，返回空（不强行下结论）。
+ */
+function buildClassRelationLine(target: TargetStatus, playerClass: string): string {
+  const profile = CHARACTER_CANONICAL_PROFILES[getTargetCharacterKey(target)];
+  const charClass = getCharacterCanonicalClass(target);
+  const playerGrade = parseGradeNumber(playerClass);
+  const charGrade = parseGradeNumber(charClass);
+  if (!playerClass || !charClass || playerGrade === null || charGrade === null) return '';
+
+  // 跨校角色（出海/美智留）不和玩家比同班同级，只点出学校不同。
+  if (profile && !profile.sameSchoolAsPlayer) {
+    return `班级：${charClass}（与 user 不同学校，不存在同班/同年级关系）。`;
+  }
+
+  let verdict: string;
+  if (playerClass.trim() === charClass.trim()) {
+    verdict = `与 user 同班同学（同为 ${charClass}）。`;
+  } else if (playerGrade === charGrade) {
+    verdict = `与 user 同年级、不同班（${playerGrade} 年级）；是同学而非学姐/学妹，禁止 user 称其为“学姐”或“前辈”。`;
+  } else if (charGrade > playerGrade) {
+    verdict = `比 user 高 ${charGrade - playerGrade} 届，是 user 的学姐/前辈；user 称呼她时可用“学姐/前辈”。`;
+  } else {
+    verdict = `比 user 低 ${playerGrade - charGrade} 届，是 user 的学妹/后辈；不要让 user 称她为“学姐/前辈”。`;
+  }
+  return `班级：角色=${charClass}，user=${playerClass} → ${verdict}`;
+}
+
+/** 把好感度（对 user）和执念度（对伦也）翻译成正文能直接用的一句话情感现状。 */
+function buildEmotionStateLine(target: TargetStatus): string {
+  const affinity = Math.max(0, Math.min(100, Math.round(Number(target.affinity ?? 0) || 0)));
+  const affinityLine = `对 user 的好感度=${affinity}（${target.stage}）`;
+  if (!hasObsessionAxis(target)) {
+    return `情感现状：${affinityLine}。`;
+  }
+  const obsession = Math.max(0, Math.min(100, Math.round(Number(target.obsession ?? 0) || 0)));
+  return `情感现状：${affinityLine}；对安艺伦也的执念度=${obsession}（${target.obsessionStage}，数值越高对伦也旧线牵挂越深、越低代表已放下）。`;
+}
+
+/**
+ * 身份锚点指导：原作定位 + 班级换算 + 好感/执念现状。
+ * 注入正文后，模型不应再脑补 user 与角色的原作关系或学年关系。
+ */
+export function getCharacterAnchorGuidance(input: AddressGuidanceInput | null): string {
+  if (!input?.target) return '';
+  const target = input.target;
+  const key = getTargetCharacterKey(target);
+  const profile = CHARACTER_CANONICAL_PROFILES[key];
+  const playerClass = String(input.playerProfile?.className ?? '').trim();
+
+  const lines: string[] = [];
+  if (profile?.relationToTomoya) {
+    lines.push(
+      `原作定位：${profile.relationToTomoya}。这是她与“安艺伦也”的关系，不是与 user 的关系；除非剧情明确建立，否则禁止把 user 写成她的青梅竹马/表弟/同班旧识。`,
+    );
+  }
+  const classLine = buildClassRelationLine(target, playerClass);
+  if (classLine) lines.push(classLine);
+  lines.push(buildEmotionStateLine(target));
+
+  return lines.length ? lines.join('\n') : '';
+}
+
 export function getRelationshipAddressGuidance(input: AddressGuidanceInput | null) {
   if (!input?.target) return '';
   const addressReactions = getAddressReactions(input.target);

@@ -1033,6 +1033,18 @@ function renderDrawingPhonePage(state: AppState) {
         </section>
 
         <section class="phone-drawing-card">
+          <label class="phone-drawing-label" for="drawing-negative-prompt">负面提示词</label>
+          <input
+            id="drawing-negative-prompt"
+            class="phone-drawing-input phone-drawing-input--large"
+            data-field="drawing-negative-prompt"
+            value="${escapeHtml(settings.negativePrompt)}"
+            placeholder="例如: lowres, bad quality, worst quality"
+          />
+          <p class="phone-drawing-help">避免这些特征出现在生成的图片中。</p>
+        </section>
+
+        <section class="phone-drawing-card">
           <label class="phone-drawing-label" for="drawing-context-count">生图上下文层数: ${settings.contextMessageCount}</label>
           <input
             id="drawing-context-count"

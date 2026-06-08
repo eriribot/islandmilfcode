@@ -652,14 +652,21 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
       .filter(target => target.meta?.worldbookEntryUid !== undefined)
       .map(target => [String(target.meta?.worldbookEntryUid), target]),
   );
+  const existingByBuiltInKey = new Map(
+    statusData.targets
+      .map(target => [getBuiltInTargetKeyFromIdentity(target), target] as const)
+      .filter(([key]) => Boolean(key)),
+  );
   const mergedTargets = worldbookTargets.map(worldbookTarget => {
+    const worldbookKey = getBuiltInTargetKeyFromIdentity(worldbookTarget);
     const existing =
       existingById.get(worldbookTarget.id) ??
       existingByName.get(worldbookTarget.name) ??
       (worldbookTarget.alias ? existingByAlias.get(worldbookTarget.alias) : undefined) ??
       (worldbookTarget.meta?.worldbookEntryUid !== undefined
         ? existingByWorldbookUid.get(String(worldbookTarget.meta.worldbookEntryUid))
-        : undefined);
+        : undefined) ??
+      (worldbookKey ? existingByBuiltInKey.get(worldbookKey) : undefined);
     if (!existing) return worldbookTarget;
     if (!canReuseExistingTargetVariables(worldbookTarget, existing)) return worldbookTarget;
 

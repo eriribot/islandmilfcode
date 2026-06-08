@@ -145,6 +145,9 @@ function normalizeRollbackSnapshot(input: unknown, options: { includeSideWindows
   if (raw.playerProfile && typeof raw.playerProfile === 'object') {
     snapshot.playerProfile = cloneJson(raw.playerProfile as RollbackSnapshot['playerProfile']);
   }
+  if (raw.drawingSettings) {
+    snapshot.drawingSettings = normalizeDrawingSettings(raw.drawingSettings);
+  }
 
   if (includeSideWindows) {
     if (raw.phoneMessages) {
@@ -162,11 +165,12 @@ function normalizeRollbackSnapshot(input: unknown, options: { includeSideWindows
 }
 
 export function createRollbackSnapshot(
-  state: Pick<AppState, 'statusData' | 'playerProfile' | 'phoneMessages' | 'summaryStore' | 'memoryDB'>,
+  state: Pick<AppState, 'statusData' | 'playerProfile' | 'drawingSettings' | 'phoneMessages' | 'summaryStore' | 'memoryDB'>,
 ) {
   return {
     statusData: cloneJson(state.statusData),
     playerProfile: cloneJson(state.playerProfile),
+    drawingSettings: normalizeDrawingSettings(state.drawingSettings),
     phoneMessages: clonePhoneMessagesForSnapshot(state.phoneMessages),
     summaryStore: deserializeSummaryStore(state.summaryStore),
     memoryDB: cloneMemoryDBForSnapshot(state.memoryDB),
@@ -177,6 +181,7 @@ export function createDefaultDrawingSettings(): DrawingSettings {
   return {
     enabled: false,
     qualityPrompt: 'masterpiece, best quality, anime style, light novel illustration',
+    negativePrompt: 'lowres, bad quality, worst quality, jpeg artifacts, very displeasing',
     contextMessageCount: 0,
     width: 832,
     height: 1216,
@@ -196,12 +201,13 @@ export function normalizeDrawingSettings(input: unknown): DrawingSettings {
           name: String(anchor?.name ?? '').trim(),
           prompt: String(anchor?.prompt ?? '').trim(),
         }))
-        .filter(anchor => anchor.name || anchor.prompt)
+        // 保留所有角色，包括新添加的空角色，以便用户可以填写
     : [];
 
     return {
       enabled: Boolean(raw.enabled),
       qualityPrompt: String(raw.qualityPrompt ?? fallback.qualityPrompt),
+      negativePrompt: String(raw.negativePrompt ?? fallback.negativePrompt),
       contextMessageCount: Math.max(0, Math.min(20, Math.round(Number(raw.contextMessageCount ?? 0) || 0))),
       width: Math.max(256, Math.min(2048, Math.round(Number(raw.width ?? fallback.width) || fallback.width))),
       height: Math.max(256, Math.min(2048, Math.round(Number(raw.height ?? fallback.height) || fallback.height))),
@@ -215,6 +221,10 @@ function restoreRollbackSnapshot(state: AppState, snapshot: RollbackSnapshot) {
   state.statusData = cloneJson(snapshot.statusData);
   if (snapshot.playerProfile) {
     state.playerProfile = cloneJson(snapshot.playerProfile);
+  }
+  if (snapshot.drawingSettings) {
+    state.drawingSettings = normalizeDrawingSettings(snapshot.drawingSettings);
+    state.runtimeFlags.drawingSettings = cloneJson(state.drawingSettings);
   }
   if (snapshot.phoneMessages) {
     state.phoneMessages = clonePhoneMessagesForSnapshot(snapshot.phoneMessages);
