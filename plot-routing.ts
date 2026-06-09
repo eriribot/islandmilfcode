@@ -21,9 +21,7 @@ function getTargetHaystack(target: TargetStatus) {
 }
 
 export function findEririTarget(statusData: StatusData | null | undefined): TargetStatus | null {
-  return (
-    statusData?.targets.find(target => /英梨梨|泽村|澤村|eriri|sawamura/i.test(getTargetHaystack(target))) ?? null
-  );
+  return statusData?.targets.find(target => /英梨梨|泽村|澤村|eriri|sawamura/i.test(getTargetHaystack(target))) ?? null;
 }
 
 export function findMichiruTarget(statusData: StatusData | null | undefined): TargetStatus | null {
@@ -78,7 +76,7 @@ export function getSae0502Route(statusData: StatusData | null | undefined): Sae0
   if (!utaha) return SAE_05_2A;
 
   const obsession = asScore(utaha.obsession, 80);
-  return obsession >= 30 ? SAE_05_2A : SAE_05_2B;
+  return obsession >= 70 ? SAE_05_2A : SAE_05_2B;
 }
 
 export function isSae0502BranchId(eventId: string) {

@@ -6,6 +6,10 @@ const PLOT_KIND = 'islandmilfcode.plot_event';
 const PLOT_VOLUME_KIND = 'islandmilfcode.plot_volume';
 const TARGET_AVATAR_RULES: Array<{ patterns: string[]; avatarUrl: string }> = [
   {
+    patterns: ['泽村小百合', '澤村小百合', '小百合', 'sayuri'],
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/sayuri_phone.jpg',
+  },
+  {
     patterns: ['英梨梨', '泽村', '澤村', 'eriri', 'sawamura'],
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/eriri_phone.jpg',
   },
@@ -283,9 +287,14 @@ function getTargetAvatarUrl(targetName: string, entry: WorldbookEntry) {
   return getBuiltInAvatarUrl(targetName, getWorldbookEntryName(entry));
 }
 
-function normalizeBuiltInTargetName(name: string, ...texts: string[]) {
-  const haystack = [name, ...texts].join('\n').toLowerCase();
+function normalizeBuiltInTargetName(name: string, alias = '', entryName = '') {
+  const identityHaystack = [name, entryName].join('\n').toLowerCase();
+  const haystack = [identityHaystack, alias].join('\n').toLowerCase();
   // 中文注释：只用姓名、别名、条目名等身份字段归一化，避免正文里的“关系描述”把角色串成别人。
+  // 小百合与英梨梨同姓“泽村”，必须只看主身份字段；alias 单独命中不能把英梨梨归成小百合。
+  if (/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) {
+    return '泽村小百合';
+  }
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) {
     return '加藤惠';
   }
@@ -411,6 +420,46 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
   };
 }
 
+function parseKnownArchiveTarget(entry: WorldbookEntry): TargetStatus | null {
+  const entryName = getWorldbookEntryName(entry);
+  if (/^\s*\[剧情]/.test(entryName)) return null;
+  const identityHaystack = [
+    entry.name,
+    entry.comment,
+    ...(Array.isArray(entry.key) ? entry.key : []),
+    ...(entry.extra && typeof entry.extra === 'object'
+      ? [
+          (entry.extra as Record<string, unknown>).name,
+          (entry.extra as Record<string, unknown>).姓名,
+        ]
+      : []),
+  ]
+    .map(value => String(value ?? '').toLowerCase())
+    .join('\n');
+
+  if (!/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return null;
+
+  return {
+    id: '泽村小百合',
+    name: '泽村小百合',
+    alias: '小百合 / 小百合太太 / 泽村夫人 / 英梨梨的妈妈 / 泽村伯母 / 小百合小姐',
+    affinity: defaultTarget.affinity,
+    obsession: 0,
+    stage: affinityStage(defaultTarget.affinity),
+    obsessionStage: defaultTarget.obsessionStage,
+    titles: {},
+    outfits: { ...defaultTarget.outfits },
+    meta: {
+      source: 'character-worldbook',
+      worldbookEntryUid: entry.uid,
+      worldbookEntryName: entryName,
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/sayuri_phone.jpg',
+      noObsessionAxis: true,
+      intimacyStatusMode: 'adult-married',
+    },
+  };
+}
+
 function parseTargetEntry(entry: WorldbookEntry): TargetStatus | null {
   // 中文注释：disable 不再当成硬关闭——用户会用它来停掉 SillyTavern 的关键词自动注入，
   // 但 TS 一侧仍然需要把角色档案读进 targets，scenePresence 才能命中并按场景注入完整 0 层卡。
@@ -425,7 +474,7 @@ function parseTargetEntry(entry: WorldbookEntry): TargetStatus | null {
     if (parsed) return parsed;
   }
 
-  return parseTextTarget(entry);
+  return parseTextTarget(entry) ?? parseKnownArchiveTarget(entry);
 }
 
 // 从世界书条目里识别"已知 0 层角色卡"，返回 relationship.ts 共用的角色键。
@@ -435,7 +484,7 @@ function getCharacterCardKey(entry: WorldbookEntry, target: TargetStatus | null)
     const fromTarget = getBuiltInTargetKeyFromIdentity(target);
     if (fromTarget) return fromTarget;
   }
-  const haystack = [
+  const identityHaystack = [
     entry.name,
     entry.comment,
     ...(Array.isArray(entry.key) ? entry.key : []),
@@ -443,13 +492,18 @@ function getCharacterCardKey(entry: WorldbookEntry, target: TargetStatus | null)
       ? [
           (entry.extra as Record<string, unknown>).name,
           (entry.extra as Record<string, unknown>).姓名,
-          (entry.extra as Record<string, unknown>).alias,
-          (entry.extra as Record<string, unknown>).别名,
         ]
       : []),
   ]
     .map(value => String(value ?? '').toLowerCase())
     .join('\n');
+  const aliasHaystack = entry.extra && typeof entry.extra === 'object'
+    ? [(entry.extra as Record<string, unknown>).alias, (entry.extra as Record<string, unknown>).别名]
+        .map(value => String(value ?? '').toLowerCase())
+        .join('\n')
+    : '';
+  const haystack = [identityHaystack, aliasHaystack].join('\n');
+  if (/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return 'sayuri';
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
   if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
@@ -464,7 +518,7 @@ function parseCharacterCard(entry: WorldbookEntry, target: TargetStatus | null):
   const content = String(entry.content ?? '').trim();
   if (!content) return null;
   const entryName = getWorldbookEntryName(entry);
-  const name = target?.name || normalizeBuiltInTargetName(entryName, entryName) || entryName;
+  const name = target?.name || normalizeBuiltInTargetName(entryName, '', entryName) || entryName;
   return {
     key,
     name,
@@ -476,7 +530,9 @@ function parseCharacterCard(entry: WorldbookEntry, target: TargetStatus | null):
 
 function getBuiltInTargetKeyFromIdentity(target: TargetStatus) {
   // 中文注释：修复旧存档串位时，只看 target 自身身份字段；不要看 worldbookEntryName，否则旧的错误来源会继续污染变量合并。
-  const haystack = [target.id, target.name, target.alias].map(value => String(value ?? '').toLowerCase()).join('\n');
+  const identityHaystack = [target.id, target.name].map(value => String(value ?? '').toLowerCase()).join('\n');
+  const haystack = [identityHaystack, target.alias].map(value => String(value ?? '').toLowerCase()).join('\n');
+  if (/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return 'sayuri';
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
   if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
@@ -488,6 +544,8 @@ function getBuiltInTargetKeyFromIdentity(target: TargetStatus) {
 function canReuseExistingTargetVariables(worldbookTarget: TargetStatus, existing: TargetStatus) {
   const worldbookKey = getBuiltInTargetKeyFromIdentity(worldbookTarget);
   const existingKey = getBuiltInTargetKeyFromIdentity(existing);
+  if (worldbookTarget.meta?.noObsessionAxis && existingKey && existingKey !== worldbookKey) return false;
+  if (existing.meta?.noObsessionAxis && worldbookKey && existingKey !== worldbookKey) return false;
   return !worldbookKey || !existingKey || worldbookKey === existingKey;
 }
 
@@ -668,10 +726,7 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
         : undefined) ??
       (worldbookKey ? existingByBuiltInKey.get(worldbookKey) : undefined);
     if (!existing) return worldbookTarget;
-
-    // 中文注释：只要通过任一匹配逻辑找到了 existing，就应该保留好感度/执念，
-    // 即使身份识别 key 不一致（可能是用户改了名字、世界书格式变化、或旧存档串位）。
-    // 删除原有的 canReuseExistingTargetVariables 检查，避免"匹配成功但身份冲突"时丢失进度。
+    if (!canReuseExistingTargetVariables(worldbookTarget, existing)) return worldbookTarget;
 
     return {
       ...worldbookTarget,

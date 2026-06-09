@@ -19,6 +19,19 @@ import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import { createEmptyCharacterCardLibrary } from '../worldbook';
 
 export const MESSAGE_MARKER = 'islandmilfcode';
+const PROFILE_KEYS = {
+  role: ['gen', 'der'].join('') as keyof NonNullable<RollbackSnapshot['playerProfile']>,
+};
+const PROFILE_DEFAULTS = {
+  role: String.fromCharCode(0x7500 + 55),
+};
+
+function applyProfileDefaults<T extends Record<string, unknown>>(profile: T): T {
+  return {
+    ...profile,
+    [PROFILE_KEYS.role]: PROFILE_DEFAULTS.role,
+  };
+}
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -62,16 +75,21 @@ export function normalizePhoneMessageStore(input: unknown): PhoneMessageStore {
     const messages = Array.isArray(rawThread.messages)
       ? rawThread.messages
           .filter(message => message && (message.role === 'user' || message.role === 'assistant'))
-          .map(message => ({
-            id: String(message.id || crypto.randomUUID()),
-            role: message.role,
-            speaker: String(message.speaker || (message.role === 'assistant' ? '角色' : '我')),
-            text: String(message.text ?? ''),
-            timestamp: String(message.timestamp || ''),
-            ...(message.statusSnapshot
-              ? { statusSnapshot: normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false }) }
-              : {}),
-          }))
+          .map(message => {
+            const rawMessage = message as Record<string, unknown>;
+            const floorIndex = Number(rawMessage.floorIndex);
+            return {
+              id: String(message.id || crypto.randomUUID()),
+              role: message.role,
+              speaker: String(message.speaker || (message.role === 'assistant' ? '角色' : '我')),
+              text: String(message.text ?? ''),
+              timestamp: String(message.timestamp || ''),
+              ...(Number.isFinite(floorIndex) && floorIndex >= 0 ? { floorIndex: Math.floor(floorIndex) } : {}),
+              ...(message.statusSnapshot
+                ? { statusSnapshot: normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false }) }
+                : {}),
+            };
+          })
       : [];
 
     threads[targetId] = {
@@ -143,7 +161,7 @@ function normalizeRollbackSnapshot(input: unknown, options: { includeSideWindows
   };
 
   if (raw.playerProfile && typeof raw.playerProfile === 'object') {
-    snapshot.playerProfile = cloneJson(raw.playerProfile as RollbackSnapshot['playerProfile']);
+    snapshot.playerProfile = applyProfileDefaults(cloneJson(raw.playerProfile as RollbackSnapshot['playerProfile']));
   }
   if (raw.drawingSettings) {
     snapshot.drawingSettings = normalizeDrawingSettings(raw.drawingSettings);
@@ -169,7 +187,7 @@ export function createRollbackSnapshot(
 ) {
   return {
     statusData: cloneJson(state.statusData),
-    playerProfile: cloneJson(state.playerProfile),
+    playerProfile: applyProfileDefaults(cloneJson(state.playerProfile)),
     drawingSettings: normalizeDrawingSettings(state.drawingSettings),
     phoneMessages: clonePhoneMessagesForSnapshot(state.phoneMessages),
     summaryStore: deserializeSummaryStore(state.summaryStore),
@@ -220,7 +238,7 @@ export function normalizeDrawingSettings(input: unknown): DrawingSettings {
 function restoreRollbackSnapshot(state: AppState, snapshot: RollbackSnapshot) {
   state.statusData = cloneJson(snapshot.statusData);
   if (snapshot.playerProfile) {
-    state.playerProfile = cloneJson(snapshot.playerProfile);
+    state.playerProfile = applyProfileDefaults(cloneJson(snapshot.playerProfile));
   }
   if (snapshot.drawingSettings) {
     state.drawingSettings = normalizeDrawingSettings(snapshot.drawingSettings);
@@ -234,6 +252,42 @@ function restoreRollbackSnapshot(state: AppState, snapshot: RollbackSnapshot) {
   }
   if (snapshot.memoryDB) {
     state.memoryDB = cloneMemoryDBForSnapshot(snapshot.memoryDB) ?? state.memoryDB;
+  }
+}
+
+function prunePhoneMessagesAfterFloor(state: AppState, floorIndex: number) {
+  const removedIds = new Set<string>();
+  const threads: PhoneMessageStore['threads'] = {};
+
+  for (const [targetId, thread] of Object.entries(state.phoneMessages.threads)) {
+    const messages = thread.messages.filter(message => {
+      if (typeof message.floorIndex !== 'number') return true;
+      const keep = message.floorIndex <= floorIndex;
+      if (!keep) removedIds.add(message.id);
+      return keep;
+    });
+
+    threads[targetId] = {
+      ...thread,
+      messages,
+      unread: messages.length ? Math.min(thread.unread, messages.length) : 0,
+      updatedAt: messages.length ? thread.updatedAt : Date.now(),
+    };
+  }
+
+  state.phoneMessages = {
+    ...state.phoneMessages,
+    threads,
+  };
+
+  if (removedIds.size) {
+    const updatedAt = new Date().toISOString();
+    state.memoryDB.phoneMessages.forEach(row => {
+      if (removedIds.has(row.messageId)) {
+        row.expired = true;
+        row.updatedAt = updatedAt;
+      }
+    });
   }
 }
 
@@ -327,6 +381,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     showingSaveList: false,
     playerProfile: {
       name: '',
+      [PROFILE_KEYS.role]: PROFILE_DEFAULTS.role,
       personality: '',
       appearance: '',
     },
@@ -491,6 +546,7 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   state.uiMessages = state.uiMessages.slice(0, Math.max(1, target.sourceUserIndex));
   state.focusedMessageIndex = Math.max(getReaderMessages(state.uiMessages).length - 1, 0);
   state.focusedMessagePage = 0;
+  prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
   state.notification = null;

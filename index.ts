@@ -47,6 +47,7 @@ import {
   getAutosaveBranchSaveId,
   importAllSavesFromJson,
   loadSave,
+  normalizePlayerProfile,
   setActiveRunId,
   setActiveSaveId,
   writeAutosave,
@@ -282,7 +283,13 @@ function commitDrawingSettingsToRuntimeFlags() {
   state.runtimeFlags.drawingSettings = JSON.parse(JSON.stringify(state.drawingSettings));
 }
 
+function syncRuntimeProfile() {
+  state.playerProfile = normalizePlayerProfile(state.playerProfile);
+  state.runtimeFlags.playerProfile = JSON.parse(JSON.stringify(state.playerProfile));
+}
+
 function buildGameState(statusData: StatusData = state.statusData): GameState {
+  syncRuntimeProfile();
   commitDrawingSettingsToRuntimeFlags();
   return {
     runId: state.activeRunId ?? crypto.randomUUID(),
@@ -430,15 +437,14 @@ function enterSave(saveId: string) {
   const msgs = deserializeMessages(save.payload.chatLog);
   replaceConversationMessages(state, msgs);
   state.statusData = save.payload.gameState.statusData;
-  state.playerProfile = (save.payload.gameState.runtimeFlags?.playerProfile as
-    | typeof state.playerProfile
-    | undefined) ?? {
-    name: save.meta.playerProfile?.name ?? save.meta.characterName ?? '',
-    gender: save.meta.playerProfile?.gender ?? '男',
-    personality: save.meta.playerProfile?.personality ?? save.meta.personality ?? '',
-    appearance: save.meta.playerProfile?.appearance ?? save.meta.appearance ?? '',
-    className: save.meta.playerProfile?.className ?? '2年A班',
-  };
+  state.playerProfile = normalizePlayerProfile(
+    (save.payload.gameState.runtimeFlags?.playerProfile as typeof state.playerProfile | undefined) ?? {
+      name: save.meta.playerProfile?.name ?? save.meta.characterName ?? '',
+      personality: save.meta.playerProfile?.personality ?? save.meta.personality ?? '',
+      appearance: save.meta.playerProfile?.appearance ?? save.meta.appearance ?? '',
+      className: save.meta.playerProfile?.className ?? '2年A班',
+    },
+  );
   state.runtimeFlags = JSON.parse(JSON.stringify(save.payload.gameState.runtimeFlags ?? {}));
   state.drawingSettings = normalizeDrawingSettings(state.runtimeFlags.drawingSettings);
   commitDrawingSettingsToRuntimeFlags();
@@ -1541,27 +1547,25 @@ function bindEvents() {
       root?.querySelectorAll<HTMLTextAreaElement>('.composer-input').forEach(other => {
         if (other !== event.target) other.value = state.draft;
       });
-      // 使用防抖渲染，避免输入时卡顿
-      scheduleRender();
     });
 
-    root?.querySelectorAll<HTMLTextAreaElement>('.phone-chat-input').forEach(textarea => {
-      textarea.addEventListener('input', event => {
-        state.phoneMessages.draft = (event.target as HTMLTextAreaElement).value;
-        scheduleRender();
-      });
-      textarea.addEventListener('keydown', event => {
-        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-          event.preventDefault();
-          const targetId = state.phoneMessages.activeThreadId;
-          if (targetId) void submitPhoneMessage(ctx, targetId);
-        }
-      });
-    });
     textarea.addEventListener('keydown', event => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault();
         void submitMessage(ctx);
+      }
+    });
+  });
+
+  root?.querySelectorAll<HTMLTextAreaElement>('.phone-chat-input').forEach(textarea => {
+    textarea.addEventListener('input', event => {
+      state.phoneMessages.draft = (event.target as HTMLTextAreaElement).value;
+    });
+    textarea.addEventListener('keydown', event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        const targetId = state.phoneMessages.activeThreadId;
+        if (targetId) void submitPhoneMessage(ctx, targetId);
       }
     });
   });
@@ -1641,7 +1645,6 @@ function bindEvents() {
   root?.querySelector<HTMLTextAreaElement>('[data-field="reader-edit-draft"]')?.addEventListener('input', event => {
     if (state.readerEditing) {
       state.readerEditing.draft = (event.target as HTMLTextAreaElement).value;
-      scheduleRender(); // 防抖渲染
     }
   });
 
@@ -1978,11 +1981,9 @@ function bindEvents() {
   });
   root?.querySelector<HTMLTextAreaElement>('[data-field="memory-edit-draft"]')?.addEventListener('input', event => {
     state.memoryEditor.editingDraft = (event.target as HTMLTextAreaElement).value;
-    scheduleRender();
   });
   root?.querySelector<HTMLTextAreaElement>('[data-field="memory-new-draft"]')?.addEventListener('input', event => {
     state.memoryEditor.creatingDraft = (event.target as HTMLTextAreaElement).value;
-    scheduleRender();
   });
 
   root?.querySelector<HTMLButtonElement>('[data-action="return-to-title"]')?.addEventListener('click', () => {
@@ -2168,32 +2169,47 @@ function bindEvents() {
   // 摘要编辑功能
   root?.querySelectorAll<HTMLButtonElement>('[data-action="summary-edit"]').forEach(button => {
     button.addEventListener('click', () => {
+      const card = button.closest<HTMLElement>('[data-summary-card]');
+      if (!card) return;
+      root?.querySelectorAll<HTMLElement>('[data-summary-card].is-editing').forEach(openCard => {
+        if (openCard !== card) openCard.classList.remove('is-editing');
+      });
+      card.classList.add('is-editing');
+      const field = card.querySelector<HTMLTextAreaElement>('[data-field="summary-edit-text"]');
+      if (!field) return;
+      requestAnimationFrame(() => {
+        field.focus();
+        field.setSelectionRange(field.value.length, field.value.length);
+      });
+    });
+  });
+
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="summary-cancel-edit"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const card = button.closest<HTMLElement>('[data-summary-card]');
+      const field = card?.querySelector<HTMLTextAreaElement>('[data-field="summary-edit-text"]');
+      const original = card?.querySelector<HTMLElement>('.summary-edit-card__text')?.textContent ?? '';
+      if (field) field.value = original;
+      card?.classList.remove('is-editing');
+    });
+  });
+
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="summary-save-edit"]').forEach(button => {
+    button.addEventListener('click', () => {
       const level = button.dataset.editLevel as 'global' | 'minor' | 'major';
       const index = button.dataset.editIndex ? parseInt(button.dataset.editIndex, 10) : -1;
+      const card = button.closest<HTMLElement>('[data-summary-card]');
+      const field = card?.querySelector<HTMLTextAreaElement>('[data-field="summary-edit-text"]');
+      const newText = field?.value.trim() ?? '';
 
-      let currentText = '';
       if (level === 'global') {
-        currentText = state.summaryStore.global || '';
+        state.summaryStore.global = newText || null;
       } else if (level === 'major' && index >= 0 && index < state.summaryStore.major.length) {
-        currentText = state.summaryStore.major[index].text;
+        state.summaryStore.major[index].text = newText;
       } else if (level === 'minor' && index >= 0 && index < state.summaryStore.minor.length) {
-        currentText = state.summaryStore.minor[index].text;
+        state.summaryStore.minor[index].text = newText;
       } else {
         return;
-      }
-
-      const newText = prompt(
-        `编辑${level === 'global' ? '全局摘要' : level === 'major' ? '大总结' : '小总结'}：`,
-        currentText,
-      );
-      if (newText === null) return; // 用户取消
-
-      if (level === 'global') {
-        state.summaryStore.global = newText.trim() || null;
-      } else if (level === 'major' && index >= 0) {
-        state.summaryStore.major[index].text = newText.trim();
-      } else if (level === 'minor' && index >= 0) {
-        state.summaryStore.minor[index].text = newText.trim();
       }
 
       persistToSave();
@@ -2315,6 +2331,7 @@ function renderImmediate() {
 
 function render() {
   if (!root) return;
+  syncRuntimeProfile();
   syncDrawingSettingsFromMountedControls();
   const readerBodyScroll = captureReaderBodyScroll();
   if (state.activeRunId) {

@@ -37,6 +37,9 @@ export function indexPhoneMessage(
             messageId: message.id,
             textPreview: message.text.slice(0, 200),
             time: message.timestamp,
+            ...(typeof message.floorIndex === 'number'
+              ? { sourceRange: [message.floorIndex, message.floorIndex] as [number, number] }
+              : {}),
           },
         ],
       },

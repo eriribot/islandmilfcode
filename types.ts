@@ -106,6 +106,8 @@ export type PhoneChatMessage = {
   speaker: string;
   text: string;
   timestamp: string;
+  /** 这条手机消息生成/发送时绑定的阅读器楼层，从 0 开始。 */
+  floorIndex?: number;
   statusSnapshot?: RollbackSnapshot;
 };
 

@@ -653,14 +653,31 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
       </div>`;
   }
 
+  const renderInlineEditor = (level: 'global' | 'major' | 'minor', index: number, text: string) => `
+    <div class="summary-inline-editor">
+      <textarea
+        class="summary-inline-editor__field"
+        data-field="summary-edit-text"
+        data-edit-level="${level}"
+        data-edit-index="${index}"
+        rows="4"
+      >${escapeHtml(text)}</textarea>
+      <div class="summary-inline-editor__actions">
+        <button class="summary-edit-btn summary-edit-btn--primary" data-action="summary-save-edit" data-edit-level="${level}" data-edit-index="${index}" ${summarizing ? 'disabled' : ''}>保存</button>
+        <button class="summary-edit-btn" data-action="summary-cancel-edit" type="button">取消</button>
+      </div>
+    </div>
+  `;
+
   const globalHtml = store.global
     ? `<div class="subsection">
         <div class="subsection-title">全局摘要</div>
-        <div class="chip-card">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-            <p style="flex:1;margin:0">${escapeHtml(store.global)}</p>
-            <button class="mini-btn" data-action="summary-edit" data-edit-level="global" style="font-size:10px;padding:2px 6px;flex-shrink:0" ${summarizing ? 'disabled' : ''}>✏️</button>
+        <div class="chip-card summary-edit-card" data-summary-card>
+          <div class="summary-edit-card__body">
+            <p class="summary-edit-card__text">${escapeHtml(store.global)}</p>
+            <button class="mini-btn summary-edit-card__icon" data-action="summary-edit" data-edit-level="global" ${summarizing ? 'disabled' : ''}>✏️</button>
           </div>
+          ${renderInlineEditor('global', -1, store.global)}
         </div>
       </div>`
     : '';
@@ -671,15 +688,16 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
         <div class="chip-list">${store.major
           .map((e, i) => {
             const [uiStart, uiEnd] = mapConversationRangeToUiRange(uiMessages, e.range);
-            return `<div class="chip-card" style="border-left:3px solid var(--accent-primary,#7c6ca8)">
-                <div style="display:flex;justify-content:space-between;align-items:center">
+            return `<div class="chip-card summary-edit-card" data-summary-card style="border-left:3px solid var(--accent-primary,#7c6ca8)">
+                <div class="summary-edit-card__header">
                   <strong>#${i + 1} · 楼层 ${uiStart}-${uiEnd}</strong>
-                  <div style="display:flex;gap:4px">
-                    <button class="mini-btn" data-action="summary-edit" data-edit-level="major" data-edit-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>✏️</button>
-                    <button class="mini-btn" data-action="summary-reroll" data-reroll-level="major" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>🎲</button>
+                  <div class="summary-edit-card__tools">
+                    <button class="mini-btn summary-edit-card__icon" data-action="summary-edit" data-edit-level="major" data-edit-index="${i}" ${summarizing ? 'disabled' : ''}>✏️</button>
+                    <button class="mini-btn summary-edit-card__icon" data-action="summary-reroll" data-reroll-level="major" data-reroll-index="${i}" ${summarizing ? 'disabled' : ''}>🎲</button>
                   </div>
                 </div>
-                <p>${escapeHtml(e.text)}</p>
+                <p class="summary-edit-card__text">${escapeHtml(e.text)}</p>
+                ${renderInlineEditor('major', i, e.text)}
                 <div style="font-size:10px;opacity:0.45;margin-top:4px">${escapeHtml(e.createdAt.slice(0, 16).replace('T', ' '))}</div>
               </div>`;
           })
@@ -694,15 +712,16 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
         <div class="chip-list">${store.minor
           .map((e, i) => {
             const [uiStart, uiEnd] = mapConversationRangeToUiRange(uiMessages, e.range);
-            return `<div class="chip-card">
-                <div style="display:flex;justify-content:space-between;align-items:center">
+            return `<div class="chip-card summary-edit-card" data-summary-card>
+                <div class="summary-edit-card__header">
                   <strong>#${i + 1} · 楼层 ${uiStart}-${uiEnd}</strong>
-                  <div style="display:flex;gap:4px">
-                    <button class="mini-btn" data-action="summary-edit" data-edit-level="minor" data-edit-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>✏️</button>
-                    <button class="mini-btn" data-action="summary-reroll" data-reroll-level="minor" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>🎲</button>
+                  <div class="summary-edit-card__tools">
+                    <button class="mini-btn summary-edit-card__icon" data-action="summary-edit" data-edit-level="minor" data-edit-index="${i}" ${summarizing ? 'disabled' : ''}>✏️</button>
+                    <button class="mini-btn summary-edit-card__icon" data-action="summary-reroll" data-reroll-level="minor" data-reroll-index="${i}" ${summarizing ? 'disabled' : ''}>🎲</button>
                   </div>
                 </div>
-                <p>${escapeHtml(e.text)}</p>
+                <p class="summary-edit-card__text">${escapeHtml(e.text)}</p>
+                ${renderInlineEditor('minor', i, e.text)}
                 <div style="font-size:10px;opacity:0.45;margin-top:4px">${escapeHtml(e.createdAt.slice(0, 16).replace('T', ' '))}</div>
               </div>`;
           })

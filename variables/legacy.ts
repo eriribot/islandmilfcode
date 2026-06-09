@@ -17,8 +17,10 @@ function normalizeTargetMeta(rawMeta: unknown): Record<string, unknown> | undefi
   return meta;
 }
 
-function getBuiltInTargetKeyFromValues(...values: unknown[]) {
-  const haystack = values.map(value => String(value ?? '').toLowerCase()).join('\n');
+function getBuiltInTargetKeyFromValues(id: unknown, name: unknown, alias: unknown, worldbookEntryName: unknown) {
+  const identityHaystack = [id, name, worldbookEntryName].map(value => String(value ?? '').toLowerCase()).join('\n');
+  const haystack = [identityHaystack, alias].map(value => String(value ?? '').toLowerCase()).join('\n');
+  if (/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return 'sayuri';
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
   if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';

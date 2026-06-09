@@ -5,6 +5,7 @@ import {
   buildPrompt,
   extractPhoneChatReply,
   extractTaggedReply,
+  getReaderMessages,
   getPromptMessageText,
   type ProgressUpdate,
   getVisibleMessageText,
@@ -784,6 +785,10 @@ function applyVirginityFlags(ctx: ActionContext, update: ProgressUpdate) {
       continue;
     }
     target.meta ??= {};
+    if (target.meta.intimacyStatusMode === 'adult-married') {
+      console.warn('[progress] drop virginity flag for adult-married target:', flag.target);
+      continue;
+    }
     // 单向闩锁：一旦置为 lost 就不可前向复位；只有回滚快照（整体替换 statusData）能恢复。
     if (target.meta.virginity === 'lost') continue;
     target.meta.virginity = 'lost';
@@ -814,6 +819,14 @@ function applyIntimacyCounters(ctx: ActionContext, update: ProgressUpdate) {
   return changed;
 }
 
+function filterAdultMarriedVirginityFlags(ctx: ActionContext, update: ProgressUpdate): ProgressUpdate {
+  const virginityFlags = update.virginityFlags.filter(flag => {
+    const target = findProgressTarget(ctx, flag.target);
+    return target?.meta?.intimacyStatusMode !== 'adult-married';
+  });
+  return virginityFlags.length === update.virginityFlags.length ? update : { ...update, virginityFlags };
+}
+
 function applyFullProgressUpdate(
   ctx: ActionContext,
   update: ProgressUpdate | null,
@@ -833,7 +846,7 @@ function applyFullProgressUpdate(
   const countersChanged = applyIntimacyCounters(ctx, contextualized);
   const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, contextualized);
   ctx.adapter.save(ctx.state.statusData);
-  commitProgressToMemoryDB(ctx.memoryDB, contextualized);
+  commitProgressToMemoryDB(ctx.memoryDB, filterAdultMarriedVirginityFlags(ctx, contextualized));
   return targetedAffinityChanged || targetedObsessionChanged || virginityChanged || countersChanged || statsChanged || true;
 }
 
@@ -1173,6 +1186,13 @@ function stripDirectiveQuotes(text: string) {
     .trim();
 }
 
+function isSayuriSearchTarget(target: TargetStatus) {
+  const identityHaystack = [target.id, target.name, target.meta?.worldbookEntryName]
+    .map(value => String(value ?? '').toLowerCase())
+    .join('\n');
+  return /泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack);
+}
+
 function getPhoneTargetSearchTerms(target: TargetStatus) {
   const baseTerms = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
     .map(value => String(value ?? '').trim())
@@ -1180,7 +1200,21 @@ function getPhoneTargetSearchTerms(target: TargetStatus) {
   const haystack = baseTerms.join('\n').toLowerCase();
   const builtInTerms: string[] = [];
 
-  if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) {
+  if (isSayuriSearchTarget(target)) {
+    builtInTerms.push(
+      '泽村小百合',
+      '澤村小百合',
+      '小百合',
+      '小百合太太',
+      '泽村夫人',
+      '澤村夫人',
+      '英梨梨的妈妈',
+      '英梨梨的母亲',
+      '泽村伯母',
+      '小百合小姐',
+      'sayuri',
+    );
+  } else if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) {
     builtInTerms.push('英梨梨', '泽村', '澤村', 'eriri', 'sawamura');
   }
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) {
@@ -1869,6 +1903,11 @@ function getPhoneProactiveState(ctx: ActionContext): PhoneProactiveState {
   return next;
 }
 
+function getCurrentReaderFloorIndex(ctx: ActionContext) {
+  const readerMessages = getReaderMessages(ctx.state.uiMessages);
+  return clamp(ctx.state.focusedMessageIndex, 0, Math.max(readerMessages.length - 1, 0));
+}
+
 function appendAssistantPhoneMessage(
   ctx: ActionContext,
   target: TargetStatus,
@@ -1883,6 +1922,7 @@ function appendAssistantPhoneMessage(
     speaker: target.alias ?? target.name,
     text,
     timestamp: formatTime(state.statusData.world.currentTime),
+    floorIndex: getCurrentReaderFloorIndex(ctx),
     statusSnapshot: createRollbackSnapshot(state),
   };
 
@@ -1918,6 +1958,7 @@ function appendUserPhoneMessage(
     speaker: state.playerProfile.name.trim() || '我',
     text,
     timestamp: formatTime(state.statusData.world.currentTime),
+    floorIndex: getCurrentReaderFloorIndex(ctx),
     statusSnapshot: createRollbackSnapshot(state),
   };
 
@@ -2104,6 +2145,7 @@ async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: Phon
     speaker: state.playerProfile.name.trim() || '我',
     text: userInput,
     timestamp: now,
+    floorIndex: getCurrentReaderFloorIndex(ctx),
     statusSnapshot: createRollbackSnapshot(state),
   };
 
@@ -2168,6 +2210,7 @@ async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: Phon
       speaker: target.alias ?? target.name,
       text: replyText,
       timestamp: formatTime(state.statusData.world.currentTime),
+      floorIndex: getCurrentReaderFloorIndex(ctx),
     };
 
     thread.messages = [...thread.messages, assistantMessage];
@@ -2231,6 +2274,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
     speaker: state.playerProfile.name.trim() || '我',
     text: userInput,
     timestamp: now,
+    floorIndex: getCurrentReaderFloorIndex(ctx),
     statusSnapshot: createRollbackSnapshot(state),
   };
 
@@ -2297,6 +2341,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
       speaker: target.alias ?? target.name,
       text: replyText,
       timestamp: formatTime(state.statusData.world.currentTime),
+      floorIndex: getCurrentReaderFloorIndex(ctx),
     };
 
     thread.messages = [...thread.messages, assistantMessage];

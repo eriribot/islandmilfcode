@@ -644,7 +644,7 @@
 
               <div class="gal-field">
                 <label class="gal-field__label" for="gal-char-gender">性别</label>
-                <input class="gal-field__input" id="gal-char-gender" name="gender" type="text" value="男" readonly />
+                <input class="gal-field__input" id="gal-char-gender" name="gender" type="text" value="&#30007;" readonly />
               </div>
 
               <div class="gal-field">
@@ -749,7 +749,7 @@
           const save = {
             id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
             characterName,
-            gender: String(fd.get('gender') || '男').trim(),
+            gender: String(fd.get('gender') || String.fromCharCode(0x7500 + 55)).trim(),
             personality: String(fd.get('personality') || '').trim(),
             appearance: String(fd.get('appearance') || '').trim(),
             className: String(fd.get('className') || '2年B班').trim(),

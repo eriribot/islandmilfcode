@@ -204,17 +204,20 @@ function getTargetAvatarUrl(target: TargetStatus | null) {
 
 function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
   // 中文注释：兼容世界书里常见的中日文、笔名和罗马音写法，避免手机档案误显示“未载入变量”。
-  const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
+  const identityHaystack = [target.id, target.name, target.meta?.worldbookEntryName]
+    .map(value => String(value ?? '').toLowerCase())
+    .join('\n');
+  const isSayuriIdentity = /泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack);
+  const haystack = [identityHaystack, target.alias]
     .map(value => String(value ?? '').toLowerCase())
     .join('\n');
 
-  if (archive.id === 'eriri')
-    return !/小百合|sayuri/.test(haystack) && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
+  if (archive.id === 'eriri') return !isSayuriIdentity && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
   if (archive.id === 'megumi') return /加藤|惠|恵|megumi|katou|kato/.test(haystack);
   if (archive.id === 'utaha') return /霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack);
   if (archive.id === 'izumi') return /波岛|波島|出海|izumi|hashima/.test(haystack);
   if (archive.id === 'michiru') return /冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack);
-  if (archive.id === 'sayuri') return /泽村小百合|澤村小百合|小百合|sayuri/.test(haystack);
+  if (archive.id === 'sayuri') return isSayuriIdentity;
   return false;
 }
 
@@ -232,7 +235,7 @@ function resolveArchive(characterId: PhoneCharacterId, targets: TargetStatus[]):
   const archive = getArchive(characterId);
   const target = getTargetForArchive(characterId, targets);
   const affinity = clampPercent(target?.affinity ?? 0);
-  const usesObsessionAxis = archive.usesObsessionAxis !== false;
+  const usesObsessionAxis = archive.usesObsessionAxis !== false && target?.meta?.noObsessionAxis !== true;
   const obsession = usesObsessionAxis ? clampPercent(target?.obsession ?? 0) : 0;
   const stage = target?.stage || affinityStage(affinity);
   const obsStage = usesObsessionAxis ? target?.obsessionStage || obsessionStage(obsession) : '';
@@ -316,6 +319,10 @@ function readVirginity(target: TargetStatus | null): 'intact' | 'lost' {
   return target?.meta?.virginity === 'lost' ? 'lost' : 'intact';
 }
 
+function isAdultMarriedIntimacyTarget(target: TargetStatus | null) {
+  return target?.meta?.intimacyStatusMode === 'adult-married';
+}
+
 /** 从 target.meta 读取亲密接触计数器，按常见字段顺序排列，自定义字段追加在后；废弃字段（经验人数）一律剔除。 */
 function readBodyCounters(target: TargetStatus | null): Array<{ field: string; value: number }> {
   const raw = target?.meta?.bodyCounters;
@@ -383,18 +390,29 @@ function renderImpressionChips(memoryDB: IslandMemoryDB | null | undefined, targ
   `;
 }
 
-/** 渲染亲密状态区：关系印章徽章 + 亲密接触计数器网格。只要 target 已载入就显示（哪怕全 0/完璧）。 */
+/** 渲染亲密状态区：关系印章徽章 + 亲密接触计数器网格。只要 target 已载入就显示。 */
 function renderSexStatusSection(target: TargetStatus | null): string {
   if (!target) return '';
+  const adultMarried = isAdultMarriedIntimacyTarget(target);
   const virginity = readVirginity(target);
   const counters = readBodyCounters(target);
+  const hasAdultIntimacy = adultMarried && counters.length > 0;
 
   // 设计意图：这是“依恋感”刻度，不是征服式战绩。已结缘=已与玩家确立亲密关系，措辞克制、暖色，不用“征服”这类词。
-  const bonded = virginity === 'lost';
+  const bonded = !adultMarried && virginity === 'lost';
+  const sealMark = adultMarried ? (hasAdultIntimacy ? '背德' : '已婚') : bonded ? '结缘' : '完璧';
+  const sealCaption = adultMarried
+    ? hasAdultIntimacy
+      ? '已发生关系 / 背德线'
+      : '婚姻存续 / 尚未越界'
+    : bonded
+      ? '已确立亲密关系'
+      : '尚未逾矩';
+  const headerStatus = adultMarried ? (hasAdultIntimacy ? '背德关系' : '既婚') : bonded ? '已结缘' : '完璧';
   const badge = `
-    <div class="archive-seal ${bonded ? 'is-bonded' : ''}" aria-label="${bonded ? '已结缘' : '完璧'}">
-      <span class="archive-seal__mark">${bonded ? '结缘' : '完璧'}</span>
-      <span class="archive-seal__caption">${bonded ? '已确立亲密关系' : '尚未逾矩'}</span>
+    <div class="archive-seal ${bonded || adultMarried ? 'is-bonded' : ''}" aria-label="${escapeHtml(headerStatus)}">
+      <span class="archive-seal__mark">${escapeHtml(sealMark)}</span>
+      <span class="archive-seal__caption">${escapeHtml(sealCaption)}</span>
     </div>
   `;
 
@@ -405,12 +423,18 @@ function renderSexStatusSection(target: TargetStatus | null): string {
     ...counters.filter(c => !COUNTER_FIELD_ORDER.includes(c.field)),
   ];
 
-  // 依恋值：从上面已剔除废弃字段的 counters + 结缘闩锁派生，单一真相源，无需单独存储。
+  // 依恋值：五小只从 counters + 结缘闩锁派生；成人已婚角色不使用贞操闩锁，只看玩家互动计数。
   const attachment = attachmentValue(Object.fromEntries(counters.map(c => [c.field, c.value])), bonded);
+  const attachmentLabel = adultMarried ? '亲近值' : '依恋值';
+  const attachmentCaption = adultMarried
+    ? hasAdultIntimacy
+      ? '背德关系已成立'
+      : '尚未越界'
+    : attachmentStage(attachment);
   const attachmentBar = `
     <div class="archive-attachment" data-attach-level="${attachment >= 75 ? 'deep' : attachment >= 25 ? 'mid' : 'early'}">
       <div class="archive-attachment__meta">
-        <span><strong>依恋值</strong><em>${escapeHtml(attachmentStage(attachment))}</em></span>
+        <span><strong>${escapeHtml(attachmentLabel)}</strong><em>${escapeHtml(attachmentCaption)}</em></span>
         <b>${attachment}</b>
       </div>
       <div class="archive-bar" style="--value:${attachment}%">
@@ -438,7 +462,7 @@ function renderSexStatusSection(target: TargetStatus | null): string {
     <section class="archive-panel archive-sexstatus">
       <div class="archive-panel__head">
         <span>亲密档案</span>
-        <span>${bonded ? '已结缘' : '完璧'}</span>
+        <span>${escapeHtml(headerStatus)}</span>
       </div>
       <div class="archive-sexstatus__body">
         ${badge}

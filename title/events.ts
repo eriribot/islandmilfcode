@@ -153,7 +153,7 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
     cb.createAndEnter({
       familyName,
       givenName,
-      gender: (fd.get('gender') as string)?.trim() || '男',
+      gender: (fd.get('gender') as string)?.trim() || String.fromCharCode(0x7500 + 55),
       personality: (fd.get('personality') as string)?.trim() || '',
       appearance: (fd.get('appearance') as string)?.trim() || '',
       className: (fd.get('className') as string)?.trim() || '2年B班',

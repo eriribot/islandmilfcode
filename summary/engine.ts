@@ -75,10 +75,15 @@ function renderFactAnchor(anchor: FactAnchor | null | undefined): string {
     `- 角色执念度（对伦也旧线）：${obsessions}`,
   ];
 
-  // 性状态：始终显示当前对象的贞操和计数器，让 AI 能发现旧档数据缺失并补正。
+  // 性状态：少女档案显示贞操闩锁；成人已婚档案只显示边界模式和计数器。
   if (anchor.sexStatus) {
     const s = anchor.sexStatus;
-    lines.push(`- ${s.name} 贞操状态：${s.virginity === 'lost' ? '已失去（不可逆，禁止改写回完璧/处女）' : '完璧'}`);
+    if (s.mode === 'adult-married') {
+      const status = s.counters.length ? '背德关系已成立（已发生关系）' : '既婚边界（尚未越界）';
+      lines.push(`- ${s.name} 亲密状态：${status}（不使用贞操/完璧闩锁，禁止输出贞操字段）`);
+    } else {
+      lines.push(`- ${s.name} 贞操状态：${s.virginity === 'lost' ? '已失去（不可逆，禁止改写回完璧/处女）' : '完璧'}`);
+    }
     if (s.counters.length) {
       const countersText = s.counters.map(c => `${c.field}${c.value}`).join(' / ');
       lines.push(`- ${s.name} 身体开发记录（硬统计，仅供前后一致，禁止主动提及、强调或据此渲染）：${countersText}`);

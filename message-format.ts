@@ -383,7 +383,9 @@ const SUMMARY_KEEP_RECENT = 6;
 function buildConversationHistory(uiMessages: UiMessage[], startIndex = 0) {
   const historyLines = uiMessages
     .slice(startIndex)
-    .filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
+    // 中文注释：主 API 的历史窗口只保留已经生成的正文。历史 user 输入不是当前指令，
+    // 且有效行动应已被上一轮 assistant 正文吸收；继续注入会污染当前楼层判断。
+    .filter(message => !message.streaming && message.role === 'assistant')
     .map(message => {
       const visibleText = getPromptMessageText(message).trim();
       if (!visibleText) return '';
@@ -396,7 +398,7 @@ function buildConversationHistory(uiMessages: UiMessage[], startIndex = 0) {
     return '';
   }
 
-  return ['Conversation history:', ...historyLines].join('\n\n');
+  return ['历史正文记录（仅供场景连续性参考；不包含历史玩家输入，当前玩家输入见下方独立字段）：', ...historyLines].join('\n\n');
 }
 
 function buildPhoneChatHistory(messages: PhoneChatMessage[]) {
@@ -739,13 +741,16 @@ function buildTargetStateList(statusData: StatusData) {
       const updateKeys = hasObsessionAxis(target)
         ? `好感度.${target.name}:±N / 执念度.${target.name}:±N`
         : `好感度.${target.name}:±N`;
-      // 亲密档案摘要：贞操 + 非零计数器，让 AI 能看到当前追踪状态并在不一致时补写。
+      // 亲密档案摘要：默认使用贞操闩锁；小百合是既婚人妻专例，不显示/补写“完璧”语义。
+      const adultMarriedIntimacy = target.meta?.intimacyStatusMode === 'adult-married';
       const virginity = target.meta?.virginity === 'lost' ? '已失去' : '完璧';
       const rawCounters = target.meta?.bodyCounters as Record<string, number> | undefined;
       const counterEntries = rawCounters
         ? Object.entries(rawCounters).filter(([, v]) => Number(v) > 0).map(([k, v]) => `${k}${v}`).join('/')
         : '';
-      const sexSegment = `；贞操=${virginity}${counterEntries ? `；计数=${counterEntries}` : ''}`;
+      const sexSegment = adultMarriedIntimacy
+        ? `；亲密轴=${counterEntries ? '小百合背德关系已成立（已发生关系）' : '小百合既婚边界（尚未越界）'}（不使用贞操/完璧闩锁，不输出贞操字段）${counterEntries ? `；计数=${counterEntries}` : ''}`
+        : `；贞操=${virginity}${counterEntries ? `；计数=${counterEntries}` : ''}`;
       return `- id=${target.id}；姓名=${target.name}${aliases ? `；别名/线索=${aliases}` : ''}${classSegment}；好感度（对 user）=${target.affinity}（${target.stage}）${obsessionSegment}${sexSegment}；更新键=${updateKeys}`;
     })
     .join('\n');
@@ -1071,7 +1076,7 @@ export function buildPrompt(
   );
   const recentSceneContext = uiMessages
     .slice(-4)
-    .filter(message => message.role === 'user' || message.role === 'assistant')
+    .filter(message => message.role === 'assistant')
     .map(message => getPromptMessageText(message))
     .filter(Boolean)
     .join('\n');
@@ -1259,6 +1264,12 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
     `长场景结束后必须评估好感度；若本轮触发伦也/旧线/创作伤口，也要评估执念度（仅限 ${OBSESSION_TARGET_DISPLAY_NAMES}，名单外角色禁止输出执念度字段）。多人场景中，所有在场并明确对 User 有反应的角色都要分别评估好感度。`,
     '普通友好互动通常 +1；明显关心、理解、协助、保护通常 +2 到 +4；冒犯、越界、揭短、冷落通常 -1 到 -6。只有角色不在场、完全无互动、或关系没有变化时才省略该角色好感度。',
     `执念度专指角色对伦也这条旧线的牵引强度；只对 ${OBSESSION_TARGET_DISPLAY_NAMES} 五人有效，不要把它当成对 User 的关系温度。其他在场角色（红坂朱音、丸户、伦也本人或任何 NPC）一律不输出执念度字段。`,
+    '亲密/背德轴判断规则：',
+    '  默认角色使用“贞操”闩锁：只有角色列表显示“贞操=完璧”时，才允许在明确发生破除后输出 贞操.角色名:已失去。',
+    '  泽村小百合是特殊的既婚人妻档案，不使用“贞操/完璧/处女”语义，也不输出贞操字段。',
+    '  泽村小百合若正文明确发生亲密行为，只输出对应 X次数.泽村小百合:+N；系统会根据计数自动派生“背德关系已成立（已发生关系）”。',
+    // '  红坂朱音、町田苑子以后即使作为成人角色加入，也不要默认套用小百合规则；是否使用贞操闩锁由角色列表里的亲密轴状态决定。',
+    '  不要输出“背德.角色名”“关系.角色名:背德”这类未定义字段；背德状态由小百合的亲密计数派生。',
     '可用字段：',
     '  时间:YYYY-MM-DD HH:mm   — 仅当正文确实描写了时间流逝（进入次日/深夜，或明确跨过一个时段）时才输出，必须完整 YYYY-MM-DD HH:mm。正文未真正推进时间时整行省略；禁止使用 `4月16日`、`2012-04-16`（缺 HH:mm）、`明天` 这种非完整格式，也禁止仅凭玩家输入里的时间词就自行补一个新时间。',
     '  地点:新地点            — 角色实际移动到新地点时更新',
@@ -1271,8 +1282,8 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
     target
       ? `  着装.部位:描述          — 更新当前明确对象 ${target.name} 的某个部位着装（例：着装.上装:换上了黑色卫衣）`
       : '  着装.部位:描述          — 主场景禁用旧单目标着装格式；没有明确对象时不要输出',
-    '  贞操.角色名:已失去       — 仅当正文明确发生破除时输出；只看是否真的发生，单向不可逆，禁止写回"完璧/处女"。若上方角色列表显示"完璧"但聊天记录/摘要中已明确发生过性行为，本轮必须补写贞操标记和对应次数以修正数据。',
-    '  X次数.角色名:+N          — 亲密接触硬统计（X=接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数）；正文明确发生时累加，或当角色列表计数与已知事实不符时一次性补正。不统计经验人数/伴侣数。',
+    '  贞操.角色名:已失去       — 仅适用于角色列表显示“贞操=完璧”的角色；泽村小百合禁用此字段；正文明确发生破除时输出，单向不可逆，禁止写回"完璧/处女"。',
+    '  X次数.角色名:+N          — 亲密接触硬统计（X=接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数）；正文明确发生时累加。泽村小百合发生关系时也只写此字段，由系统派生背德关系；不统计经验人数/伴侣数。',
     '  当前事件:事件ID          — 当有事件进行中时，每轮都必须输出该字段（例：当前事件:SAE_01-2）；事件结束时才输出 当前事件:无 清空',
     '  主线事件.事件ID:状态     — 更新主线事件状态（未触发/进行中/已结束/跳过/延后）',
     '  事件名:事件描述         — 添加或替换近期重要事件，可有多条',
@@ -1325,8 +1336,8 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
     `好感度.角色名:±N（必须从下方“可更新角色”的更新键复制角色名；例如 ${affinityExamples}）`,
     `执念度.角色名:±N（例：${obsessionExamples}）`,
     '五维.能力名:±N',
-    '贞操.角色名:已失去（仅正文明确发生破除时，或角色列表显示完璧但已知事实不符时补写；单向不可逆，不写复位）',
-    'X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/性交次数/足交次数；正文明确发生时累加，或计数与已知事实不符时一次性补正；不统计经验人数）',
+    '贞操.角色名:已失去（仅适用于角色列表显示“贞操=完璧”的角色；泽村小百合禁用此字段）',
+    'X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/性交次数/足交次数；正文明确发生时累加。泽村小百合发生关系时也只写此字段，由系统派生背德关系；不统计经验人数）',
     '主线事件.事件ID:状态',
     '当前事件:事件ID',
     '</state_delta>',
@@ -1409,6 +1420,12 @@ export function buildProgressPrompt(
         '  动态门槛：旧情度 >= 70 时变化幅度可以更鲜明；< 30 时已是稳定关系，不要频繁微调；< 10 时除非伦也强行介入，否则保持不变。',
         '  数值幅度：日常 ±1~2、明确事件 ±3~5、重大冲击 ±6~8。',
         '  好感度与执念度可以同时变化，且不要求同向，但禁止无脑同步 ±1。',
+        '亲密/背德轴判断规则：',
+        '  默认角色使用“贞操”闩锁：只有角色列表显示“贞操=完璧”时，才允许在明确发生破除后输出 贞操.角色名:已失去。',
+        '  泽村小百合是特殊的既婚人妻档案，不使用“贞操/完璧/处女”语义，也不输出贞操字段。',
+        '  泽村小百合若正文明确发生亲密行为，只输出对应 X次数.泽村小百合:+N；系统会根据计数自动派生“背德关系已成立（已发生关系）”。',
+        // '  红坂朱音、町田苑子以后即使作为成人角色加入，也不要默认套用小百合规则；是否使用贞操闩锁由角色列表里的亲密轴状态决定。',
+        '  不要输出“背德.角色名”“关系.角色名:背德”这类未定义字段；背德状态由小百合的亲密计数派生。',
         timeIntentNote ? `\n时间推进提醒：${timeIntentNote}` : '',
         '',
         '请用 <progress> 标签输出变化的字段，每行一个 key:value。如果没有任何变化，输出空的 <progress></progress>。',
@@ -1420,8 +1437,8 @@ export function buildProgressPrompt(
         `  执念度.角色名或id:±N（多人场景必须显式指定角色；例如 ${obsessionExamples}）`,
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
         '  着装.部位:描述（主场景禁用旧单目标着装格式；没有明确对象时不要输出）',
-        '  贞操.角色名:已失去（正文明确发生破除时，或角色列表显示完璧但已知事实不符时补写；单向不可逆）',
-        '  X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/性交次数/足交次数；正文明确发生时累加，或计数与已知事实不符时补正；不统计经验人数）',
+        '  贞操.角色名:已失去（仅适用于角色列表显示“贞操=完璧”的角色；泽村小百合禁用此字段）',
+        '  X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/性交次数/足交次数；正文明确发生时累加。泽村小百合发生关系时也只写此字段，由系统派生背德关系；不统计经验人数）',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
         '  主线事件.事件ID:状态（未触发/进行中/已结束）',
         '  ※ 正在进行的当前事件在事件日期/持续至当天通常必须保持进行中；只有当前日期已经晚于该事件日期窗口，或当前剧情卡的可接续事件已被路由解锁并可在当前日期激活时，才允许写 主线事件.事件ID:已结束 并同轮写 当前事件:无。否则省略主线事件字段。',

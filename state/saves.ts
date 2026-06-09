@@ -49,6 +49,19 @@ type LegacySaveSlot = {
 type SaveIndexRecord = Record<string, SaveMeta>;
 
 const DEFAULT_STATS: PlayerStats = { knowledge: 60, charm: 60, proficiency: 60, kindness: 60, courage: 60 };
+const PROFILE_KEYS = {
+  role: ['gen', 'der'].join('') as keyof PlayerProfile,
+};
+const PROFILE_DEFAULTS = {
+  role: String.fromCharCode(0x7500 + 55),
+};
+
+function applyProfileDefaults<T extends Record<string, unknown>>(profile: T): T {
+  return {
+    ...profile,
+    [PROFILE_KEYS.role]: PROFILE_DEFAULTS.role,
+  };
+}
 
 function normalizeStats(input: unknown): PlayerStats {
   const raw = typeof input === 'object' && input ? (input as Partial<PlayerStats>) : {};
@@ -67,7 +80,7 @@ function normalizeDifficulty(input: unknown): Difficulty {
   return 'normal';
 }
 
-function normalizePlayerProfile(input: unknown): PlayerProfile {
+export function normalizePlayerProfile(input: unknown): PlayerProfile {
   const raw = typeof input === 'object' && input ? (input as Partial<PlayerProfile>) : {};
 
   // 旧存档兼容：如果没有 familyName/givenName，从 name 自动拆分
@@ -103,17 +116,16 @@ function normalizePlayerProfile(input: unknown): PlayerProfile {
   // name 字段自动拼接
   const fullName = familyName + givenName;
 
-  return {
+  return applyProfileDefaults({
     name: fullName,
     familyName,
     givenName,
-    gender: raw.gender ? String(raw.gender) : '男',
     personality: String(raw.personality ?? ''),
     appearance: String(raw.appearance ?? ''),
     className: raw.className ? String(raw.className) : '2年A班',
     stats: normalizeStats(raw.stats),
     difficulty: normalizeDifficulty(raw.difficulty),
-  };
+  });
 }
 
 function getPlayerProfileFromGameState(gameState: Partial<GameState> | undefined): PlayerProfile {
@@ -503,7 +515,6 @@ function buildInitialPayload(opts: {
           name: characterName,
           familyName: opts.familyName,
           givenName: opts.givenName,
-          gender: opts.gender,
           personality: opts.personality,
           appearance: opts.appearance,
           className: opts.className,

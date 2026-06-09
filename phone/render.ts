@@ -1,5 +1,14 @@
 import { escapeHtml } from '../html';
-import type { AppState, NotificationState, PhoneChatThread, PlotEventCard, StatusData, TargetStatus } from '../types';
+import { getReaderMessages } from '../message-format';
+import type {
+  AppState,
+  NotificationState,
+  PhoneChatThread,
+  PhoneMessageStore,
+  PlotEventCard,
+  StatusData,
+  TargetStatus,
+} from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
 import { renderCharacterArchivePanel } from './archive';
 import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './types';
@@ -59,7 +68,7 @@ function getPhoneCharacterTheme(characterId: PhoneCharacterId) {
     return {
       label: '泽村小百合',
       avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/sayuri_phone.jpg',
-      wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/sayuri_phone.jpg',
+      wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_sayuri.png',
       bgmUrl: '',
     };
   }
@@ -93,6 +102,34 @@ function renderPhoneNotification(notification: NotificationState | null) {
 
 function renderFloatingPhoneStyle(position: FloatingPhonePosition) {
   return `left:${position.x}px;top:${position.y}px;`;
+}
+
+function getRenderedPhoneMessageStore(state: AppState): PhoneMessageStore {
+  const readerMessages = getReaderMessages(state.uiMessages);
+  const latestFloorIndex = Math.max(readerMessages.length - 1, 0);
+  const focusedFloorIndex = Math.max(0, Math.min(state.focusedMessageIndex, latestFloorIndex));
+
+  if (focusedFloorIndex >= latestFloorIndex) {
+    return state.phoneMessages;
+  }
+
+  const threads: PhoneMessageStore['threads'] = {};
+  for (const [targetId, thread] of Object.entries(state.phoneMessages.threads)) {
+    const messages = thread.messages.filter(message => {
+      if (typeof message.floorIndex !== 'number') return true;
+      return message.floorIndex <= focusedFloorIndex;
+    });
+    threads[targetId] = {
+      ...thread,
+      messages,
+      unread: Math.min(thread.unread, messages.length),
+    };
+  }
+
+  return {
+    ...state.phoneMessages,
+    threads,
+  };
 }
 
 function renderResponsivePhoneFrameStyle() {
@@ -1166,6 +1203,14 @@ export function renderPhone(state: AppState, renderers: PhoneRenderers) {
   const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
   const isGenerating = state.generating || state.phoneMessages.generating;
   const frameStyle = renderResponsivePhoneFrameStyle();
+  const renderedPhoneMessages = getRenderedPhoneMessageStore(state);
+  const renderedState =
+    renderedPhoneMessages === state.phoneMessages
+      ? state
+      : {
+          ...state,
+          phoneMessages: renderedPhoneMessages,
+        };
   return `
     <div class="phone-modal ${state.phoneOpen ? 'is-open' : ''} ${isGenerating ? 'generating' : ''}" aria-hidden="${state.phoneOpen ? 'false' : 'true'}">
       <button class="phone-backdrop" data-action="close-phone" aria-label="关闭手帐"></button>
@@ -1192,7 +1237,7 @@ export function renderPhone(state: AppState, renderers: PhoneRenderers) {
 
           ${renderPhoneNotification(state.notification)}
           <div class="phone-screen">
-            ${renderPhoneRoute(state, renderers)}
+            ${renderPhoneRoute(renderedState, renderers)}
           </div>
         </div>
       </section>

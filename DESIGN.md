@@ -94,7 +94,7 @@ TS 计算 activeCardIds
         ↓
 世界书 0层角色卡控制器
         ↓
-getwi('霞之丘诗羽_0层卡') / getwi('英梨梨_0层卡') / getwi('加藤惠_0层卡')
+getwi('霞之丘诗羽_0层卡') / getwi('英梨梨_') / getwi('加藤惠_0层卡')
         ↓
 relationship.ts 追加短关系叠层
 ```

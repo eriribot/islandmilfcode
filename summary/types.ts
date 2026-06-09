@@ -93,7 +93,14 @@ export type FactAnchor = {
   obsessions: Array<{ name: string; value: number; stage: string }>;
   mainEvents: Array<{ id: string; status: string }>;
   /** 当前对象的性状态（仅当前聊天/在场对象，回注用）。 */
-  sexStatus?: { name: string; virginity: 'intact' | 'lost'; counters: Array<{ field: string; value: number }> } | null;
+  sexStatus?:
+    | {
+        name: string;
+        mode: 'virginity-lock' | 'adult-married';
+        virginity?: 'intact' | 'lost';
+        counters: Array<{ field: string; value: number }>;
+      }
+    | null;
 };
 
 /** 从 statusData 构造一个事实锚点，供摘要 prompt 使用。 */
@@ -147,6 +154,7 @@ function buildSexStatusForActiveTarget(statusData: {
   const target = statusData.targets.find(t => t.id === activeId);
   if (!target) return null;
 
+  const adultMarried = target.meta?.intimacyStatusMode === 'adult-married';
   const virginity = target.meta?.virginity === 'lost' ? 'lost' : 'intact';
   const rawCounters = target.meta?.bodyCounters;
   const counters: Array<{ field: string; value: number }> = [];
@@ -159,8 +167,10 @@ function buildSexStatusForActiveTarget(statusData: {
     }
   }
 
-  // 始终返回状态（包括完璧+零计数），让 AI 能看到当前追踪值并在与已知事实不符时补正。
-  return { name: target.name, virginity, counters };
+  // 少女档案始终返回贞操状态（包括完璧+零计数）；成人已婚档案不使用贞操/完璧闩锁。
+  return adultMarried
+    ? { name: target.name, mode: 'adult-married', counters }
+    : { name: target.name, mode: 'virginity-lock', virginity, counters };
 }
 
 /** 副 API 配置，用于将摘要/变量提取请求发往独立的模型。 */

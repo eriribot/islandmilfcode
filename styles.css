@@ -1481,6 +1481,111 @@ button {
   margin: 4px 0 0;
 }
 
+.summary-edit-card__body,
+.summary-edit-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.summary-edit-card__header {
+  align-items: center;
+}
+
+.summary-edit-card__tools {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.summary-edit-card__icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.summary-edit-card__text {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.summary-inline-editor {
+  display: none;
+  margin-top: 8px;
+}
+
+.summary-edit-card.is-editing .summary-inline-editor {
+  display: block;
+}
+
+.summary-edit-card.is-editing .summary-edit-card__text {
+  display: none;
+}
+
+.summary-inline-editor__field {
+  width: 100%;
+  min-height: 96px;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  resize: vertical;
+  border: 1.5px solid rgba(107, 78, 158, 0.18);
+  border-radius: 10px;
+  outline: none;
+  color: var(--ink-dark);
+  background: rgba(255, 253, 247, 0.86);
+  font: inherit;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.summary-inline-editor__field:focus {
+  border-color: rgba(107, 78, 158, 0.42);
+  box-shadow: 0 0 0 3px rgba(107, 78, 158, 0.08);
+}
+
+.summary-inline-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.summary-edit-btn {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--ink-assistant);
+  background: rgba(107, 78, 158, 0.06);
+  border: 1.5px solid rgba(107, 78, 158, 0.12);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.summary-edit-btn--primary {
+  color: #fff;
+  background: var(--ink-assistant);
+  border-color: var(--ink-assistant);
+}
+
+.summary-edit-btn:hover:not(:disabled) {
+  background: rgba(107, 78, 158, 0.12);
+}
+
+.summary-edit-btn--primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.summary-edit-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .profile-edit-field {
   width: 100%;
   box-sizing: border-box;
