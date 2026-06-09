@@ -7,6 +7,14 @@ import type {
   MemoryWorldStateRow,
   MemoryWriteBatch,
 } from './types';
+import {
+  getPhoneArchiveImpressionSemanticKey,
+  isPhoneArchiveGoldImpression,
+  normalizePhoneArchiveImpressionSubject,
+  PHONE_ARCHIVE_IMPRESSION_GOLD_TAG,
+  PHONE_ARCHIVE_IMPRESSION_LOCKED_TAG,
+  selectPhoneArchiveImpressions,
+} from '../phone/types';
 
 /**
  * 应用一个写入批次到 MemoryDB。同步操作，直接修改传入的 db 对象。
@@ -70,9 +78,14 @@ export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string
             subject: string;
             label: string;
             polarity: -1 | 0 | 1;
+            weight?: number;
+            importance?: number;
+            tags?: string[];
           };
-          const dedup = deduplicateImpression(db, impPayload);
+          const normalizedPayload = normalizeImpressionPayload(impPayload);
+          const dedup = deduplicateImpression(db, normalizedPayload);
           if (dedup.action === 'duplicate') {
+            pruneImpressionsForSubject(db, normalizedPayload.targetId, normalizedPayload.subject, now);
             continue;
           }
           const newId = generateId();
@@ -82,6 +95,7 @@ export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string
             updatedAt: now,
             source: batch.source,
             ...payload,
+            ...normalizedPayload,
           };
           if (dedup.action === 'supersede' && dedup.existingId) {
             const old = db.impressions.find(i => i.id === dedup.existingId);
@@ -93,6 +107,7 @@ export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string
           }
           table.push(row);
           newIds.push(newId);
+          pruneImpressionsForSubject(db, normalizedPayload.targetId, normalizedPayload.subject, now);
           continue;
         }
 
@@ -160,9 +175,7 @@ export function deduplicateFact(
   const activeFacts = db.facts.filter(f => !f.expired);
 
   // 完全匹配：同 subject + 同 content
-  const exact = activeFacts.find(
-    f => f.subject === incoming.subject && f.content === incoming.content,
-  );
+  const exact = activeFacts.find(f => f.subject === incoming.subject && f.content === incoming.content);
   if (exact) {
     exact.lastSeenAt = now;
     exact.updatedAt = now;
@@ -170,9 +183,7 @@ export function deduplicateFact(
   }
 
   // 同 subject 不同 content：supersede
-  const sameSubject = activeFacts.find(
-    f => f.subject === incoming.subject && f.category === incoming.category,
-  );
+  const sameSubject = activeFacts.find(f => f.subject === incoming.subject && f.category === incoming.category);
   if (sameSubject) {
     return { action: 'supersede', existingId: sameSubject.id };
   }
@@ -181,9 +192,9 @@ export function deduplicateFact(
 }
 
 /**
- * 印象去重：以 (targetId, subject, label) 为身份。
- * - 同身份且同极性 → 只刷 lastSeenAt，返回 'duplicate'（避免同一印象反复堆叠成一长串 chip）
- * - 同身份但极性变了（如"靠谱"从 + 转 -）→ supersede 旧行，返回 'supersede'
+ * 印象去重：以 (targetId, subject, 语义标签) 为身份。
+ * - 同语义且同极性 → 只刷 lastSeenAt，返回 'duplicate'（避免同一印象反复堆叠成一长串 chip）
+ * - 同语义但极性变了（如"靠谱"从 + 转 -）→ supersede 旧行，返回 'supersede'
  * - 无匹配 → 'new'
  */
 export function deduplicateImpression(
@@ -191,11 +202,14 @@ export function deduplicateImpression(
   incoming: { targetId: string; subject: string; label: string; polarity: -1 | 0 | 1 },
 ): { action: 'duplicate' | 'supersede' | 'new'; existingId?: string } {
   const now = new Date().toISOString();
+  const incomingSubject = normalizePhoneArchiveImpressionSubject(incoming.subject);
+  const incomingKey = getPhoneArchiveImpressionSemanticKey(incoming.label);
   const active = db.impressions.filter(
-    i => !i.expired
-      && i.targetId === incoming.targetId
-      && i.subject === incoming.subject
-      && i.label === incoming.label,
+    i =>
+      !i.expired &&
+      i.targetId === incoming.targetId &&
+      normalizePhoneArchiveImpressionSubject(i.subject) === incomingSubject &&
+      getPhoneArchiveImpressionSemanticKey(i.label) === incomingKey,
   );
   if (!active.length) return { action: 'new' };
 
@@ -211,6 +225,57 @@ export function deduplicateImpression(
   return { action: 'supersede', existingId: active[0].id };
 }
 
+function normalizeImpressionPayload<
+  T extends {
+    targetId: string;
+    subject: string;
+    label: string;
+    polarity: -1 | 0 | 1;
+    weight?: number;
+    importance?: number;
+    tags?: string[];
+  },
+>(payload: T): T {
+  const label = payload.label.trim();
+  const normalized = {
+    ...payload,
+    subject: normalizePhoneArchiveImpressionSubject(payload.subject),
+    label,
+  };
+  if (!isPhoneArchiveGoldImpression(normalized)) return normalized;
+
+  const tags = new Set(normalized.tags ?? []);
+  tags.add(PHONE_ARCHIVE_IMPRESSION_GOLD_TAG);
+  tags.add(PHONE_ARCHIVE_IMPRESSION_LOCKED_TAG);
+  return {
+    ...normalized,
+    tags: [...tags],
+    weight: Math.max(Math.abs(normalized.weight ?? 0), 5),
+    importance: Math.max(normalized.importance ?? 0, 5),
+  };
+}
+
+function pruneImpressionsForSubject(
+  db: IslandMemoryDB,
+  targetId: string,
+  subject: string,
+  now = new Date().toISOString(),
+): void {
+  const normalizedSubject = normalizePhoneArchiveImpressionSubject(subject);
+  const active = db.impressions.filter(
+    i =>
+      !i.expired && i.targetId === targetId && normalizePhoneArchiveImpressionSubject(i.subject) === normalizedSubject,
+  );
+  if (active.length <= 1) return;
+
+  const keep = new Set(selectPhoneArchiveImpressions(active).map(i => i.id));
+  for (const row of active) {
+    if (keep.has(row.id) || isPhoneArchiveGoldImpression(row)) continue;
+    row.expired = true;
+    row.updatedAt = now;
+  }
+}
+
 /**
  * 关系去重：同 fromId + toId + exclusiveGroup 只保留最新。
  * 返回需要 expire 的旧行 ID 列表。
@@ -222,11 +287,12 @@ export function findSupersededRelations(
   if (!incoming.exclusiveGroup) return [];
 
   return db.relations
-    .filter(r =>
-      !r.expired
-      && r.fromId === incoming.fromId
-      && r.toId === incoming.toId
-      && r.exclusiveGroup === incoming.exclusiveGroup,
+    .filter(
+      r =>
+        !r.expired &&
+        r.fromId === incoming.fromId &&
+        r.toId === incoming.toId &&
+        r.exclusiveGroup === incoming.exclusiveGroup,
     )
     .map(r => r.id);
 }
@@ -235,10 +301,7 @@ export function findSupersededRelations(
  * 秘密去重：同 subject 的秘密走状态更新而非新增。
  * 返回已存在的行 ID（调用方应 update 而非 insert）。
  */
-export function findExistingSecret(
-  db: IslandMemoryDB,
-  subject: string,
-): string | null {
+export function findExistingSecret(db: IslandMemoryDB, subject: string): string | null {
   const existing = db.secrets.find(s => !s.expired && s.subject === subject);
   return existing?.id ?? null;
 }
@@ -284,10 +347,7 @@ const CONFIDENCE_RANK: Record<string, number> = {
  * 检查新行是否有权覆盖旧行。
  * 规则：低置信度不能覆盖高置信度 + 高重要度的行。
  */
-export function canSupersede(
-  existing: MemoryBaseRow,
-  incomingConfidence?: string,
-): boolean {
+export function canSupersede(existing: MemoryBaseRow, incomingConfidence?: string): boolean {
   const existingRank = CONFIDENCE_RANK[existing.confidence ?? 'low'] ?? 1;
   const incomingRank = CONFIDENCE_RANK[incomingConfidence ?? 'low'] ?? 1;
 
@@ -342,9 +402,7 @@ export function upsertAttribute(
   },
 ): UpsertResult {
   const now = new Date().toISOString();
-  const active = db.attributes.filter(
-    a => !a.expired && a.targetId === patch.targetId && a.key === patch.key,
-  );
+  const active = db.attributes.filter(a => !a.expired && a.targetId === patch.targetId && a.key === patch.key);
   // 同 key 出现多条活跃行（旧 schema 残留）：按 createdAt 取最新一条，其余 expire。
   active.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const latest = active[0];
@@ -482,9 +540,7 @@ export function upsertItem(
   const owner = patch.ownerId ?? 'player';
   const delta = patch.count ?? 1;
 
-  const existing = db.items.find(
-    i => !i.expired && i.name === patch.name && (i.ownerId ?? 'player') === owner,
-  );
+  const existing = db.items.find(i => !i.expired && i.name === patch.name && (i.ownerId ?? 'player') === owner);
 
   if (patch.action === 'lost') {
     if (!existing) return { action: 'unchanged', rowId: '' };
@@ -559,13 +615,7 @@ export function upsertWorldState(
 
   if (row) {
     let changed = false;
-    const fields = [
-      'currentTime',
-      'currentLocation',
-      'currentMainEventId',
-      'storyStartDate',
-      'currentDay',
-    ] as const;
+    const fields = ['currentTime', 'currentLocation', 'currentMainEventId', 'storyStartDate', 'currentDay'] as const;
     for (const f of fields) {
       const next = patch[f];
       if (next === undefined) continue;

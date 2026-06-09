@@ -1,8 +1,8 @@
 // crypto.randomUUID polyfill: iOS HTTP 环境下不可用，降级到 Math.random
 if (typeof crypto !== 'undefined' && typeof crypto.randomUUID !== 'function') {
   // @ts-ignore
-  crypto.randomUUID = function(): string {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+  crypto.randomUUID = function (): string {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
       const r = (Math.random() * 16) | 0;
       const v = c === 'x' ? r : (r & 0x3) | 0x8;
       return v.toString(16);
@@ -78,7 +78,12 @@ import type { SummaryApiConfig, SummaryModelOption } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
 import type { GameState, NotificationState, StatusData, TabKey, TavernWindow } from './types';
-import { isPhoneThemeCharacterId } from './phone/types';
+import {
+  isPhoneArchiveGoldImpression,
+  isPhoneThemeCharacterId,
+  PHONE_ARCHIVE_IMPRESSION_GOLD_TAG,
+  PHONE_ARCHIVE_IMPRESSION_LOCKED_TAG,
+} from './phone/types';
 import type { MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './phone/types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { clamp, formatTime, syncMainEvents } from './variables/normalize';
@@ -298,13 +303,16 @@ function persistToSave() {
     activeSaveId: state.activeSaveId,
     runId: state.activeRunId,
   });
-  const meta = writeAutosave({
-    runId: state.activeRunId,
-    gameState: buildGameState(),
-    chatLog: serializeMessages(state.uiMessages),
-    summaryStore: state.summaryStore,
-    memoryDB: state.memoryDB,
-  }, saveId);
+  const meta = writeAutosave(
+    {
+      runId: state.activeRunId,
+      gameState: buildGameState(),
+      chatLog: serializeMessages(state.uiMessages),
+      summaryStore: state.summaryStore,
+      memoryDB: state.memoryDB,
+    },
+    saveId,
+  );
   if (meta) {
     state.activeSaveId = meta.saveId;
     setActiveSaveId(meta.saveId);
@@ -893,17 +901,22 @@ function updateDrawingSettingsFromControls(shouldRender = false) {
   settings.manualPrompt =
     root?.querySelector<HTMLTextAreaElement>('[data-field="drawing-manual-prompt"]')?.value ?? settings.manualPrompt;
   settings.width = clamp(
-    Number(root?.querySelector<HTMLInputElement>('[data-field="drawing-width"]')?.value ?? settings.width) || settings.width,
+    Number(root?.querySelector<HTMLInputElement>('[data-field="drawing-width"]')?.value ?? settings.width) ||
+      settings.width,
     256,
     2048,
   );
   settings.height = clamp(
-    Number(root?.querySelector<HTMLInputElement>('[data-field="drawing-height"]')?.value ?? settings.height) || settings.height,
+    Number(root?.querySelector<HTMLInputElement>('[data-field="drawing-height"]')?.value ?? settings.height) ||
+      settings.height,
     256,
     2048,
   );
   settings.contextMessageCount = clamp(
-    Number(root?.querySelector<HTMLInputElement>('[data-field="drawing-context-count"]')?.value ?? settings.contextMessageCount) || 0,
+    Number(
+      root?.querySelector<HTMLInputElement>('[data-field="drawing-context-count"]')?.value ??
+        settings.contextMessageCount,
+    ) || 0,
     0,
     20,
   );
@@ -914,8 +927,10 @@ function updateDrawingSettingsFromControls(shouldRender = false) {
     const id = row.dataset.drawingAnchorId;
     const anchor = settings.characterAnchors.find(item => item.id === id);
     if (!anchor) return;
-    anchor.name = row.querySelector<HTMLInputElement>('[data-field="drawing-anchor-name"]')?.value.trim() ?? anchor.name;
-    anchor.prompt = row.querySelector<HTMLTextAreaElement>('[data-field="drawing-anchor-prompt"]')?.value.trim() ?? anchor.prompt;
+    anchor.name =
+      row.querySelector<HTMLInputElement>('[data-field="drawing-anchor-name"]')?.value.trim() ?? anchor.name;
+    anchor.prompt =
+      row.querySelector<HTMLTextAreaElement>('[data-field="drawing-anchor-prompt"]')?.value.trim() ?? anchor.prompt;
   });
 
   state.drawingSettings = normalizeDrawingSettings(settings);
@@ -925,7 +940,11 @@ function updateDrawingSettingsFromControls(shouldRender = false) {
 }
 
 function syncDrawingSettingsFromMountedControls() {
-  if (!root?.querySelector('[data-field="drawing-negative-prompt"], [data-field="drawing-quality-prompt"], [data-field="drawing-manual-prompt"]')) {
+  if (
+    !root?.querySelector(
+      '[data-field="drawing-negative-prompt"], [data-field="drawing-quality-prompt"], [data-field="drawing-manual-prompt"]',
+    )
+  ) {
     return;
   }
   updateDrawingSettingsFromControls(false);
@@ -964,11 +983,13 @@ function addDrawingAnchor() {
     name: '',
     prompt: '',
   };
-  state.drawingSettings.characterAnchors = [
-    ...state.drawingSettings.characterAnchors,
-    newAnchor,
-  ];
-  console.log('[addDrawingAnchor] 添加完成，新数量:', state.drawingSettings.characterAnchors.length, '新角色ID:', newAnchor.id);
+  state.drawingSettings.characterAnchors = [...state.drawingSettings.characterAnchors, newAnchor];
+  console.log(
+    '[addDrawingAnchor] 添加完成，新数量:',
+    state.drawingSettings.characterAnchors.length,
+    '新角色ID:',
+    newAnchor.id,
+  );
   persistToSave();
   render();
 }
@@ -1038,7 +1059,9 @@ async function generateDrawingNow() {
 
 function removeDrawingAnchor(anchorId: string) {
   updateDrawingSettingsFromControls(false);
-  state.drawingSettings.characterAnchors = state.drawingSettings.characterAnchors.filter(anchor => anchor.id !== anchorId);
+  state.drawingSettings.characterAnchors = state.drawingSettings.characterAnchors.filter(
+    anchor => anchor.id !== anchorId,
+  );
   persistToSave();
   render();
 }
@@ -1048,6 +1071,74 @@ function switchPhoneCharacter(characterId: PhoneCharacterId, bgmUrl?: string) {
   if (state.phoneCharacterId === characterId) return;
   state.phoneCharacterId = characterId;
   render();
+}
+
+function saveArchiveImpressionLabel(rowId: string, label: string) {
+  const row = state.memoryDB.impressions.find(imp => !imp.expired && imp.id === rowId);
+  const nextLabel = label.trim();
+  if (!row || !nextLabel || nextLabel === row.label) return false;
+
+  row.label = nextLabel;
+  row.updatedAt = new Date().toISOString();
+
+  const tags = new Set(row.tags ?? []);
+  if (isPhoneArchiveGoldImpression(row)) {
+    tags.add(PHONE_ARCHIVE_IMPRESSION_GOLD_TAG);
+    tags.add(PHONE_ARCHIVE_IMPRESSION_LOCKED_TAG);
+    row.weight = Math.max(Math.abs(row.weight ?? 0), 5);
+    row.importance = Math.max(row.importance ?? 0, 5);
+  } else {
+    tags.delete(PHONE_ARCHIVE_IMPRESSION_GOLD_TAG);
+    tags.delete(PHONE_ARCHIVE_IMPRESSION_LOCKED_TAG);
+  }
+  row.tags = tags.size ? [...tags] : undefined;
+
+  persistToSave();
+  return true;
+}
+
+function editArchiveImpressionLabel(button: HTMLButtonElement) {
+  const rowId = button.dataset.impressionId ?? '';
+  const row = state.memoryDB.impressions.find(imp => !imp.expired && imp.id === rowId);
+  if (!row || button.parentElement?.querySelector('[data-field="archive-impression-edit"]')) return;
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = row.label;
+  input.maxLength = 16;
+  input.className = `${button.className} archive-impression-chip--editing`;
+  input.dataset.field = 'archive-impression-edit';
+  input.setAttribute('aria-label', '编辑印象标签');
+  input.setAttribute('enterkeyhint', 'done');
+
+  let finished = false;
+  const finish = (save: boolean) => {
+    if (finished) return;
+    finished = true;
+    const changed = saveArchiveImpressionLabel(rowId, save ? input.value : row.label);
+    if (changed) {
+      render();
+      return;
+    }
+    input.replaceWith(button);
+  };
+
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      finish(true);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      finish(false);
+    }
+  });
+  input.addEventListener('blur', () => finish(true));
+
+  button.replaceWith(input);
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
 }
 
 function openPhoneThread(targetId: string) {
@@ -1450,11 +1541,14 @@ function bindEvents() {
       root?.querySelectorAll<HTMLTextAreaElement>('.composer-input').forEach(other => {
         if (other !== event.target) other.value = state.draft;
       });
+      // 使用防抖渲染，避免输入时卡顿
+      scheduleRender();
     });
 
     root?.querySelectorAll<HTMLTextAreaElement>('.phone-chat-input').forEach(textarea => {
       textarea.addEventListener('input', event => {
         state.phoneMessages.draft = (event.target as HTMLTextAreaElement).value;
+        scheduleRender();
       });
       textarea.addEventListener('keydown', event => {
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -1482,6 +1576,11 @@ function bindEvents() {
     button.addEventListener('click', () => {
       const characterId = button.dataset.characterId as PhoneCharacterId | undefined;
       if (characterId) switchPhoneCharacter(characterId, button.dataset.bgmUrl);
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="archive-edit-impression"]').forEach(button => {
+    button.addEventListener('click', () => {
+      editArchiveImpressionLabel(button);
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="open-phone-thread"]').forEach(button => {
@@ -1542,6 +1641,7 @@ function bindEvents() {
   root?.querySelector<HTMLTextAreaElement>('[data-field="reader-edit-draft"]')?.addEventListener('input', event => {
     if (state.readerEditing) {
       state.readerEditing.draft = (event.target as HTMLTextAreaElement).value;
+      scheduleRender(); // 防抖渲染
     }
   });
 
@@ -1608,9 +1708,9 @@ function bindEvents() {
   });
 
   root
-    ?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-      '[data-field="drawing-quality-prompt"], [data-field="drawing-negative-prompt"], [data-field="drawing-system-prompt"], [data-field="drawing-anchor-name"], [data-field="drawing-anchor-prompt"]',
-    )
+    ?.querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement
+    >('[data-field="drawing-quality-prompt"], [data-field="drawing-negative-prompt"], [data-field="drawing-system-prompt"], [data-field="drawing-anchor-name"], [data-field="drawing-anchor-prompt"]')
     .forEach(input => {
       input.addEventListener('input', () => updateDrawingSettingsFromControls(false));
       input.addEventListener('change', () => updateDrawingSettingsFromControls(true));
@@ -1628,9 +1728,9 @@ function bindEvents() {
     updateDrawingSettingsFromControls(true);
   });
   root
-    ?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-      '[data-field="drawing-manual-prompt"], [data-field="drawing-width"], [data-field="drawing-height"]',
-    )
+    ?.querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement
+    >('[data-field="drawing-manual-prompt"], [data-field="drawing-width"], [data-field="drawing-height"]')
     .forEach(input => {
       input.addEventListener('input', () => updateDrawingSettingsFromControls(false));
       input.addEventListener('change', () => updateDrawingSettingsFromControls(true));
@@ -1650,7 +1750,9 @@ function bindEvents() {
 
   // 进度条 seek：mousedown/touchstart 期间 timeupdate 不再写回 slider 值，避免抢手感。
   root?.querySelectorAll<HTMLInputElement>('[data-action="music-seek"]').forEach(slider => {
-    const onPointerDown = () => { seekDragging = true; };
+    const onPointerDown = () => {
+      seekDragging = true;
+    };
     const onPointerUp = () => {
       if (!seekDragging) return;
       seekDragging = false;
@@ -1693,7 +1795,8 @@ function bindEvents() {
 
   // ── Memory config events ──
   root?.querySelector('[data-action="memory-config-save"]')?.addEventListener('click', () => {
-    const getInjectionValue = (field: string) => root?.querySelector<HTMLInputElement>(`[data-injection-field="${field}"]`);
+    const getInjectionValue = (field: string) =>
+      root?.querySelector<HTMLInputElement>(`[data-injection-field="${field}"]`);
     const getTriggerValue = (field: string) => root?.querySelector<HTMLInputElement>(`[data-trigger-field="${field}"]`);
 
     const { saveFullMemoryConfig } = require('./memory-config');
@@ -1850,7 +1953,11 @@ function bindEvents() {
   });
   root?.querySelector<HTMLButtonElement>('[data-action="memory-save-new"]')?.addEventListener('click', () => {
     try {
-      const newId = insertMemoryRow(state.memoryDB, 'facts', createUserEventMemoryPayload(state.memoryEditor.creatingDraft));
+      const newId = insertMemoryRow(
+        state.memoryDB,
+        'facts',
+        createUserEventMemoryPayload(state.memoryEditor.creatingDraft),
+      );
       if (!newId) throw new Error('写入失败');
       state.memoryEditor.creating = false;
       state.memoryEditor.creatingDraft = '';
@@ -1871,9 +1978,11 @@ function bindEvents() {
   });
   root?.querySelector<HTMLTextAreaElement>('[data-field="memory-edit-draft"]')?.addEventListener('input', event => {
     state.memoryEditor.editingDraft = (event.target as HTMLTextAreaElement).value;
+    scheduleRender();
   });
   root?.querySelector<HTMLTextAreaElement>('[data-field="memory-new-draft"]')?.addEventListener('input', event => {
     state.memoryEditor.creatingDraft = (event.target as HTMLTextAreaElement).value;
+    scheduleRender();
   });
 
   root?.querySelector<HTMLButtonElement>('[data-action="return-to-title"]')?.addEventListener('click', () => {
@@ -1917,7 +2026,9 @@ function bindEvents() {
     }
   });
   root
-    ?.querySelectorAll<HTMLButtonElement>('[data-action="save-player-profile"], [data-action="save-player-profile-edit"]')
+    ?.querySelectorAll<HTMLButtonElement>(
+      '[data-action="save-player-profile"], [data-action="save-player-profile-edit"]',
+    )
     .forEach(button => {
       button.addEventListener('click', () => {
         savePlayerProfileFromStatusPanel();
@@ -2007,9 +2118,7 @@ function bindEvents() {
   }
 
   function countPendingConversations() {
-    const total = state.uiMessages.filter(
-      m => !m.streaming && (m.role === 'user' || m.role === 'assistant'),
-    ).length;
+    const total = state.uiMessages.filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant')).length;
     return Math.max(0, total - state.summaryStore.lastSummarizedIndex);
   }
 
@@ -2055,6 +2164,43 @@ function bindEvents() {
       });
     });
   });
+
+  // 摘要编辑功能
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="summary-edit"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const level = button.dataset.editLevel as 'global' | 'minor' | 'major';
+      const index = button.dataset.editIndex ? parseInt(button.dataset.editIndex, 10) : -1;
+
+      let currentText = '';
+      if (level === 'global') {
+        currentText = state.summaryStore.global || '';
+      } else if (level === 'major' && index >= 0 && index < state.summaryStore.major.length) {
+        currentText = state.summaryStore.major[index].text;
+      } else if (level === 'minor' && index >= 0 && index < state.summaryStore.minor.length) {
+        currentText = state.summaryStore.minor[index].text;
+      } else {
+        return;
+      }
+
+      const newText = prompt(
+        `编辑${level === 'global' ? '全局摘要' : level === 'major' ? '大总结' : '小总结'}：`,
+        currentText,
+      );
+      if (newText === null) return; // 用户取消
+
+      if (level === 'global') {
+        state.summaryStore.global = newText.trim() || null;
+      } else if (level === 'major' && index >= 0) {
+        state.summaryStore.major[index].text = newText.trim();
+      } else if (level === 'minor' && index >= 0) {
+        state.summaryStore.minor[index].text = newText.trim();
+      }
+
+      persistToSave();
+      render();
+    });
+  });
+
   root?.querySelector<HTMLButtonElement>('[data-action="summary-retry"]')?.addEventListener('click', () => {
     state.summaryStore.lastError = null;
     state.summaryStore.consecutiveFailures = 0;
@@ -2134,6 +2280,39 @@ const titleCallbacks: TitleCallbacks = {
   render: () => render(),
 };
 
+// ── Performance: Debounced render scheduler ──
+
+let renderTimer: number | null = null;
+let isRenderScheduled = false;
+
+/**
+ * 调度一次渲染，使用 requestAnimationFrame 防抖。
+ * 高频操作（输入、滚动）时避免每次都立即 render，而是在下一帧统一渲染。
+ */
+function scheduleRender() {
+  if (isRenderScheduled) return;
+  isRenderScheduled = true;
+
+  if (renderTimer) cancelAnimationFrame(renderTimer);
+  renderTimer = requestAnimationFrame(() => {
+    render();
+    isRenderScheduled = false;
+    renderTimer = null;
+  });
+}
+
+/**
+ * 立即执行渲染，不防抖。用于必须同步更新的场景（发送消息、切换存档）。
+ */
+function renderImmediate() {
+  if (renderTimer) {
+    cancelAnimationFrame(renderTimer);
+    renderTimer = null;
+    isRenderScheduled = false;
+  }
+  render();
+}
+
 function render() {
   if (!root) return;
   syncDrawingSettingsFromMountedControls();
@@ -2181,7 +2360,7 @@ window.addEventListener('resize', () => {
     x: clamp(tucao.x, 8, Math.max(8, window.innerWidth - 260)),
     y: clamp(tucao.y, 8, Math.max(8, window.innerHeight - 44)),
   });
-  render();
+  scheduleRender(); // 使用防抖渲染，避免 resize 时卡顿
 });
 
 window.addEventListener(

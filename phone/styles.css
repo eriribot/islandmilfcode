@@ -136,8 +136,16 @@ body.floating-phone-dragging {
     radial-gradient(circle, var(--dot-color) calc(var(--dot-size) * 0.6), transparent calc(var(--dot-size) * 0.6)) 6px
       6px / 18px 18px,
     linear-gradient(180deg, var(--journal-cream) 0%, var(--journal-warm) 100%);
-  background-size: auto, cover, 18px 18px, auto;
-  background-position: center, center, 6px 6px, center;
+  background-size:
+    auto,
+    cover,
+    18px 18px,
+    auto;
+  background-position:
+    center,
+    center,
+    6px 6px,
+    center;
   background-repeat: no-repeat, no-repeat, repeat, no-repeat;
   color: var(--ink-dark);
 }
@@ -2156,6 +2164,27 @@ body.floating-phone-dragging {
   font-size: 0.72rem;
   font-weight: 800;
   border: 1px solid transparent;
+  font-family: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  appearance: none;
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    filter 0.16s ease;
+}
+
+.archive-impression-chip:hover,
+.archive-impression-chip:focus-visible {
+  filter: brightness(1.02);
+  transform: translateY(-1px);
+}
+
+.archive-impression-chip--editing {
+  min-width: 6.5em;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(73, 121, 228, 0.18);
+  transform: none;
 }
 
 .archive-impression-chip--pos {
@@ -2174,6 +2203,15 @@ body.floating-phone-dragging {
   color: #5b6b86;
   background: rgba(226, 232, 244, 0.9);
   border-color: rgba(132, 150, 184, 0.4);
+}
+
+.archive-impression-chip--gold {
+  color: #8a5a10;
+  background: linear-gradient(135deg, rgba(255, 239, 181, 0.96), rgba(255, 248, 218, 0.9));
+  border-color: rgba(199, 145, 36, 0.48);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.56),
+    0 2px 8px rgba(199, 145, 36, 0.18);
 }
 
 /* ── 性状态区：贞操印章徽章 + 身体开发计数器网格 ── */
@@ -2216,7 +2254,9 @@ body.floating-phone-dragging {
   background: linear-gradient(135deg, rgba(255, 224, 233, 0.95), rgba(255, 238, 243, 0.8));
   color: #c0436a;
   opacity: 1;
-  box-shadow: 0 2px 12px rgba(214, 90, 122, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  box-shadow:
+    0 2px 12px rgba(214, 90, 122, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
 
 .archive-counter-grid {
@@ -2285,12 +2325,12 @@ body.floating-phone-dragging {
 }
 
 /* 深度依恋（>=75）：暖玫瑰加深 + 呼吸光，作为“彻底沦陷”的情绪强化。 */
-.archive-attachment[data-attach-level="deep"] .archive-bar__fill--attachment {
+.archive-attachment[data-attach-level='deep'] .archive-bar__fill--attachment {
   background: linear-gradient(90deg, #ffb1c8 0%, #ec74a2 50%, #cf4d83 100%);
   animation: archive-affection-glow 2.6s ease-in-out infinite;
 }
 
-.archive-attachment[data-attach-level="deep"] .archive-attachment__meta em {
+.archive-attachment[data-attach-level='deep'] .archive-attachment__meta em {
   color: #c64388;
   font-weight: 600;
 }
@@ -2367,7 +2407,9 @@ body.floating-phone-dragging {
   width: 18px;
   height: 18px;
   background: rgba(233, 196, 210, 0.42);
-  clip-path: path('M9 16 C2 11,0 7,0 4 C0 1.8,1.8 0,4 0 C5.8 0,7.4 1,9 3.2 C10.6 1,12.2 0,14 0 C16.2 0,18 1.8,18 4 C18 7,16 11,9 16 Z');
+  clip-path: path(
+    'M9 16 C2 11,0 7,0 4 C0 1.8,1.8 0,4 0 C5.8 0,7.4 1,9 3.2 C10.6 1,12.2 0,14 0 C16.2 0,18 1.8,18 4 C18 7,16 11,9 16 Z'
+  );
 }
 
 .archive-hearts span.is-active {
@@ -2501,44 +2543,49 @@ body.floating-phone-dragging {
 }
 
 /* 旧情度危险位（>=70）：填充更深、加暗紫脉动，提示这条线还是伦也的 */
-.archive-meter--obsession[data-meter-level="danger"] .archive-bar__fill {
+.archive-meter--obsession[data-meter-level='danger'] .archive-bar__fill {
   background: linear-gradient(90deg, #c4a8ec 0%, #8769bf 50%, #5a3a96 100%);
   animation: archive-obsession-pulse 2.4s ease-in-out infinite;
 }
 
-.archive-meter--obsession[data-meter-level="danger"] .archive-meter__meta em {
+.archive-meter--obsession[data-meter-level='danger'] .archive-meter__meta em {
   color: #6b4f9a;
   font-weight: 600;
 }
 
 /* 旧情度淡出位（<30）：颜色变冷淡、字标注变弱 */
-.archive-meter--obsession[data-meter-level="fading"] .archive-bar__fill {
+.archive-meter--obsession[data-meter-level='fading'] .archive-bar__fill {
   background: linear-gradient(90deg, #efeaf8 0%, #c8b9e4 100%);
   opacity: 0.85;
 }
 
 /* 旧情度已放下（<10）：灰虚线条，文字斜体表示"过去" */
-.archive-meter--obsession[data-meter-level="letgo"] .archive-bar {
+.archive-meter--obsession[data-meter-level='letgo'] .archive-bar {
   border-style: dashed;
   border-color: rgba(147, 128, 181, 0.4);
 }
 
-.archive-meter--obsession[data-meter-level="letgo"] .archive-bar__fill {
+.archive-meter--obsession[data-meter-level='letgo'] .archive-bar__fill {
   background: linear-gradient(90deg, rgba(200, 195, 215, 0.6), rgba(150, 145, 165, 0.6));
   opacity: 0.65;
 }
 
-.archive-meter--obsession[data-meter-level="letgo"] .archive-meter__meta em {
+.archive-meter--obsession[data-meter-level='letgo'] .archive-meter__meta em {
   font-style: italic;
   opacity: 0.7;
 }
 
 @keyframes archive-obsession-pulse {
-  0%, 100% {
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.26), 0 0 0 0 rgba(132, 105, 178, 0);
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.26),
+      0 0 0 0 rgba(132, 105, 178, 0);
   }
   50% {
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.34), 0 0 8px 1px rgba(132, 105, 178, 0.45);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.34),
+      0 0 8px 1px rgba(132, 105, 178, 0.45);
   }
 }
 
@@ -2562,12 +2609,12 @@ body.floating-phone-dragging {
 }
 
 /* 好感度高位（>=70）：暖红心动渐变 + 轻微暖光呼吸 */
-.archive-meter--affection[data-meter-level="hot"] .archive-bar__fill {
+.archive-meter--affection[data-meter-level='hot'] .archive-bar__fill {
   background: linear-gradient(90deg, #ffb1c1 0%, #ef7e9e 50%, #d44b73 100%);
   animation: archive-affection-glow 2.6s ease-in-out infinite;
 }
 
-.archive-meter--affection[data-meter-level="hot"] .archive-meter__meta em {
+.archive-meter--affection[data-meter-level='hot'] .archive-meter__meta em {
   color: #c64367;
   font-weight: 600;
 }
@@ -2575,17 +2622,22 @@ body.floating-phone-dragging {
 /* 好感度中等（30-70）：默认粉，已经默认样式覆盖 */
 
 /* 好感度低位（<30）：冷淡浅灰粉，没有什么实感 */
-.archive-meter--affection[data-meter-level="cold"] .archive-bar__fill {
+.archive-meter--affection[data-meter-level='cold'] .archive-bar__fill {
   background: linear-gradient(90deg, #f5e6ea 0%, #e9c5ce 100%);
   opacity: 0.88;
 }
 
 @keyframes archive-affection-glow {
-  0%, 100% {
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32), 0 0 0 0 rgba(212, 75, 115, 0);
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.32),
+      0 0 0 0 rgba(212, 75, 115, 0);
   }
   50% {
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42), 0 0 8px 1px rgba(232, 115, 153, 0.42);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.42),
+      0 0 8px 1px rgba(232, 115, 153, 0.42);
   }
 }
 

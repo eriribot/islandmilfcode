@@ -35,6 +35,27 @@ const MAIN_EVENT_NOT_STARTED = '未进行';
 const MAIN_EVENT_RUNNING = '进行中';
 const MAIN_EVENT_FINISHED = '已结束';
 
+/**
+ * 清理文本中的占位符，防止 {{user}} / {{char}} 等占位符泄露到 prompt 中。
+ * 这些占位符如果来自世界书、旧存档或未替换的模板，会导致 AI 在输出中也使用占位符。
+ */
+function sanitizePlaceholders(text: string, playerName?: string, charName?: string): string {
+  if (!text) return text;
+  let result = text;
+  // 替换 {{user}} 和 {{User}}
+  if (playerName) {
+    result = result.replace(/\{\{user\}\}/gi, playerName);
+  } else {
+    // 如果没有玩家名，至少替换成通用词避免泄露
+    result = result.replace(/\{\{user\}\}/gi, '玩家');
+  }
+  // 替换 {{char}} 和 {{Char}}
+  if (charName) {
+    result = result.replace(/\{\{char\}\}/gi, charName);
+  }
+  return result;
+}
+
 // 预设里常见的、会嵌在正文里的元标签。这些不是正文边界，只是吐槽 / 思考 / 指令块。
 // 抽正文时需要把它们整体剥掉，否则 <tucao> 包住正文会让可见正文变空。
 const META_SUBTAG_NAMES = [
@@ -310,14 +331,50 @@ export function getPromptMessageText(message: UiMessage) {
   return String(message.text || '');
 }
 
-export function getReaderMessages(messages: UiMessage[]) {
-  return messages.filter(message => {
+// ── Reader message cache for performance ──
+
+let cachedReaderMessages: UiMessage[] = [];
+let cachedSourceLength = 0;
+
+export function getReaderMessages(messages: UiMessage[], forceRebuild = false) {
+  // 如果消息数组没变化，返回缓存
+  if (!forceRebuild && messages.length === cachedSourceLength && messages.length > 0) {
+    return cachedReaderMessages;
+  }
+
+  // 如果只是新增消息（最常见场景：记录新对话），增量添加
+  if (!forceRebuild && messages.length > cachedSourceLength && cachedSourceLength > 0) {
+    const newMessages = messages.slice(cachedSourceLength);
+    const filtered = newMessages.filter(message => {
+      if (message.role === 'system') return false;
+      if (message.role === 'user') return Boolean(message.text.trim());
+      if (isFrontendHtmlShell(message.rawText || message.text)) return false;
+      // assistant: 流式中或有任何原文都保留，让掉标签的楼层也能被翻到并走编辑入口恢复。
+      return message.streaming || Boolean(message.text.trim());
+    });
+    cachedReaderMessages.push(...filtered);
+    cachedSourceLength = messages.length;
+    return cachedReaderMessages;
+  }
+
+  // 删除/编辑消息时或首次加载时，完全重建
+  cachedReaderMessages = messages.filter(message => {
     if (message.role === 'system') return false;
     if (message.role === 'user') return Boolean(message.text.trim());
     if (isFrontendHtmlShell(message.rawText || message.text)) return false;
     // assistant: 流式中或有任何原文都保留，让掉标签的楼层也能被翻到并走编辑入口恢复。
     return message.streaming || Boolean(message.text.trim());
   });
+  cachedSourceLength = messages.length;
+  return cachedReaderMessages;
+}
+
+/**
+ * 清空 reader 消息缓存，在删除/编辑消息后调用。
+ */
+export function invalidateReaderMessagesCache() {
+  cachedReaderMessages = [];
+  cachedSourceLength = 0;
 }
 
 // 摘要完成后至少保留最近几条原始消息，防止模型丢失近期对话细节。
@@ -1097,6 +1154,12 @@ export function buildPhoneChatPrompt(input: {
     triggerEvent,
     forceMessage = false,
   } = input;
+
+  // 清理占位符，防止泄露到 prompt
+  const playerName = playerProfile?.name || '玩家';
+  const cleanPlayerName = sanitizePlaceholders(playerName, playerName, target.name);
+  const cleanTargetName = sanitizePlaceholders(target.name, cleanPlayerName, target.name);
+
   const miniPersona = getRelationshipMiniPersona(target);
   const relationshipGuidance = getRelationshipGuidance(target);
   const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile });
@@ -1120,10 +1183,10 @@ export function buildPhoneChatPrompt(input: {
   const plotContext = buildCurrentPlotContext(statusData, input.plotLibrary);
   const playerProfileText = playerProfile?.name
     ? [
-        `玩家姓名：${playerProfile.name}`,
-        playerProfile.className ? `玩家班级：${playerProfile.className}` : '',
-        playerProfile.personality ? `玩家性格：${playerProfile.personality}` : '',
-        playerProfile.appearance ? `玩家外貌：${playerProfile.appearance}` : '',
+        `玩家姓名：${cleanPlayerName}`,
+        playerProfile.className ? `玩家班级：${sanitizePlaceholders(playerProfile.className, cleanPlayerName)}` : '',
+        playerProfile.personality ? `玩家性格：${sanitizePlaceholders(playerProfile.personality, cleanPlayerName)}` : '',
+        playerProfile.appearance ? `玩家外貌：${sanitizePlaceholders(playerProfile.appearance, cleanPlayerName)}` : '',
         buildPlayerStatsText(playerProfile),
       ]
         .filter(Boolean)
@@ -1131,8 +1194,8 @@ export function buildPhoneChatPrompt(input: {
     : '';
 
   const parts = [
-    `你正在扮演 ${target.name}，通过手机消息和玩家聊天。`,
-    `可见回复必须写在 <message>...</message> 中，只输出 ${target.name} 发出的手机消息。`,
+    `你正在扮演 ${cleanTargetName}，通过手机消息和玩家聊天。`,
+    `可见回复必须写在 <message>...</message> 中，只输出 ${cleanTargetName} 发出的手机消息。`,
     '语气要像即时通讯，不要写旁白、舞台说明或第三人称叙述。',
     '可以短一些，自然一些；除非玩家要求，不要一次发长篇。',
     '记住不在场的时候好感度是不会变化的，只有当玩家的消息让你产生了明确情绪反应时才评估好感度变化。',
@@ -1410,9 +1473,14 @@ export function buildPhoneProgressPrompt(input: {
   messages: PhoneChatMessage[];
 }): Array<{ role: 'system' | 'user'; content: string }> {
   const { statusData, target, messages } = input;
+
+  // 清理角色名中的占位符，防止泄露到 prompt
+  const playerName = '玩家'; // 手机进度分析不需要具体玩家名
+  const cleanTargetName = sanitizePlaceholders(target.name, playerName, target.name);
+
   const formatted = messages
     .slice(-8)
-    .map(message => `[${message.speaker}]\n${message.text.trim()}`)
+    .map(message => `[${sanitizePlaceholders(message.speaker, playerName, cleanTargetName)}]\n${message.text.trim()}`)
     .filter(Boolean)
     .join('\n\n');
 
@@ -1436,7 +1504,7 @@ export function buildPhoneProgressPrompt(input: {
             .map(([id, status]) => `${id}:${status}`)
             .join('；') || '无'
         }`,
-        `  聊天对象: ${target.name}`,
+        `  聊天对象: ${cleanTargetName}`,
         `  好感度: ${target.affinity} (${target.stage})`,
         hasObsessionAxis(target) ? `  执念度: ${target.obsession} (${target.obsessionStage})` : '',
         '',
@@ -1444,13 +1512,13 @@ export function buildPhoneProgressPrompt(input: {
         '可用字段：',
         '  时间:YYYY-MM-DD HH:mm',
         '  地点:新地点',
-        `  好感度:±N（只更新当前聊天对象：${target.name}）`,
-        `  好感度.${target.name}:±N（也可显式写当前聊天对象；例如 好感度.${target.name}:+1）`,
+        `  好感度:±N（只更新当前聊天对象：${cleanTargetName}）`,
+        `  好感度.${cleanTargetName}:±N（也可显式写当前聊天对象；例如 好感度.${cleanTargetName}:+1）`,
         hasObsessionAxis(target)
-          ? `  执念度:±N（旧情度，对伦也旧线的牵挂；只更新当前聊天对象：${target.name}）`
+          ? `  执念度:±N（旧情度，对伦也旧线的牵挂；只更新当前聊天对象：${cleanTargetName}）`
           : '',
         hasObsessionAxis(target)
-          ? `  执念度.${target.name}:±N（也可显式写当前聊天对象；例如 执念度.${target.name}:-1）`
+          ? `  执念度.${cleanTargetName}:±N（也可显式写当前聊天对象；例如 执念度.${cleanTargetName}:-1）`
           : '',
         hasObsessionAxis(target)
           ? '  ※ 好感度与执念度（旧情度）是独立两条轴：好感对 user，执念对伦也。允许扣减执念的通道：伦也直接负面 / 对比戏 / user 替代位（user 替伦也完成她期待的事）/ 主动吐露旧事。日常戏只动其一；对比或替代位场景才允许同回合双动；禁止无脑同步 ±1。日常 ±1~2，明确事件 ±3~5，重大冲击 ±6~8。'

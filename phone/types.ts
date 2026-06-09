@@ -22,6 +22,131 @@ export function isPhoneThemeCharacterId(value: string | null | undefined): value
   return Boolean(value && (PHONE_THEME_CHARACTER_IDS as readonly string[]).includes(value));
 }
 
+// 档案页印象标签策略：金色关系闩锁不参与裁剪；普通标签按极性配额展示，避免重复刷屏。
+export const PHONE_ARCHIVE_IMPRESSION_MAX_COUNT = 8;
+
+export const PHONE_ARCHIVE_IMPRESSION_POLARITY_LIMITS = {
+  positive: 3,
+  neutral: 2,
+  negative: 1,
+} as const;
+
+export const PHONE_ARCHIVE_IMPRESSION_GOLD_TAG = 'gold-variable';
+export const PHONE_ARCHIVE_IMPRESSION_LOCKED_TAG = 'locked-variable';
+
+export const PHONE_ARCHIVE_GOLD_IMPRESSION_KEYWORDS = [
+  '恋人',
+  '恋爱关系',
+  '交往',
+  '女友',
+  '男友',
+  '伴侣',
+  '爱人',
+  '婚约',
+  '结婚',
+  '后宫',
+  '正宫',
+  '结缘',
+] as const;
+
+export type PhoneArchiveImpressionLike = {
+  label: string;
+  polarity: -1 | 0 | 1;
+  weight?: number;
+  importance?: number;
+  tags?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+  lastSeenAt?: string;
+};
+
+export function normalizePhoneArchiveImpressionSubject(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  return /^(user|玩家|你)$/.test(normalized) ? 'user' : normalized.replace(/\s+/g, '');
+}
+
+function compactImpressionText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[“”"'「」『』【】\[\]（）()\s、，,。.!！?？：:；;·\-_/\\|｜]/g, '')
+    .replace(/[的地得]/g, '');
+}
+
+export function getPhoneArchiveImpressionSemanticKey(label: string): string {
+  const compact = compactImpressionText(label)
+    .replace(/极强|强烈|高度|非常|明显|过度|深度|很|有点|略微|相当/g, '')
+    .replace(/和|与|且|并且/g, '');
+
+  if (/后宫|正宫/.test(compact)) return 'locked-harem';
+  if (/婚约|结婚/.test(compact)) return 'locked-marriage';
+  if (/恋人|恋爱关系|交往|女友|男友|伴侣|爱人/.test(compact)) return 'locked-lover';
+  if (/结缘/.test(compact)) return 'locked-bond';
+  if (/依赖|信任|信赖|安心|可靠|靠谱|托付|靠得住|安全感/.test(compact)) return 'trust';
+  if (/占有|独占|吃醋|嫉妒|醋意|不想分享/.test(compact)) return 'possessive';
+  if (/迷恋|沉迷|上瘾|渴望|欲望|吸引/.test(compact)) return 'desire';
+  if (/亲密|暧昧|偏心|在意|心动|喜欢|好感|宠爱/.test(compact)) return 'affection';
+  if (/保护|守护|护短|照顾|关心/.test(compact)) return 'care';
+  if (/伤害|受伤|刺痛|失望|难过|委屈/.test(compact)) return 'hurt';
+  if (/警惕|戒备|怀疑|防备|不信任/.test(compact)) return 'wary';
+  if (/尴尬|困惑|迷茫|观察|试探|好奇/.test(compact)) return 'neutral-watch';
+  return compact;
+}
+
+export function isPhoneArchiveGoldImpression(imp: PhoneArchiveImpressionLike): boolean {
+  if (imp.tags?.some(tag => tag === PHONE_ARCHIVE_IMPRESSION_GOLD_TAG || tag === PHONE_ARCHIVE_IMPRESSION_LOCKED_TAG)) {
+    return true;
+  }
+  return PHONE_ARCHIVE_GOLD_IMPRESSION_KEYWORDS.some(keyword => imp.label.includes(keyword));
+}
+
+function getImpressionTime(imp: PhoneArchiveImpressionLike): string {
+  return imp.lastSeenAt || imp.updatedAt || imp.createdAt || '';
+}
+
+function rankPhoneArchiveImpression(a: PhoneArchiveImpressionLike, b: PhoneArchiveImpressionLike): number {
+  const goldDiff = Number(isPhoneArchiveGoldImpression(b)) - Number(isPhoneArchiveGoldImpression(a));
+  if (goldDiff) return goldDiff;
+  const weightDiff = Math.abs(b.weight ?? 0) - Math.abs(a.weight ?? 0);
+  if (weightDiff) return weightDiff;
+  const importanceDiff = (b.importance ?? 0) - (a.importance ?? 0);
+  if (importanceDiff) return importanceDiff;
+  return getImpressionTime(b).localeCompare(getImpressionTime(a));
+}
+
+export function selectPhoneArchiveImpressions<T extends PhoneArchiveImpressionLike>(impressions: T[]): T[] {
+  const sorted = [...impressions].sort(rankPhoneArchiveImpression);
+  const unique: T[] = [];
+  const seen = new Set<string>();
+  for (const imp of sorted) {
+    const key = `${imp.polarity}|${getPhoneArchiveImpressionSemanticKey(imp.label)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(imp);
+  }
+
+  const gold = unique.filter(isPhoneArchiveGoldImpression);
+  const regular = unique.filter(imp => !isPhoneArchiveGoldImpression(imp));
+  const selected: T[] = [...gold];
+  const selectedSet = new Set<T>(selected);
+
+  const addByPolarity = (polarity: -1 | 0 | 1, limit: number) => {
+    for (const imp of regular.filter(item => item.polarity === polarity).slice(0, limit)) {
+      if (selectedSet.has(imp)) continue;
+      selected.push(imp);
+      selectedSet.add(imp);
+    }
+  };
+
+  addByPolarity(1, PHONE_ARCHIVE_IMPRESSION_POLARITY_LIMITS.positive);
+  addByPolarity(0, PHONE_ARCHIVE_IMPRESSION_POLARITY_LIMITS.neutral);
+  addByPolarity(-1, PHONE_ARCHIVE_IMPRESSION_POLARITY_LIMITS.negative);
+
+  return gold.length > PHONE_ARCHIVE_IMPRESSION_MAX_COUNT
+    ? gold
+    : selected.slice(0, PHONE_ARCHIVE_IMPRESSION_MAX_COUNT);
+}
+
 export type FloatingPhonePosition = {
   x: number;
   y: number;

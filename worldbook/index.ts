@@ -668,7 +668,10 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
         : undefined) ??
       (worldbookKey ? existingByBuiltInKey.get(worldbookKey) : undefined);
     if (!existing) return worldbookTarget;
-    if (!canReuseExistingTargetVariables(worldbookTarget, existing)) return worldbookTarget;
+
+    // 中文注释：只要通过任一匹配逻辑找到了 existing，就应该保留好感度/执念，
+    // 即使身份识别 key 不一致（可能是用户改了名字、世界书格式变化、或旧存档串位）。
+    // 删除原有的 canReuseExistingTargetVariables 检查，避免"匹配成功但身份冲突"时丢失进度。
 
     return {
       ...worldbookTarget,

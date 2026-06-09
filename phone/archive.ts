@@ -3,7 +3,7 @@ import type { TargetStatus } from '../types';
 import { affinityStage, attachmentStage, attachmentValue, obsessionStage } from '../variables/normalize';
 import { getImpressionsForTarget } from '../memorydatabase/query';
 import type { IslandMemoryDB } from '../memorydatabase/types';
-import type { PhoneCharacterId } from './types';
+import { isPhoneArchiveGoldImpression, selectPhoneArchiveImpressions, type PhoneCharacterId } from './types';
 
 const LEGACY_IZUMI_FILM_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg';
 const IZUMI_PHONE_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg';
@@ -208,7 +208,8 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
     .map(value => String(value ?? '').toLowerCase())
     .join('\n');
 
-  if (archive.id === 'eriri') return !/小百合|sayuri/.test(haystack) && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
+  if (archive.id === 'eriri')
+    return !/小百合|sayuri/.test(haystack) && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
   if (archive.id === 'megumi') return /加藤|惠|恵|megumi|katou|kato/.test(haystack);
   if (archive.id === 'utaha') return /霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack);
   if (archive.id === 'izumi') return /波岛|波島|出海|izumi|hashima/.test(haystack);
@@ -304,14 +305,7 @@ function renderMeter(meter: ArchiveMeter) {
 }
 
 // 中文注释：亲密接触计数器的常见字段展示顺序；未列出的自定义字段（如 足交次数）追加在后面。
-const COUNTER_FIELD_ORDER = [
-  '接吻次数',
-  '口交次数',
-  '乳交次数',
-  '性交次数',
-  '被内射次数',
-  '肛交次数',
-];
+const COUNTER_FIELD_ORDER = ['接吻次数', '口交次数', '乳交次数', '性交次数', '被内射次数', '肛交次数'];
 
 // 中文注释：已废弃、不再展示的计数字段。设计意图是“加深依恋感”而非征服式统计，
 // 经验人数（伴侣数）与该意图冲突，旧存档里残留也一律不读取、不展示、不回注。
@@ -353,12 +347,29 @@ function renderImpressionChips(memoryDB: IslandMemoryDB | null | undefined, targ
   if (!memoryDB || !targetId) return '';
   const allImpressions = getImpressionsForTarget(memoryDB, targetId);
   // 只显示"对 User/玩家"的印象；对其他角色的印象不在"她对你的印象"里展示。
-  const impressions = allImpressions.filter(imp => /^(user|玩家|你)$/i.test(imp.subject.trim()));
+  const impressions = selectPhoneArchiveImpressions(
+    allImpressions.filter(imp => /^(user|玩家|你)$/i.test(imp.subject.trim())),
+  );
   if (!impressions.length) return '';
   const chips = impressions
     .map(imp => {
-      const polarity = imp.polarity > 0 ? 'pos' : imp.polarity < 0 ? 'neg' : 'neutral';
-      return `<span class="archive-impression-chip archive-impression-chip--${polarity}">${escapeHtml(imp.label)}</span>`;
+      const polarity = isPhoneArchiveGoldImpression(imp)
+        ? 'gold'
+        : imp.polarity > 0
+          ? 'pos'
+          : imp.polarity < 0
+            ? 'neg'
+            : 'neutral';
+      return `
+        <button
+          type="button"
+          class="archive-impression-chip archive-impression-chip--${polarity}"
+          data-action="archive-edit-impression"
+          data-impression-id="${escapeHtml(imp.id)}"
+          title="编辑印象标签"
+          aria-label="编辑印象标签：${escapeHtml(imp.label)}"
+        >${escapeHtml(imp.label)}</button>
+      `;
     })
     .join('');
   return `

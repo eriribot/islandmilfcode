@@ -656,7 +656,12 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
   const globalHtml = store.global
     ? `<div class="subsection">
         <div class="subsection-title">全局摘要</div>
-        <div class="chip-card"><p>${escapeHtml(store.global)}</p></div>
+        <div class="chip-card">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+            <p style="flex:1;margin:0">${escapeHtml(store.global)}</p>
+            <button class="mini-btn" data-action="summary-edit" data-edit-level="global" style="font-size:10px;padding:2px 6px;flex-shrink:0" ${summarizing ? 'disabled' : ''}>✏️</button>
+          </div>
+        </div>
       </div>`
     : '';
 
@@ -669,7 +674,10 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
             return `<div class="chip-card" style="border-left:3px solid var(--accent-primary,#7c6ca8)">
                 <div style="display:flex;justify-content:space-between;align-items:center">
                   <strong>#${i + 1} · 楼层 ${uiStart}-${uiEnd}</strong>
-                  <button class="mini-btn" data-action="summary-reroll" data-reroll-level="major" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>🎲</button>
+                  <div style="display:flex;gap:4px">
+                    <button class="mini-btn" data-action="summary-edit" data-edit-level="major" data-edit-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>✏️</button>
+                    <button class="mini-btn" data-action="summary-reroll" data-reroll-level="major" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>🎲</button>
+                  </div>
                 </div>
                 <p>${escapeHtml(e.text)}</p>
                 <div style="font-size:10px;opacity:0.45;margin-top:4px">${escapeHtml(e.createdAt.slice(0, 16).replace('T', ' '))}</div>
@@ -689,7 +697,10 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
             return `<div class="chip-card">
                 <div style="display:flex;justify-content:space-between;align-items:center">
                   <strong>#${i + 1} · 楼层 ${uiStart}-${uiEnd}</strong>
-                  <button class="mini-btn" data-action="summary-reroll" data-reroll-level="minor" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>🎲</button>
+                  <div style="display:flex;gap:4px">
+                    <button class="mini-btn" data-action="summary-edit" data-edit-level="minor" data-edit-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>✏️</button>
+                    <button class="mini-btn" data-action="summary-reroll" data-reroll-level="minor" data-reroll-index="${i}" style="font-size:10px;padding:2px 6px" ${summarizing ? 'disabled' : ''}>🎲</button>
+                  </div>
                 </div>
                 <p>${escapeHtml(e.text)}</p>
                 <div style="font-size:10px;opacity:0.45;margin-top:4px">${escapeHtml(e.createdAt.slice(0, 16).replace('T', ' '))}</div>

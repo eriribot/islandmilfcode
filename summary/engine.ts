@@ -3,6 +3,7 @@ import type { UiMessage } from '../types';
 import type { FactAnchor, KeyFact, KeyFactCategory, SummaryEntry, SummaryStore } from './types';
 import { KEY_FACT_CATEGORY_LABEL, KEY_FACT_CATEGORY_MAP } from './types';
 import { loadSummaryTriggerConfig } from '../memory-config';
+import { selectPhoneArchiveImpressions } from '../phone/types';
 
 // 默认阈值（当 localStorage 无配置时使用）
 export const MINOR_THRESHOLD = 5;
@@ -77,14 +78,10 @@ function renderFactAnchor(anchor: FactAnchor | null | undefined): string {
   // 性状态：始终显示当前对象的贞操和计数器，让 AI 能发现旧档数据缺失并补正。
   if (anchor.sexStatus) {
     const s = anchor.sexStatus;
-    lines.push(
-      `- ${s.name} 贞操状态：${s.virginity === 'lost' ? '已失去（不可逆，禁止改写回完璧/处女）' : '完璧'}`,
-    );
+    lines.push(`- ${s.name} 贞操状态：${s.virginity === 'lost' ? '已失去（不可逆，禁止改写回完璧/处女）' : '完璧'}`);
     if (s.counters.length) {
       const countersText = s.counters.map(c => `${c.field}${c.value}`).join(' / ');
-      lines.push(
-        `- ${s.name} 身体开发记录（硬统计，仅供前后一致，禁止主动提及、强调或据此渲染）：${countersText}`,
-      );
+      lines.push(`- ${s.name} 身体开发记录（硬统计，仅供前后一致，禁止主动提及、强调或据此渲染）：${countersText}`);
     }
   }
 
@@ -132,8 +129,9 @@ export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnch
         '2. <key_facts> 标签：按下方格式逐行列出新产生的关键事实。没有则输出空标签。',
         '',
         '<key_facts> 行格式：`[类别] 主体 | 内容`（类别限定：承诺、秘密、关系、物品、事件、地点、设定）。',
-        '  ⚠ [关系] 类别特殊规则：内容必须是简短的印象标签（2~10字），不要写完整句子。',
+        '  ⚠ [关系] 类别特殊规则：只记录本段新形成或明显改变的核心印象，不要复述已有印象；内容必须是简短标签（2~10字），不要写完整句子。',
         '  格式：`[关系] A → B | 标签 | 极性`，表示 A 对 B 形成的印象。极性取 + / - / 0（正面好感 / 负面反感 / 中性观察），省略时按中性处理。一条只写一个标签，多个印象分多行。',
+        '  数量限制：每段最多 6 条 [关系] 印象，其中最多 3 条正面、2 条中性、1 条负面；同义标签只保留最准确的一条。恋人/交往/伴侣/后宫/结婚/婚约/结缘这类关系闩锁若正文明确成立，必须保留为单条标签，不要再派生一串相似情绪标签。',
         '  示例：`[关系] 英梨梨 → User | 幽默 | +`、`[关系] 英梨梨 → User | 太爱多管闲事 | -`、`[关系] 加藤惠 → User | 话多 | 0`。',
         '示例：',
         '<summary>',
@@ -309,7 +307,10 @@ export type ParsedImpression = {
 
 /** 把 `标签 | 极性` 尾部的极性标记拆出来；无标记按中性。兼容 +/正、-/负、0/中。 */
 function splitLabelPolarity(rawTail: string): { label: string; polarity: -1 | 0 | 1 } {
-  const segs = rawTail.split(/[|｜]/).map(s => s.trim()).filter(Boolean);
+  const segs = rawTail
+    .split(/[|｜]/)
+    .map(s => s.trim())
+    .filter(Boolean);
   if (segs.length >= 2) {
     const mark = segs[segs.length - 1];
     if (/^[+＋]$|正|positive/i.test(mark)) return { label: segs.slice(0, -1).join(' ').trim(), polarity: 1 };
@@ -347,5 +348,5 @@ export function parseImpressionsFromSummary(raw: string): ParsedImpression[] {
     if (!source || !subject || !label) continue;
     impressions.push({ source, subject, label, polarity });
   }
-  return impressions;
+  return selectPhoneArchiveImpressions(impressions);
 }
