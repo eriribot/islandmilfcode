@@ -176,8 +176,8 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     ],
     tags: ['外交官夫人', '人妻', '特别档案'],
     details: [
-      { label: '身份', value: '英梨梨的母亲' },
-      { label: '变量', value: '独立轴待设计' },
+      { label: '年龄', value: '38-39' },
+      { label: '身高', value: '159cm' },
     ],
     meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
     usesObsessionAxis: false,

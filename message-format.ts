@@ -1,3 +1,6 @@
+import { isPlotEventAllowedByRoute, isPlotEventVisibleByRoute } from './plot-routing';
+import { buildCharacterDataImportPrompt, stripCharacterDataImportText } from './plugins/character-data-import';
+import { buildImageGenerationPrompt, stripImageGenerationTags } from './plugins/image-generation';
 import {
   getCharacterAnchorGuidance,
   getRelationshipAddressGuidance,
@@ -9,17 +12,14 @@ import {
   hasObsessionAxisByName,
   OBSESSION_TARGET_DISPLAY_NAMES,
 } from './relationship';
-import { isPlotEventAllowedByRoute, isPlotEventVisibleByRoute } from './plot-routing';
-import { buildCharacterDataImportPrompt, stripCharacterDataImportText } from './plugins/character-data-import';
-import { buildImageGenerationPrompt, stripImageGenerationTags } from './plugins/image-generation';
 import type { KeyFact, KeyFactCategory, SummaryStore } from './summary/types';
 import { KEY_FACT_CATEGORY_LABEL } from './summary/types';
 import type {
   CharacterCardLibrary,
+  DrawingSettings,
   PhoneChatMessage,
   PlayerProfile,
   PlayerStats,
-  DrawingSettings,
   PlotEventCard,
   PlotLibrary,
   ScenePresence,
@@ -243,7 +243,10 @@ export function extractOptionsBlock(text: string, { streaming = false }: { strea
   if (match) {
     const content = (match[1] ?? '').trim();
     // 解析每个选项，格式：>选项一：[内容]
-    const lines = content.split('\n').map(line => line.trim()).filter(Boolean);
+    const lines = content
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean);
     for (const line of lines) {
       const optionMatch = line.match(/^>(?:选项[一二三四]：)?\s*\[?(.+?)\]?$/);
       if (optionMatch) {
@@ -265,7 +268,10 @@ export function extractOptionsBlock(text: string, { streaming = false }: { strea
         .slice(start)
         .replace(/<[^>]*$/, '')
         .trim();
-      const lines = content.split('\n').map(line => line.trim()).filter(Boolean);
+      const lines = content
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
       for (const line of lines) {
         const optionMatch = line.match(/^>(?:选项[一二三四]：)?\s*\[?(.+?)\]?$/);
         if (optionMatch) {
@@ -340,12 +346,22 @@ let cachedSourceLength = 0;
 export function getReaderMessages(messages: UiMessage[], forceRebuild = false) {
   // 如果消息数组本身没变化，返回缓存。不能只看 length：
   // 存档恢复/分区重建可能换了一整组同长度消息，旧缓存会让 readerIndex 指到旧楼层。
-  if (!forceRebuild && messages === cachedSourceMessages && messages.length === cachedSourceLength && messages.length > 0) {
+  if (
+    !forceRebuild &&
+    messages === cachedSourceMessages &&
+    messages.length === cachedSourceLength &&
+    messages.length > 0
+  ) {
     return cachedReaderMessages;
   }
 
   // 如果同一个数组只是新增消息（最常见场景：记录新对话），增量添加
-  if (!forceRebuild && messages === cachedSourceMessages && messages.length > cachedSourceLength && cachedSourceLength > 0) {
+  if (
+    !forceRebuild &&
+    messages === cachedSourceMessages &&
+    messages.length > cachedSourceLength &&
+    cachedSourceLength > 0
+  ) {
     const newMessages = messages.slice(cachedSourceLength);
     const filtered = newMessages.filter(message => {
       if (message.role === 'system') return false;
@@ -403,7 +419,9 @@ function buildConversationHistory(uiMessages: UiMessage[], startIndex = 0) {
     return '';
   }
 
-  return ['历史正文记录（仅供场景连续性参考；不包含历史玩家输入，当前玩家输入见下方独立字段）：', ...historyLines].join('\n\n');
+  return ['历史正文记录（仅供场景连续性参考；不包含历史玩家输入，当前玩家输入见下方独立字段）：', ...historyLines].join(
+    '\n\n',
+  );
 }
 
 function buildPhoneChatHistory(messages: PhoneChatMessage[]) {
@@ -751,7 +769,10 @@ function buildTargetStateList(statusData: StatusData) {
       const virginity = target.meta?.virginity === 'lost' ? '已失去' : '完璧';
       const rawCounters = target.meta?.bodyCounters as Record<string, number> | undefined;
       const counterEntries = rawCounters
-        ? Object.entries(rawCounters).filter(([, v]) => Number(v) > 0).map(([k, v]) => `${k}${v}`).join('/')
+        ? Object.entries(rawCounters)
+            .filter(([, v]) => Number(v) > 0)
+            .map(([k, v]) => `${k}${v}`)
+            .join('/')
         : '';
       const sexSegment = adultMarriedIntimacy
         ? `；亲密轴=${counterEntries ? '小百合背德关系已成立（已发生关系）' : '小百合既婚边界（尚未越界）'}（不使用贞操/完璧闩锁，不输出贞操字段）${counterEntries ? `；计数=${counterEntries}` : ''}`
@@ -905,9 +926,7 @@ function buildActiveCharacterCards(
 
   // targetIds 优先级最高：手机聊天等单对象场景直接指定要注入的角色，绕过 scenePresence 判定。
   const explicit = (options.targetIds ?? []).filter(Boolean);
-  const allowedIds: Set<string> | null = explicit.length
-    ? new Set(explicit)
-    : getSceneGuidanceTargetIds(scenePresence);
+  const allowedIds: Set<string> | null = explicit.length ? new Set(explicit) : getSceneGuidanceTargetIds(scenePresence);
   if (!allowedIds || !allowedIds.size) return '';
 
   const blocks: string[] = [];
@@ -960,7 +979,7 @@ function buildSummaryContextInline(
     currentMainEventId?: string;
     recentUserInput?: string;
     tokenBudget?: number;
-  }
+  },
 ): string {
   // 优先使用 memoryDB 的结构化注入（新系统）
   if (memoryDB && context) {
@@ -1034,8 +1053,7 @@ export function buildPrompt(
     ? {
         currentTime: statusData.world.currentTime,
         currentLocation: statusData.world.currentLocation,
-        currentTargetIds: options.scenePresence?.presentIds ||
-                         statusData.targets.map(t => t.id),
+        currentTargetIds: options.scenePresence?.presentIds || statusData.targets.map(t => t.id),
         currentMainEventId: statusData.world.currentMainEventId,
         recentUserInput: userInput,
         config: (() => {
@@ -1059,11 +1077,12 @@ export function buildPrompt(
       }
     : undefined;
 
-  const summaryContext = options?.memoryDB && memoryContext
-    ? buildSummaryContextInline(summaryStore, options.memoryDB, memoryContext)
-    : hasSummary
-    ? buildSummaryContextInline(summaryStore)
-    : '';
+  const summaryContext =
+    options?.memoryDB && memoryContext
+      ? buildSummaryContextInline(summaryStore, options.memoryDB, memoryContext)
+      : hasSummary
+        ? buildSummaryContextInline(summaryStore)
+        : '';
   const mainEventsContext = buildMainEventsContext(statusData);
   const plotContext = buildCurrentPlotContext(statusData, options?.plotLibrary);
   // 取 lastSummarizedIndex 和「总消息数 - 保留窗口」中较小的那个，
@@ -1177,12 +1196,9 @@ export function buildPhoneChatPrompt(input: {
   const recentEventsContext = buildRecentEventsContext(statusData);
   const mainEventsContext = buildMainEventsContext(statusData);
   // 手机聊天天然只有一个聊天对象，绕过 scenePresence 直接指定 targetIds 注入这一张完整卡。
-  const activeCharacterCards = buildActiveCharacterCards(
-    statusData,
-    null,
-    input.characterCardLibrary,
-    { targetIds: [target.id] },
-  );
+  const activeCharacterCards = buildActiveCharacterCards(statusData, null, input.characterCardLibrary, {
+    targetIds: [target.id],
+  });
   const hasSummary =
     summaryStore &&
     (summaryStore.global ||
@@ -1195,7 +1211,9 @@ export function buildPhoneChatPrompt(input: {
     ? [
         `玩家姓名：${cleanPlayerName}`,
         playerProfile.className ? `玩家班级：${sanitizePlaceholders(playerProfile.className, cleanPlayerName)}` : '',
-        playerProfile.personality ? `玩家性格：${sanitizePlaceholders(playerProfile.personality, cleanPlayerName)}` : '',
+        playerProfile.personality
+          ? `玩家性格：${sanitizePlaceholders(playerProfile.personality, cleanPlayerName)}`
+          : '',
         playerProfile.appearance ? `玩家外貌：${sanitizePlaceholders(playerProfile.appearance, cleanPlayerName)}` : '',
         buildPlayerStatsText(playerProfile),
       ]
@@ -1342,7 +1360,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
     `执念度.角色名:±N（例：${obsessionExamples}）`,
     '五维.能力名:±N',
     '贞操.角色名:已失去（仅适用于角色列表显示“贞操=完璧”的角色；泽村小百合禁用此字段）',
-    'X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/性交次数/足交次数；正文明确发生时累加。泽村小百合发生关系时也只写此字段，由系统派生背德关系；不统计经验人数）',
+    'X次数.角色名:+N（亲密接触硬统计，X 接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数；正文明确发生时累加。泽村小百合发生关系时也只写此字段，由系统派生背德关系；不统计经验人数）',
     '主线事件.事件ID:状态',
     '当前事件:事件ID',
     '</state_delta>',
@@ -1443,7 +1461,7 @@ export function buildProgressPrompt(
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
         '  着装.部位:描述（主场景禁用旧单目标着装格式；没有明确对象时不要输出）',
         '  贞操.角色名:已失去（仅适用于角色列表显示“贞操=完璧”的角色；泽村小百合禁用此字段）',
-        '  X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/性交次数/足交次数；正文明确发生时累加。泽村小百合发生关系时也只写此字段，由系统派生背德关系；不统计经验人数）',
+        '  X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数；正文明确发生时累加。泽村小百合发生关系时也只写此字段，由系统派生背德关系；不统计经验人数）',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
         '  主线事件.事件ID:状态（未触发/进行中/已结束）',
         '  ※ 正在进行的当前事件在事件日期/持续至当天通常必须保持进行中；只有当前日期已经晚于该事件日期窗口，或当前剧情卡的可接续事件已被路由解锁并可在当前日期激活时，才允许写 主线事件.事件ID:已结束 并同轮写 当前事件:无。否则省略主线事件字段。',
