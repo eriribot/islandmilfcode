@@ -24,11 +24,7 @@ export function isChatu8PluginAvailable(win: TavernWindow): boolean {
   const api = getEventApi(win);
 
   // 检查事件 API 是否可用
-  if (
-    typeof api.eventEmit !== 'function' ||
-    typeof api.eventOn !== 'function' ||
-    typeof api.eventRemoveListener !== 'function'
-  ) {
+  if (typeof api.eventEmit !== 'function' || typeof api.eventOn !== 'function') {
     return false;
   }
 
@@ -254,12 +250,14 @@ export function requestChatu8Task<T = unknown>(
   return new Promise((resolve, reject) => {
     let handled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let stopListening: { stop?: () => void } | void;
 
     const cleanup = () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
+      stopListening?.stop?.();
       api.eventRemoveListener?.(responseEvent, responseHandler);
     };
 
@@ -293,7 +291,7 @@ export function requestChatu8Task<T = unknown>(
       finish(() => reject(new Error('智慧姬任务请求超时')));
     }, timeoutMs);
 
-    api.eventOn(responseEvent, responseHandler);
+    stopListening = api.eventOn(responseEvent, responseHandler);
 
     Promise.resolve(
       api.eventEmit(requestEvent, {

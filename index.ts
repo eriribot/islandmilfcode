@@ -14,10 +14,10 @@ import './styles.css';
 import './phone/styles.css';
 import './title/styles.css';
 
-import { retryBackgroundProgressUpdate, submitMessage, submitPhoneMessage, type ActionContext } from './actions';
+import { cancelCurrentGeneration, retryBackgroundProgressUpdate, submitMessage, submitPhoneMessage, type ActionContext } from './actions';
 import { clearBackgroundTask } from './background-tasks';
 import { setupStreamingHooks } from './actions/streaming';
-import { extractContextReply, getReaderMessages } from './message-format';
+import { extractContextReply, getReaderMessages, invalidateReaderMessagesCache } from './message-format';
 import { bindFloatingPhoneEvents, loadFloatingPhonePosition, syncFloatingPhoneAfterResize } from './phone/floating';
 import {
   closePhoneRoute,
@@ -111,6 +111,7 @@ const READER_CONTEXT_MENU_GAP = 12;
 const READER_CONTEXT_MENU_WIDTH = 240;
 const READER_CONTEXT_MENU_HEIGHT = 176;
 const STATUS_CACHE_KEY_PREFIX = 'islandmilfcode:status-cache:v2:';
+const DRAWING_ENABLED_KEY_PREFIX = 'islandmilfcode:drawing-enabled:v1:';
 
 let flipDirection: 'forward' | 'backward' | '' = '';
 let phoneBgmAudio: HTMLAudioElement | null = null;
@@ -186,6 +187,15 @@ function restoreReaderBodyScroll(snapshot: ReaderBodyScrollSnapshot | null) {
   window.requestAnimationFrame(restore);
 }
 
+function resolveReaderIndex(readerIndex: number, readerId?: string | null) {
+  if (readerId) {
+    const byId = getReaderMessages(state.uiMessages).findIndex(message => message.id === readerId);
+    if (byId >= 0) return byId;
+  }
+  if (Number.isFinite(readerIndex)) return readerIndex;
+  return state.focusedMessageIndex;
+}
+
 // ── State & adapter ──
 
 let adapter: VariableAdapter;
@@ -215,6 +225,43 @@ function guardedAdapterSave(data: StatusData) {
   syncMainEvents(data, state.plotLibrary);
   adapter.save(data);
   cacheStatusData(data);
+}
+
+function getDrawingEnabledPreferenceKey() {
+  return `${DRAWING_ENABLED_KEY_PREFIX}${state.activeRunId ?? 'global'}`;
+}
+
+function readDrawingEnabledPreference() {
+  try {
+    const raw = localStorage.getItem(getDrawingEnabledPreferenceKey());
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+  } catch {
+    /* ignore storage failures */
+  }
+  return null;
+}
+
+function writeDrawingEnabledPreference(enabled: boolean) {
+  try {
+    localStorage.setItem(getDrawingEnabledPreferenceKey(), enabled ? 'true' : 'false');
+  } catch {
+    /* ignore storage failures */
+  }
+}
+
+function applyDrawingEnabledPreference() {
+  const stored = readDrawingEnabledPreference();
+  if (stored == null) {
+    writeDrawingEnabledPreference(Boolean(state.drawingSettings.enabled));
+    return;
+  }
+  if (state.drawingSettings.enabled === stored) return;
+  state.drawingSettings = normalizeDrawingSettings({
+    ...state.drawingSettings,
+    enabled: stored,
+  });
+  state.runtimeFlags.drawingSettings = JSON.parse(JSON.stringify(state.drawingSettings));
 }
 
 /** 包装后的 adapter：save() 会同时写入 localStorage 缓存。 */
@@ -448,6 +495,7 @@ function enterSave(saveId: string) {
   state.runtimeFlags = JSON.parse(JSON.stringify(save.payload.gameState.runtimeFlags ?? {}));
   state.drawingSettings = normalizeDrawingSettings(state.runtimeFlags.drawingSettings);
   commitDrawingSettingsToRuntimeFlags();
+  applyDrawingEnabledPreference();
   state.summaryStore = save.payload.summaryStore;
   if (save.payload.memoryDB) {
     state.memoryDB = save.payload.memoryDB;
@@ -481,8 +529,9 @@ function returnToTitle() {
 
 // ── UI actions (thin wrappers that stay in index.ts) ──
 
-function openReaderContextMenu(readerIndex: number, clientX: number, clientY: number) {
-  const message = getReaderMessageByIndex(state, readerIndex);
+function openReaderContextMenu(readerIndex: number, clientX: number, clientY: number, readerId?: string | null) {
+  const resolvedReaderIndex = resolveReaderIndex(readerIndex, readerId);
+  const message = getReaderMessageByIndex(state, resolvedReaderIndex);
   if (!message) return;
   const maxX = Math.max(
     READER_CONTEXT_MENU_GAP,
@@ -493,8 +542,8 @@ function openReaderContextMenu(readerIndex: number, clientX: number, clientY: nu
     window.innerHeight - READER_CONTEXT_MENU_HEIGHT - READER_CONTEXT_MENU_GAP,
   );
   state.readerContextMenu = {
-    readerIndex,
-    sourceUserText: getSourceUserTextForReaderIndex(state, readerIndex),
+    readerIndex: resolvedReaderIndex,
+    sourceUserText: getSourceUserTextForReaderIndex(state, resolvedReaderIndex),
     canDeleteMessage: Boolean(message),
     x: clamp(clientX, READER_CONTEXT_MENU_GAP, maxX),
     y: clamp(clientY, READER_CONTEXT_MENU_GAP, maxY),
@@ -502,11 +551,12 @@ function openReaderContextMenu(readerIndex: number, clientX: number, clientY: nu
   render();
 }
 
-function openReaderEditor(readerIndex: number) {
-  const message = getReaderMessageByIndex(state, readerIndex);
+function openReaderEditor(readerIndex: number, readerId?: string | null) {
+  const resolvedReaderIndex = resolveReaderIndex(readerIndex, readerId);
+  const message = getReaderMessageByIndex(state, resolvedReaderIndex);
   if (!message) return;
   state.readerEditing = {
-    readerIndex,
+    readerIndex: resolvedReaderIndex,
     draft: String(message.rawText || message.text || ''),
   };
   ctx.closeReaderContextMenu(false);
@@ -543,6 +593,7 @@ async function saveReaderEditor() {
 
   message.rawText = nextText;
   message.text = message.role === 'assistant' ? extractContextReply(nextText) || nextText : nextText;
+  invalidateReaderMessagesCache();
 
   // 同步回酒馆楼层，防止刷新后又被酒馆侧的原文覆盖。
   if (typeof message.tavernMessageId === 'number' && typeof win.setChatMessages === 'function') {
@@ -897,9 +948,6 @@ function quickSearchCharacterSong(characterId: PhoneThemeCharacterId) {
 
 function updateDrawingSettingsFromControls(shouldRender = false) {
   const settings = state.drawingSettings;
-  const enabledInput = root?.querySelector<HTMLInputElement>('[data-field="drawing-enabled"]');
-  const nextEnabled = enabledInput?.checked ?? settings.enabled;
-  settings.enabled = nextEnabled;
   settings.qualityPrompt =
     root?.querySelector<HTMLInputElement>('[data-field="drawing-quality-prompt"]')?.value ?? settings.qualityPrompt;
   settings.negativePrompt =
@@ -946,6 +994,7 @@ function updateDrawingSettingsFromControls(shouldRender = false) {
 }
 
 function syncDrawingSettingsFromMountedControls() {
+  if (state.generating) return;
   if (
     !root?.querySelector(
       '[data-field="drawing-negative-prompt"], [data-field="drawing-quality-prompt"], [data-field="drawing-manual-prompt"]',
@@ -968,16 +1017,12 @@ function showDrawingPluginMissingNotification() {
 }
 
 function toggleDrawingEnabled(input: HTMLInputElement) {
-  if (input.checked && !isImageGenerationPluginAvailable(win)) {
-    input.checked = false;
-    state.drawingSettings.enabled = false;
-    persistToSave();
-    showDrawingPluginMissingNotification();
-    return;
-  }
-
   state.drawingSettings.enabled = input.checked;
+  writeDrawingEnabledPreference(input.checked);
   persistToSave();
+  if (input.checked && !isImageGenerationPluginAvailable(win)) {
+    showDrawingPluginMissingNotification();
+  }
   render();
 }
 
@@ -1003,8 +1048,6 @@ function addDrawingAnchor() {
 async function generateDrawingNow() {
   updateDrawingSettingsFromControls(false);
   if (!isImageGenerationPluginAvailable(win)) {
-    state.drawingSettings.enabled = false;
-    persistToSave();
     showDrawingPluginMissingNotification();
     return;
   }
@@ -1519,13 +1562,14 @@ function bindReaderContextMenuEvents() {
         Number(readerCard.dataset.readerIndex ?? state.focusedMessageIndex),
         event.clientX,
         event.clientY,
+        readerCard.dataset.readerId,
       );
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-message"]').forEach(button => {
     button.addEventListener('contextmenu', event => {
       event.preventDefault();
-      openReaderContextMenu(Number(button.dataset.index ?? 0), event.clientX, event.clientY);
+      openReaderContextMenu(Number(button.dataset.index ?? 0), event.clientX, event.clientY, button.dataset.readerId);
     });
   });
 }
@@ -1619,7 +1663,7 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="reader-edit"]').forEach(button => {
     button.addEventListener('click', event => {
       event.stopPropagation();
-      openReaderEditor(Number(button.dataset.readerIndex ?? state.focusedMessageIndex));
+      openReaderEditor(Number(button.dataset.readerIndex ?? state.focusedMessageIndex), button.dataset.readerId);
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="reader-actions-open"]').forEach(button => {
@@ -1630,6 +1674,7 @@ function bindEvents() {
         Number(button.dataset.readerIndex ?? state.focusedMessageIndex),
         rect.left,
         rect.bottom + READER_CONTEXT_MENU_GAP,
+        button.dataset.readerId,
       );
     });
   });
@@ -2045,6 +2090,10 @@ function bindEvents() {
     });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="send"]').forEach(button =>
     button.addEventListener('click', () => {
+      if (state.generating) {
+        cancelCurrentGeneration(ctx);
+        return;
+      }
       void submitMessage(ctx);
     }),
   );
@@ -2332,6 +2381,7 @@ function renderImmediate() {
 function render() {
   if (!root) return;
   syncRuntimeProfile();
+  applyDrawingEnabledPreference();
   syncDrawingSettingsFromMountedControls();
   const readerBodyScroll = captureReaderBodyScroll();
   if (state.activeRunId) {
@@ -2447,7 +2497,7 @@ init();
 
 // ── Debug interfaces ──
 
-(window as any).render_game_to_text = () => {
+function getDebugGameStateText() {
   return JSON.stringify({
     screen: state.activeRunId ? 'game' : 'title',
     activeRunId: state.activeRunId,
@@ -2459,6 +2509,7 @@ init();
     generating: state.generating,
     focusedMessageIndex: state.focusedMessageIndex,
     draft: state.draft,
+    drawingSettings: state.drawingSettings,
     world: state.statusData.world,
     plot: {
       eventCount: Object.keys(state.plotLibrary.events).length,
@@ -2477,7 +2528,27 @@ init();
     })),
     messageCount: state.uiMessages.length,
   });
-};
+}
+
+function installDebugGlobals() {
+  const debugApi = {
+    render_game_to_text: getDebugGameStateText,
+    islandmilfcode_debug_state: () => JSON.parse(getDebugGameStateText()),
+  };
+  Object.assign(window as any, debugApi);
+  Object.assign(globalThis as any, debugApi);
+
+  try {
+    if (window.parent && window.parent !== window) {
+      (window.parent as any).islandmilfcodeFrame = window;
+      Object.assign(window.parent as any, debugApi);
+    }
+  } catch {
+    // Cross-origin/sandboxed iframes cannot expose helpers to the parent window.
+  }
+}
+
+installDebugGlobals();
 
 (window as any).advanceTime = () => {
   if (adapter) {

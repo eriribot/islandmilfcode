@@ -12,7 +12,7 @@ import {
   parseProgressUpdate,
 } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
-import { runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
+import { SecondaryTaskCancelledError, runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
 import { createRollbackSnapshot, pushMessage } from '../state/store';
 import {
   buildFactAnchorFromStatus,
@@ -93,6 +93,44 @@ type ScenePhoneMessage = {
 // 合并版 progress prompt 解析出的手机消息暂存：同回合 maybeQueueProactivePhoneMessage 会读它并清空，跳过 phone-scene-extract 副 API。
 // 不放进 state（属于一次性流转数据，不需要存档），也不放进 ctx 类型（避免侵入）。流程顺序执行无竞态。
 let lastProgressPhoneMessages: ScenePhoneMessage[] | null = null;
+
+const GENERATION_CANCEL_TOKEN_KEY = 'generationCancelToken';
+
+function getGenerationCancelToken(ctx: Pick<ActionContext, 'state'>): number {
+  return Number(ctx.state.runtimeFlags?.[GENERATION_CANCEL_TOKEN_KEY] ?? 0) || 0;
+}
+
+function beginGenerationRun(ctx: Pick<ActionContext, 'state'>): number {
+  const token = getGenerationCancelToken(ctx) + 1;
+  ctx.state.runtimeFlags[GENERATION_CANCEL_TOKEN_KEY] = token;
+  ctx.state.runtimeFlags.generationCancelRequested = false;
+  return token;
+}
+
+function isGenerationRunCancelled(ctx: Pick<ActionContext, 'state'>, token: number): boolean {
+  return (
+    Boolean(ctx.state.runtimeFlags?.generationCancelRequested) ||
+    getGenerationCancelToken(ctx) !== token
+  );
+}
+
+export function cancelCurrentGeneration(ctx: ActionContext) {
+  const { state } = ctx;
+  if (!state.generating && !state.currentGenerationId && !state.phoneMessages.generating) return;
+
+  state.runtimeFlags[GENERATION_CANCEL_TOKEN_KEY] = getGenerationCancelToken(ctx) + 1;
+  state.runtimeFlags.generationCancelRequested = true;
+  state.generating = false;
+  state.phoneMessages.generating = false;
+  state.currentGenerationId = '';
+  lastProgressPhoneMessages = null;
+  clearBackgroundTask(state, 'progress');
+  clearBackgroundTask(state, 'summary');
+  discardStreamingMessage(ctx);
+  ctx.persistConversation();
+  ctx.render();
+  recordGenerationDebug(ctx, 'submit:cancel-requested');
+}
 
 type RawPrompt = {
   role: 'system' | 'user' | 'assistant';
@@ -878,11 +916,14 @@ export async function submitMessage(
     return;
   }
 
+  const drawingEnabledAtSubmit = Boolean(state.drawingSettings.enabled);
   state.generating = true;
   if (!options.keepDraft || options.text == null) {
     state.draft = '';
   }
   state.currentGenerationId = crypto.randomUUID();
+  const generationToken = beginGenerationRun(ctx);
+  let requestGenerationId = state.currentGenerationId;
   state.finalizedGenerationId = '';
   state.focusedMessagePage = 0;
   const hasTavernGenerate = typeof win.generate === 'function' || typeof win.generateRaw === 'function';
@@ -902,6 +943,10 @@ export async function submitMessage(
     if (phoneDirective) {
       phoneDirectiveSource = 'fallback-parser';
     }
+  }
+  if (isGenerationRunCancelled(ctx, generationToken)) {
+    recordGenerationDebug(ctx, 'submit:cancelled-before-push', { requestGenerationId });
+    return;
   }
   recordGenerationDebug(ctx, 'submit:start', {
     userInputLength: userInput.length,
@@ -940,6 +985,10 @@ export async function submitMessage(
   if (hasTavernGenerate) {
     const preflightHistory = state.uiMessages.slice(0, -1);
     scenePresence = await detectScenePresence(ctx, preflightHistory, userInput);
+    if (isGenerationRunCancelled(ctx, generationToken)) {
+      recordGenerationDebug(ctx, 'submit:cancelled-after-preflight', { requestGenerationId });
+      return;
+    }
     commitPreGenerationTimeProposal(ctx, scenePresence);
   }
 
@@ -955,14 +1004,20 @@ export async function submitMessage(
 
   if (!hasTavernGenerate) {
     await simulateGeneration(ctx, userInput);
+    if (isGenerationRunCancelled(ctx, generationToken)) {
+      recordGenerationDebug(ctx, 'submit:cancelled-after-simulate', { requestGenerationId });
+      return;
+    }
     if (options.clearDraftOnSuccess) {
       state.draft = '';
     }
     state.generating = false;
     if (phoneDirective) {
-      await sendPhoneMessageFromDirective(ctx, phoneDirective);
+      await sendPhoneMessageFromDirective(ctx, phoneDirective, () => isGenerationRunCancelled(ctx, generationToken));
     } else {
-      await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
+      await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration, () =>
+        isGenerationRunCancelled(ctx, generationToken),
+      );
     }
     ctx.render();
     return;
@@ -975,7 +1030,7 @@ export async function submitMessage(
 
     // 流式占位助手消息已压入，正文 prompt 的历史要剔除它（preflight 用的是占位前的历史，二者一致）。
     const promptHistory = state.uiMessages.slice(0, -1);
-    const requestGenerationId = state.currentGenerationId;
+    requestGenerationId = state.currentGenerationId;
     const generator = win.generate ?? win.generateRaw;
     const baseConfig: Record<string, unknown> = {
       should_stream: true,
@@ -1035,6 +1090,10 @@ export async function submitMessage(
       requestGenerationId,
       resultLength: String(result ?? '').length,
     });
+    if (isGenerationRunCancelled(ctx, generationToken)) {
+      recordGenerationDebug(ctx, 'submit:cancelled-after-generate-returned', { requestGenerationId });
+      return;
+    }
     finalizeStreamingText(ctx, String(result ?? ''), requestGenerationId);
 
     // 变量更新（含手机消息提取）统一移到 finally：正文后发一次合并 progress，配/不配副 API 都走同一条路。
@@ -1056,6 +1115,13 @@ export async function submitMessage(
     recordGenerationDebug(ctx, 'submit:main-success-before-phone', { requestGenerationId });
     // 手机消息/主动手机 与 变量更新 的顺序依赖统一在 finally 处理（progress → phone → summary）。
   } catch (error) {
+    if (isGenerationRunCancelled(ctx, generationToken) || error instanceof SecondaryTaskCancelledError) {
+      recordGenerationDebug(ctx, 'submit:catch-cancelled', {
+        requestGenerationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
     recordGenerationDebug(ctx, 'submit:catch', {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -1090,7 +1156,14 @@ export async function submitMessage(
       });
     }
   } finally {
-    state.generating = false;
+    if (drawingEnabledAtSubmit && !state.drawingSettings.enabled) {
+      state.drawingSettings.enabled = true;
+      recordGenerationDebug(ctx, 'drawing:restore-enabled-after-generation');
+      ctx.persistConversation();
+    }
+    if (getGenerationCancelToken(ctx) === generationToken) {
+      state.generating = false;
+    }
     recordGenerationDebug(ctx, 'submit:finally-before-render', { generationSucceeded });
     ctx.render();
 
@@ -1098,7 +1171,11 @@ export async function submitMessage(
     // 顺序是关键：合并版 progress 必须先于 maybeQueueProactivePhoneMessage 跑，才能填好
     // lastProgressPhoneMessages 供其消费——旧代码把 progress 放在 phone 之后，导致 phone 永远读到 null、
     // 退回独立的 phone-scene-extract 副 API，形成"正文 + 手机提取 + 含手机的progress"三发请求。
-    if (generationSucceeded && (typeof win.generateRaw === 'function' || typeof win.generate === 'function')) {
+    if (
+      generationSucceeded &&
+      !isGenerationRunCancelled(ctx, generationToken) &&
+      (typeof win.generateRaw === 'function' || typeof win.generate === 'function')
+    ) {
       recordGenerationDebug(ctx, 'submit:summary-start');
 
       // ① 变量更新：配/不配副 API 都走同一条合并 progress（无副 API 时 runSecondaryTask 回落主 API）。
@@ -1110,14 +1187,24 @@ export async function submitMessage(
           includePhoneMessages: true,
         }),
         null,
-        { scenePresence },
+        { scenePresence, isCancelled: () => isGenerationRunCancelled(ctx, generationToken) },
       );
+      if (isGenerationRunCancelled(ctx, generationToken)) {
+        recordGenerationDebug(ctx, 'submit:cancelled-after-progress', { requestGenerationId });
+        return;
+      }
 
       // ② 手机消息：directive 走专用聊天流；否则消费上一步暂存的 phone_messages（无则正则兜底）。
       if (phoneDirective) {
-        await sendPhoneMessageFromDirective(ctx, phoneDirective);
+        await sendPhoneMessageFromDirective(ctx, phoneDirective, () => isGenerationRunCancelled(ctx, generationToken));
       } else {
-        await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration);
+        await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration, () =>
+          isGenerationRunCancelled(ctx, generationToken),
+        );
+      }
+      if (isGenerationRunCancelled(ctx, generationToken)) {
+        recordGenerationDebug(ctx, 'submit:cancelled-after-phone', { requestGenerationId });
+        return;
       }
 
       // ③ 总结历史：按优先级单选触发（global > major > minor），不回写变量；没到阈值不触发。
@@ -1140,6 +1227,7 @@ export async function submitMessage(
         },
         memoryDB: ctx.memoryDB,
         getFactAnchor: () => buildFactAnchorFromStatus(ctx.state.statusData),
+        isCancelled: () => isGenerationRunCancelled(ctx, generationToken),
       };
       if (postTurnMode === 'minor') {
         await runSummary(summaryCtx, 'minor').catch(() => null);
@@ -1153,6 +1241,12 @@ export async function submitMessage(
         });
       }
       recordGenerationDebug(ctx, 'submit:summary-finished');
+    }
+    if (drawingEnabledAtSubmit && !state.drawingSettings.enabled) {
+      state.drawingSettings.enabled = true;
+      recordGenerationDebug(ctx, 'drawing:restore-enabled-after-post-turn');
+      ctx.persistConversation();
+      ctx.render();
     }
   }
 }
@@ -1692,9 +1786,10 @@ async function runSecondaryProgressUpdate(
   generationId: string,
   prompts: RawPrompt[],
   targetId?: string | null,
-  options: { showTask?: boolean; scenePresence?: ScenePresence | null } = {},
+  options: { showTask?: boolean; scenePresence?: ScenePresence | null; isCancelled?: () => boolean } = {},
 ): Promise<boolean> {
   const showTask = options.showTask ?? true;
+  if (options.isCancelled?.()) return false;
   if (showTask) {
     setBackgroundTaskRunning(ctx.state, 'progress');
     ctx.render();
@@ -1706,7 +1801,12 @@ async function runSecondaryProgressUpdate(
       generationId,
       prompts,
       apiConfig: ctx.summaryApiConfig,
+      isCancelled: options.isCancelled,
     });
+    if (options.isCancelled?.()) {
+      if (showTask) clearBackgroundTask(ctx.state, 'progress');
+      return false;
+    }
     const committed = commitProgressAnalysis(ctx, raw, targetId, options.scenePresence);
     if (showTask) clearBackgroundTask(ctx.state, 'progress');
     if (committed.applied) {
@@ -1716,6 +1816,10 @@ async function runSecondaryProgressUpdate(
       return true;
     }
   } catch (error) {
+    if (error instanceof SecondaryTaskCancelledError || options.isCancelled?.()) {
+      if (showTask) clearBackgroundTask(ctx.state, 'progress');
+      return false;
+    }
     console.warn('[progress] secondary analysis failed:', error);
     if (showTask) setBackgroundTaskFailed(ctx.state, 'progress', error);
   }
@@ -2007,7 +2111,12 @@ function shouldQueueProactivePhoneMessage(
   return true;
 }
 
-async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEventKey?: string | null) {
+async function maybeQueueProactivePhoneMessage(
+  ctx: ActionContext,
+  previousEventKey?: string | null,
+  isCancelled?: () => boolean,
+) {
+  if (isCancelled?.()) return;
   const { state, win } = ctx;
   const latestEvent = getLatestRecentEvent(ctx);
   const latestSceneText = getLatestAssistantSceneText(ctx);
@@ -2116,6 +2225,7 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
             generation_id: generationId,
             user_input: prompt,
           });
+    if (isCancelled?.()) return;
     const replyText = extractPhoneChatReply(String(rawResult ?? '')).trim();
     debugPhoneFlow(ctx, replyText ? 'proactive:message' : 'proactive:empty', {
       generationId,
@@ -2127,11 +2237,17 @@ async function maybeQueueProactivePhoneMessage(ctx: ActionContext, previousEvent
 
     appendAssistantPhoneMessage(ctx, target, thread, replyText);
   } catch (e) {
+    if (isCancelled?.() || e instanceof SecondaryTaskCancelledError) return;
     console.warn('[phone-proactive] generation failed:', e);
   }
 }
 
-async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: PhoneDirective) {
+async function sendPhoneMessageFromDirective(
+  ctx: ActionContext,
+  directive: PhoneDirective,
+  isCancelled?: () => boolean,
+) {
+  if (isCancelled?.()) return;
   const { state, win } = ctx;
   const target = directive.target;
   const userInput = directive.text.trim();
@@ -2202,6 +2318,9 @@ async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: Phon
     } else {
       rawResult = await simulatePhoneGeneration(target, userInput);
     }
+    if (isCancelled?.()) {
+      throw new SecondaryTaskCancelledError('phone-directive-detect', String(state.currentGenerationId || target.id));
+    }
 
     const replyText = extractPhoneChatReply(rawResult) || '……';
     const assistantMessage: PhoneChatMessage = {
@@ -2225,7 +2344,11 @@ async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: Phon
         messages: thread.messages,
       }),
       target.id,
+      isCancelled ? { isCancelled } : undefined,
     );
+    if (isCancelled?.()) {
+      throw new SecondaryTaskCancelledError('phone-progress', String(state.currentGenerationId || target.id));
+    }
 
     assistantMessage.statusSnapshot = createRollbackSnapshot(state);
     if (!(state.phoneOpen && state.phoneRoute === 'app:chat' && state.phoneMessages.activeThreadId === target.id)) {
@@ -2246,6 +2369,7 @@ async function sendPhoneMessageFromDirective(ctx: ActionContext, directive: Phon
     // 正文指令失败时回滚这条手机用户消息，避免界面显示已发但实际未生成回复。
     thread.messages = thread.messages.filter(message => message.id !== userMessage.id);
     thread.updatedAt = Date.now();
+    if (error instanceof SecondaryTaskCancelledError || isCancelled?.()) return;
     ctx.showNotification({
       kind: 'status',
       title: '正文手机指令失败',

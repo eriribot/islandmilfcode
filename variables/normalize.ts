@@ -1,5 +1,15 @@
 import type { ProgressUpdate } from '../message-format';
-import { SAE_03_8, SAE_04_3, isPlotEventAllowedByRoute, isSae0307BranchId, isSae0402BranchId } from '../plot-routing';
+import {
+  SAE_03_8,
+  SAE_04_2A,
+  SAE_04_2B,
+  SAE_04_3,
+  getSae0402Route,
+  isPlotEventAllowedByRoute,
+  isSae0307BranchId,
+  isSae0402BranchId,
+  isSae0402ExpiredByDate,
+} from '../plot-routing';
 import type { PlotEventCard, PlotLibrary, StatusData } from '../types';
 import { affinityStage, clamp, obsessionStage } from './format';
 
@@ -359,11 +369,42 @@ function closeEarlierRunningMainEvents(
   return changed;
 }
 
+function closeExpiredSae0402Branch(statusData: StatusData): boolean {
+  if (!isSae0402ExpiredByDate(statusData)) return false;
+
+  const mainEvents = (statusData.world.mainEvents ??= {});
+  const currentId = statusData.world.currentMainEventId;
+  const branchId = isSae0402BranchId(currentId) ? currentId : getSae0402Route(statusData);
+  let changed = false;
+
+  if (normalizeMainEventStatus(mainEvents[branchId]) !== MAIN_EVENT_FINISHED) {
+    mainEvents[branchId] = MAIN_EVENT_FINISHED;
+    changed = true;
+  }
+
+  const otherBranchId = branchId === SAE_04_2A ? SAE_04_2B : SAE_04_2A;
+  if (normalizeMainEventStatus(mainEvents[otherBranchId]) === MAIN_EVENT_RUNNING) {
+    mainEvents[otherBranchId] = MAIN_EVENT_NOT_STARTED;
+    changed = true;
+  }
+
+  if (isSae0402BranchId(currentId)) {
+    statusData.world.currentMainEventId = '';
+    changed = true;
+  }
+
+  return changed;
+}
+
 export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary | null): boolean {
   const schedule = buildSchedule(plotLibrary, statusData);
   const mainEvents = (statusData.world.mainEvents ??= {});
   const currentDate = getDatePart(statusData.world.currentTime);
   let changed = false;
+
+  if (closeExpiredSae0402Branch(statusData)) {
+    changed = true;
+  }
 
   for (const event of schedule) {
     const normalizedStatus = normalizeMainEventStatus(mainEvents[event.id]);

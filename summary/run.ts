@@ -1,6 +1,6 @@
 import { getPromptMessageText } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
-import { runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
+import { SecondaryTaskCancelledError, runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
 import type { AppState, TavernWindow, UiMessage } from '../types';
 import {
   buildGlobalCompressionPrompt,
@@ -33,6 +33,7 @@ export type SummaryContext = {
   getFactAnchor?: () => FactAnchor | null;
   /** memoryDB 引用，摘要成功后写入 summaries/facts 表。 */
   memoryDB?: IslandMemoryDB;
+  isCancelled?: () => boolean;
 };
 
 export type SummaryRunResult = {
@@ -90,6 +91,7 @@ async function callGenerateRaw(
   prompts: Array<{ role: string; content: string }>,
   apiConfig: SummaryApiConfig | null,
   kind: Extract<SecondaryTaskKind, 'summary-minor' | 'summary-major' | 'summary-global'>,
+  isCancelled?: () => boolean,
 ): Promise<string> {
   return runSecondaryTask({
     win,
@@ -97,6 +99,7 @@ async function callGenerateRaw(
     kind,
     prompts,
     apiConfig,
+    isCancelled,
   });
 }
 
@@ -233,7 +236,11 @@ export async function runSummary(
         result.minorRan = true;
         startTask('小摘要生成中');
         const prompts = buildMinorSummaryPrompt(unsummarized, anchor);
-        const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-minor');
+        const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-minor', ctx.isCancelled);
+        if (ctx.isCancelled?.()) {
+          finishTask();
+          return result;
+        }
         const text = parseSummaryResult(raw);
         if (text) {
           const nextIndex = startIndex + unsummarized.length;
@@ -256,6 +263,10 @@ export async function runSummary(
           commitImpressionsFromSummary(ctx, raw);
         }
       } catch (error) {
+        if (error instanceof SecondaryTaskCancelledError || ctx.isCancelled?.()) {
+          finishTask();
+          return result;
+        }
         failTask(error);
         recordFailure(store, 'minor', error);
         saveSummaryStore(win, store);
@@ -286,7 +297,12 @@ export async function runSummary(
       result.majorRan = true;
       startTask('大摘要生成中');
       const prompts = buildMajorSummaryPrompt(consumed, anchor, pinnedFacts());
-      const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-major');
+      const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-major', ctx.isCancelled);
+      if (ctx.isCancelled?.()) {
+        store.minor.unshift(...consumed);
+        finishTask();
+        return result;
+      }
       const text = parseSummaryResult(raw);
       if (text) {
         const firstRange = consumed[0]?.range[0] ?? 0;
@@ -303,6 +319,11 @@ export async function runSummary(
         store.minor.unshift(...consumed);
       }
     } catch (error) {
+      if (error instanceof SecondaryTaskCancelledError || ctx.isCancelled?.()) {
+        store.minor.unshift(...consumed);
+        finishTask();
+        return result;
+      }
       failTask(error);
       store.minor.unshift(...consumed);
       recordFailure(store, 'major', error);
@@ -326,7 +347,12 @@ export async function runSummary(
       result.globalRan = true;
       startTask('全局记忆压缩中');
       const prompts = buildGlobalCompressionPrompt(store.global, consumed, anchor, pinnedFacts());
-      const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-global');
+      const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-global', ctx.isCancelled);
+      if (ctx.isCancelled?.()) {
+        store.major.unshift(...consumed);
+        finishTask();
+        return result;
+      }
       const text = parseSummaryResult(raw);
       if (text) {
         store.global = text;
@@ -337,6 +363,11 @@ export async function runSummary(
         store.major.unshift(...consumed);
       }
     } catch (error) {
+      if (error instanceof SecondaryTaskCancelledError || ctx.isCancelled?.()) {
+        store.major.unshift(...consumed);
+        finishTask();
+        return result;
+      }
       failTask(error);
       store.major.unshift(...consumed);
       recordFailure(store, 'global', error);

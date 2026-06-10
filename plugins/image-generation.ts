@@ -53,11 +53,7 @@ function getEventApi(win: TavernWindow): TavernEventApi {
 
 export function isImageGenerationPluginAvailable(win: TavernWindow) {
   const api = getEventApi(win);
-  if (
-    typeof api.eventEmit !== 'function' ||
-    typeof api.eventOn !== 'function' ||
-    typeof api.eventRemoveListener !== 'function'
-  ) {
+  if (typeof api.eventEmit !== 'function' || typeof api.eventOn !== 'function') {
     return false;
   }
 
@@ -240,11 +236,7 @@ function formatEventError(error: unknown) {
 
 function requestChatu8LlmImagePrompt(win: TavernWindow, prompts: ImagePromptMessage[], timeoutMs = 90_000) {
   const api = getEventApi(win);
-  if (
-    typeof api.eventEmit !== 'function' ||
-    typeof api.eventOn !== 'function' ||
-    typeof api.eventRemoveListener !== 'function'
-  ) {
+  if (typeof api.eventEmit !== 'function' || typeof api.eventOn !== 'function') {
     return Promise.reject(new Error('chatu8 LLM event API not available'));
   }
 
@@ -252,12 +244,14 @@ function requestChatu8LlmImagePrompt(win: TavernWindow, prompts: ImagePromptMess
   return new Promise<string>((resolve, reject) => {
     let handled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let stopListening: { stop?: () => void } | void;
 
     const cleanup = () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
+      stopListening?.stop?.();
       api.eventRemoveListener?.(CHATU8_LLM_IMAGE_GEN_RESPONSE_EVENT, responseHandler);
     };
 
@@ -300,7 +294,7 @@ function requestChatu8LlmImagePrompt(win: TavernWindow, prompts: ImagePromptMess
       finish(() => reject(new Error('chatu8 LLM image prompt request timeout')));
     }, timeoutMs);
 
-    api.eventOn(CHATU8_LLM_IMAGE_GEN_RESPONSE_EVENT, responseHandler);
+    stopListening = api.eventOn(CHATU8_LLM_IMAGE_GEN_RESPONSE_EVENT, responseHandler);
     Promise.resolve(api.eventEmit(CHATU8_LLM_IMAGE_GEN_REQUEST_EVENT, { id, prompt: prompts })).catch(error => {
       finish(() => reject(new Error(formatEventError(error))));
     });
@@ -456,12 +450,14 @@ export async function requestImageGeneration(
   return new Promise(resolve => {
     let handled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let stopListening: { stop?: () => void } | void;
 
     const cleanup = () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
+      stopListening?.stop?.();
       api.eventRemoveListener?.(IMAGE_GENERATION_RESPONSE_EVENT, responseHandler);
     };
 
@@ -487,7 +483,7 @@ export async function requestImageGeneration(
       resolve({ sent: true, id, prompt: cleanPrompt, reason: 'timeout' });
     }, 120_000);
 
-    api.eventOn(IMAGE_GENERATION_RESPONSE_EVENT, responseHandler);
+    stopListening = api.eventOn(IMAGE_GENERATION_RESPONSE_EVENT, responseHandler);
     Promise.resolve(api.eventEmit(IMAGE_GENERATION_REQUEST_EVENT, requestData)).catch(error => {
       if (handled) return;
       handled = true;

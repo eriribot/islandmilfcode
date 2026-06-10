@@ -21,7 +21,21 @@ export type SecondaryTaskCall = {
   prompts: SecondaryPrompt[];
   apiConfig: SummaryApiConfig | null;
   allowEmpty?: boolean;
+  isCancelled?: () => boolean;
 };
+
+export class SecondaryTaskCancelledError extends Error {
+  constructor(kind: SecondaryTaskKind, generationId: string) {
+    super(`secondary API task cancelled (${kind}, ${generationId})`);
+    this.name = 'SecondaryTaskCancelledError';
+  }
+}
+
+function throwIfCancelled(kind: SecondaryTaskKind, generationId: string, isCancelled?: () => boolean) {
+  if (isCancelled?.()) {
+    throw new SecondaryTaskCancelledError(kind, generationId);
+  }
+}
 
 export async function generateSecondaryRaw(input: {
   win: TavernWindow;
@@ -30,8 +44,10 @@ export async function generateSecondaryRaw(input: {
   apiConfig: SummaryApiConfig | null;
   kind?: SecondaryTaskKind;
   allowEmpty?: boolean;
+  isCancelled?: () => boolean;
 }): Promise<string> {
-  const { win, generationId, prompts, apiConfig, kind = 'custom', allowEmpty = false } = input;
+  const { win, generationId, prompts, apiConfig, kind = 'custom', allowEmpty = false, isCancelled } = input;
+  throwIfCancelled(kind, generationId, isCancelled);
 
   if (apiConfig && typeof win.generateRaw !== 'function') {
     throw new Error('generateRaw not available for secondary API');
@@ -87,18 +103,20 @@ export async function generateSecondaryRaw(input: {
       };
     }
 
-    return normalizeResult(await win.generateRaw(config));
+    const raw = await win.generateRaw(config);
+    throwIfCancelled(kind, generationId, isCancelled);
+    return normalizeResult(raw);
   }
 
   if (typeof win.generate === 'function') {
-    return normalizeResult(
-      await win.generate({
-        should_silence: true,
-        should_stream: false,
-        generation_id: generationId,
-        user_input: prompts.map(prompt => prompt.content).join('\n\n'),
-      }),
-    );
+    const raw = await win.generate({
+      should_silence: true,
+      should_stream: false,
+      generation_id: generationId,
+      user_input: prompts.map(prompt => prompt.content).join('\n\n'),
+    });
+    throwIfCancelled(kind, generationId, isCancelled);
+    return normalizeResult(raw);
   }
 
   throw new Error('generateRaw/generate not available');

@@ -334,16 +334,18 @@ export function getPromptMessageText(message: UiMessage) {
 // ── Reader message cache for performance ──
 
 let cachedReaderMessages: UiMessage[] = [];
+let cachedSourceMessages: UiMessage[] | null = null;
 let cachedSourceLength = 0;
 
 export function getReaderMessages(messages: UiMessage[], forceRebuild = false) {
-  // 如果消息数组没变化，返回缓存
-  if (!forceRebuild && messages.length === cachedSourceLength && messages.length > 0) {
+  // 如果消息数组本身没变化，返回缓存。不能只看 length：
+  // 存档恢复/分区重建可能换了一整组同长度消息，旧缓存会让 readerIndex 指到旧楼层。
+  if (!forceRebuild && messages === cachedSourceMessages && messages.length === cachedSourceLength && messages.length > 0) {
     return cachedReaderMessages;
   }
 
-  // 如果只是新增消息（最常见场景：记录新对话），增量添加
-  if (!forceRebuild && messages.length > cachedSourceLength && cachedSourceLength > 0) {
+  // 如果同一个数组只是新增消息（最常见场景：记录新对话），增量添加
+  if (!forceRebuild && messages === cachedSourceMessages && messages.length > cachedSourceLength && cachedSourceLength > 0) {
     const newMessages = messages.slice(cachedSourceLength);
     const filtered = newMessages.filter(message => {
       if (message.role === 'system') return false;
@@ -353,6 +355,7 @@ export function getReaderMessages(messages: UiMessage[], forceRebuild = false) {
       return message.streaming || Boolean(message.text.trim());
     });
     cachedReaderMessages.push(...filtered);
+    cachedSourceMessages = messages;
     cachedSourceLength = messages.length;
     return cachedReaderMessages;
   }
@@ -365,6 +368,7 @@ export function getReaderMessages(messages: UiMessage[], forceRebuild = false) {
     // assistant: 流式中或有任何原文都保留，让掉标签的楼层也能被翻到并走编辑入口恢复。
     return message.streaming || Boolean(message.text.trim());
   });
+  cachedSourceMessages = messages;
   cachedSourceLength = messages.length;
   return cachedReaderMessages;
 }
@@ -374,6 +378,7 @@ export function getReaderMessages(messages: UiMessage[], forceRebuild = false) {
  */
 export function invalidateReaderMessagesCache() {
   cachedReaderMessages = [];
+  cachedSourceMessages = null;
   cachedSourceLength = 0;
 }
 

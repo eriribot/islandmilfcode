@@ -112,7 +112,7 @@ function renderPreviewCard(message: UiMessage, index: number, side: 'before' | '
   const preview = escapeHtml(visibleText.slice(0, 72).trim() + (visibleText.length > 72 ? '……' : ''));
 
   return `
-    <button class="reader-preview reader-preview--${side}" data-action="jump-message" data-index="${index}">
+    <button class="reader-preview reader-preview--${side}" data-action="jump-message" data-index="${index}" data-reader-id="${escapeHtml(message.id)}">
       <span class="reader-preview__index">${String(index + 1).padStart(2, '0')}</span>
       <span class="reader-preview__text">${preview}</span>
     </button>
@@ -296,6 +296,10 @@ function getRollbackSourceForReaderIndex(state: AppState, readerIndex: number) {
 }
 
 function renderReaderActionsButton(state: AppState, readerIndex: number, className: string) {
+  const readerMessages = getReaderMessages(state.uiMessages);
+  const message = readerMessages[readerIndex];
+  if (!message) return '';
+
   const sourceUserText = getRollbackSourceForReaderIndex(state, readerIndex);
   if (!sourceUserText) return '';
 
@@ -304,6 +308,7 @@ function renderReaderActionsButton(state: AppState, readerIndex: number, classNa
       class="${className}"
       data-action="reader-actions-open"
       data-reader-index="${readerIndex}"
+      data-reader-id="${escapeHtml(message.id)}"
       title="楼层操作"
       aria-label="打开楼层操作"
     >
@@ -360,6 +365,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
         <article
           class="reader-card reader-card--${message.role} reader-card--empty"
           data-reader-index="${model.currentIndex}"
+          data-reader-id="${escapeHtml(message.id)}"
           ${flipDir ? ` data-flip="${flipDir}"` : ''}
         >
           <div class="reader-card__chrome">
@@ -367,7 +373,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
               ${renderReaderHint('prev', Boolean(model.previousMessage))}
             </div>
             <span class="reader-card__index">${String(model.currentIndex + 1).padStart(2, '0')}</span>
-            <button class="reader-card__edit" data-action="reader-edit" data-reader-index="${model.currentIndex}" title="编辑原文" aria-label="编辑原文">✎</button>
+            <button class="reader-card__edit" data-action="reader-edit" data-reader-index="${model.currentIndex}" data-reader-id="${escapeHtml(message.id)}" title="编辑原文" aria-label="编辑原文">✎</button>
             <div class="reader-card__hint-group reader-card__hint-group--right">
               ${renderReaderHint('next', Boolean(model.nextMessage))}
             </div>
@@ -391,6 +397,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
       <article
         class="reader-card reader-card--${message.role}"
         data-reader-index="${model.currentIndex}"
+        data-reader-id="${escapeHtml(message.id)}"
         ${flipDir ? ` data-flip="${flipDir}"` : ''}
       >
         <div class="reader-card__chrome">
@@ -402,7 +409,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
           ${
             message.streaming
               ? ''
-              : `<button class="reader-card__edit" data-action="reader-edit" data-reader-index="${model.currentIndex}" title="编辑原文" aria-label="编辑原文">✎</button>`
+              : `<button class="reader-card__edit" data-action="reader-edit" data-reader-index="${model.currentIndex}" data-reader-id="${escapeHtml(message.id)}" title="编辑原文" aria-label="编辑原文">✎</button>`
           }
           <div class="reader-card__hint-group reader-card__hint-group--right">
             ${renderReaderHint('next', Boolean(model.nextMessage))}
@@ -488,7 +495,7 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
         <div class="composer-actions">
           ${composerActionsButton}
           ${state.generating ? '<span class="composer-tip">写入中……</span>' : ''}
-          <button class="send-btn" data-action="send" ${state.generating ? 'disabled' : ''}>记录</button>
+          <button class="send-btn" data-action="send">${state.generating ? '取消' : '记录'}</button>
         </div>
       </div>
     </section>

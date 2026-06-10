@@ -7,6 +7,7 @@ export const SAE_03_8 = 'SAE_03-8';
 export const SAE_04_2A = 'SAE_04-2A';
 export const SAE_04_2B = 'SAE_04-2B';
 export const SAE_04_3 = 'SAE_04-3';
+const SAE_04_2_DATE = '2012-09-24';
 export const SAE_05_2A = 'SAE_05-2A';
 export const SAE_05_2B = 'SAE_05-2B';
 export const SAE_05_3 = 'SAE_05-3';
@@ -107,14 +108,23 @@ export function isSae0401Resolved(statusData: StatusData | null | undefined) {
 
 export function isSae0402Resolved(statusData: StatusData | null | undefined) {
   const mainEvents = statusData?.world.mainEvents ?? {};
-  return isFinishedMainEventStatus(mainEvents[SAE_04_2A]) || isFinishedMainEventStatus(mainEvents[SAE_04_2B]);
+  return (
+    isFinishedMainEventStatus(mainEvents[SAE_04_2A]) ||
+    isFinishedMainEventStatus(mainEvents[SAE_04_2B]) ||
+    isSae0402ExpiredByDate(statusData)
+  );
+}
+
+export function isSae0402ExpiredByDate(statusData: StatusData | null | undefined) {
+  const currentDate = getDatePart(statusData?.world.currentTime ?? '');
+  return Boolean(currentDate && currentDate > SAE_04_2_DATE);
 }
 
 function validateSae0402DateTime(statusData: StatusData | null | undefined): boolean {
   if (!statusData) return false;
   const currentTime = statusData.world.currentTime;
   const currentDate = getDatePart(currentTime);
-  return currentDate === '2012-09-24' && getTimeMinutes(currentTime) >= 17 * 60;
+  return currentDate === SAE_04_2_DATE && getTimeMinutes(currentTime) >= 17 * 60;
 }
 
 export function isPlotEventVisibleByRoute(eventId: string, statusData: StatusData | null | undefined) {
@@ -198,7 +208,8 @@ export function isPlotEventAllowedByRoute(eventId: string, statusData: StatusDat
   if (eventId === SAE_04_3) {
     if (!isSae0401Resolved(statusData)) return false;
     if (currentId === SAE_04_3) return true;
-    return isSae0402Resolved(statusData);
+    if (isSae0402Resolved(statusData)) return true;
+    return isSae0402BranchId(currentId);
   }
 
   return true;
