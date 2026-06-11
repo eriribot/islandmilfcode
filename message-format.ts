@@ -56,6 +56,27 @@ function sanitizePlaceholders(text: string, playerName?: string, charName?: stri
   return result;
 }
 
+function stripHtmlCommentBlocks(text: string) {
+  if (!text) return text;
+  return text
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<--![\s\S]*?-->/g, '')
+    .replace(/<!--[\s\S]*$/g, '')
+    .replace(/<--![\s\S]*$/g, '');
+}
+
+/**
+ * 清理只应该留在楼层原文/小铅笔里的预设说明。
+ * 这里不改 rawText，只在拼 prompt、摘要、状态审计等发给 AI 的文本前调用。
+ */
+export function sanitizePromptInputText(text: string) {
+  if (!text) return '';
+  return stripHtmlCommentBlocks(String(text ?? ''))
+    .replace(/<Admin\b[^>]*>[\s\S]*?<\/Admin>/gi, '')
+    .replace(/<Admin\b[^>]*>[\s\S]*$/gi, '')
+    .replace(/<\/Admin\b[^>]*>/gi, '');
+}
+
 // 预设里常见的、会嵌在正文里的元标签。这些不是正文边界，只是吐槽 / 思考 / 指令块。
 // 抽正文时需要把它们整体剥掉，否则 <tucao> 包住正文会让可见正文变空。
 const META_SUBTAG_NAMES = [
@@ -285,7 +306,7 @@ export function extractOptionsBlock(text: string, { streaming = false }: { strea
 }
 
 export function extractContextReply(text: string, { streaming = false }: { streaming?: boolean } = {}) {
-  const raw = stripImageGenerationTags(stripCharacterDataImportText(String(text ?? '')));
+  const raw = stripHtmlCommentBlocks(stripImageGenerationTags(stripCharacterDataImportText(String(text ?? ''))));
   if (!raw) {
     return '';
   }
@@ -325,16 +346,16 @@ export function getVisibleMessageText(message: UiMessage) {
 
 export function getPromptMessageText(message: UiMessage) {
   if (message.role !== 'assistant') {
-    return message.text;
+    return sanitizePromptInputText(message.text);
   }
 
   const visible = getVisibleMessageText(message);
-  if (visible) return visible;
+  if (visible) return sanitizePromptInputText(visible);
 
   const raw = String(message.rawText || message.text || '');
   if (isFrontendHtmlShell(raw)) return '';
 
-  return String(message.text || '');
+  return sanitizePromptInputText(String(message.text || ''));
 }
 
 // ── Reader message cache for performance ──
@@ -1028,6 +1049,7 @@ export function buildPrompt(
     drawingSettings?: DrawingSettings | null;
   },
 ) {
+  const cleanUserInput = sanitizePromptInputText(userInput);
   const topEvent = Object.entries(statusData.world.recentEvents)
     .find(([name, description]) => name !== '初始记录' && String(description ?? '').trim());
   const playerProfile = options?.playerProfile;
@@ -1057,7 +1079,7 @@ export function buildPrompt(
         currentLocation: statusData.world.currentLocation,
         currentTargetIds: options.scenePresence?.presentIds || statusData.targets.map(t => t.id),
         currentMainEventId: statusData.world.currentMainEventId,
-        recentUserInput: userInput,
+        recentUserInput: cleanUserInput,
         config: (() => {
           try {
             // 从 localStorage 读取用户配置
@@ -1108,7 +1130,7 @@ export function buildPrompt(
     .join('\n');
   // 审计协议只跟“当前可见场景/本轮输入”绑定，不能用剧情卡、事件名或地点命中。
   // 否则世界书里反复出现某角色名时，会让局部审计变成每轮全局常驻规则。
-  const localAuditContext = [recentSceneContext, userInput].filter(Boolean).join('\n');
+  const localAuditContext = [recentSceneContext, cleanUserInput].filter(Boolean).join('\n');
   const localAuditGuidance = buildLocalCharacterAuditList(statusData, localAuditContext, options?.scenePresence);
   const phoneMessageBoundary = options?.suppressPhoneMessageContent
     ? [
@@ -1142,7 +1164,7 @@ export function buildPrompt(
     plotContext,
     summaryContext,
     conversationHistory,
-    userInput && !options?.suppressUserInputLine ? `玩家当前输入：${userInput}` : '',
+    cleanUserInput && !options?.suppressUserInputLine ? `玩家当前输入：${cleanUserInput}` : '',
     localAuditGuidance
       ? `角色局部条件审计：只在指定角色实际在场、发言、行动或立刻反应时应用。不要输出审计过程。\n${localAuditGuidance}`
       : '',
@@ -1151,7 +1173,7 @@ export function buildPrompt(
   // 只有没有副 API 处理变量时，才要求主 API 输出 <progress>。
   if (!options?.skipProgress) {
     parts.push(buildProgressInstruction(statusData));
-    if (detectTimeAdvanceIntent(userInput)) {
+    if (detectTimeAdvanceIntent(cleanUserInput)) {
       parts.push(
         '玩家当前输入要求推进时间。如果你的正文确实描写了时间流逝或场景切换到新时段，请在 <progress> 中输出完整的 `时间:YYYY-MM-DD HH:mm`（HH:mm 由你根据剧情合理判断）。如果正文实际上没有推进时间（例如只是对话中提到了时间词），则不要输出时间字段。禁止使用 `4月16日` 或缺时分的格式。',
       );
@@ -1185,6 +1207,7 @@ export function buildPhoneChatPrompt(input: {
     triggerEvent,
     forceMessage = false,
   } = input;
+  const cleanUserInput = sanitizePromptInputText(userInput);
 
   // 清理占位符，防止泄露到 prompt
   const playerName = playerProfile?.name || '玩家';
@@ -1249,14 +1272,14 @@ export function buildPhoneChatPrompt(input: {
       : '',
     triggerEvent
       ? forceMessage
-        ? `请根据触发事件补全这条已经发出的手机消息：${userInput}`
-        : `请基于触发事件判断主动发一条手机消息：${userInput}`
-      : `玩家刚发来的消息：${userInput}`,
+        ? `请根据触发事件补全这条已经发出的手机消息：${cleanUserInput}`
+        : `请基于触发事件判断主动发一条手机消息：${cleanUserInput}`
+      : `玩家刚发来的消息：${cleanUserInput}`,
   ];
 
   if (!skipProgress) {
     parts.push(buildProgressInstruction(statusData, target));
-    if (detectTimeAdvanceIntent(userInput)) {
+    if (detectTimeAdvanceIntent(cleanUserInput)) {
       parts.push(
         '玩家当前输入要求推进时间。如果手机聊天内容确实推进了时间，请在 <progress> 中输出完整的 `时间:YYYY-MM-DD HH:mm`（HH:mm 由你根据剧情合理判断）。如果只是聊天提及时间词、并未真的让剧情时间向前走，则不要输出时间字段。禁止使用 `4月16日` 或缺时分的格式。',
       );
@@ -1390,7 +1413,7 @@ export function buildProgressPrompt(
 
   const recentUserMessage = [...turnMessages].reverse().find(m => m.role === 'user');
   const timeIntentNote =
-    recentUserMessage && detectTimeAdvanceIntent(recentUserMessage.text)
+    recentUserMessage && detectTimeAdvanceIntent(getPromptMessageText(recentUserMessage))
       ? '玩家最近输入提到推进时间。以正文实际描写为准：只有当对话正文确实跨过了一个时段或日期时或玩家提到今天,明天加时间段这里需要思考具时间，才输出完整 `时间:YYYY-MM-DD HH:mm` 字段；正文没有真正推进时间时，整行省略，禁止凭玩家输入里的时间词自行补齐一个新时间。'
       : '';
 

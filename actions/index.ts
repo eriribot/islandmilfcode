@@ -10,6 +10,7 @@ import {
   type ProgressUpdate,
   getVisibleMessageText,
   parseProgressUpdate,
+  sanitizePromptInputText,
 } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
 import { SecondaryTaskCancelledError, runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
@@ -519,6 +520,7 @@ function getLatestAssistantSceneText(ctx: ActionContext) {
 
 function buildDrawingHistoryContext(ctx: ActionContext, userInput: string) {
   const count = ctx.state.drawingSettings.contextMessageCount;
+  const cleanUserInput = sanitizePromptInputText(userInput);
   const completed = ctx.state.uiMessages.filter(
     message => !message.streaming && (message.role === 'user' || message.role === 'assistant'),
   );
@@ -530,8 +532,8 @@ function buildDrawingHistoryContext(ctx: ActionContext, userInput: string) {
       return text ? `[${speaker}]\n${text}` : '';
     })
     .filter(Boolean);
-  if (userInput.trim() && !lines.some(line => line.includes(userInput.trim()))) {
-    lines.push(`[玩家当前输入]\n${userInput.trim()}`);
+  if (cleanUserInput.trim() && !lines.some(line => line.includes(cleanUserInput.trim()))) {
+    lines.push(`[玩家当前输入]\n${cleanUserInput.trim()}`);
   }
   return lines.join('\n\n');
 }
@@ -558,6 +560,7 @@ function attachIllustrationToMessage(ctx: ActionContext, messageId: string, imag
 function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
   if (!ctx.state.drawingSettings.enabled) return;
   if (!isImageGenerationPluginAvailable(ctx.win)) return;
+  const cleanUserInput = sanitizePromptInputText(userInput);
   const latest = ctx.state.uiMessages[ctx.state.uiMessages.length - 1];
   if (!latest || latest.role !== 'assistant') return;
 
@@ -565,7 +568,7 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
   const sceneText = getVisibleMessageText(latest).trim();
   const historyContext = buildDrawingHistoryContext(ctx, userInput);
   const metadata = {
-    generationContext: historyContext || userInput,
+    generationContext: historyContext || cleanUserInput,
     generationWorldBook: [
       `时间: ${ctx.state.statusData.world.currentTime}`,
       `地点: ${ctx.state.statusData.world.currentLocation}`,
@@ -597,7 +600,7 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
     });
 
   const imagePrompts = extractImageGenerationPrompts(rawText);
-  if (!imagePrompts.length && (sceneText || userInput.trim())) {
+  if (!imagePrompts.length && (sceneText || cleanUserInput.trim())) {
     imagePrompts.push({ prompt: '' });
   }
   if (!imagePrompts.length) return;
@@ -609,7 +612,7 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
     rawText,
     generationContext: metadata.generationContext,
     generationWorldBook: metadata.generationWorldBook,
-    userInput,
+    userInput: cleanUserInput,
     summaryApiConfig: ctx.summaryApiConfig,
   })
     .then(result => {
@@ -924,6 +927,7 @@ export async function submitMessage(
   if (!userInput || state.generating) {
     return;
   }
+  const cleanUserInput = sanitizePromptInputText(userInput).trim();
 
   const drawingEnabledAtSubmit = Boolean(state.drawingSettings.enabled);
   state.generating = true;
@@ -938,8 +942,8 @@ export async function submitMessage(
   const hasTavernGenerate = typeof win.generate === 'function' || typeof win.generateRaw === 'function';
   let phoneDirective: PhoneDirective | null = null;
   let phoneDirectiveSource: string | null = null;
-  if (hasTavernGenerate && hasExplicitPhoneSendIntent(userInput)) {
-    phoneDirective = await detectPhoneDirectiveWithLlm(ctx, userInput).catch(error => {
+  if (hasTavernGenerate && hasExplicitPhoneSendIntent(cleanUserInput)) {
+    phoneDirective = await detectPhoneDirectiveWithLlm(ctx, cleanUserInput).catch(error => {
       console.warn('[phone-directive] detector failed:', error);
       return null;
     });
@@ -948,7 +952,7 @@ export async function submitMessage(
     }
   }
   if (!phoneDirective) {
-    phoneDirective = extractPhoneMessageDirective(ctx, userInput);
+    phoneDirective = extractPhoneMessageDirective(ctx, cleanUserInput);
     if (phoneDirective) {
       phoneDirectiveSource = 'fallback-parser';
     }
@@ -985,7 +989,7 @@ export async function submitMessage(
   }
   const eventBeforeGeneration = getLatestRecentEvent(ctx)?.key ?? null;
 
-  applyLocalWorldHintsFromUserInput(ctx, userInput);
+  applyLocalWorldHintsFromUserInput(ctx, cleanUserInput);
 
   // 生成前预判（preflight）：用在场判定那一发副 API 顺带判时间推进，结果只有 high 置信、且明确推进才采纳。
   // 这一步必须在 syncMainEvents 之前——把世界游标推进到正确日期后，syncMainEvents 才能当场激活对应事件，
@@ -993,7 +997,7 @@ export async function submitMessage(
   let scenePresence: ScenePresence | null = null;
   if (hasTavernGenerate) {
     const preflightHistory = state.uiMessages.slice(0, -1);
-    scenePresence = await detectScenePresence(ctx, preflightHistory, userInput);
+    scenePresence = await detectScenePresence(ctx, preflightHistory, cleanUserInput);
     if (isGenerationRunCancelled(ctx, generationToken)) {
       recordGenerationDebug(ctx, 'submit:cancelled-after-preflight', { requestGenerationId });
       return;
@@ -1012,7 +1016,7 @@ export async function submitMessage(
   }
 
   if (!hasTavernGenerate) {
-    await simulateGeneration(ctx, userInput);
+    await simulateGeneration(ctx, cleanUserInput || userInput);
     if (isGenerationRunCancelled(ctx, generationToken)) {
       recordGenerationDebug(ctx, 'submit:cancelled-after-simulate', { requestGenerationId });
       return;
@@ -1058,7 +1062,7 @@ export async function submitMessage(
             ordered_prompts: [
               {
                 role: 'system',
-                content: buildPrompt(state.statusData, promptHistory, userInput, ctx.summaryStore, {
+                content: buildPrompt(state.statusData, promptHistory, cleanUserInput, ctx.summaryStore, {
                   playerProfile: state.playerProfile,
                   plotLibrary: state.plotLibrary,
                   characterCardLibrary: state.characterCardLibrary,
@@ -1074,13 +1078,13 @@ export async function submitMessage(
               },
               {
                 role: 'user',
-                content: userInput,
+                content: cleanUserInput,
               },
             ],
           }
         : {
             ...baseConfig,
-            user_input: buildPrompt(state.statusData, promptHistory, userInput, ctx.summaryStore, {
+            user_input: buildPrompt(state.statusData, promptHistory, cleanUserInput, ctx.summaryStore, {
               playerProfile: state.playerProfile,
               plotLibrary: state.plotLibrary,
               characterCardLibrary: state.characterCardLibrary,
@@ -1450,6 +1454,7 @@ function findScenePhoneMessage(ctx: ActionContext, text: string): ScenePhoneMess
 }
 
 function buildPhoneActionDetectorPrompts(ctx: ActionContext, userInput: string): RawPrompt[] {
+  const cleanUserInput = sanitizePromptInputText(userInput);
   const contacts = getPhoneContactTargets(ctx)
     .map(target => {
       const aliases = getPhoneTargetSearchTerms(target)
@@ -1498,7 +1503,7 @@ function buildPhoneActionDetectorPrompts(ctx: ActionContext, userInput: string):
     },
     {
       role: 'user',
-      content: `玩家输入：${userInput}`,
+      content: `玩家输入：${cleanUserInput}`,
     },
   ];
 }
@@ -1581,6 +1586,7 @@ function normalizeScenePresenceIds(ids: unknown, allowedIds: Set<string>) {
 }
 
 function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[], userInput: string): RawPrompt[] {
+  const cleanUserInput = sanitizePromptInputText(userInput);
   const recentVisible = promptHistory
     .filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
     .slice(-4)
@@ -1654,7 +1660,7 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
         '最近4条可见正文：',
         recentVisible || '（无）',
         '',
-        `玩家当前输入：${userInput || '（无）'}`,
+        `玩家当前输入：${cleanUserInput || '（无）'}`,
         '',
         '请输出 JSON，格式如下（无时间推进时省略 timeProposal 或置 null）：',
         '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"},"timeProposal":{"time":"YYYY-MM-DD HH:mm","confidence":"high|low","source":"explicit_player_transition|narrative_transition|none","reason":"一句话依据"}}',
