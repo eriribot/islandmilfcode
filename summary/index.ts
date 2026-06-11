@@ -12,3 +12,4 @@ export {
   type SummaryError,
   type SummaryStore,
 } from './types';
+export { diagnoseSummaryStore, repairSummaryStore, formatDiagnosticReport, type SummaryDiagnostic } from './repair';

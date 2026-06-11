@@ -146,9 +146,7 @@ export const defaultStatusData: StatusData = {
       'SAE_04-7': '未进行',
       'SAE_04-8': '未进行',
     },
-    recentEvents: {
-      初始记录: '新的记录已经建立，等待攻略对象资料载入。',
-    },
+    recentEvents: {},
   },
   // 中文注释：内置可攻略角色先作为变量种子存在；世界书载入后会按姓名合并并保留好感。
   targets: builtInTargetSeeds,

@@ -526,11 +526,10 @@ export function applyProgressUpdate(
     }
   }
 
-  if (Object.keys(update.events).length) {
-    const merged = { ...update.events, ...statusData.world.recentEvents };
-    const entries = Object.entries(merged).slice(0, MAX_RECENT_EVENTS);
-    statusData.world.recentEvents = Object.fromEntries(entries);
-  }
+  const recentEntries = Object.entries(update.events)
+    .filter(([name, description]) => name && name !== '初始记录' && String(description ?? '').trim())
+    .slice(0, MAX_RECENT_EVENTS);
+  statusData.world.recentEvents = Object.fromEntries(recentEntries);
 
   if (Object.keys(update.mainEvents ?? {}).length) {
     const normalizedUpdates = Object.fromEntries(

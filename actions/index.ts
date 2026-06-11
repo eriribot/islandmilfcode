@@ -58,6 +58,7 @@ import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
 import { indexPhoneMessage } from '../memorydatabase/phone-repository';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import { isPlotEventAllowedByRoute } from '../plot-routing';
+import { isPlayerPhonePseudoTarget } from '../phone/types';
 import { emitCharacterDataImportFromResponse } from '../plugins/character-data-import';
 import {
   extractImageGenerationPrompts,
@@ -89,6 +90,14 @@ type ScenePhoneMessage = {
   role: 'user' | 'assistant';
   text: string;
 };
+
+function isPlayerPseudoTarget(target: TargetStatus | null | undefined) {
+  return isPlayerPhonePseudoTarget(target);
+}
+
+function getPhoneContactTargets(ctx: Pick<ActionContext, 'state'>) {
+  return ctx.state.statusData.targets.filter(target => !isPlayerPseudoTarget(target));
+}
 
 // 合并版 progress prompt 解析出的手机消息暂存：同回合 maybeQueueProactivePhoneMessage 会读它并清空，跳过 phone-scene-extract 副 API。
 // 不放进 state（属于一次性流转数据，不需要存档），也不放进 ctx 类型（避免侵入）。流程顺序执行无竞态。
@@ -1177,6 +1186,7 @@ export async function submitMessage(
       (typeof win.generateRaw === 'function' || typeof win.generate === 'function')
     ) {
       recordGenerationDebug(ctx, 'submit:summary-start');
+      lastProgressPhoneMessages = null;
 
       // ① 变量更新：配/不配副 API 都走同一条合并 progress（无副 API 时 runSecondaryTask 回落主 API）。
       //    含 includePhoneMessages，结果里的 <phone_messages> 暂存到 lastProgressPhoneMessages。
@@ -1184,7 +1194,7 @@ export async function submitMessage(
         ctx,
         `progress-after-text-${crypto.randomUUID()}`,
         buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
-          includePhoneMessages: true,
+          includePhoneMessages: !phoneDirective,
         }),
         null,
         { scenePresence, isCancelled: () => isGenerationRunCancelled(ctx, generationToken) },
@@ -1252,7 +1262,8 @@ export async function submitMessage(
 }
 
 function getPhoneThreadTarget(ctx: ActionContext, targetId: string): TargetStatus | null {
-  return ctx.state.statusData.targets.find(target => target.id === targetId) ?? null;
+  const target = getPhoneContactTargets(ctx).find(item => item.id === targetId) ?? null;
+  return isPlayerPseudoTarget(target) ? null : target;
 }
 
 function normalizeForDirectiveMatch(text: string) {
@@ -1343,7 +1354,7 @@ function findPhoneDirectiveTarget(ctx: ActionContext, rawName: string) {
   if (!needle) return null;
 
   return (
-    ctx.state.statusData.targets.find(target =>
+    getPhoneContactTargets(ctx).find(target =>
       getPhoneTargetSearchTerms(target).some(term => {
         const normalizedTerm = normalizeForDirectiveMatch(term);
         return normalizedTerm && (normalizedTerm.includes(needle) || needle.includes(normalizedTerm));
@@ -1414,54 +1425,32 @@ function sceneTextMentionsIncomingPhoneFromTarget(target: TargetStatus, sceneTex
   return hasPhoneSignal && hasIncomingSignal && isExplicitPhoneTargetMention(target, sceneText);
 }
 
-function sceneTextMentionsOutgoingPhoneToTarget(target: TargetStatus, sceneText: string) {
-  const normalizedText = normalizeForDirectiveMatch(sceneText);
-  if (!normalizedText) return false;
-
-  const phoneWords = '(?:line|手机|短信|私聊|微信|消息)';
-  const sendWords = '(?:发|发送|传|回复|回覆|回信|告诉|联系)';
-  return getPhoneTargetSearchTerms(target)
-    .map(term => normalizeForDirectiveMatch(term))
-    .filter(term => term.length >= 2)
-    .some(term => {
-      const escaped = escapeRegExp(term);
-      return (
-        new RegExp(`(?:给|向|对|发给|发送给|传给).{0,12}${escaped}.{0,16}${sendWords}.{0,12}${phoneWords}`).test(
-          normalizedText,
-        ) ||
-        new RegExp(`${sendWords}.{0,12}${phoneWords}.{0,16}(?:给|向|对|发给|发送给|传给).{0,12}${escaped}`).test(
-          normalizedText,
-        ) ||
-        new RegExp(`(?:回复|回覆|回信).{0,12}${escaped}.{0,12}(?:的)?${phoneWords}`).test(normalizedText)
-      );
-    });
-}
-
 function scenePhoneMessageIsExplicitlyBoundToTarget(
   target: TargetStatus,
   sceneText: string,
   role: ScenePhoneMessage['role'],
 ) {
+  if (isPlayerPseudoTarget(target)) return false;
   if (role === 'assistant') {
     return (
       sceneExplicitlyReceivedPhoneMessage(target, sceneText) ||
       sceneTextMentionsIncomingPhoneFromTarget(target, sceneText)
     );
   }
-  return sceneTextMentionsOutgoingPhoneToTarget(target, sceneText);
+  return false;
 }
 
 function findScenePhoneMessage(ctx: ActionContext, text: string): ScenePhoneMessage | null {
   const target =
-    ctx.state.statusData.targets.find(item => sceneExplicitlyReceivedPhoneMessage(item, text)) ??
-    ctx.state.statusData.targets.find(item => sceneTextMentionsIncomingPhoneFromTarget(item, text)) ??
+    getPhoneContactTargets(ctx).find(item => sceneExplicitlyReceivedPhoneMessage(item, text)) ??
+    getPhoneContactTargets(ctx).find(item => sceneTextMentionsIncomingPhoneFromTarget(item, text)) ??
     null;
   const messageText = extractScenePhoneMessageText(text);
   return target && messageText ? { target, role: 'assistant', text: messageText } : null;
 }
 
 function buildPhoneActionDetectorPrompts(ctx: ActionContext, userInput: string): RawPrompt[] {
-  const contacts = ctx.state.statusData.targets
+  const contacts = getPhoneContactTargets(ctx)
     .map(target => {
       const aliases = getPhoneTargetSearchTerms(target)
         .filter(term => term !== target.id && term !== target.name)
@@ -1839,9 +1828,7 @@ function commitProgressAnalysis(
     const latestSceneText = getLatestAssistantSceneText(ctx);
     if (latestSceneText) {
       const phoneMessages = parseScenePhoneMessageExtractorResult(ctx, raw, latestSceneText);
-      if (phoneMessages.length) {
-        lastProgressPhoneMessages = phoneMessages;
-      }
+      lastProgressPhoneMessages = phoneMessages.length ? phoneMessages : null;
     }
   }
 
@@ -1902,16 +1889,28 @@ function parseScenePhoneMessageExtractorResult(
           .match(/^direction[:：]\s*(.+)$/im)?.[1]
           ?.trim()
           .toLowerCase() ?? '';
+      if (direction !== 'incoming') {
+        debugPhoneFlow(ctx, 'scene-extract:drop-outgoing', { direction });
+        return null;
+      }
       const targetHint = block.match(/^target_id[:：]\s*(.+)$/im)?.[1]?.trim() ?? '';
       const message = stripDirectiveQuotes(
         block.match(/^message[:：]\s*([\s\S]*?)(?=\n(?:direction|target_id|message)[:：]|\s*$)/im)?.[1] ?? '',
       );
-      const role = direction === 'outgoing' ? 'user' : 'assistant';
+      const role: ScenePhoneMessage['role'] = 'assistant';
       if (isMissingPhoneTargetHint(targetHint) || !role || !message) return null;
 
       const target = getPhoneThreadTarget(ctx, targetHint) ?? findPhoneDirectiveTarget(ctx, targetHint);
       if (!target) {
         debugPhoneFlow(ctx, 'scene-extract:drop-non-id-target', { targetHint, direction });
+        return null;
+      }
+      if (!scenePhoneMessageIsExplicitlyBoundToTarget(target, sceneText, role)) {
+        debugPhoneFlow(ctx, 'scene-extract:drop-unbound-target', {
+          targetId: target.id,
+          targetHint,
+          direction,
+        });
         return null;
       }
 
@@ -1988,7 +1987,10 @@ async function simulatePhoneGeneration(target: TargetStatus, userInput: string) 
 }
 
 function getLatestRecentEvent(ctx: ActionContext) {
-  const [name, description] = Object.entries(ctx.state.statusData.world.recentEvents)[0] ?? [];
+  const [name, description] =
+    Object.entries(ctx.state.statusData.world.recentEvents).find(
+      ([eventName, eventDescription]) => eventName !== '初始记录' && String(eventDescription ?? '').trim(),
+    ) ?? [];
   if (!name || !description) return null;
   return {
     key: `${name}:${description}`,
@@ -2074,15 +2076,18 @@ function appendUserPhoneMessage(
 }
 
 function appendExtractedScenePhoneMessage(ctx: ActionContext, item: ScenePhoneMessage) {
+  if (item.role !== 'assistant' || isPlayerPseudoTarget(item.target)) {
+    debugPhoneFlow(ctx, 'scene-extract:drop-non-incoming-or-player-target', {
+      targetId: item.target.id,
+      role: item.role,
+    });
+    return false;
+  }
   const thread = ensurePhoneThread(ctx, item.target);
   const lastMessage = thread.messages[thread.messages.length - 1];
   if (lastMessage?.role === item.role && lastMessage.text.trim() === item.text.trim()) return false;
 
-  if (item.role === 'user') {
-    appendUserPhoneMessage(ctx, item.target, thread, item.text.trim(), 'phone-scene-extract');
-  } else {
-    appendAssistantPhoneMessage(ctx, item.target, thread, item.text.trim(), 'phone-scene-extract');
-  }
+  appendAssistantPhoneMessage(ctx, item.target, thread, item.text.trim(), 'phone-scene-extract');
   return true;
 }
 
@@ -2163,7 +2168,7 @@ async function maybeQueueProactivePhoneMessage(
   }
 
   const target =
-    state.statusData.targets.find(candidate => isExplicitPhoneTargetMention(candidate, latestEvent.text)) ?? null;
+    getPhoneContactTargets(ctx).find(candidate => isExplicitPhoneTargetMention(candidate, latestEvent.text)) ?? null;
   if (!target) {
     debugPhoneFlow(ctx, 'proactive:skip-no-target-in-event', {
       eventKey: latestEvent.key,

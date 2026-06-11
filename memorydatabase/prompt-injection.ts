@@ -68,6 +68,11 @@ type MemoryBlock = {
   estimatedChars: number;
 };
 
+function rangeContains(outer: [number, number] | undefined, inner: [number, number] | undefined): boolean {
+  if (!outer || !inner) return false;
+  return inner[0] >= outer[0] && inner[1] <= outer[1];
+}
+
 /**
  * 从 memoryDB 构建结构化的 prompt 注入文本。
  *
@@ -125,7 +130,9 @@ function buildSummaryBlocks(
   config: Required<MemoryInjectionConfig>
 ): void {
   // Global 摘要：最高优先级
-  const global = db.summaries.find(s => !s.expired && s.level === 'global');
+  const global = db.summaries
+    .filter(s => !s.expired && s.level === 'global')
+    .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))[0];
   if (global?.text) {
     blocks.push({
       title: '【至今剧情背景】',
@@ -138,6 +145,7 @@ function buildSummaryBlocks(
   // Major 摘要：高优先级，窗口大小可配置
   const majors = db.summaries
     .filter(s => !s.expired && s.level === 'major')
+    .filter(s => !rangeContains(global?.range, s.range))
     .sort((a, b) => (b.range?.[0] ?? 0) - (a.range?.[0] ?? 0)) // 按时间倒序
     .slice(0, config.majorWindowSize);
 
@@ -154,6 +162,7 @@ function buildSummaryBlocks(
   // Minor 摘要：中优先级，窗口大小可配置
   const minors = db.summaries
     .filter(s => !s.expired && s.level === 'minor')
+    .filter(s => !majors.some(m => rangeContains(m.range, s.range)))
     .sort((a, b) => (b.range?.[0] ?? 0) - (a.range?.[0] ?? 0))
     .slice(0, config.minorWindowSize);
 

@@ -585,7 +585,6 @@ function renderBackgroundTasks(tasks: BackgroundTaskState[]) {
 }
 
 export function renderSummaryPanel(state: AppState) {
-  const recentEvents = Object.entries(state.statusData.world.recentEvents).slice(0, 3);
   const lastMessage = state.uiMessages[state.uiMessages.length - 1];
   const playerName = state.playerProfile.name.trim() || '主角';
   const playerMeta =
@@ -611,26 +610,6 @@ export function renderSummaryPanel(state: AppState) {
           <div class="summary-card">
             <strong>${lastMessage ? escapeHtml(lastMessage.speaker) : '暂无对白'}</strong>
             <p>${lastMessage ? escapeHtml(getVisibleMessageText(lastMessage) || '……') : '等待新的记录写入。'}</p>
-          </div>
-        </div>
-
-        <div class="subsection">
-          <div class="subsection-title">最近事件</div>
-          <div class="chip-list">
-            ${
-              recentEvents.length
-                ? recentEvents
-                    .map(
-                      ([name, text]) => `
-                        <div class="chip-card">
-                          <strong>${escapeHtml(name)}</strong>
-                          <p>${escapeHtml(text)}</p>
-                        </div>
-                      `,
-                    )
-                    .join('')
-                : '<div class="empty-card">还没有可展示的事件。</div>'
-            }
           </div>
         </div>
 
@@ -738,6 +717,11 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
     : '';
 
   const hasAny = store.global || store.major.length || store.minor.length;
+  const rangeContains = (outer: [number, number], inner: [number, number]) =>
+    inner[0] >= outer[0] && inner[1] <= outer[1];
+  const unmergedMinorCount = store.minor.filter(
+    minor => !store.major.some(major => rangeContains(major.range, minor.range)),
+  ).length;
   // lastSummarizedIndex 是对话序号，把它也映射成 UI 楼层号让用户能直接对上 #N。
   const lastSummarizedUi = store.lastSummarizedIndex > 0
     ? mapConversationRangeToUiRange(uiMessages, [store.lastSummarizedIndex - 1, store.lastSummarizedIndex - 1])[1]
@@ -748,13 +732,20 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
     m => !m.streaming && (m.role === 'user' || m.role === 'assistant'),
   ).length;
   const pendingCount = Math.max(0, conversationCount - store.lastSummarizedIndex);
-  const statusLine = `已总结到楼层 #${lastSummarizedUi} · 小总结 ${store.minor.length} · 大总结 ${store.major.length} · 全局 ${store.global ? '有' : '无'}`;
-  const pendingHint = pendingCount >= 5
-    ? `<div class="summary-pending" style="font-size:11px;color:#c97c5d;margin-bottom:8px;padding:4px 8px;background:rgba(201,124,93,0.08);border-radius:6px">还有 <strong>${pendingCount}</strong> 条对话未被小总结吞掉，可点下方「小总结」补救。</div>`
+  const minorThreshold = Math.max(1, Number(loadFullMemoryConfig().summaryTrigger.minorThreshold) || 5);
+  const pendingMinorText =
+    pendingCount >= minorThreshold
+      ? `待小总结 ${pendingCount}/${minorThreshold}（可触发）`
+      : `待小总结 ${pendingCount}/${minorThreshold}（未触发）`;
+  const statusLine = `已总结到楼层 #${lastSummarizedUi} · ${pendingMinorText} · 小总结 ${store.minor.length}（待大总结 ${unmergedMinorCount}） · 大总结 ${store.major.length} · 全局 ${store.global ? '有' : '无'}`;
+  const pendingHint = pendingCount
+    ? pendingCount >= minorThreshold
+      ? `<div class="summary-pending" style="font-size:11px;color:#c97c5d;margin-bottom:8px;padding:4px 8px;background:rgba(201,124,93,0.08);border-radius:6px">还有 <strong>${pendingCount}</strong> 条对话未被小总结吞掉，可点下方「小总结」推进摘要游标。</div>`
+      : `<div class="summary-pending" style="font-size:11px;color:#8a7a62;margin-bottom:8px;padding:4px 8px;background:rgba(138,122,98,0.08);border-radius:6px">小总结还差 <strong>${minorThreshold - pendingCount}</strong> 条触发；大总结只消化已有小总结，不推进楼层游标。</div>`
     : '';
-  // 大总结补救提示：minor 堆到 4 条以上就该升级 major。
-  const majorPendingHint = store.minor.length >= 4
-    ? `<div class="summary-pending" style="font-size:11px;color:#7c6ca8;margin-bottom:8px;padding:4px 8px;background:rgba(124,108,168,0.08);border-radius:6px">小总结已堆 <strong>${store.minor.length}</strong> 条，可点下方「大总结」一次性消化。</div>`
+  // 大总结补救提示：只计算尚未被大总结覆盖的小总结，历史小总结仍保留展示。
+  const majorPendingHint = unmergedMinorCount >= 4
+    ? `<div class="summary-pending" style="font-size:11px;color:#7c6ca8;margin-bottom:8px;padding:4px 8px;background:rgba(124,108,168,0.08);border-radius:6px">待大总结的小总结还有 <strong>${unmergedMinorCount}</strong> 条，可点下方「大总结」一次性消化。</div>`
     : '';
 
   return `
@@ -768,6 +759,7 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
       <div class="summary-actions" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
         <button class="mini-btn" data-action="summary-minor" style="white-space:nowrap;flex:1;min-height:30px" ${summarizing ? 'disabled' : ''}>小总结</button>
         <button class="mini-btn" data-action="summary-major" style="white-space:nowrap;flex:1;min-height:30px" ${summarizing ? 'disabled' : ''}>大总结</button>
+        <button class="mini-btn" data-action="summary-global" style="white-space:nowrap;flex:1;min-height:30px" ${summarizing ? 'disabled' : ''}>全局摘要</button>
       </div>
     </div>`;
 }

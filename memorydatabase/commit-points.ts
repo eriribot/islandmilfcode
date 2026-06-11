@@ -202,6 +202,10 @@ const KEY_FACT_TO_MEMORY_CATEGORY: Record<KeyFact['category'], MemoryFactCategor
   profile: 'profile',
 };
 
+function rangeContains(outer: [number, number], inner: [number, number] | undefined): boolean {
+  return Array.isArray(inner) && inner.length >= 2 && inner[0] >= outer[0] && inner[1] <= outer[1];
+}
+
 export function commitSummaryToMemoryDB(
   db: IslandMemoryDB | null | undefined,
   level: 'minor' | 'major' | 'global',
@@ -211,33 +215,20 @@ export function commitSummaryToMemoryDB(
 ): void {
   if (!db) return;
 
+  const expireSummaryIds =
+    level === 'major'
+      ? db.summaries
+          .filter(row => !row.expired && row.level === 'minor' && rangeContains(range, row.range))
+          .map(row => row.id)
+      : level === 'global'
+        ? db.summaries
+            .filter(row => !row.expired && row.level === 'major' && rangeContains(range, row.range))
+            .map(row => row.id)
+        : [];
+
   const inserts: NonNullable<MemoryWriteBatch['inserts']> = {
     summaries: [{ level, range, text }],
   };
-
-  // 写 major 时，把范围被本条 major 完全覆盖的 minor 行 expire；
-  // 写 global 时，把范围被本条 global 完全覆盖的 major 行 expire。
-  // 这样 hydrate 时不会再把已经被升级吸收的下级摘要读回 store.minor / store.major。
-  const expireIds: string[] = [];
-  if (level === 'major') {
-    for (const row of db.summaries) {
-      if (row.expired) continue;
-      if (row.level !== 'minor') continue;
-      if (!Array.isArray(row.range) || row.range.length < 2) continue;
-      if (row.range[0] >= range[0] && row.range[1] <= range[1]) {
-        expireIds.push(row.id);
-      }
-    }
-  } else if (level === 'global') {
-    for (const row of db.summaries) {
-      if (row.expired) continue;
-      if (row.level !== 'major') continue;
-      if (!Array.isArray(row.range) || row.range.length < 2) continue;
-      if (row.range[0] >= range[0] && row.range[1] <= range[1]) {
-        expireIds.push(row.id);
-      }
-    }
-  }
 
   if (keyFacts?.length) {
     inserts.facts = keyFacts
@@ -253,7 +244,7 @@ export function commitSummaryToMemoryDB(
   commitBatch(db, {
     source: SUMMARY_SOURCE_MAP[level],
     inserts,
-    expire: expireIds.length ? { summaries: expireIds } : undefined,
+    expire: expireSummaryIds.length ? { summaries: expireSummaryIds } : undefined,
     advanceCursor: range[1],
   });
 }

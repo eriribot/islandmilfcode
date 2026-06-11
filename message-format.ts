@@ -435,6 +435,7 @@ function buildPhoneChatHistory(messages: PhoneChatMessage[]) {
 
 function buildRecentEventsContext(statusData: StatusData) {
   const lines = Object.entries(statusData.world.recentEvents)
+    .filter(([name, description]) => name !== '初始记录' && String(description ?? '').trim())
     .slice(0, 3)
     .map(([name, description]) => `- ${name}：${description}`);
 
@@ -1027,7 +1028,8 @@ export function buildPrompt(
     drawingSettings?: DrawingSettings | null;
   },
 ) {
-  const topEvent = Object.entries(statusData.world.recentEvents)[0];
+  const topEvent = Object.entries(statusData.world.recentEvents)
+    .find(([name, description]) => name !== '初始记录' && String(description ?? '').trim());
   const playerProfile = options?.playerProfile;
   const playerProfileText = playerProfile?.name
     ? [
@@ -1474,23 +1476,24 @@ export function buildProgressPrompt(
           ? [
               '',
               '── 手机消息提取 ──',
-              '在判断变量之外，请同时检查"最新正文"里是否出现攻略对象用手机/LINE/短信/私聊给玩家发消息、或玩家在正文里用手机给攻略对象发消息。如有，按下方格式补充输出 <phone_messages> 标签，没有就输出空标签。',
+              '在判断变量之外，请同时检查"最新正文"里是否出现攻略对象用手机/LINE/短信/私聊给玩家发消息。如有，按下方格式补充输出 <phone_messages> 标签，没有就输出空标签。',
               '提取规则：',
-              '  1. incoming = 攻略对象发给玩家；outgoing = 玩家发给攻略对象。',
+              '  1. 只提取 incoming：攻略对象发给玩家。',
               '  2. target_id 必须是"可更新角色列表"里出现过的 id；不能猜测归属。',
               '  3. 如果正文只写"她/对方/手机弹出消息"等无法确定具体联系人，跳过这条不输出。',
               '  4. message 优先用正文里明确写出的消息文本（引号、【】、冒号后的内容）；若只是概括，可用一句自然的手机文本重构；若内容不明确，跳过。',
               '  5. 只提取手机/LINE/短信/私聊等远程消息；面对面对话、旁白、心理活动、系统通知、普通叙述不要输出。',
               '  6. 非攻略对象（伦也、红坂朱音、丸户等）发来的消息不要输出，因为它们不会落到攻略对象的 thread。',
-              '  7. 可输出多条按正文顺序。没有可提取的消息时输出空的 <phone_messages></phone_messages>。',
+              '  7. 玩家发出的消息、玩家反馈、玩家输入、括号里的操作意图不要输出；玩家主动发短信只由手机发送指令处理。',
+              '  8. 可输出多条按正文顺序。没有可提取的消息时输出空的 <phone_messages></phone_messages>。',
               '',
               '输出格式（在 <progress> 后面追加）：',
               '<phone_messages>',
-              'direction: incoming|outgoing',
+              'direction: incoming',
               'target_id: 联系人id',
               'message: 消息正文',
               '---',
-              'direction: incoming|outgoing',
+              'direction: incoming',
               'target_id: 联系人id',
               'message: 消息正文',
               '</phone_messages>',

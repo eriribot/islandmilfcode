@@ -19,6 +19,7 @@ import type { FactAnchor, KeyFact, SummaryApiConfig, SummaryStore } from './type
 import { commitSummaryToMemoryDB } from '../memorydatabase/commit-points';
 import { commitBatch } from '../memorydatabase/upsert';
 import type { IslandMemoryDB } from '../memorydatabase/types';
+import { loadSummaryTriggerConfig } from '../memory-config';
 
 /** 摘要运行所需的上下文。 */
 export type SummaryContext = {
@@ -179,6 +180,29 @@ function countConversationMessages(messages: UiMessage[]): number {
   return getConversationMessages(messages).length;
 }
 
+function rangeContains(outer: [number, number], inner: [number, number]) {
+  return inner[0] >= outer[0] && inner[1] <= outer[1];
+}
+
+function getUncoveredMinorSummaries(store: SummaryStore) {
+  return store.minor.filter(minor => !store.major.some(major => rangeContains(major.range, minor.range)));
+}
+
+function getActiveGlobalRanges(db?: import('../memorydatabase/types').IslandMemoryDB | null): Array<[number, number]> {
+  if (!db) return [];
+  return db.summaries
+    .filter(row => !row.expired && row.level === 'global' && Array.isArray(row.range) && row.range.length >= 2)
+    .map(row => row.range);
+}
+
+function getUncoveredMajorSummaries(
+  store: SummaryStore,
+  db?: import('../memorydatabase/types').IslandMemoryDB | null,
+) {
+  const globalRanges = getActiveGlobalRanges(db);
+  return store.major.filter(major => !globalRanges.some(range => rangeContains(range, major.range)));
+}
+
 /** 将消息列表格式化为 [说话人]\n内容 的纯文本，用于重roll大摘要。 */
 function formatMessagesAsText(messages: UiMessage[]): string {
   return messages
@@ -286,50 +310,65 @@ export async function runSummary(
   // 大摘要：自动模式达到阈值时运行，或 mode=major 时强制运行。
   const runMajor = mode === 'major' || (mode === 'auto' && shouldRunMajorSummary(store));
   if (runMajor) {
-    if (store.minor.length === 0) {
+    const consumed = getUncoveredMinorSummaries(store);
+    const config = loadSummaryTriggerConfig();
+    const majorThreshold = config.majorThreshold ?? 4;
+    const sourceMinor = consumed.length ? consumed : mode === 'major' ? store.minor : [];
+    if (sourceMinor.length === 0 || (mode === 'auto' && sourceMinor.length < majorThreshold)) {
       // 没有可提升的摘要。
-      saveSummaryStore(win, store);
-      ctx.onStoreUpdated();
-      return result;
-    }
-    const consumed = store.minor.splice(0, store.minor.length);
-    try {
-      result.majorRan = true;
-      startTask('大摘要生成中');
-      const prompts = buildMajorSummaryPrompt(consumed, anchor, pinnedFacts());
-      const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-major', ctx.isCancelled);
-      if (ctx.isCancelled?.()) {
-        store.minor.unshift(...consumed);
-        finishTask();
+      if (mode === 'major') {
+        saveSummaryStore(win, store);
+        ctx.onStoreUpdated();
         return result;
       }
-      const text = parseSummaryResult(raw);
-      if (text) {
-        const firstRange = consumed[0]?.range[0] ?? 0;
-        const lastRange = consumed[consumed.length - 1]?.range[1] ?? 0;
-        store.major.push({
-          range: [firstRange, lastRange],
-          text,
-          createdAt: new Date().toISOString(),
-        });
-        clearFailureState(store);
-        commitSummaryToMemoryDB(ctx.memoryDB, 'major', text, [firstRange, lastRange]);
-      } else {
-        // 解析失败时恢复已消费的小摘要。
-        store.minor.unshift(...consumed);
-      }
-    } catch (error) {
-      if (error instanceof SecondaryTaskCancelledError || ctx.isCancelled?.()) {
-        store.minor.unshift(...consumed);
-        finishTask();
+    } else {
+      try {
+        result.majorRan = true;
+        startTask('大摘要生成中');
+        const prompts = buildMajorSummaryPrompt(sourceMinor, anchor, pinnedFacts());
+        const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-major', ctx.isCancelled);
+        if (ctx.isCancelled?.()) {
+          finishTask();
+          return result;
+        }
+        const text = parseSummaryResult(raw);
+        if (text) {
+          const firstRange = sourceMinor[0]?.range[0] ?? 0;
+          const lastRange = sourceMinor[sourceMinor.length - 1]?.range[1] ?? 0;
+          const majorRange: [number, number] = [firstRange, lastRange];
+          const now = new Date().toISOString();
+          const existing = store.major.find(entry => entry.range[0] === firstRange && entry.range[1] === lastRange);
+          if (existing) {
+            existing.text = text;
+            existing.createdAt = now;
+          } else {
+            store.major.push({
+              range: majorRange,
+              text,
+              createdAt: now,
+            });
+          }
+          // 清理被此大摘要覆盖的所有小摘要（修复：确保完全清理）
+          const beforeMinorCount = store.minor.length;
+          store.minor = store.minor.filter(entry => !rangeContains(majorRange, entry.range));
+          const removedMinorCount = beforeMinorCount - store.minor.length;
+          if (removedMinorCount > 0) {
+            console.log(`[summary] 大摘要 [${majorRange[0]}, ${majorRange[1]}] 清理了 ${removedMinorCount} 条小摘要`);
+          }
+          clearFailureState(store);
+          commitSummaryToMemoryDB(ctx.memoryDB, 'major', text, majorRange);
+        }
+      } catch (error) {
+        if (error instanceof SecondaryTaskCancelledError || ctx.isCancelled?.()) {
+          finishTask();
+          return result;
+        }
+        failTask(error);
+        recordFailure(store, 'major', error);
+        saveSummaryStore(win, store);
+        ctx.onStoreUpdated();
         return result;
       }
-      failTask(error);
-      store.minor.unshift(...consumed);
-      recordFailure(store, 'major', error);
-      saveSummaryStore(win, store);
-      ctx.onStoreUpdated();
-      return result;
     }
     // 大摘要模式在大摘要后停止，不做全局压缩。
     if (mode === 'major') {
@@ -342,14 +381,22 @@ export async function runSummary(
 
   // 全局压缩：只在自动级联中执行。
   if (mode === 'global' || shouldRunGlobalCompression(store)) {
-    const consumed = store.major.splice(0, store.major.length);
+    const uncoveredMajors = getUncoveredMajorSummaries(store, ctx.memoryDB).sort((a, b) => a.range[0] - b.range[0]);
+    const config = loadSummaryTriggerConfig();
+    const globalThreshold = config.globalThreshold ?? 4;
+    const consumed = uncoveredMajors.slice(0, -1);
+    if (consumed.length === 0 || (mode === 'auto' && uncoveredMajors.length < globalThreshold)) {
+      finishTask();
+      saveSummaryStore(win, store);
+      ctx.onStoreUpdated();
+      return result;
+    }
     try {
       result.globalRan = true;
       startTask('全局记忆压缩中');
       const prompts = buildGlobalCompressionPrompt(store.global, consumed, anchor, pinnedFacts());
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-global', ctx.isCancelled);
       if (ctx.isCancelled?.()) {
-        store.major.unshift(...consumed);
         finishTask();
         return result;
       }
@@ -357,19 +404,16 @@ export async function runSummary(
       if (text) {
         store.global = text;
         clearFailureState(store);
-        const globalRange: [number, number] = [0, ctx.memoryDB?.lastProcessedIndex ?? store.lastSummarizedIndex];
+        const globalRange: [number, number] = [0, consumed[consumed.length - 1]?.range[1] ?? 0];
+        store.major = store.major.filter(entry => !rangeContains(globalRange, entry.range));
         commitSummaryToMemoryDB(ctx.memoryDB, 'global', text, globalRange);
-      } else {
-        store.major.unshift(...consumed);
       }
     } catch (error) {
       if (error instanceof SecondaryTaskCancelledError || ctx.isCancelled?.()) {
-        store.major.unshift(...consumed);
         finishTask();
         return result;
       }
       failTask(error);
-      store.major.unshift(...consumed);
       recordFailure(store, 'global', error);
       saveSummaryStore(win, store);
       ctx.onStoreUpdated();

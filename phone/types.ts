@@ -65,6 +65,24 @@ export function normalizePhoneArchiveImpressionSubject(value: string): string {
   return /^(user|玩家|你)$/.test(normalized) ? 'user' : normalized.replace(/\s+/g, '');
 }
 
+export function isPlayerPhonePseudoTarget(target: {
+  id?: string;
+  name?: string;
+  alias?: string;
+  meta?: Record<string, unknown>;
+} | null | undefined) {
+  if (!target) return true;
+  const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
+    .map(value =>
+      String(value ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[{}・·.\s　"'“”‘’《》【】「」『』（）()]+/g, ''),
+    )
+    .filter(Boolean);
+  return haystack.some(value => /^(?:user|player|玩家|主角|你|我)$/.test(value));
+}
+
 function compactImpressionText(value: string): string {
   return value
     .trim()

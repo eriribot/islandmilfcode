@@ -52,15 +52,9 @@ export function hydrateSummaryStoreFromMemoryDB(
     }
   }
 
-  // ── 第二遍：剔除已被 major 覆盖范围的 minor（避免显示双份） ──
-  // 仅按相同 range[0] 去重 major，不做"包含关系"判断——
-  // 因为历史 bug 写出过 92-156 这种跨度异常大的怪物 major，如果按"被包含就丢弃"，
-  // 它会反过来把 82-101、102-121 这些正常 major 全吞掉，剩一条怪物。
-  // 保守做法：只折叠完全相同起点的重复条目。
+  // ── 第二遍：仅去重，不按覆盖关系隐藏小/大总结。UI 面板要显示真实存量。 ──
   const majorList = [...majorByStart.values()].sort((a, b) => a.range[0] - b.range[0]);
-  const minorList = [...minorByStart.values()]
-    .filter(m => !majorList.some(M => m.range[0] >= M.range[0] && m.range[1] <= M.range[1]))
-    .sort((a, b) => a.range[0] - b.range[0]);
+  const minorList = [...minorByStart.values()].sort((a, b) => a.range[0] - b.range[0]);
 
   const major: SummaryEntry[] = majorList.map(({ _ts, ...rest }) => {
     void _ts;

@@ -12,6 +12,7 @@ import type {
 import { formatDate, formatTime } from '../variables/normalize';
 import { renderCharacterArchivePanel } from './archive';
 import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './types';
+import { isPlayerPhonePseudoTarget } from './types';
 import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
 import { renderMemoryEditor } from '../memorydatabase/editor';
 
@@ -761,11 +762,12 @@ function renderPhoneContactRow(target: TargetStatus, hasThread: boolean) {
 }
 
 function renderMessagesPhonePage(state: AppState) {
+  const contactTargets = state.statusData.targets.filter(target => !isPlayerPhonePseudoTarget(target));
+  const targetsById = new Map(contactTargets.map(target => [target.id, target]));
   const threads = Object.values(state.phoneMessages.threads)
     .filter(thread => thread.messages.length)
+    .filter(thread => targetsById.has(thread.targetId))
     .sort((a, b) => b.updatedAt - a.updatedAt);
-  const targetsById = new Map(state.statusData.targets.map(target => [target.id, target]));
-  const contactTargets = state.statusData.targets;
 
   return `
     <section class="phone-route-page phone-app-page phone-app-page--messages" data-phone-route-view="app:messages">
@@ -804,7 +806,7 @@ function renderMessagesPhonePage(state: AppState) {
 function renderPhoneChatPage(state: AppState) {
   const targetId = state.phoneMessages.activeThreadId;
   const target = targetId ? state.statusData.targets.find(item => item.id === targetId) : null;
-  if (!target) {
+  if (!target || isPlayerPhonePseudoTarget(target)) {
     return renderMessagesPhonePage(state);
   }
 

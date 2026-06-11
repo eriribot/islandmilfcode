@@ -71,10 +71,11 @@ import {
   buildFactAnchorFromStatus,
   loadSummaryApiConfig,
   rerollSummaryEntry,
+  repairSummaryStore,
   resumeAutoSummary,
   runSummary,
   saveSummaryApiConfig,
-} from './summary';
+} from "./summary";
 import type { SummaryApiConfig, SummaryModelOption } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
@@ -706,8 +707,12 @@ async function regenerateReaderMessage(readerIndex: number) {
 
 async function deleteReaderFloor(readerIndex: number) {
   if (state.generating) return;
+  const deletedSourceText = getSourceUserTextForReaderIndex(state, readerIndex).trim();
   const deleted = await deleteReaderMessage(state, readerIndex, win);
   if (!deleted) return;
+  if (deletedSourceText && state.draft.trim() === deletedSourceText) {
+    state.draft = '';
+  }
   guardedAdapterSave(state.statusData);
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
@@ -2115,7 +2120,7 @@ function bindEvents() {
   });
 
   // 摘要操作。
-  function triggerSummary(mode: 'auto' | 'minor' | 'major') {
+  function triggerSummary(mode: 'auto' | 'minor' | 'major' | 'global') {
     if (state.summarizing) return;
     state.summarizing = true;
     render();
@@ -2124,9 +2129,10 @@ function bindEvents() {
 
   // 一键补救：
   // - 'minor'：循环跑到 pending < 5（吞掉所有未总结对话）
-  // - 'major'：循环跑到 minor.length < 4（消化所有可升级的小总结）
+  // - 'major'：循环跑到待大总结的小总结 < 4（消化所有尚未被大总结覆盖的小总结）
+  // - 'global'：强制跑一次全局摘要（必要时会先补大摘要）
   // - 'auto'：单次（保留 runSummary 内部的 auto 级联逻辑）
-  async function runSummaryChain(mode: 'auto' | 'minor' | 'major') {
+  async function runSummaryChain(mode: 'auto' | 'minor' | 'major' | 'global') {
     const ctxArg = {
       win,
       state,
@@ -2142,6 +2148,21 @@ function bindEvents() {
       getFactAnchor: () => buildFactAnchorFromStatus(state.statusData),
     };
     try {
+    // 在开始摘要前，先运行一次自动修复，清理遗留问题
+    try {
+      const repairResult = repairSummaryStore(state.summaryStore, state.uiMessages, {
+        removeOrphanedMinors: true,
+        fixLastSummarizedIndex: true,
+        removeOverlapping: true,
+      });
+      if (repairResult.fixed) {
+        console.log('[summary] 自动修复完成:', repairResult.changes);
+        persistToSave();
+      }
+    } catch (error) {
+      console.warn('[summary] 自动修复失败:', error);
+    }
+
       const result = await runSummary(ctxArg, mode);
       if (mode === 'minor') {
         let safety = 20;
@@ -2153,10 +2174,15 @@ function bindEvents() {
       } else if (mode === 'major') {
         let safety = 10;
         while (safety-- > 0) {
-          if (state.summaryStore.minor.length < 4) break;
+          if (!state.summaryStore.minor.length) break;
           if (state.summaryStore.autoPaused) break;
+          const beforeMajorCount = state.summaryStore.major.length;
           await runSummary(ctxArg, 'major');
+          if (state.summaryStore.major.length === beforeMajorCount) break;
+          if (countUnmergedMinorSummaries() < 4) break;
         }
+      } else if (mode === 'global') {
+        await runSummary(ctxArg, 'global');
       }
       void result;
     } catch (err) {
@@ -2172,12 +2198,23 @@ function bindEvents() {
     return Math.max(0, total - state.summaryStore.lastSummarizedIndex);
   }
 
+  function countUnmergedMinorSummaries() {
+    const rangeContains = (outer: [number, number], inner: [number, number]) =>
+      inner[0] >= outer[0] && inner[1] <= outer[1];
+    return state.summaryStore.minor.filter(
+      minor => !state.summaryStore.major.some(major => rangeContains(major.range, minor.range)),
+    ).length;
+  }
+
   root
-    ?.querySelector<HTMLButtonElement>('[data-action="summary-minor"]')
-    ?.addEventListener('click', () => triggerSummary('minor'));
+    ?.querySelectorAll<HTMLButtonElement>('[data-action="summary-minor"]')
+    .forEach(button => button.addEventListener('click', () => triggerSummary('minor')));
   root
-    ?.querySelector<HTMLButtonElement>('[data-action="summary-major"]')
-    ?.addEventListener('click', () => triggerSummary('major'));
+    ?.querySelectorAll<HTMLButtonElement>('[data-action="summary-major"]')
+    .forEach(button => button.addEventListener('click', () => triggerSummary('major')));
+  root
+    ?.querySelectorAll<HTMLButtonElement>('[data-action="summary-global"]')
+    .forEach(button => button.addEventListener('click', () => triggerSummary('global')));
   root?.querySelectorAll<HTMLButtonElement>('[data-action="summary-reroll"]').forEach(button => {
     button.addEventListener('click', () => {
       // 触发骰子翻滚动画
