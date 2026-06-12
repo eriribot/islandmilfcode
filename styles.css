@@ -573,6 +573,123 @@ button {
   color: var(--ink-dark);
 }
 
+/* Saenai 对话雪碧图头像：只显示五小只，跳过第 0 格安艺伦也。 */
+.saenai-dialogue {
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  min-height: 76px;
+  margin: 14px 0;
+  padding: 12px 18px 14px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(255, 252, 245, 0.46)),
+    rgba(255, 252, 245, 0.38);
+  backdrop-filter: blur(10px) saturate(1.08);
+  box-shadow:
+    0 10px 26px rgba(98, 72, 62, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  color: var(--ink-dark);
+}
+
+.saenai-dialogue--unknown {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.saenai-dialogue__avatar {
+  display: block;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  overflow: hidden;
+  background-image: url('https://eriribot.github.io/islandmilfcode/picresource/Saenai_sprites.jpg');
+  background-repeat: no-repeat;
+  background-size: 384px 64px;
+  box-shadow:
+    0 8px 18px rgba(98, 72, 62, 0.16),
+    0 0 0 3px rgba(255, 255, 255, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.saenai-dialogue__avatar--megumi {
+  background-position: -64px 0;
+}
+
+.saenai-dialogue__avatar--eriri {
+  background-position: -128px 0;
+}
+
+.saenai-dialogue__avatar--utaha {
+  background-position: -192px 0;
+}
+
+.saenai-dialogue__avatar--izumi {
+  background-position: -256px 0;
+}
+
+.saenai-dialogue__avatar--michiru {
+  background-position: -320px 0;
+}
+
+.saenai-dialogue__avatar--placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-image: none;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(201, 184, 232, 0.32));
+  color: var(--ink-assistant);
+  font-family: 'Zen Maru Gothic', sans-serif;
+  font-size: 1.35rem;
+  font-weight: 900;
+}
+
+.saenai-dialogue__content {
+  min-width: 0;
+  padding-top: 0;
+}
+
+.saenai-dialogue__header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.saenai-dialogue__name {
+  font-family: 'Zen Maru Gothic', sans-serif;
+  font-size: 1.08rem;
+  font-weight: 900;
+  line-height: 1.2;
+  color: var(--ink-assistant);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.saenai-dialogue__mood {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(107, 78, 158, 0.09);
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.saenai-dialogue__text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Klee One', serif;
+  font-size: 1.14rem;
+  line-height: 1.74;
+  color: var(--ink-dark);
+}
+
 .reader-illustrations {
   display: grid;
   gap: 12px;
@@ -2275,6 +2392,55 @@ button {
 
   .reader-card__text {
     line-height: 1.68;
+  }
+
+  .saenai-dialogue {
+    grid-template-columns: 50px minmax(0, 1fr);
+    gap: 10px;
+    min-height: 62px;
+    margin: 10px 0;
+    padding: 9px 10px 10px 8px;
+    border-radius: 8px;
+  }
+
+  .saenai-dialogue__avatar {
+    width: 50px;
+    height: 50px;
+    border-radius: 13px;
+    background-size: 300px 50px;
+  }
+
+  .saenai-dialogue__avatar--megumi {
+    background-position: -50px 0;
+  }
+
+  .saenai-dialogue__avatar--eriri {
+    background-position: -100px 0;
+  }
+
+  .saenai-dialogue__avatar--utaha {
+    background-position: -150px 0;
+  }
+
+  .saenai-dialogue__avatar--izumi {
+    background-position: -200px 0;
+  }
+
+  .saenai-dialogue__avatar--michiru {
+    background-position: -250px 0;
+  }
+
+  .saenai-dialogue__name {
+    font-size: 0.92rem;
+  }
+
+  .saenai-dialogue__mood {
+    font-size: 0.68rem;
+  }
+
+  .saenai-dialogue__text {
+    font-size: 0.95rem;
+    line-height: 1.64;
   }
 
   .composer-input {

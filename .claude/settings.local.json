@@ -80,7 +80,24 @@
       "PowerShell(Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' | Select-Object -Skip 600 -First 40 | ForEach-Object -Begin {$i=601} -Process {\"$i`t$_\"; $i++})",
       "PowerShell($content = Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' -Encoding UTF8 -Raw; $lines = $content -split \"`n\"; for\\($i=550; $i -lt 565; $i++\\) { \"$\\($i+1\\)`t$\\($lines[$i]\\)\" })",
       "PowerShell($content = Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' -Encoding UTF8 -Raw; $lines = $content -split \"`n\"; for\\($i=554; $i -lt 630; $i++\\) { \"$\\($i+1\\)`t$\\($lines[$i]\\)\" })",
-      "PowerShell($content = Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' -Encoding UTF8 -Raw; $lines = $content -split \"`n\"; for\\($i=770; $i -lt 830; $i++\\) { \"$\\($i+1\\)`t$\\($lines[$i]\\)\" })"
+      "PowerShell($content = Get-Content 'E:\\\\web\\\\tavern_helper_template-main\\\\src\\\\islandmilfcode\\\\render.ts' -Encoding UTF8 -Raw; $lines = $content -split \"`n\"; for\\($i=770; $i -lt 830; $i++\\) { \"$\\($i+1\\)`t$\\($lines[$i]\\)\" })",
+      "WebFetch(domain:api.github.com)",
+      "Bash(curl -s \"https://api.github.com/repos/Moshenxy/---/git/trees/main?recursive=1\")",
+      "Bash(curl -s \"https://api.github.com/repos/Moshenxy/---/contents/综漫-春物\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/Moshenxy/---/main/src/youth-romcom-simulator/types/index.ts\")",
+      "Bash(curl -s \"https://api.github.com/search/code?q=repo:Moshenxy/---+轻松模式+OR+难度选择+OR+开局选项\")",
+      "Bash(curl -s \"https://api.github.com/repos/Moshenxy/---/contents/src/youth-romcom-simulator/docs\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/Moshenxy/---/main/src/youth-romcom-simulator/docs/lean-context-architecture.md\")",
+      "Bash(curl -s \"https://api.github.com/repos/Moshenxy/---/contents/src/youth-romcom-simulator/components\")",
+      "Bash(curl -s \"https://api.github.com/repos/Moshenxy/---/contents/src/youth-romcom-simulator/components/panels\")",
+      "Bash(curl -s \"https://api.github.com/repos/Moshenxy/---/contents/src/youth-romcom-simulator/components\" -H \"Accept: application/vnd.github+json\")",
+      "Bash(curl -s \"https://data.jsdelivr.com/v1/packages/gh/Moshenxy/---@main?structure=flat\")",
+      "Bash(curl -sI \"https://cdn.jsdelivr.net/gh/Moshenxy/---@main/dist/youth-romcom-simulator/index.js\")",
+      "Bash(curl -s \"https://data.jsdelivr.com/v1/packages/gh/Moshenxy/---@main?structure=tree\")",
+      "Bash(python -c 'import sys,json; d=json.load\\(sys.stdin\\); *)",
+      "Bash(curl -s \"https://cdn.jsdelivr.net/gh/Moshenxy/---@main/dist/youth-romcom-simulator/index.html\" -o yrc.html)",
+      "Bash(grep -oE \"talents:\\\\[\\\\{[^]]{0,4000}\" yrc.html)",
+      "Bash(python -)"
     ]
   }
 }

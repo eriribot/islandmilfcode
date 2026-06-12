@@ -261,6 +261,250 @@ function renderIllustrationPanel(messageId: string, illustrations: MessageIllust
   `;
 }
 
+type SaenaiSpriteId = 'megumi' | 'eriri' | 'utaha' | 'izumi' | 'michiru';
+
+interface SaenaiDialogueLine {
+  characterName: string;
+  mood: string;
+  text: string;
+  sprite: SaenaiSpriteId | null;
+}
+
+const SAENAI_SPRITE_ALIASES: Record<SaenaiSpriteId, string[]> = {
+  megumi: ['加藤惠', '加藤恵', '惠', '恵', 'Megumi'],
+  eriri: ['泽村·斯宾塞·英梨梨', '澤村·斯賓塞·英梨梨', '泽村英梨梨', '澤村英梨梨', '英梨梨', 'Eriri'],
+  utaha: ['霞之丘诗羽', '霞之丘詩羽', '霞ヶ丘詩羽', '霞丘诗羽', '诗羽', '詩羽', 'Utaha'],
+  izumi: ['波岛出海', '波島出海', '出海', 'Izumi'],
+  michiru: ['冰堂美智留', '氷堂美智留', '美智留', 'Michiru'],
+};
+
+function normalizeSaenaiName(name: string) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[·・\s　._-]/g, '');
+}
+
+function stripSaenaiDialogueBrackets(text: string) {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) return trimmed.slice(1, -1).trim();
+  if (trimmed.startsWith('【') && trimmed.endsWith('】')) return trimmed.slice(1, -1).trim();
+  return trimmed;
+}
+
+function escapeSaenaiRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getSaenaiSprite(characterName: string): SaenaiSpriteId | null {
+  const normalized = normalizeSaenaiName(characterName);
+  for (const [sprite, aliases] of Object.entries(SAENAI_SPRITE_ALIASES) as Array<[SaenaiSpriteId, string[]]>) {
+    if (aliases.some(alias => normalizeSaenaiName(alias) === normalized)) return sprite;
+  }
+  return null;
+}
+
+function extractSaenaiBody(line: string) {
+  const match = line.trim().match(/^[＠@]\s*saenai\s*[:：]\s*([\s\S]*)$/i);
+  return match?.[1]?.trim() ?? '';
+}
+
+// Saenai 对话解析：识别正文里的 @saenai 行并渲染五小只头像，雪碧图第 0 格安艺伦也不参与映射。
+function parseSaenaiDialogueLine(line: string): SaenaiDialogueLine | null {
+  const body = extractSaenaiBody(line);
+  if (!body) return null;
+
+  const inline = body.match(/^([^|「『“"\[\]【】]+?)(?:\|([^「『“"\[\]【】]+))?([「『“"\[\]【】][\s\S]+)$/);
+  if (inline) {
+    const characterName = inline[1]?.trim() ?? '';
+    const mood = inline[2]?.trim() ?? '';
+    const text = stripSaenaiDialogueBrackets(inline[3] ?? '');
+    if (!characterName || !text) return null;
+
+    return {
+      characterName,
+      mood,
+      text,
+      sprite: getSaenaiSprite(characterName),
+    };
+  }
+
+  const double = body.match(/^([^|]+)\|([\s\S]+)$/);
+  const triple = body.match(/^([^|]+)\|([^|]*)\|([\s\S]+)$/);
+  const quad = body.match(/^([^|]+)\|([^|]+)\|([^|]*)\|([\s\S]+)$/);
+  const match = quad ?? triple ?? double;
+  if (!match) return null;
+
+  const characterName = (quad ? match[2] : match[1])?.trim() ?? '';
+  const mood = (quad ? match[3] : triple ? match[2] : '')?.trim() ?? '';
+  const text = stripSaenaiDialogueBrackets((quad ? match[4] : triple ? match[3] : match[2]) ?? '');
+  if (!characterName || !text) return null;
+
+  return {
+    characterName,
+    mood,
+    text,
+    sprite: getSaenaiSprite(characterName),
+  };
+}
+
+function parseSaenaiDialogueTriggerLine(line: string): Omit<SaenaiDialogueLine, 'text'> | null {
+  const body = extractSaenaiBody(line);
+  if (!body || body.includes('[')) return null;
+
+  const parts = body.split('|').map(part => part.trim());
+  if (parts.length > 2) return null;
+
+  const characterName = parts[0] ?? '';
+  if (!characterName) return null;
+
+  return {
+    characterName,
+    mood: parts[1] ?? '',
+    sprite: getSaenaiSprite(characterName),
+  };
+}
+
+function splitSaenaiTriggeredDialogue(line: string) {
+  const trimmed = line.trim();
+  const quoted = trimmed.match(/^[「『“"]([\s\S]*?)[」』”"]\s*([\s\S]*)$/);
+  if (quoted) {
+    return {
+      text: quoted[1]?.trim() ?? '',
+      trailing: quoted[2]?.trim() ?? '',
+    };
+  }
+
+  return {
+    text: stripSaenaiDialogueBrackets(trimmed),
+    trailing: '',
+  };
+}
+
+function hasUnclosedSaenaiQuote(text: string) {
+  const openIndex = text.search(/[「『“"]/);
+  if (openIndex < 0) return false;
+
+  const quotePairs: Array<[string, string]> = [
+    ['「', '」'],
+    ['『', '』'],
+    ['“', '”'],
+    ['"', '"'],
+  ];
+
+  return quotePairs.some(([open, close]) => {
+    const opens = Array.from(text.matchAll(new RegExp(escapeSaenaiRegExp(open), 'g'))).length;
+    const closes = Array.from(text.matchAll(new RegExp(escapeSaenaiRegExp(close), 'g'))).length;
+    return opens > closes;
+  });
+}
+
+function renderReaderTextBlock(text: string) {
+  return text.trim() ? `<p class="reader-card__text">${escapeHtml(text.trim())}</p>` : '';
+}
+
+function renderSaenaiDialogueLine(dialogue: SaenaiDialogueLine) {
+  const avatar = dialogue.sprite
+    ? `<span class="saenai-dialogue__avatar saenai-dialogue__avatar--${dialogue.sprite}" aria-hidden="true"></span>`
+    : `<span class="saenai-dialogue__avatar saenai-dialogue__avatar--placeholder" aria-hidden="true">${escapeHtml(dialogue.characterName.slice(0, 1) || '?')}</span>`;
+  const mood = dialogue.mood ? `<span class="saenai-dialogue__mood">${escapeHtml(dialogue.mood)}</span>` : '';
+
+  return `
+    <div class="saenai-dialogue">
+      ${avatar}
+      <div class="saenai-dialogue__content">
+        <div class="saenai-dialogue__header">
+          <span class="saenai-dialogue__name">${escapeHtml(dialogue.characterName)}</span>
+          ${mood}
+        </div>
+        <div class="saenai-dialogue__text">${escapeHtml(dialogue.text)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderSaenaiDialogueBody(text: string) {
+  const normalized = String(text ?? '').replace(/\r\n/g, '\n');
+  if (!normalized.trim()) return `<p class="reader-card__text">……</p>`;
+
+  const blocks: string[] = [];
+  const textBuffer: string[] = [];
+  let pendingTrigger: Omit<SaenaiDialogueLine, 'text'> | null = null;
+  let pendingDialogueLine = '';
+  const flushText = () => {
+    const rendered = renderReaderTextBlock(textBuffer.join('\n'));
+    if (rendered) blocks.push(rendered);
+    textBuffer.length = 0;
+  };
+
+  normalized.split('\n').forEach(line => {
+    if (pendingDialogueLine) {
+      pendingDialogueLine = `${pendingDialogueLine}${line.trim()}`;
+      if (hasUnclosedSaenaiQuote(pendingDialogueLine)) return;
+
+      const dialogue = parseSaenaiDialogueLine(pendingDialogueLine);
+      if (dialogue) {
+        flushText();
+        blocks.push(renderSaenaiDialogueLine(dialogue));
+      } else {
+        textBuffer.push(pendingDialogueLine);
+      }
+      pendingDialogueLine = '';
+      return;
+    }
+
+    const dialogue = parseSaenaiDialogueLine(line);
+    if (dialogue && hasUnclosedSaenaiQuote(line)) {
+      pendingDialogueLine = line.trim();
+      return;
+    }
+    if (!dialogue) {
+      const trigger = parseSaenaiDialogueTriggerLine(line);
+      if (trigger) {
+        flushText();
+        pendingTrigger = trigger;
+        return;
+      }
+
+      if (pendingTrigger && line.trim()) {
+        const triggered = splitSaenaiTriggeredDialogue(line);
+        if (triggered.text) {
+          flushText();
+          blocks.push(renderSaenaiDialogueLine({ ...pendingTrigger, text: triggered.text }));
+          if (triggered.trailing) textBuffer.push(triggered.trailing);
+          pendingTrigger = null;
+          return;
+        }
+        pendingTrigger = null;
+      }
+
+      textBuffer.push(line);
+      return;
+    }
+
+    flushText();
+    pendingTrigger = null;
+    blocks.push(renderSaenaiDialogueLine(dialogue));
+  });
+
+  if (pendingDialogueLine) {
+    const dialogue = parseSaenaiDialogueLine(pendingDialogueLine);
+    if (dialogue) {
+      flushText();
+      blocks.push(renderSaenaiDialogueLine(dialogue));
+    } else {
+      textBuffer.push(pendingDialogueLine);
+    }
+  }
+
+  if (pendingTrigger) {
+    textBuffer.unshift(`@saenai:${pendingTrigger.characterName}${pendingTrigger.mood ? `|${pendingTrigger.mood}` : ''}`);
+  }
+
+  flushText();
+  return blocks.join('') || `<p class="reader-card__text">……</p>`;
+}
+
 function renderAnchoredMessageBody(
   message: UiMessage,
   visibleText: string,
@@ -288,7 +532,7 @@ function renderAnchoredMessageBody(
   const hasInlineAnchors = (anchored.size > 0 || hasImageAnchors) && hasImageAnchors;
   if (!hasInlineAnchors) {
     return `
-      <p class="reader-card__text">${escapeHtml(visibleText || '……')}</p>
+      ${renderSaenaiDialogueBody(visibleText || '……')}
       ${renderIllustrationPanel(message.id, illustrations, editing)}
     `;
   }
@@ -309,7 +553,7 @@ function renderAnchoredMessageBody(
       }
 
       const text = segment.text.trim();
-      return text ? `<p class="reader-card__text">${escapeHtml(text)}</p>` : '';
+      return text ? renderSaenaiDialogueBody(text) : '';
     })
     .filter(Boolean);
 
@@ -318,7 +562,7 @@ function renderAnchoredMessageBody(
   }
 
   return `
-    ${chunks.join('') || `<p class="reader-card__text">${escapeHtml(visibleText || '……')}</p>`}
+    ${chunks.join('') || renderSaenaiDialogueBody(visibleText || '……')}
     ${renderIllustrationPanel(message.id, trailing, editing)}
   `;
 }
