@@ -16,7 +16,7 @@ import {
 } from './engine';
 import { saveSummaryStore } from './store';
 import type { FactAnchor, KeyFact, SummaryApiConfig, SummaryStore } from './types';
-import { commitSummaryToMemoryDB } from '../memorydatabase/commit-points';
+import { commitSummaryToMemoryDB, updateSummaryTextInMemoryDB } from '../memorydatabase/commit-points';
 import { commitBatch } from '../memorydatabase/upsert';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import { loadSummaryTriggerConfig } from '../memory-config';
@@ -102,6 +102,14 @@ async function callGenerateRaw(
     apiConfig,
     isCancelled,
   });
+}
+
+function parseRequiredSummaryResult(raw: string, kind: SecondaryTaskKind): string {
+  const text = parseSummaryResult(raw);
+  if (!text) {
+    throw new Error(`secondary API returned invalid summary content (${kind})`);
+  }
+  return text;
 }
 
 /** 把摘要里的 [关系] 印象行写入 memoryDB.impressions 表；source 名→target.id 归一后才写，否则丢弃。 */
@@ -265,27 +273,25 @@ export async function runSummary(
           finishTask();
           return result;
         }
-        const text = parseSummaryResult(raw);
-        if (text) {
-          const nextIndex = startIndex + unsummarized.length;
-          const range: [number, number] = [startIndex, nextIndex - 1];
-          const parsedFacts = parseKeyFactsFromSummary(raw);
-          const newFacts = createKeyFacts(parsedFacts, range);
-          store.minor.push({
-            range,
-            text,
-            createdAt: new Date().toISOString(),
-            keyFacts: newFacts.length ? newFacts : undefined,
-          });
-          if (newFacts.length) {
-            store.keyFacts.push(...newFacts);
-            dedupeKeyFacts(store);
-          }
-          store.lastSummarizedIndex = nextIndex;
-          clearFailureState(store);
-          commitSummaryToMemoryDB(ctx.memoryDB, 'minor', text, range, newFacts);
-          commitImpressionsFromSummary(ctx, raw);
+        const text = parseRequiredSummaryResult(raw, 'summary-minor');
+        const nextIndex = startIndex + unsummarized.length;
+        const range: [number, number] = [startIndex, nextIndex - 1];
+        const parsedFacts = parseKeyFactsFromSummary(raw);
+        const newFacts = createKeyFacts(parsedFacts, range);
+        store.minor.push({
+          range,
+          text,
+          createdAt: new Date().toISOString(),
+          keyFacts: newFacts.length ? newFacts : undefined,
+        });
+        if (newFacts.length) {
+          store.keyFacts.push(...newFacts);
+          dedupeKeyFacts(store);
         }
+        store.lastSummarizedIndex = nextIndex;
+        clearFailureState(store);
+        commitSummaryToMemoryDB(ctx.memoryDB, 'minor', text, range, newFacts);
+        commitImpressionsFromSummary(ctx, raw);
       } catch (error) {
         if (error instanceof SecondaryTaskCancelledError || ctx.isCancelled?.()) {
           finishTask();
@@ -331,33 +337,31 @@ export async function runSummary(
           finishTask();
           return result;
         }
-        const text = parseSummaryResult(raw);
-        if (text) {
-          const firstRange = sourceMinor[0]?.range[0] ?? 0;
-          const lastRange = sourceMinor[sourceMinor.length - 1]?.range[1] ?? 0;
-          const majorRange: [number, number] = [firstRange, lastRange];
-          const now = new Date().toISOString();
-          const existing = store.major.find(entry => entry.range[0] === firstRange && entry.range[1] === lastRange);
-          if (existing) {
-            existing.text = text;
-            existing.createdAt = now;
-          } else {
-            store.major.push({
-              range: majorRange,
-              text,
-              createdAt: now,
-            });
-          }
-          // 清理被此大摘要覆盖的所有小摘要（修复：确保完全清理）
-          const beforeMinorCount = store.minor.length;
-          store.minor = store.minor.filter(entry => !rangeContains(majorRange, entry.range));
-          const removedMinorCount = beforeMinorCount - store.minor.length;
-          if (removedMinorCount > 0) {
-            console.log(`[summary] 大摘要 [${majorRange[0]}, ${majorRange[1]}] 清理了 ${removedMinorCount} 条小摘要`);
-          }
-          clearFailureState(store);
-          commitSummaryToMemoryDB(ctx.memoryDB, 'major', text, majorRange);
+        const text = parseRequiredSummaryResult(raw, 'summary-major');
+        const firstRange = sourceMinor[0]?.range[0] ?? 0;
+        const lastRange = sourceMinor[sourceMinor.length - 1]?.range[1] ?? 0;
+        const majorRange: [number, number] = [firstRange, lastRange];
+        const now = new Date().toISOString();
+        const existing = store.major.find(entry => entry.range[0] === firstRange && entry.range[1] === lastRange);
+        if (existing) {
+          existing.text = text;
+          existing.createdAt = now;
+        } else {
+          store.major.push({
+            range: majorRange,
+            text,
+            createdAt: now,
+          });
         }
+        // 清理被此大摘要覆盖的所有小摘要（修复：确保完全清理）
+        const beforeMinorCount = store.minor.length;
+        store.minor = store.minor.filter(entry => !rangeContains(majorRange, entry.range));
+        const removedMinorCount = beforeMinorCount - store.minor.length;
+        if (removedMinorCount > 0) {
+          console.log(`[summary] 大摘要 [${majorRange[0]}, ${majorRange[1]}] 清理了 ${removedMinorCount} 条小摘要`);
+        }
+        clearFailureState(store);
+        commitSummaryToMemoryDB(ctx.memoryDB, 'major', text, majorRange);
       } catch (error) {
         if (error instanceof SecondaryTaskCancelledError || ctx.isCancelled?.()) {
           finishTask();
@@ -400,14 +404,12 @@ export async function runSummary(
         finishTask();
         return result;
       }
-      const text = parseSummaryResult(raw);
-      if (text) {
-        store.global = text;
-        clearFailureState(store);
-        const globalRange: [number, number] = [0, consumed[consumed.length - 1]?.range[1] ?? 0];
-        store.major = store.major.filter(entry => !rangeContains(globalRange, entry.range));
-        commitSummaryToMemoryDB(ctx.memoryDB, 'global', text, globalRange);
-      }
+      const text = parseRequiredSummaryResult(raw, 'summary-global');
+      store.global = text;
+      clearFailureState(store);
+      const globalRange: [number, number] = [0, consumed[consumed.length - 1]?.range[1] ?? 0];
+      store.major = store.major.filter(entry => !rangeContains(globalRange, entry.range));
+      commitSummaryToMemoryDB(ctx.memoryDB, 'global', text, globalRange);
     } catch (error) {
       if (error instanceof SecondaryTaskCancelledError || ctx.isCancelled?.()) {
         finishTask();
@@ -448,22 +450,21 @@ export async function rerollSummaryEntry(
       const anchor = ctx.getFactAnchor?.() ?? null;
       const prompts = buildMinorSummaryPrompt(selected, anchor);
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-minor');
-      const text = parseSummaryResult(raw);
-      if (text) {
-        const parsedFacts = parseKeyFactsFromSummary(raw);
-        const newFacts = createKeyFacts(parsedFacts, entry.range);
-        store.minor[entryIndex] = {
-          ...entry,
-          text,
-          createdAt: new Date().toISOString(),
-          keyFacts: newFacts.length ? newFacts : entry.keyFacts,
-        };
-        if (newFacts.length) {
-          store.keyFacts.push(...newFacts);
-          dedupeKeyFacts(store);
-        }
-        clearFailureState(store);
+      const text = parseRequiredSummaryResult(raw, 'summary-minor');
+      const parsedFacts = parseKeyFactsFromSummary(raw);
+      const newFacts = createKeyFacts(parsedFacts, entry.range);
+      store.minor[entryIndex] = {
+        ...entry,
+        text,
+        createdAt: new Date().toISOString(),
+        keyFacts: newFacts.length ? newFacts : entry.keyFacts,
+      };
+      updateSummaryTextInMemoryDB(ctx.memoryDB, 'minor', text, entry.range);
+      if (newFacts.length) {
+        store.keyFacts.push(...newFacts);
+        dedupeKeyFacts(store);
       }
+      clearFailureState(store);
     } catch (error) {
       if (ctx.state) {
         setBackgroundTaskFailed(ctx.state, 'summary', error);
@@ -490,11 +491,10 @@ export async function rerollSummaryEntry(
       ];
       const prompts = buildMajorSummaryPrompt(pseudoMinors, anchor, pinned);
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-major');
-      const text = parseSummaryResult(raw);
-      if (text) {
-        store.major[entryIndex] = { ...entry, text, createdAt: new Date().toISOString() };
-        clearFailureState(store);
-      }
+      const text = parseRequiredSummaryResult(raw, 'summary-major');
+      store.major[entryIndex] = { ...entry, text, createdAt: new Date().toISOString() };
+      updateSummaryTextInMemoryDB(ctx.memoryDB, 'major', text, entry.range);
+      clearFailureState(store);
     } catch (error) {
       if (ctx.state) {
         setBackgroundTaskFailed(ctx.state, 'summary', error);

@@ -38,6 +38,7 @@ import {
 import { renderApp } from './render';
 import { mountRadarChart, unmountRadarChart } from './phone/radar';
 import { getCalendarMonthOffset, setCalendarMonthOffset, setCalendarSelectedDate } from './phone/render';
+import { updateSummaryTextInMemoryDB } from './memorydatabase/commit-points';
 import {
   clearActiveSaveId,
   createManualSave,
@@ -102,7 +103,7 @@ import {
   type MemoryTableName,
 } from './memorydatabase/editor';
 import { loadMemoryConfig, saveMemoryConfig, resetMemoryConfig } from './memory-config';
-import { isImageGenerationPluginAvailable, requestImageGeneration } from './plugins/image-generation';
+import { getImageGenerationPromptAtAnchor, isImageGenerationPluginAvailable, requestImageGeneration } from './plugins/image-generation';
 import { isChatu8PluginAvailable, openChatu8Plugin } from './plugins/chatu8-integration';
 
 const win = window as TavernWindow;
@@ -1111,6 +1112,222 @@ async function generateDrawingNow() {
   });
 }
 
+async function generateReaderImage(messageId: string, anchorIndex: number) {
+  const message = state.uiMessages.find(item => item.id === messageId);
+  if (!message || message.role !== 'assistant') return;
+  if (!isImageGenerationPluginAvailable(win)) {
+    showDrawingPluginMissingNotification();
+    return;
+  }
+
+  const imagePrompt = getImageGenerationPromptAtAnchor(message.rawText || message.text, anchorIndex);
+  if (!imagePrompt) return;
+  const rawText = message.rawText || message.text;
+  const sceneText = extractContextReply(rawText);
+
+  ctx.showNotification({
+    kind: 'message',
+    title: '正在发送给智绘姬',
+    preview: '',
+    targetTab: 'summary',
+    timestamp: formatTime(state.statusData.world.currentTime),
+  });
+
+  const result = await requestImageGeneration(
+    win,
+    imagePrompt.prompt,
+    state.drawingSettings,
+    imagePrompt.change,
+    {
+      sceneText,
+      rawText,
+      summaryApiConfig: state.summaryApiConfig,
+    },
+  );
+
+  if (result.imageData && !result.error) {
+    const illustrations = message.illustrations ?? [];
+    if (!illustrations.some(illustration => illustration.imageData === result.imageData)) {
+      message.illustrations = [
+        ...illustrations,
+        {
+          id: crypto.randomUUID(),
+          imageData: result.imageData,
+          prompt: result.prompt ?? imagePrompt.prompt,
+          anchorIndex,
+          rerollContext: {
+            prompt: result.prompt ?? imagePrompt.prompt,
+            change: imagePrompt.change,
+            sceneText,
+            rawText,
+          },
+          createdAt: Date.now(),
+        },
+      ];
+      persistToSave();
+    }
+  }
+
+  ctx.showNotification({
+    kind: 'message',
+    title: result.sent && !result.error ? '生图请求已发送' : '生图失败',
+    preview:
+      result.error ||
+      (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
+    targetTab: 'summary',
+    timestamp: formatTime(state.statusData.world.currentTime),
+  });
+  render();
+}
+
+function getReaderImageRerollPrompt(messageId: string, illustrationId: string) {
+  const message = state.uiMessages.find(item => item.id === messageId);
+  if (!message || message.role !== 'assistant') return '';
+  const illustration = message.illustrations?.find(item => item.id === illustrationId);
+  if (!illustration) return '';
+
+  const rawText = illustration.rerollContext?.rawText || message.rawText || message.text;
+  const anchorIndex = Number(illustration.anchorIndex);
+  const anchorPrompt = Number.isFinite(anchorIndex)
+    ? getImageGenerationPromptAtAnchor(rawText, Math.max(0, Math.floor(anchorIndex)))
+    : null;
+  return illustration.rerollContext?.prompt || anchorPrompt?.prompt || illustration.prompt || '';
+}
+
+function openImageRerollEditor(messageId: string, illustrationId: string) {
+  const prompt = getReaderImageRerollPrompt(messageId, illustrationId);
+  const message = state.uiMessages.find(item => item.id === messageId);
+  const illustration = message?.illustrations?.find(item => item.id === illustrationId);
+  const negativePrompt = illustration?.rerollContext?.negativePrompt ?? state.drawingSettings.negativePrompt ?? '';
+  state.imageRerollEditing = {
+    messageId,
+    illustrationId,
+    prompt,
+    negativePrompt,
+  };
+  render();
+  setTimeout(() => {
+    const textarea = root?.querySelector<HTMLTextAreaElement>('[data-field="image-reroll-prompt"]');
+    textarea?.focus();
+    if (textarea) {
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+    }
+  }, 0);
+}
+
+function cancelImageRerollEditor() {
+  if (!state.imageRerollEditing) return;
+  state.imageRerollEditing = null;
+  render();
+}
+
+async function saveImageRerollEditor() {
+  const editing = state.imageRerollEditing;
+  if (!editing) return;
+  const prompt =
+    root?.querySelector<HTMLTextAreaElement>('[data-field="image-reroll-prompt"]')?.value.trim() ??
+    editing.prompt.trim();
+  const negativePrompt =
+    root?.querySelector<HTMLTextAreaElement>('[data-field="image-reroll-negative-prompt"]')?.value.trim() ??
+    editing.negativePrompt.trim();
+  if (!prompt) {
+    ctx.showNotification({
+      kind: 'message',
+      title: '重 roll 提示词为空',
+      preview: '请先填写这张图要发送给智绘姬的正面提示词。',
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+    return;
+  }
+  state.imageRerollEditing = null;
+  render();
+  await rerollReaderImage(editing.messageId, editing.illustrationId, prompt, negativePrompt);
+}
+
+async function rerollReaderImage(
+  messageId: string,
+  illustrationId: string,
+  editedPrompt?: string,
+  editedNegativePrompt?: string,
+) {
+  const message = state.uiMessages.find(item => item.id === messageId);
+  if (!message || message.role !== 'assistant') return;
+  const illustration = message.illustrations?.find(item => item.id === illustrationId);
+  if (!illustration) return;
+  if (!isImageGenerationPluginAvailable(win)) {
+    showDrawingPluginMissingNotification();
+    return;
+  }
+
+  const rawText = illustration.rerollContext?.rawText || message.rawText || message.text;
+  const anchorIndex = Number(illustration.anchorIndex);
+  const anchorPrompt = Number.isFinite(anchorIndex)
+    ? getImageGenerationPromptAtAnchor(rawText, Math.max(0, Math.floor(anchorIndex)))
+    : null;
+  const prompt = editedPrompt?.trim() || illustration.rerollContext?.prompt || anchorPrompt?.prompt || illustration.prompt || '';
+  const negativePrompt = editedNegativePrompt?.trim() ?? illustration.rerollContext?.negativePrompt ?? state.drawingSettings.negativePrompt ?? '';
+  const change = illustration.rerollContext?.change ?? anchorPrompt?.change ?? '';
+  const sceneText = illustration.rerollContext?.sceneText || extractContextReply(rawText);
+  const rerollSettings = {
+    ...state.drawingSettings,
+    negativePrompt,
+  };
+
+  ctx.showNotification({
+    kind: 'message',
+    title: '正在重 roll 图片',
+    preview: '',
+    targetTab: 'summary',
+    timestamp: formatTime(state.statusData.world.currentTime),
+  });
+
+  const result = await requestImageGeneration(win, prompt, rerollSettings, change, {
+    sceneText,
+    rawText,
+    generationContext: illustration.rerollContext?.generationContext,
+    generationWorldBook: illustration.rerollContext?.generationWorldBook,
+    userInput: illustration.rerollContext?.userInput,
+    summaryApiConfig: state.summaryApiConfig,
+  });
+
+  if (result.imageData && !result.error) {
+    message.illustrations = (message.illustrations ?? []).map(item =>
+      item.id === illustrationId
+        ? {
+            ...item,
+            imageData: result.imageData ?? item.imageData,
+            prompt: result.prompt ?? prompt,
+            rerollContext: {
+              prompt: result.prompt ?? prompt,
+              negativePrompt,
+              change,
+              sceneText,
+              rawText,
+              generationContext: illustration.rerollContext?.generationContext,
+              generationWorldBook: illustration.rerollContext?.generationWorldBook,
+              userInput: illustration.rerollContext?.userInput,
+            },
+            createdAt: Date.now(),
+          }
+        : item,
+    );
+    persistToSave();
+  }
+
+  ctx.showNotification({
+    kind: 'message',
+    title: result.sent && !result.error ? '图片已重 roll' : '重 roll 失败',
+    preview:
+      result.error ||
+      (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
+    targetTab: 'summary',
+    timestamp: formatTime(state.statusData.world.currentTime),
+  });
+  render();
+}
+
 function removeDrawingAnchor(anchorId: string) {
   updateDrawingSettingsFromControls(false);
   state.drawingSettings.characterAnchors = state.drawingSettings.characterAnchors.filter(
@@ -1375,6 +1592,12 @@ function bindReaderDragEvents() {
       if ((event.target as HTMLElement).closest('[data-action="jump-message"]')) return;
       if ((event.target as HTMLElement).closest('[data-action="reader-edit"]')) return;
       if ((event.target as HTMLElement).closest('[data-action="reader-actions-open"]')) return;
+      if ((event.target as HTMLElement).closest('[data-action="reader-generate-image"]')) return;
+      if ((event.target as HTMLElement).closest('[data-action="reader-reroll-image"]')) return;
+      if ((event.target as HTMLElement).closest('[data-action="image-reroll-cancel"]')) return;
+      if ((event.target as HTMLElement).closest('[data-action="image-reroll-save"]')) return;
+      if ((event.target as HTMLElement).closest('[data-field="image-reroll-prompt"]')) return;
+      if ((event.target as HTMLElement).closest('[data-field="image-reroll-negative-prompt"]')) return;
       if ((event.target as HTMLElement).closest('[data-action="select-option"]')) return;
       readerDragState = {
         pointerId: event.pointerId,
@@ -1682,6 +1905,42 @@ function bindEvents() {
         button.dataset.readerId,
       );
     });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="reader-generate-image"]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      const messageId = button.dataset.messageId;
+      const anchorIndex = Number(button.dataset.anchorIndex);
+      if (messageId && Number.isFinite(anchorIndex)) void generateReaderImage(messageId, anchorIndex);
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="reader-reroll-image"]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      const messageId = button.dataset.messageId;
+      const illustrationId = button.dataset.illustrationId;
+      if (messageId && illustrationId) openImageRerollEditor(messageId, illustrationId);
+    });
+  });
+  root?.querySelectorAll<HTMLElement>('[data-action="image-reroll-cancel"]').forEach(element => {
+    element.addEventListener('click', event => {
+      event.stopPropagation();
+      cancelImageRerollEditor();
+    });
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="image-reroll-save"]')?.addEventListener('click', event => {
+    event.stopPropagation();
+    void saveImageRerollEditor();
+  });
+  root?.querySelector<HTMLTextAreaElement>('[data-field="image-reroll-prompt"]')?.addEventListener('input', event => {
+    if (state.imageRerollEditing) {
+      state.imageRerollEditing.prompt = (event.target as HTMLTextAreaElement).value;
+    }
+  });
+  root?.querySelector<HTMLTextAreaElement>('[data-field="image-reroll-negative-prompt"]')?.addEventListener('input', event => {
+    if (state.imageRerollEditing) {
+      state.imageRerollEditing.negativePrompt = (event.target as HTMLTextAreaElement).value;
+    }
   });
   root?.querySelectorAll<HTMLElement>('[data-action="reader-edit-cancel"]').forEach(element => {
     element.addEventListener('click', event => {
@@ -2290,10 +2549,16 @@ function bindEvents() {
 
       if (level === 'global') {
         state.summaryStore.global = newText || null;
+        updateSummaryTextInMemoryDB(state.memoryDB, 'global', state.summaryStore.global, [
+          0,
+          Math.max(0, state.summaryStore.lastSummarizedIndex),
+        ]);
       } else if (level === 'major' && index >= 0 && index < state.summaryStore.major.length) {
         state.summaryStore.major[index].text = newText;
+        updateSummaryTextInMemoryDB(state.memoryDB, 'major', newText, state.summaryStore.major[index].range);
       } else if (level === 'minor' && index >= 0 && index < state.summaryStore.minor.length) {
         state.summaryStore.minor[index].text = newText;
+        updateSummaryTextInMemoryDB(state.memoryDB, 'minor', newText, state.summaryStore.minor[index].range);
       } else {
         return;
       }
@@ -2478,6 +2743,11 @@ window.addEventListener(
 );
 
 window.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && state.imageRerollEditing) {
+    event.preventDefault();
+    cancelImageRerollEditor();
+    return;
+  }
   if (event.key === 'Escape' && state.readerEditing) {
     event.preventDefault();
     cancelReaderEditor();

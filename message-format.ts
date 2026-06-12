@@ -89,6 +89,7 @@ const META_SUBTAG_NAMES = [
   'konatan_chat',
   'thinking',
   'think',
+  'imgthink',
   'options',
   'story_progress',
 ];
@@ -190,6 +191,33 @@ function findClosedTaggedBody(raw: string, tagName: string) {
   }
 
   return null;
+}
+
+function findAllClosedTaggedBodies(raw: string, tagName: string) {
+  const bodies: Array<{ body: string; start: number; end: number }> = [];
+  const tag = new RegExp(`<\\/?${escapeRegExp(tagName)}\\b[^>]*>`, 'gi');
+  let match: RegExpExecArray | null;
+
+  while ((match = tag.exec(raw))) {
+    if (match[0].startsWith('</')) continue;
+
+    const bodyStart = tag.lastIndex;
+    const next = tag.exec(raw);
+    if (!next) break;
+
+    if (next[0].startsWith('</')) {
+      bodies.push({
+        body: raw.slice(bodyStart, next.index),
+        start: match.index,
+        end: tag.lastIndex,
+      });
+      continue;
+    }
+
+    tag.lastIndex = next.index;
+  }
+
+  return bodies;
 }
 
 export function extractTaggedReply(raw: string, tagName: string, streaming: boolean) {
@@ -307,6 +335,30 @@ export function extractOptionsBlock(text: string, { streaming = false }: { strea
 
 export function extractContextReply(text: string, { streaming = false }: { streaming?: boolean } = {}) {
   const raw = stripHtmlCommentBlocks(stripImageGenerationTags(stripCharacterDataImportText(String(text ?? ''))));
+  return extractContextReplyFromPreparedRaw(raw, { streaming });
+}
+
+export function extractContextReplyWithImageGenerationTags(
+  text: string,
+  { streaming = false }: { streaming?: boolean } = {},
+) {
+  const raw = stripHtmlCommentBlocks(stripCharacterDataImportText(String(text ?? '')));
+  const closedBodies = findAllClosedTaggedBodies(raw, PRIMARY_VISIBLE_TAG);
+  if (closedBodies.length > 1) {
+    let result = '';
+    let cursor = 0;
+    for (const item of closedBodies) {
+      result += raw.slice(cursor, item.start).replace(new RegExp(`<\\/?${PRIMARY_VISIBLE_TAG}\\b[^>]*>`, 'gi'), '');
+      result += item.body;
+      cursor = item.end;
+    }
+    result += raw.slice(cursor).replace(new RegExp(`<\\/?${PRIMARY_VISIBLE_TAG}\\b[^>]*>`, 'gi'), '');
+    return dedupeAdjacentReply(stripMetaSubtags(result));
+  }
+  return extractContextReplyFromPreparedRaw(raw, { streaming });
+}
+
+function extractContextReplyFromPreparedRaw(raw: string, { streaming = false }: { streaming?: boolean } = {}) {
   if (!raw) {
     return '';
   }

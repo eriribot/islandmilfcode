@@ -5,6 +5,7 @@ import type { FloatingPhonePosition } from '../phone/types';
 import type {
   AppState,
   DrawingSettings,
+  ImageRerollContext,
   PersistedMessage,
   PhoneMessageStore,
   PlotLibrary,
@@ -52,6 +53,24 @@ function applyProfileDefaults<T extends Record<string, unknown>>(profile: T): T 
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function normalizeImageRerollContext(context?: ImageRerollContext): ImageRerollContext | undefined {
+  if (!context || typeof context !== 'object') return undefined;
+  const normalized: ImageRerollContext = {};
+  const assignString = (key: keyof ImageRerollContext, preserveEmpty = false) => {
+    const value = context[key];
+    if (typeof value === 'string' && (preserveEmpty || value.trim())) normalized[key] = value;
+  };
+  assignString('prompt');
+  assignString('negativePrompt', true);
+  assignString('change');
+  assignString('sceneText');
+  assignString('rawText');
+  assignString('generationContext');
+  assignString('generationWorldBook');
+  assignString('userInput');
+  return Object.keys(normalized).length ? normalized : undefined;
 }
 
 function createSystemMessage(): UiMessage {
@@ -484,7 +503,9 @@ function pruneMemoryAndSummariesAfterRollback(
   previousSummaryStore?: SummaryStore | null,
   previousMemoryDB?: IslandMemoryDB | null,
   pruneFromConversationIndex?: number,
+  options: { mergePrevious?: boolean } = {},
 ) {
+  const { mergePrevious = true } = options;
   const conversationCount = countRollbackConversationMessages(state);
   const readerMessageCount = getReaderMessages(state.uiMessages, true).filter(
     message => !message.streaming && (message.role === 'user' || message.role === 'assistant'),
@@ -493,8 +514,10 @@ function pruneMemoryAndSummariesAfterRollback(
     0,
     Math.min(conversationCount, readerMessageCount, Math.floor(pruneFromConversationIndex ?? conversationCount)),
   );
-  mergeSummaryStoreAfterSnapshotRestore(state, previousSummaryStore, pruneThreshold, readerMessageCount);
-  mergeMemoryDBAfterSnapshotRestore(state, previousMemoryDB, pruneThreshold, readerMessageCount);
+  if (mergePrevious) {
+    mergeSummaryStoreAfterSnapshotRestore(state, previousSummaryStore, pruneThreshold, readerMessageCount);
+    mergeMemoryDBAfterSnapshotRestore(state, previousMemoryDB, pruneThreshold, readerMessageCount);
+  }
   pruneSummaryStoreAfterConversationCount(state, pruneThreshold, readerMessageCount);
   pruneMemoryRowsAfterConversationCount(state, pruneThreshold, readerMessageCount);
 
@@ -550,11 +573,15 @@ export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
           id: String(illustration.id || crypto.randomUUID()),
           imageData: String(illustration.imageData || ''),
           prompt: illustration.prompt ? String(illustration.prompt) : undefined,
+          anchorIndex: Number.isFinite(Number(illustration.anchorIndex))
+            ? Math.max(0, Math.floor(Number(illustration.anchorIndex)))
+            : undefined,
+          rerollContext: normalizeImageRerollContext(illustration.rerollContext),
           createdAt: Number(illustration.createdAt) || Date.now(),
         })).filter(illustration => illustration.imageData);
       }
       if (message.statusSnapshot) {
-        base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false });
+        base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot);
       }
       return base;
     });
@@ -578,13 +605,17 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
                 id: String(illustration.id || crypto.randomUUID()),
                 imageData: String(illustration.imageData || ''),
                 prompt: illustration.prompt ? String(illustration.prompt) : undefined,
+                anchorIndex: Number.isFinite(Number(illustration.anchorIndex))
+                  ? Math.max(0, Math.floor(Number(illustration.anchorIndex)))
+                  : undefined,
+                rerollContext: normalizeImageRerollContext(illustration.rerollContext),
                 createdAt: Number(illustration.createdAt) || Date.now(),
               }))
               .filter(illustration => illustration.imageData)
           : undefined,
       };
       if (msg.statusSnapshot) {
-        ui.statusSnapshot = normalizeRollbackSnapshot(msg.statusSnapshot, { includeSideWindows: false });
+        ui.statusSnapshot = normalizeRollbackSnapshot(msg.statusSnapshot);
       }
       return ui;
     });
@@ -627,6 +658,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     backgroundTasks: [],
     readerContextMenu: null,
     readerEditing: null,
+    imageRerollEditing: null,
     summaryStore: createDefaultSummaryStore(),
     summaryApiConfig: null,
     summaryModelFetch: {
@@ -758,7 +790,8 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   for (let i = target.sourceUserIndex; i >= 0; i--) {
     const msg = state.uiMessages[i];
     if (msg?.statusSnapshot) {
-      restoreRollbackSnapshot(state, normalizeRollbackSnapshot(msg.statusSnapshot));
+      const snapshot = normalizeRollbackSnapshot(msg.statusSnapshot);
+      restoreRollbackSnapshot(state, snapshot);
       break;
     }
   }
@@ -767,7 +800,9 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   state.focusedMessageIndex = Math.max(getReaderMessages(state.uiMessages).length - 1, 0);
   state.focusedMessagePage = 0;
   prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
-  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackConversationIndex);
+  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackConversationIndex, {
+    mergePrevious: false,
+  });
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
   state.notification = null;
@@ -796,7 +831,8 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
   for (let i = targetUiIndex - 1; i >= 0; i -= 1) {
     const msg = state.uiMessages[i];
     if (msg?.statusSnapshot) {
-      restoreRollbackSnapshot(state, normalizeRollbackSnapshot(msg.statusSnapshot));
+      const snapshot = normalizeRollbackSnapshot(msg.statusSnapshot);
+      restoreRollbackSnapshot(state, snapshot);
       break;
     }
   }
@@ -804,7 +840,9 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
   state.uiMessages = state.uiMessages.filter(message => message.id !== targetMessage.id);
   syncFocusedMessage(state);
   prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
-  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, deletedConversationIndex);
+  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, deletedConversationIndex, {
+    mergePrevious: false,
+  });
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
   state.notification = null;

@@ -97,7 +97,20 @@ export type MessageIllustration = {
   id: string;
   imageData: string;
   prompt?: string;
+  anchorIndex?: number;
+  rerollContext?: ImageRerollContext;
   createdAt: number;
+};
+
+export type ImageRerollContext = {
+  prompt?: string;
+  negativePrompt?: string;
+  change?: string;
+  sceneText?: string;
+  rawText?: string;
+  generationContext?: string;
+  generationWorldBook?: string;
+  userInput?: string;
 };
 
 export type PhoneChatMessage = {
@@ -309,6 +322,13 @@ export type ReaderEditingState = {
   draft: string;
 };
 
+export type ImageRerollEditingState = {
+  messageId: string;
+  illustrationId: string;
+  prompt: string;
+  negativePrompt: string;
+};
+
 export type DrawingCharacterAnchor = {
   id: string;
   name: string;
@@ -358,6 +378,7 @@ export type AppState = {
   backgroundTasks: BackgroundTaskState[];
   readerContextMenu: ReaderContextMenuState | null;
   readerEditing: ReaderEditingState | null;
+  imageRerollEditing: ImageRerollEditingState | null;
   summaryStore: SummaryStore;
   summaryApiConfig: SummaryApiConfig | null;
   summaryModelFetch: SummaryModelFetchState;

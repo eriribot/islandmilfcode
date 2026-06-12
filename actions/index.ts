@@ -25,6 +25,7 @@ import {
 } from '../summary';
 import type { SummaryApiConfig, SummaryStore } from '../summary/types';
 import type {
+  ImageRerollContext,
   PhoneChatMessage,
   PhoneProactiveState,
   PlayerProfile,
@@ -80,6 +81,7 @@ export type ActionContext = StreamingContext & {
 
 const PHONE_PROACTIVE_COOLDOWN_MS = 3 * 60 * 1000;
 const PHONE_ACTION_DETECTOR_CONFIDENCE = new Set(['high', 'medium', '中', '高', '确定', '较高']);
+const IMAGE_GENERATION_REQUEST_INTERVAL_MS = 45_000;
 
 type PhoneDirective = {
   target: TargetStatus;
@@ -94,6 +96,10 @@ type ScenePhoneMessage = {
 
 function isPlayerPseudoTarget(target: TargetStatus | null | undefined) {
   return isPlayerPhonePseudoTarget(target);
+}
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function getPhoneContactTargets(ctx: Pick<ActionContext, 'state'>) {
@@ -538,7 +544,14 @@ function buildDrawingHistoryContext(ctx: ActionContext, userInput: string) {
   return lines.join('\n\n');
 }
 
-function attachIllustrationToMessage(ctx: ActionContext, messageId: string, imageData: string, prompt?: string) {
+function attachIllustrationToMessage(
+  ctx: ActionContext,
+  messageId: string,
+  imageData: string,
+  prompt?: string,
+  anchorIndex?: number,
+  rerollContext?: ImageRerollContext,
+) {
   const message = ctx.state.uiMessages.find(item => item.id === messageId);
   if (!message || message.role !== 'assistant' || !imageData.trim()) return false;
 
@@ -550,6 +563,8 @@ function attachIllustrationToMessage(ctx: ActionContext, messageId: string, imag
       id: crypto.randomUUID(),
       imageData,
       prompt,
+      anchorIndex,
+      rerollContext,
       createdAt: Date.now(),
     },
   ];
@@ -599,24 +614,47 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
       });
     });
 
-  const imagePrompts = extractImageGenerationPrompts(rawText);
-  if (!imagePrompts.length && (sceneText || cleanUserInput.trim())) {
+  const explicitImagePrompts = extractImageGenerationPrompts(rawText);
+  const imagePrompts = explicitImagePrompts.filter(prompt => !prompt.prompt);
+  if (!explicitImagePrompts.length && (sceneText || cleanUserInput.trim())) {
     imagePrompts.push({ prompt: '' });
   }
   if (!imagePrompts.length) return;
 
-  const prompt = imagePrompts[0]!;
   const targetMessageId = latest.id;
-  void requestImageGeneration(ctx.win, prompt.prompt, ctx.state.drawingSettings, prompt.change, {
-    sceneText,
-    rawText,
-    generationContext: metadata.generationContext,
-    generationWorldBook: metadata.generationWorldBook,
-    userInput: cleanUserInput,
-    summaryApiConfig: ctx.summaryApiConfig,
-  })
-    .then(result => {
+  void (async () => {
+    let sentCount = 0;
+    let failedCount = 0;
+    let attachedCount = 0;
+    let timeoutCount = 0;
+    let lastError = '';
+
+    for (const [index, prompt] of imagePrompts.entries()) {
+      if (prompt.prompt) continue;
+      if (index > 0) {
+        ctx.showNotification({
+          kind: 'message',
+          title: `等待发送生图 ${index + 1}/${imagePrompts.length}`,
+          preview: '为避免插件队列拥堵，下一张将在 45 秒后发送。',
+          targetTab: 'summary',
+          timestamp: formatTime(ctx.state.statusData.world.currentTime),
+        });
+        ctx.render();
+        await sleep(IMAGE_GENERATION_REQUEST_INTERVAL_MS);
+      }
+
+      const result = await requestImageGeneration(ctx.win, prompt.prompt, ctx.state.drawingSettings, prompt.change, {
+        sceneText,
+        rawText,
+        generationContext: metadata.generationContext,
+        generationWorldBook: metadata.generationWorldBook,
+        userInput: cleanUserInput,
+        summaryApiConfig: ctx.summaryApiConfig,
+      });
+
       recordGenerationDebug(ctx, 'image-generation:request', {
+        index: index + 1,
+        total: imagePrompts.length,
         sent: result.sent,
         reason: result.reason ?? '',
         error: result.error ?? '',
@@ -624,19 +662,67 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
         hasImageData: Boolean(result.imageData),
       });
 
-      if (!result.sent) return;
-      if (!result.error && result.imageData) {
-        attachIllustrationToMessage(ctx, targetMessageId, result.imageData, result.prompt ?? prompt.prompt);
+      if (result.sent) sentCount += 1;
+      if (result.error) {
+        failedCount += 1;
+        lastError = result.error;
       }
+      if (result.reason === 'timeout') timeoutCount += 1;
+      if (!result.error && result.imageData) {
+        const attached = attachIllustrationToMessage(
+          ctx,
+          targetMessageId,
+          result.imageData,
+          result.prompt ?? prompt.prompt,
+          prompt.anchorIndex,
+          {
+            prompt: result.prompt ?? prompt.prompt,
+            negativePrompt: ctx.state.drawingSettings.negativePrompt?.trim() || '',
+            change: prompt.change,
+            sceneText,
+            rawText,
+            generationContext: metadata.generationContext,
+            generationWorldBook: metadata.generationWorldBook,
+            userInput: cleanUserInput,
+          },
+        );
+        if (attached) attachedCount += 1;
+      }
+
       ctx.showNotification({
         kind: 'message',
-        title: result.error ? '生图失败' : '生图请求已发送',
-        preview: result.error || (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
+        title:
+          imagePrompts.length > 1
+            ? `生图 ${index + 1}/${imagePrompts.length}`
+            : result.error
+              ? '生图失败'
+              : '生图请求已发送',
+        preview:
+          result.error ||
+          (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
         targetTab: 'summary',
         timestamp: formatTime(ctx.state.statusData.world.currentTime),
       });
       ctx.render();
-    })
+    }
+
+    if (imagePrompts.length > 1) {
+      ctx.showNotification({
+        kind: 'message',
+        title: failedCount ? '部分生图失败' : '多张生图已处理',
+        preview:
+          lastError ||
+          (timeoutCount
+            ? `已发送 ${sentCount}/${imagePrompts.length} 张，部分生成较慢，请到插件图片面板查看。`
+            : attachedCount
+              ? `已挂载 ${attachedCount} 张图片。`
+              : `已发送 ${sentCount}/${imagePrompts.length} 张。`),
+        targetTab: 'summary',
+        timestamp: formatTime(ctx.state.statusData.world.currentTime),
+      });
+      ctx.render();
+    }
+  })()
     .catch(error => {
       console.warn('[image-generation] emit failed:', error);
       recordGenerationDebug(ctx, 'image-generation:error', {

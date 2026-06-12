@@ -7,7 +7,7 @@ import {
   upsertItem,
   upsertWorldState,
 } from './upsert';
-import type { IslandMemoryDB, MemoryFactCategory, MemoryWriteBatch } from './types';
+import type { IslandMemoryDB, MemoryFactCategory, MemorySummaryLevel, MemoryWriteBatch } from './types';
 
 /**
  * 把一次主回复的 ProgressUpdate 写入 memoryDB。
@@ -206,6 +206,10 @@ function rangeContains(outer: [number, number], inner: [number, number] | undefi
   return Array.isArray(inner) && inner.length >= 2 && inner[0] >= outer[0] && inner[1] <= outer[1];
 }
 
+function sameRange(a: [number, number] | undefined, b: [number, number]): boolean {
+  return Array.isArray(a) && a.length >= 2 && a[0] === b[0] && a[1] === b[1];
+}
+
 export function commitSummaryToMemoryDB(
   db: IslandMemoryDB | null | undefined,
   level: 'minor' | 'major' | 'global',
@@ -247,4 +251,57 @@ export function commitSummaryToMemoryDB(
     expire: expireSummaryIds.length ? { summaries: expireSummaryIds } : undefined,
     advanceCursor: range[1],
   });
+}
+
+export function updateSummaryTextInMemoryDB(
+  db: IslandMemoryDB | null | undefined,
+  level: MemorySummaryLevel,
+  text: string | null,
+  range?: [number, number],
+): void {
+  if (!db) return;
+
+  const now = new Date().toISOString();
+
+  if (level === 'global') {
+    const activeGlobals = db.summaries.filter(row => !row.expired && row.level === 'global');
+    if (!text?.trim()) {
+      for (const row of activeGlobals) {
+        row.expired = true;
+        row.updatedAt = now;
+      }
+      return;
+    }
+
+    const latest = activeGlobals.sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))[0];
+    if (latest) {
+      latest.text = text;
+      latest.updatedAt = now;
+      return;
+    }
+
+    commitSummaryToMemoryDB(db, 'global', text, range ?? [0, Math.max(0, db.lastProcessedIndex)]);
+    return;
+  }
+
+  if (!range) return;
+
+  const matches = db.summaries.filter(row => !row.expired && row.level === level && sameRange(row.range, range));
+  if (!text?.trim()) {
+    for (const row of matches) {
+      row.expired = true;
+      row.updatedAt = now;
+    }
+    return;
+  }
+
+  if (matches.length) {
+    for (const row of matches) {
+      row.text = text;
+      row.updatedAt = now;
+    }
+    return;
+  }
+
+  commitSummaryToMemoryDB(db, level, text, range);
 }

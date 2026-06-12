@@ -9,6 +9,8 @@ const CHATU8_LLM_IMAGE_GEN_RESPONSE_EVENT = 'ch-llm-image-gen-response';
 
 const GENERATE_IMAGE_PAIR_TAG_PATTERN = /<generate_image\b([^>]*)>[\s\S]*?<\/generate_image>/gi;
 const GENERATE_IMAGE_SELF_CLOSING_TAG_PATTERN = /<generate_image\b([^>]*)\/>/gi;
+const LEGACY_IMAGE_PAIR_TAG_PATTERN = /<image\b[^>]*>[\s\S]*?<\/image>/gi;
+const LEGACY_IMAGE_PAYLOAD_PATTERN = /\bimage\s*###([\s\S]*?)###/gi;
 const PROMPT_ATTR_PATTERN = /\bprompt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
 const CHANGE_ATTR_PATTERN = /\bchange\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
 const IMAGE_INTENT_PATTERN =
@@ -17,6 +19,7 @@ const IMAGE_INTENT_PATTERN =
 export type ImageGenerationPrompt = {
   prompt: string;
   change?: string;
+  anchorIndex?: number;
 };
 
 export type ImageGenerationRequestContext = {
@@ -37,10 +40,19 @@ export type ImageGenerationResult = {
   error?: string;
 };
 
+export type ImageGenerationTextSegment = {
+  text: string;
+  anchorIndex?: number;
+};
+
 type TavernEventApi = Pick<TavernWindow, 'eventEmit' | 'eventOn' | 'eventRemoveListener'>;
 type ImageGenerationSettings = Pick<DrawingSettings, 'width' | 'height' | 'negativePrompt'> &
   Partial<Pick<DrawingSettings, 'qualityPrompt' | 'manualPrompt' | 'characterAnchors' | 'systemPrompt'>>;
 type ImagePromptMessage = { role: string; content: string };
+
+function stripImageThinkBlocks(text: string) {
+  return String(text ?? '').replace(/<imgthink\b[^>]*>[\s\S]*?<\/imgthink>/gi, '').trim();
+}
 
 function getEventApi(win: TavernWindow): TavernEventApi {
   const globalApi = globalThis as Partial<TavernEventApi>;
@@ -244,7 +256,7 @@ function requestChatu8LlmImagePrompt(win: TavernWindow, prompts: ImagePromptMess
   return new Promise<string>((resolve, reject) => {
     let handled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    let stopListening: { stop?: () => void } | void;
+    let stopListening: { stop?: () => void } | undefined;
 
     const cleanup = () => {
       if (timeoutId) {
@@ -334,6 +346,29 @@ function readAttr(attrs: string, pattern: RegExp) {
   return (match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim();
 }
 
+function extractLegacyImagePrompts(rawText: string, startAnchorIndex: number): ImageGenerationPrompt[] {
+  const prompts: ImageGenerationPrompt[] = [];
+  let anchorIndex = startAnchorIndex;
+  let blockMatch: RegExpExecArray | null;
+  LEGACY_IMAGE_PAIR_TAG_PATTERN.lastIndex = 0;
+
+  while ((blockMatch = LEGACY_IMAGE_PAIR_TAG_PATTERN.exec(rawText))) {
+    const block = blockMatch[0] ?? '';
+    const currentAnchorIndex = anchorIndex;
+    anchorIndex += 1;
+    let payloadMatch: RegExpExecArray | null;
+    LEGACY_IMAGE_PAYLOAD_PATTERN.lastIndex = 0;
+
+    while ((payloadMatch = LEGACY_IMAGE_PAYLOAD_PATTERN.exec(block))) {
+      const payload = String(payloadMatch[1] ?? '').trim();
+      if (!payload) continue;
+      prompts.push({ prompt: stripImageThinkBlocks(`image###${payload}###`), anchorIndex: currentAnchorIndex });
+    }
+  }
+
+  return prompts;
+}
+
 export function extractImageGenerationPrompts(rawText: string): ImageGenerationPrompt[] {
   const prompts: ImageGenerationPrompt[] = [];
   const text = String(rawText ?? '');
@@ -344,13 +379,42 @@ export function extractImageGenerationPrompts(rawText: string): ImageGenerationP
       const attrs = match[1] ?? '';
       const prompt = readAttr(attrs, PROMPT_ATTR_PATTERN);
       const change = readAttr(attrs, CHANGE_ATTR_PATTERN);
-      prompts.push({ prompt, change: change || undefined });
+      prompts.push({ prompt, change: change || undefined, anchorIndex: prompts.length });
     }
   };
 
   collect(GENERATE_IMAGE_PAIR_TAG_PATTERN);
   collect(GENERATE_IMAGE_SELF_CLOSING_TAG_PATTERN);
+  prompts.push(...extractLegacyImagePrompts(text, prompts.length));
   return prompts;
+}
+
+export function splitTextByImageGenerationAnchors(rawText: string): ImageGenerationTextSegment[] {
+  const text = String(rawText ?? '');
+  const matches = [
+    ...Array.from(text.matchAll(GENERATE_IMAGE_PAIR_TAG_PATTERN)),
+    ...Array.from(text.matchAll(GENERATE_IMAGE_SELF_CLOSING_TAG_PATTERN)),
+    ...Array.from(text.matchAll(LEGACY_IMAGE_PAIR_TAG_PATTERN)),
+  ]
+    .filter((match): match is RegExpMatchArray & { index: number } => typeof match.index === 'number')
+    .sort((a, b) => a.index - b.index);
+
+  if (!matches.length) return [{ text }];
+
+  const segments: ImageGenerationTextSegment[] = [];
+  let cursor = 0;
+  matches.forEach((match, anchorIndex) => {
+    const before = text.slice(cursor, match.index);
+    segments.push({ text: before });
+    segments.push({ text: '', anchorIndex });
+    cursor = match.index + match[0].length;
+  });
+  segments.push({ text: text.slice(cursor) });
+  return segments;
+}
+
+export function getImageGenerationPromptAtAnchor(rawText: string, anchorIndex: number) {
+  return extractImageGenerationPrompts(rawText).find(prompt => prompt.anchorIndex === anchorIndex) ?? null;
 }
 
 export function hasExplicitImageGenerationIntent(text: string) {
@@ -361,6 +425,7 @@ export function stripImageGenerationTags(rawText: string) {
   return String(rawText ?? '')
     .replace(GENERATE_IMAGE_PAIR_TAG_PATTERN, '')
     .replace(GENERATE_IMAGE_SELF_CLOSING_TAG_PATTERN, '')
+    .replace(LEGACY_IMAGE_PAIR_TAG_PATTERN, '')
     .trim();
 }
 
@@ -373,6 +438,7 @@ export function buildImageGenerationPrompt(settings?: DrawingSettings | null) {
     '生图标签不要写进 <content> 正文内部；正文自然叙事即可。',
     '标签只用于插件读取，最终会被前端剥离，不会进入可见正文或后续历史上下文。',
     '优先使用单行格式：<generate_image />',
+    '如果需要一次生成多张图，可以连续输出多个 <generate_image />；如果世界书已经输出 <image>image###...###</image> 格式，前端也会逐张读取。',
     '不要为了生图在正文里编写英文提示词、画面参数或插件说明；智绘姬会在正文生成完成后读取正文并调用自己的 LLM 生成图像提示词。',
     '如果玩家明确给了局部修改要求，可写成：<generate_image change="玩家要求的局部修改" />',
     '没有明确生图价值时不要输出生图标签，避免每轮乱画。',
@@ -450,7 +516,7 @@ export async function requestImageGeneration(
   return new Promise(resolve => {
     let handled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    let stopListening: { stop?: () => void } | void;
+    let stopListening: { stop?: () => void } | undefined;
 
     const cleanup = () => {
       if (timeoutId) {

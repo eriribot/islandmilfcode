@@ -1,8 +1,22 @@
 import { escapeHtml } from './html';
-import { extractOptionsBlock, extractTucaoBlocks, getReaderMessages, getVisibleMessageText } from './message-format';
+import {
+  extractContextReplyWithImageGenerationTags,
+  extractOptionsBlock,
+  extractTucaoBlocks,
+  getReaderMessages,
+  getVisibleMessageText,
+} from './message-format';
+import { splitTextByImageGenerationAnchors } from './plugins/image-generation';
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
 import type { SummaryStore } from './summary/types';
-import type { AppState, BackgroundTaskState, ReaderContextMenuState, StatusData, UiMessage } from './types';
+import type {
+  AppState,
+  BackgroundTaskState,
+  MessageIllustration,
+  ReaderContextMenuState,
+  StatusData,
+  UiMessage,
+} from './types';
 import { loadFullMemoryConfig } from './memory-config';
 
 /**
@@ -181,27 +195,131 @@ function renderOptionsPanel(message: UiMessage) {
   `;
 }
 
-function renderIllustrationPanel(message: UiMessage) {
-  const illustrations = message.illustrations?.filter(illustration => illustration.imageData.trim()) ?? [];
+function renderIllustrationFigures(
+  messageId: string,
+  illustrations: MessageIllustration[],
+  editing: AppState['imageRerollEditing'],
+) {
+  if (!illustrations.length) return '';
+
+  return illustrations
+    .map(illustration => {
+      const isEditing = editing?.messageId === messageId && editing.illustrationId === illustration.id;
+      return `
+        <figure class="reader-illustration">
+          <button
+            class="reader-illustration__reroll"
+            data-action="reader-reroll-image"
+            data-message-id="${escapeHtml(messageId)}"
+            data-illustration-id="${escapeHtml(illustration.id)}"
+            type="button"
+            aria-label="重 roll 图片"
+            title="重 roll 图片"
+          >重 roll</button>
+          <img
+            class="reader-illustration__image"
+            src="${escapeHtml(illustration.imageData)}"
+            alt="${escapeHtml(illustration.prompt || 'generated illustration')}"
+            loading="lazy"
+          />
+          ${
+            isEditing
+              ? `<div class="reader-illustration__prompt-editor">
+                  <textarea
+                    class="reader-illustration__prompt-field"
+                    data-field="image-reroll-prompt"
+                    aria-label="正向提示词"
+                    spellcheck="false"
+                  >${escapeHtml(editing.prompt)}</textarea>
+                  <textarea
+                    class="reader-illustration__prompt-field reader-illustration__prompt-field--negative"
+                    data-field="image-reroll-negative-prompt"
+                    aria-label="负向提示词"
+                    placeholder="负向提示词（可留空）"
+                    spellcheck="false"
+                  >${escapeHtml(editing.negativePrompt)}</textarea>
+                  <div class="reader-illustration__prompt-actions">
+                    <button class="reader-illustration__prompt-btn" data-action="image-reroll-cancel" type="button">取消</button>
+                    <button class="reader-illustration__prompt-btn reader-illustration__prompt-btn--primary" data-action="image-reroll-save" type="button">发送</button>
+                  </div>
+                </div>`
+              : ''
+          }
+        </figure>
+      `;
+    })
+    .join('');
+}
+
+function renderIllustrationPanel(messageId: string, illustrations: MessageIllustration[], editing: AppState['imageRerollEditing']) {
   if (!illustrations.length) return '';
 
   return `
     <div class="reader-illustrations">
-      ${illustrations
-        .map(
-          illustration => `
-            <figure class="reader-illustration">
-              <img
-                class="reader-illustration__image"
-                src="${escapeHtml(illustration.imageData)}"
-                alt="${escapeHtml(illustration.prompt || 'generated illustration')}"
-                loading="lazy"
-              />
-            </figure>
-          `,
-        )
-        .join('')}
+      ${renderIllustrationFigures(messageId, illustrations, editing)}
     </div>
+  `;
+}
+
+function renderAnchoredMessageBody(
+  message: UiMessage,
+  visibleText: string,
+  editing: AppState['imageRerollEditing'],
+) {
+  const illustrations = message.illustrations?.filter(illustration => illustration.imageData.trim()) ?? [];
+  const anchored = new Map<number, MessageIllustration[]>();
+  const trailing: MessageIllustration[] = [];
+
+  illustrations.forEach(illustration => {
+    const anchorIndex = Number(illustration.anchorIndex);
+    if (Number.isFinite(anchorIndex) && anchorIndex >= 0) {
+      const key = Math.floor(anchorIndex);
+      anchored.set(key, [...(anchored.get(key) ?? []), illustration]);
+      return;
+    }
+    trailing.push(illustration);
+  });
+
+  const sourceWithAnchors =
+    message.role === 'assistant'
+      ? extractContextReplyWithImageGenerationTags(message.rawText || message.text, { streaming: message.streaming })
+      : message.text;
+  const hasImageAnchors = /<(?:generate_image|image)\b/i.test(sourceWithAnchors);
+  const hasInlineAnchors = (anchored.size > 0 || hasImageAnchors) && hasImageAnchors;
+  if (!hasInlineAnchors) {
+    return `
+      <p class="reader-card__text">${escapeHtml(visibleText || '……')}</p>
+      ${renderIllustrationPanel(message.id, illustrations, editing)}
+    `;
+  }
+
+  const usedAnchors = new Set<number>();
+  const chunks = splitTextByImageGenerationAnchors(sourceWithAnchors)
+    .map(segment => {
+      if (segment.anchorIndex != null) {
+        const figures = anchored.get(segment.anchorIndex) ?? [];
+        usedAnchors.add(segment.anchorIndex);
+        const button = message.streaming
+          ? ''
+          : `<button class="reader-image-generate" data-action="reader-generate-image" data-message-id="${escapeHtml(message.id)}" data-anchor-index="${segment.anchorIndex}" type="button">生成图片</button>`;
+        const renderedFigures = figures.length
+          ? `<div class="reader-illustrations reader-illustrations--inline">${renderIllustrationFigures(message.id, figures, editing)}</div>`
+          : '';
+        return `<div class="reader-image-anchor">${button}${renderedFigures}</div>`;
+      }
+
+      const text = segment.text.trim();
+      return text ? `<p class="reader-card__text">${escapeHtml(text)}</p>` : '';
+    })
+    .filter(Boolean);
+
+  for (const [anchorIndex, figures] of anchored) {
+    if (!usedAnchors.has(anchorIndex)) trailing.push(...figures);
+  }
+
+  return `
+    ${chunks.join('') || `<p class="reader-card__text">${escapeHtml(visibleText || '……')}</p>`}
+    ${renderIllustrationPanel(message.id, trailing, editing)}
   `;
 }
 
@@ -344,7 +462,8 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
 
   const message = model.currentMessage;
   const visibleText = getVisibleMessageText(message);
-  const illustrationHtml = renderIllustrationPanel(message);
+  const illustrations = message.illustrations?.filter(illustration => illustration.imageData.trim()) ?? [];
+  const hasIllustrations = illustrations.length > 0;
 
   const topLane = `
     <div class="paper-reader__lane paper-reader__lane--top">
@@ -357,7 +476,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
     </div>
   `;
 
-  if (!visibleText && !illustrationHtml && !message.streaming) {
+  if (!visibleText && !hasIllustrations && !message.streaming) {
     return `
       <section class="paper-reader">
         ${topLane}
@@ -388,8 +507,6 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
     `;
   }
 
-  const pageText = escapeHtml(visibleText || '……');
-
   return `
     <section class="paper-reader">
       ${topLane}
@@ -416,8 +533,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
           </div>
         </div>
         <div class="reader-card__body" tabindex="0">
-          <p class="reader-card__text">${pageText}</p>
-          ${illustrationHtml}
+          ${renderAnchoredMessageBody(message, visibleText, state.imageRerollEditing)}
         </div>
         ${renderOptionsPanel(message)}
       </article>

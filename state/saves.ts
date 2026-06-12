@@ -4,6 +4,7 @@ import { extractContextReply, isFrontendHtmlShell } from '../message-format';
 import type {
   Difficulty,
   GameState,
+  ImageRerollContext,
   PersistedMessage,
   PlayerProfile,
   PlayerStats,
@@ -33,6 +34,23 @@ const ACTIVE_RUN_ID_STORAGE_KEY = 'islandmilfcode:active-run-id:v2';
 const ACTIVE_SAVE_ID_STORAGE_KEY = 'islandmilfcode:active-save-id:v2';
 const LEGACY_SAVES_STORAGE_KEY = 'islandmilfcode-saves-v1';
 const SAVE_VERSION = 2;
+
+function normalizeImageRerollContext(context?: ImageRerollContext): ImageRerollContext | undefined {
+  if (!context || typeof context !== 'object') return undefined;
+  const normalized: ImageRerollContext = {};
+  const assignString = (key: keyof ImageRerollContext) => {
+    const value = context[key];
+    if (typeof value === 'string' && value.trim()) normalized[key] = value;
+  };
+  assignString('prompt');
+  assignString('change');
+  assignString('sceneText');
+  assignString('rawText');
+  assignString('generationContext');
+  assignString('generationWorldBook');
+  assignString('userInput');
+  return Object.keys(normalized).length ? normalized : undefined;
+}
 
 type LegacySaveSlot = {
   id: string;
@@ -237,6 +255,9 @@ function normalizePersistedStatusSnapshot(input: unknown): RollbackSnapshot | un
     statusData: normalizeStatusData(raw.statusData ?? defaultStatusData),
     ...(raw.playerProfile ? { playerProfile: normalizePlayerProfile(raw.playerProfile) } : {}),
     ...(raw.drawingSettings ? { drawingSettings: normalizeDrawingSettings(raw.drawingSettings) } : {}),
+    ...(raw.phoneMessages ? { phoneMessages: normalizePhoneMessageStore(raw.phoneMessages) } : {}),
+    ...(raw.summaryStore ? { summaryStore: cloneJson(raw.summaryStore) } : {}),
+    ...(raw.memoryDB ? { memoryDB: cloneJson(raw.memoryDB) } : {}),
   };
 }
 
@@ -274,6 +295,10 @@ function normalizePersistedMessages(messages: PersistedMessage[] | undefined): P
                   id: String(illustration.id || crypto.randomUUID()),
                   imageData: String(illustration.imageData || ''),
                   prompt: illustration.prompt ? String(illustration.prompt) : undefined,
+                  anchorIndex: Number.isFinite(Number(illustration.anchorIndex))
+                    ? Math.max(0, Math.floor(Number(illustration.anchorIndex)))
+                    : undefined,
+                  rerollContext: normalizeImageRerollContext(illustration.rerollContext),
                   createdAt: Number(illustration.createdAt) || Date.now(),
                 }))
                 .filter(illustration => illustration.imageData),

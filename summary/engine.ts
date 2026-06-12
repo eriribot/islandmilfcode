@@ -273,9 +273,23 @@ export function buildGlobalCompressionPrompt(
 /** 从 AI 回复中提取 <summary> 标签内的文本；找不到标签时回退到裁剪原文。 */
 export function parseSummaryResult(text: string): string {
   const tagged = extractTaggedReply(text, 'summary', false);
-  if (tagged) return tagged;
+  if (tagged && isValidSummaryText(tagged)) return tagged;
+  if (tagged !== null && tagged !== undefined) return '';
   // 后备逻辑：找不到标签时返回裁剪后的原文，小模型有时会漏掉标签。
-  return text.trim();
+  const fallback = text.trim();
+  return isValidSummaryText(fallback) ? fallback : '';
+}
+
+function isValidSummaryText(text: string): boolean {
+  const normalized = text
+    .replace(/<summary\b[^>]*>|<\/summary>/gi, '')
+    .replace(/<key_facts\b[^>]*>[\s\S]*?<\/key_facts>/gi, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .trim();
+  if (!normalized) return false;
+  if (/^(?:0|０|零|null|none|无|没有|沒有|空|empty|n\/a|na|undefined)$/i.test(normalized)) return false;
+  if (/^[0０\s,，.。;；:：|｜/\\-]+$/.test(normalized)) return false;
+  return /[\p{Script=Han}A-Za-z0-9]/u.test(normalized);
 }
 
 /** 从 AI 回复中提取 <key_facts> 块，解析每行 `[类别] 主体 | 内容` 格式。 */
