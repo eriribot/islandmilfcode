@@ -30,7 +30,7 @@ import type {
 
 export const PRIMARY_VISIBLE_TAG = 'content';
 // 兼容用户自定义预设里要求的中文正文标签，避免模型输出 <正文> 时被当成未知标签吞掉。
-export const FALLBACK_VISIBLE_TAGS = ['正文', 'context'];
+export const FALLBACK_VISIBLE_TAGS = ['正文', 'context', 'story_scene'];
 const MAIN_EVENT_NOT_STARTED = '未进行';
 const MAIN_EVENT_RUNNING = '进行中';
 const MAIN_EVENT_FINISHED = '已结束';
@@ -1389,7 +1389,7 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
     '亲密/背德轴判断规则：',
     '  默认角色使用“贞操”闩锁：只有角色列表显示“贞操=完璧”时，才允许在明确发生破除后输出 贞操.角色名:已失去。',
     '  泽村小百合是特殊的既婚人妻档案，不使用“贞操/完璧/处女”语义，也不输出贞操字段。',
-    '  泽村小百合若正文明确发生亲密行为，只输出对应 X次数.泽村小百合:+N；系统会根据计数自动派生“背德关系已成立（已发生关系）”。',
+    '  泽村小百合若正文明确发生亲密行为，只输出具体次数字段.泽村小百合:+N，例如 性交次数.泽村小百合:+1；系统会根据计数自动派生“背德关系已成立（已发生关系）”。',
     // '  红坂朱音、町田苑子以后即使作为成人角色加入，也不要默认套用小百合规则；是否使用贞操闩锁由角色列表里的亲密轴状态决定。',
     '  不要输出“背德.角色名”“关系.角色名:背德”这类未定义字段；背德状态由小百合的亲密计数派生。',
     '可用字段：',
@@ -1405,7 +1405,7 @@ function buildProgressInstruction(statusData: StatusData, target?: TargetStatus 
       ? `  着装.部位:描述          — 更新当前明确对象 ${target.name} 的某个部位着装（例：着装.上装:换上了黑色卫衣）`
       : '  着装.部位:描述          — 主场景禁用旧单目标着装格式；没有明确对象时不要输出',
     '  贞操.角色名:已失去       — 仅适用于角色列表显示“贞操=完璧”的角色；泽村小百合禁用此字段；正文明确发生破除时输出，单向不可逆，禁止写回"完璧/处女"。',
-    '  X次数.角色名:+N          — 亲密接触硬统计（X=接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数）；正文明确发生时累加。泽村小百合发生关系时也只写此字段，由系统派生背德关系；不统计经验人数/伴侣数。',
+    '  接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数/足交次数.角色名:+N — 亲密接触硬统计。字段名必须直接写具体行为次数，例：性交次数.泽村小百合:+1、指交次数.霞之丘诗羽:+1。不要写 X次数，不要写 背德/关系/经验人数。正文明确发生一次就 +1，发生多次按实际次数 +N。',
     '  当前事件:事件ID          — 当有事件进行中时，每轮都必须输出该字段（例：当前事件:SAE_01-2）；事件结束时才输出 当前事件:无 清空',
     '  主线事件.事件ID:状态     — 更新主线事件状态（未触发/进行中/已结束/跳过/延后）',
     '  事件名:事件描述         — 添加或替换近期重要事件，可有多条',
@@ -1459,7 +1459,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
     `执念度.角色名:±N（例：${obsessionExamples}）`,
     '五维.能力名:±N',
     '贞操.角色名:已失去（仅适用于角色列表显示“贞操=完璧”的角色；泽村小百合禁用此字段）',
-    'X次数.角色名:+N（亲密接触硬统计，X 接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数；正文明确发生时累加。泽村小百合发生关系时也只写此字段，由系统派生背德关系；不统计经验人数）',
+    '接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数/足交次数.角色名:+N（亲密接触硬统计。字段名必须直接写具体行为次数，例：性交次数.泽村小百合:+1、指交次数.霞之丘诗羽:+1。不要写 X次数，不要写 背德/关系/经验人数。正文明确发生一次就 +1，发生多次按实际次数 +N）',
     '主线事件.事件ID:状态',
     '当前事件:事件ID',
     '</state_delta>',
@@ -1517,7 +1517,6 @@ export function buildProgressPrompt(
             .map(([id, status]) => `${id}:${status}`)
             .join('；') || '无'
         }`,
-        '  全局默认变量目标: 无（主场景不再使用旧单目标兜底）',
         `  可更新角色列表:\n${targetList}`,
         '  着装: 主场景不使用默认对象；只有正文明确涉及某角色服装时才记录',
         `  物品: ${inventoryList}`,
@@ -1545,7 +1544,7 @@ export function buildProgressPrompt(
         '亲密/背德轴判断规则：',
         '  默认角色使用“贞操”闩锁：只有角色列表显示“贞操=完璧”时，才允许在明确发生破除后输出 贞操.角色名:已失去。',
         '  泽村小百合是特殊的既婚人妻档案，不使用“贞操/完璧/处女”语义，也不输出贞操字段。',
-        '  泽村小百合若正文明确发生亲密行为，只输出对应 X次数.泽村小百合:+N；系统会根据计数自动派生“背德关系已成立（已发生关系）”。',
+        '  泽村小百合若正文明确发生亲密行为，只输出具体次数字段.泽村小百合:+N，例如 性交次数.泽村小百合:+1；系统会根据计数自动派生“背德关系已成立（已发生关系）”。',
         // '  红坂朱音、町田苑子以后即使作为成人角色加入，也不要默认套用小百合规则；是否使用贞操闩锁由角色列表里的亲密轴状态决定。',
         '  不要输出“背德.角色名”“关系.角色名:背德”这类未定义字段；背德状态由小百合的亲密计数派生。',
         timeIntentNote ? `\n时间推进提醒：${timeIntentNote}` : '',
@@ -1560,7 +1559,7 @@ export function buildProgressPrompt(
         '  五维.能力名:±N（知识/魅力/灵巧/体贴/勇气，例如 五维.勇气:+1）',
         '  着装.部位:描述（主场景禁用旧单目标着装格式；没有明确对象时不要输出）',
         '  贞操.角色名:已失去（仅适用于角色列表显示“贞操=完璧”的角色；泽村小百合禁用此字段）',
-        '  X次数.角色名:+N（亲密接触硬统计，X 如 接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数，特殊玩法可自定义如 足交次数；正文明确发生时累加。泽村小百合发生关系时也只写此字段，由系统派生背德关系；不统计经验人数）',
+        '  接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数/足交次数.角色名:+N（亲密接触硬统计。字段名必须直接写具体行为次数，例：性交次数.泽村小百合:+1、指交次数.霞之丘诗羽:+1。不要写 X次数，不要写 背德/关系/经验人数。正文明确发生一次就 +1，发生多次按实际次数 +N）',
         '  当前事件:事件ID（手机状态页显示的唯一当前主线事件；清空用 当前事件:无）',
         '  主线事件.事件ID:状态（未触发/进行中/已结束）',
         '  ※ 正在进行的当前事件在事件日期/持续至当天通常必须保持进行中；只有当前日期已经晚于该事件日期窗口，或当前剧情卡的可接续事件已被路由解锁并可在当前日期激活时，才允许写 主线事件.事件ID:已结束 并同轮写 当前事件:无。否则省略主线事件字段。',
@@ -1717,6 +1716,14 @@ function createEmptyProgressUpdate(): ProgressUpdate {
   };
 }
 
+function parseProgressDelta(value: string | undefined): number {
+  const normalized = String(value ?? '')
+    .replace(/\s+/g, '')
+    .replace(/^＋/, '+')
+    .replace(/^－/, '-');
+  return parseInt(normalized, 10) || 0;
+}
+
 // 小此预设输出的 <progress> 格式特征:PG.1 / 时间推进:A → B / 主线任务进度:xxx / 概括:xxx
 // 这种格式如果用我们原来的通用 parser 会把 PG.1 / 时间推进 / 概括 全部塞进 events,污染 recentEvents
 function isKonatanProgressFormat(body: string): boolean {
@@ -1785,7 +1792,7 @@ function parseStateBody(body: string): ProgressUpdate | null {
     if (!trimmed) continue;
 
     // 时间:value
-    const timeMatch = trimmed.match(/^时间[:：]\s*(.+)/);
+    const timeMatch = trimmed.match(/^时间\s*[:：]\s*(.+)/);
     if (timeMatch) {
       result.time = timeMatch[1].trim();
       hasAnyField = true;
@@ -1793,7 +1800,7 @@ function parseStateBody(body: string): ProgressUpdate | null {
     }
 
     // 地点:value
-    const locMatch = trimmed.match(/^地点[:：]\s*(.+)/);
+    const locMatch = trimmed.match(/^地点\s*[:：]\s*(.+)/);
     if (locMatch) {
       result.location = locMatch[1].trim();
       hasAnyField = true;
@@ -1801,7 +1808,7 @@ function parseStateBody(body: string): ProgressUpdate | null {
     }
 
     // 当前事件:SAE_01-2 / 当前主线事件:无
-    const currentEventMatch = trimmed.match(/^当前(?:主线)?事件[:：]\s*(.+)/);
+    const currentEventMatch = trimmed.match(/^当前(?:主线)?事件\s*[:：]\s*(.+)/);
     if (currentEventMatch) {
       const value = currentEventMatch[1].trim();
       result.currentMainEventId = /^(无|none|null|clear|-)$/.test(value) ? '' : value;
@@ -1811,12 +1818,12 @@ function parseStateBody(body: string): ProgressUpdate | null {
 
     // 好感度.角色名或id:±N / 好感度变化:角色名或id:±N
     const targetedAffMatch =
-      trimmed.match(/^好感度[.．]\s*([^:：]+)[:：]\s*([+\-]?\d+)/) ??
-      trimmed.match(/^好感度变化[:：]\s*([^:：]+)[:：]\s*([+\-]?\d+)/);
+      trimmed.match(/^好感度\s*[.．]\s*([^:：]+?)\s*[:：]\s*([+\-＋－]?\s*\d+)/) ??
+      trimmed.match(/^好感度变化\s*[:：]\s*([^:：]+?)\s*[:：]\s*([+\-＋－]?\s*\d+)/);
     if (targetedAffMatch) {
       result.affinityDeltas.push({
         target: targetedAffMatch[1].trim(),
-        delta: parseInt(targetedAffMatch[2], 10) || 0,
+        delta: parseProgressDelta(targetedAffMatch[2]),
       });
       hasAnyField = true;
       continue;
@@ -1824,8 +1831,8 @@ function parseStateBody(body: string): ProgressUpdate | null {
 
     // 执念度.角色名或id:±N / 执念度变化:角色名或id:±N
     const targetedObsMatch =
-      trimmed.match(/^执念度[.．]\s*([^:：]+)[:：]\s*([+\-]?\d+)/) ??
-      trimmed.match(/^执念度变化[:：]\s*([^:：]+)[:：]\s*([+\-]?\d+)/);
+      trimmed.match(/^执念度\s*[.．]\s*([^:：]+?)\s*[:：]\s*([+\-＋－]?\s*\d+)/) ??
+      trimmed.match(/^执念度变化\s*[:：]\s*([^:：]+?)\s*[:：]\s*([+\-＋－]?\s*\d+)/);
     if (targetedObsMatch) {
       const obsTarget = targetedObsMatch[1].trim();
       if (!hasObsessionAxisByName(obsTarget)) {
@@ -1836,25 +1843,25 @@ function parseStateBody(body: string): ProgressUpdate | null {
       }
       result.obsessionDeltas.push({
         target: obsTarget,
-        delta: parseInt(targetedObsMatch[2], 10) || 0,
+        delta: parseProgressDelta(targetedObsMatch[2]),
       });
       hasAnyField = true;
       continue;
     }
 
     // 角色名或id.好感度:±N
-    const prefixedAffMatch = trimmed.match(/^([^:：.．]+)[.．]\s*好感度[:：]\s*([+\-]?\d+)/);
+    const prefixedAffMatch = trimmed.match(/^([^:：.．]+?)\s*[.．]\s*好感度\s*[:：]\s*([+\-＋－]?\s*\d+)/);
     if (prefixedAffMatch) {
       result.affinityDeltas.push({
         target: prefixedAffMatch[1].trim(),
-        delta: parseInt(prefixedAffMatch[2], 10) || 0,
+        delta: parseProgressDelta(prefixedAffMatch[2]),
       });
       hasAnyField = true;
       continue;
     }
 
     // 角色名或id.执念度:±N
-    const prefixedObsMatch = trimmed.match(/^([^:：.．]+)[.．]\s*执念度[:：]\s*([+\-]?\d+)/);
+    const prefixedObsMatch = trimmed.match(/^([^:：.．]+?)\s*[.．]\s*执念度\s*[:：]\s*([+\-＋－]?\s*\d+)/);
     if (prefixedObsMatch) {
       const obsTarget = prefixedObsMatch[1].trim();
       if (!hasObsessionAxisByName(obsTarget)) {
@@ -1864,40 +1871,40 @@ function parseStateBody(body: string): ProgressUpdate | null {
       }
       result.obsessionDeltas.push({
         target: obsTarget,
-        delta: parseInt(prefixedObsMatch[2], 10) || 0,
+        delta: parseProgressDelta(prefixedObsMatch[2]),
       });
       hasAnyField = true;
       continue;
     }
 
     // 好感度:±N
-    const affMatch = trimmed.match(/^好感度[:：]\s*([+\-]?\d+)/);
+    const affMatch = trimmed.match(/^好感度\s*[:：]\s*([+\-＋－]?\s*\d+)/);
     if (affMatch) {
-      result.affinityDelta = parseInt(affMatch[1], 10) || 0;
+      result.affinityDelta = parseProgressDelta(affMatch[1]);
       hasAnyField = true;
       continue;
     }
 
-    const obsMatch = trimmed.match(/^执念度[:：]\s*([+\-]?\d+)/);
+    const obsMatch = trimmed.match(/^执念度\s*[:：]\s*([+\-＋－]?\s*\d+)/);
     if (obsMatch) {
-      result.obsessionDelta = parseInt(obsMatch[1], 10) || 0;
+      result.obsessionDelta = parseProgressDelta(obsMatch[1]);
       hasAnyField = true;
       continue;
     }
 
     // 五维.体贴:+1 / P5.kindness:+1 / stat.knowledge:+1
-    const statMatch = trimmed.match(/^(?:五维|P5|p5|stat|stats)[.．]\s*([^:：]+)[:：]\s*([+\-]?\d+)/);
+    const statMatch = trimmed.match(/^(?:五维|P5|p5|stat|stats)\s*[.．]\s*([^:：]+?)\s*[:：]\s*([+\-＋－]?\s*\d+)/);
     if (statMatch) {
       const statKey = normalizeStatKey(statMatch[1]);
       if (statKey) {
-        result.statDeltas[statKey] = (result.statDeltas[statKey] ?? 0) + (parseInt(statMatch[2], 10) || 0);
+        result.statDeltas[statKey] = (result.statDeltas[statKey] ?? 0) + parseProgressDelta(statMatch[2]);
         hasAnyField = true;
       }
       continue;
     }
 
     // 着装.部位:描述
-    const outfitMatch = trimmed.match(/^着装[.．]\s*([^:：]+)[:：]\s*(.+)/);
+    const outfitMatch = trimmed.match(/^着装\s*[.．]\s*([^:：]+?)\s*[:：]\s*(.+)/);
     if (outfitMatch) {
       result.outfitChanges[outfitMatch[1].trim()] = outfitMatch[2].trim();
       hasAnyField = true;
@@ -1905,7 +1912,7 @@ function parseStateBody(body: string): ProgressUpdate | null {
     }
 
     // 贞操.角色名:已失去 —— 单向闩锁，只接受"破除"语义，不接受复位。
-    const virginityMatch = trimmed.match(/^贞操[.．]\s*([^:：]+)[:：]\s*(.+)/);
+    const virginityMatch = trimmed.match(/^贞操\s*[.．]\s*([^:：]+?)\s*[:：]\s*(.+)/);
     if (virginityMatch) {
       const value = virginityMatch[2].trim();
       // 仅当语义明确为"已破除"时记录；写"完璧/处女/intact"等复位语义一律忽略（前向不可回退）。
@@ -1916,11 +1923,33 @@ function parseStateBody(body: string): ProgressUpdate | null {
       continue;
     }
 
-    // 性交次数.角色名:+N / 足交次数.角色名:+N（开放字段，仅接受"X次数"后缀）。
+    // X次数.角色名:性交次数:+N —— 兼容模型把提示里的占位符 X次数 原样输出的旧错误。
+    const placeholderCounterMatch = trimmed.match(
+      /^X次数\s*[.．]\s*([^:：]+?)\s*[:：]\s*([一-鿿]{1,12}次数)\s*[:：]\s*([+\-＋－]?\s*\d+)/i,
+    );
+    if (placeholderCounterMatch) {
+      const delta = parseProgressDelta(placeholderCounterMatch[3]);
+      if (delta > 0) {
+        result.intimacyCounters.push({
+          field: placeholderCounterMatch[2].trim(),
+          target: placeholderCounterMatch[1].trim(),
+          delta,
+        });
+      }
+      hasAnyField = true;
+      continue;
+    }
+
+    if (/^X次数\s*[.．]/i.test(trimmed)) {
+      hasAnyField = true;
+      continue;
+    }
+
+    // 性交次数.角色名:+N / 足交次数.角色名:+N（开放字段，仅接受"次数"后缀）。
     // 设计意图是加深依恋感而非征服式统计，经验人数（伴侣数）不在此列，旧存档残留也不再解析。
-    const counterMatch = trimmed.match(/^([一-鿿]{1,8}次数)[.．]\s*([^:：]+)[:：]\s*([+\-]?\d+)/);
+    const counterMatch = trimmed.match(/^([一-鿿]{1,12}次数)\s*[.．]\s*([^:：]+?)\s*[:：]\s*([+\-＋－]?\s*\d+)/);
     if (counterMatch) {
-      const delta = parseInt(counterMatch[3], 10) || 0;
+      const delta = parseProgressDelta(counterMatch[3]);
       if (delta > 0) {
         result.intimacyCounters.push({
           field: counterMatch[1].trim(),

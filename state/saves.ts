@@ -255,21 +255,18 @@ function normalizePersistedStatusSnapshot(input: unknown): RollbackSnapshot | un
     statusData: normalizeStatusData(raw.statusData ?? defaultStatusData),
     ...(raw.playerProfile ? { playerProfile: normalizePlayerProfile(raw.playerProfile) } : {}),
     ...(raw.drawingSettings ? { drawingSettings: normalizeDrawingSettings(raw.drawingSettings) } : {}),
-    ...(raw.phoneMessages ? { phoneMessages: normalizePhoneMessageStore(raw.phoneMessages) } : {}),
-    ...(raw.summaryStore ? { summaryStore: cloneJson(raw.summaryStore) } : {}),
-    ...(raw.memoryDB ? { memoryDB: cloneJson(raw.memoryDB) } : {}),
   };
 }
 
-function hasHeavyStatusSnapshot(input: unknown): boolean {
+function hasHeavyPersistedStatusSnapshot(input: unknown): boolean {
   if (!input || typeof input !== 'object' || isStatusDataLike(input)) return false;
-  const raw = input as Record<string, unknown>;
+  const raw = input as Partial<RollbackSnapshot>;
   return Boolean(raw.phoneMessages || raw.summaryStore || raw.memoryDB);
 }
 
 function shouldCompactPersistedMessages(messages: unknown): boolean {
   if (!Array.isArray(messages)) return false;
-  return messages.some(message => hasHeavyStatusSnapshot((message as Partial<PersistedMessage> | null)?.statusSnapshot));
+  return messages.some(message => hasHeavyPersistedStatusSnapshot((message as Partial<PersistedMessage> | null)?.statusSnapshot));
 }
 
 function normalizePersistedMessages(messages: PersistedMessage[] | undefined): PersistedMessage[] {
@@ -785,44 +782,105 @@ export type SingleSaveBackupPayload = {
 
 const BACKUP_KEY_PREFIX = 'islandmilfcode:';
 
-export function exportAllSavesAsJson(): string {
-  const entries: Record<string, unknown> = {};
+function appendJsonField(parts: string[], key: string, value: unknown, hasPreviousField: boolean): boolean {
+  if (hasPreviousField) parts.push(',');
+  parts.push(JSON.stringify(key), ':', JSON.stringify(value));
+  return true;
+}
+
+function appendChatLogJson(parts: string[], messages: PersistedMessage[]): void {
+  parts.push('[');
+  messages.forEach((message, index) => {
+    if (index > 0) parts.push(',');
+    parts.push(JSON.stringify(message));
+  });
+  parts.push(']');
+}
+
+function appendSavePayloadJson(parts: string[], payload: SavePayload): void {
+  parts.push('{');
+  let hasField = false;
+  hasField = appendJsonField(parts, 'saveId', payload.saveId, hasField);
+  hasField = appendJsonField(parts, 'runId', payload.runId, hasField);
+  hasField = appendJsonField(parts, 'gameState', payload.gameState, hasField);
+  if (hasField) parts.push(',');
+  parts.push(JSON.stringify('chatLog'), ':');
+  appendChatLogJson(parts, payload.chatLog);
+  hasField = true;
+  hasField = appendJsonField(parts, 'summaryStore', payload.summaryStore, hasField);
+  if (payload.memoryDB) hasField = appendJsonField(parts, 'memoryDB', payload.memoryDB, hasField);
+  if (Array.isArray(payload.messageSnapshots)) {
+    hasField = appendJsonField(parts, 'messageSnapshots', payload.messageSnapshots, hasField);
+  }
+  appendJsonField(parts, 'version', payload.version, hasField);
+  parts.push('}');
+}
+
+function appendEntryPrefix(parts: string[], key: string, hasPreviousEntry: boolean): boolean {
+  if (hasPreviousEntry) parts.push(',');
+  parts.push(JSON.stringify(key), ':');
+  return true;
+}
+
+export function exportAllSavesAsJsonParts(): string[] {
+  const parts: string[] = ['{'];
+  let hasField = false;
   const index = readSaveIndex();
 
-  entries[SAVE_INDEX_STORAGE_KEY] = cloneJson(index);
+  hasField = appendJsonField(parts, 'version', SAVE_VERSION, hasField);
+  hasField = appendJsonField(parts, 'exportedAt', new Date().toISOString(), hasField);
+  if (hasField) parts.push(',');
+  parts.push(JSON.stringify('entries'), ':{');
+
+  let hasEntry = false;
+  hasEntry = appendEntryPrefix(parts, SAVE_INDEX_STORAGE_KEY, hasEntry);
+  parts.push(JSON.stringify(cloneJson(index)));
+
   for (const saveId of Object.keys(index)) {
     const payload = readPayload(saveId);
-    if (payload) entries[getPayloadStorageKey(saveId)] = payload;
+    if (!payload) continue;
+    hasEntry = appendEntryPrefix(parts, getPayloadStorageKey(saveId), hasEntry);
+    appendSavePayloadJson(parts, payload);
   }
 
   for (const key of [ACTIVE_RUN_ID_STORAGE_KEY, ACTIVE_SAVE_ID_STORAGE_KEY]) {
     const raw = localStorage.getItem(key);
-    if (raw != null) entries[key] = raw;
+    if (raw == null) continue;
+    hasEntry = appendEntryPrefix(parts, key, hasEntry);
+    parts.push(JSON.stringify(raw));
   }
 
-  const backup: SaveBackupPayload = {
-    version: SAVE_VERSION,
-    exportedAt: new Date().toISOString(),
-    entries,
-  };
-  return JSON.stringify(backup, null, 2);
+  parts.push('}}');
+  return parts;
 }
 
-export function exportSaveAsJson(saveId: string): string {
+export function exportAllSavesAsJson(): string {
+  return exportAllSavesAsJsonParts().join('');
+}
+
+export function exportSaveAsJsonParts(saveId: string): string[] {
   const meta = ensureMeta(saveId);
   const payload = readPayload(saveId);
   if (!meta || !payload) {
-    throw new Error('当前存档不存在，无法导出。');
+    throw new Error('Current save does not exist, so it cannot be exported.');
   }
-  const backup: SingleSaveBackupPayload = {
-    version: SAVE_VERSION,
-    exportedAt: new Date().toISOString(),
-    kind: 'single-save',
-    saveId,
-    meta: cloneJson(meta),
-    payload: cloneJson(payload),
-  };
-  return JSON.stringify(backup, null, 2);
+
+  const parts: string[] = ['{'];
+  let hasField = false;
+  hasField = appendJsonField(parts, 'version', SAVE_VERSION, hasField);
+  hasField = appendJsonField(parts, 'exportedAt', new Date().toISOString(), hasField);
+  hasField = appendJsonField(parts, 'kind', 'single-save', hasField);
+  hasField = appendJsonField(parts, 'saveId', saveId, hasField);
+  hasField = appendJsonField(parts, 'meta', cloneJson(meta), hasField);
+  if (hasField) parts.push(',');
+  parts.push(JSON.stringify('payload'), ':');
+  appendSavePayloadJson(parts, payload);
+  parts.push('}');
+  return parts;
+}
+
+export function exportSaveAsJson(saveId: string): string {
+  return exportSaveAsJsonParts(saveId).join('');
 }
 
 function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): { imported: number; skipped: number; saveId: string } {

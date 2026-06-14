@@ -156,7 +156,20 @@ function renderResponsivePhoneFrameStyle() {
 
   width = Math.max(0, Math.floor(width));
   height = Math.max(0, Math.floor(height));
-  return `--phone-shell-width:${width}px;--phone-shell-height:${height}px;`;
+  const homeAvatarSize = Math.floor(Math.max(48, Math.min(70, Math.min(width * 0.21, height * 0.11))));
+  const characterOptionSize = Math.floor(Math.max(20, Math.min(28, width * 0.075)));
+  const chatAvatarSize = Math.floor(Math.max(34, Math.min(42, width * 0.12)));
+  const embeddedReaderHeight = Math.floor(Math.max(168, Math.min(280, height * 0.34)));
+  const embeddedIllustrationHeight = Math.floor(Math.max(150, Math.min(260, height * 0.3)));
+  return [
+    `--phone-shell-width:${width}px`,
+    `--phone-shell-height:${height}px`,
+    `--phone-home-avatar-size:${homeAvatarSize}px`,
+    `--phone-character-option-size:${characterOptionSize}px`,
+    `--phone-chat-avatar-size:${chatAvatarSize}px`,
+    `--phone-reader-body-height:${embeddedReaderHeight}px`,
+    `--phone-illustration-max-height:${embeddedIllustrationHeight}px`,
+  ].join(';');
 }
 
 function renderPhoneAppHeader(state: AppState, title: string, subtitle = '') {

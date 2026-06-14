@@ -50,8 +50,10 @@ body.floating-phone-dragging {
 
 .phone-modal {
   --phone-modal-pad: clamp(6px, 2.4vmin, 24px);
-  --phone-safe-width: calc(100vw - var(--phone-modal-pad) - var(--phone-modal-pad));
-  --phone-safe-height: calc(100vh - var(--phone-modal-pad) - var(--phone-modal-pad));
+  --phone-safe-width: calc(100vw - var(--phone-modal-pad) * 2);
+  --phone-safe-height: calc(100vh - var(--phone-modal-pad) * 2);
+  --phone-shell-width: min(380px, var(--phone-safe-width));
+  --phone-shell-height: min(680px, var(--phone-safe-height));
   position: fixed;
   inset: 0;
   z-index: 20;
@@ -79,12 +81,12 @@ body.floating-phone-dragging {
   position: relative;
   z-index: 1;
   box-sizing: border-box;
-  width: min(var(--phone-safe-width), var(--phone-shell-width, 380px));
-  height: min(var(--phone-safe-height), var(--phone-shell-height, 680px));
-  max-width: var(--phone-safe-width);
-  max-height: var(--phone-safe-height);
-  border-radius: 12px;
-  padding: 10px;
+  width: var(--phone-shell-width);
+  height: var(--phone-shell-height);
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: clamp(8px, 2vmin, 12px);
+  padding: clamp(8px, 1.8vmin, 10px);
   background: linear-gradient(180deg, var(--journal-kraft) 0%, var(--journal-edge) 100%);
   box-shadow:
     0 16px 48px rgba(80, 60, 30, 0.2),
@@ -3535,4 +3537,51 @@ body.floating-phone-dragging {
 
 .phone-drawing-primary:active {
   transform: translateY(1px);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   手机设备响应式优化
+   ═══════════════════════════════════════════════════════════════ */
+
+/* 小屏幕设备（手机竖屏）*/
+@media (max-width: 480px) {
+  .phone-modal {
+    --phone-modal-pad: clamp(4px, 1.5vmin, 8px);
+    --phone-shell-width: min(340px, var(--phone-safe-width));
+    --phone-shell-height: min(600px, var(--phone-safe-height));
+  }
+
+  .phone-shell {
+    border-radius: 8px;
+    padding: 8px;
+  }
+
+  .phone-screen {
+    border-radius: 6px;
+  }
+}
+
+/* 极小高度屏幕 */
+@media (max-height: 600px) {
+  .phone-modal {
+    --phone-shell-height: calc(100vh - 16px);
+  }
+
+  .phone-shell {
+    padding: 6px;
+  }
+}
+
+/* 超小屏幕（小手机或横屏）*/
+@media (max-width: 480px) and (max-height: 600px) {
+  .phone-modal {
+    --phone-modal-pad: 4px;
+    --phone-shell-width: calc(100vw - 8px);
+    --phone-shell-height: calc(100vh - 8px);
+  }
+
+  .phone-shell {
+    border-radius: 6px;
+    padding: 6px;
+  }
 }

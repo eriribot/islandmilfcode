@@ -47,3 +47,28 @@ Original prompt: DESIGN.md 根据这个md文件修复提到的问题
   - `npx tsc --noEmit --skipLibCheck --pretty false --target es2020 --module esnext --moduleResolution node src/islandmilfcode/index.ts src/islandmilfcode/actions/index.ts src/islandmilfcode/actions/streaming.ts src/islandmilfcode/state/store.ts src/islandmilfcode/message-format.ts src/islandmilfcode/types.ts src/islandmilfcode/variables/adapter.ts`
   - Browser check in local SillyTavern: sending from the iframe no longer increased host `.mes` count.
   - After page reload, the iframe conversation was restored from variables.
+
+2026-06-14 paper fullscreen plugin
+
+- Added `plugins/fullscreen.ts` for the in-app paper workspace fullscreen flag, render button, and `F` shortcut guard.
+- Wired the fullscreen button into `renderPaperWorkspace()` without using the browser Fullscreen API.
+- Added CSS for `.paper-workspace.is-paper-fullscreen` so the rendered floor fills the viewport while staying inside the app.
+
+- 2026-06-14 correction: fullscreen now also expands the host frame/message wrapper around the rendered islandmilfcode UI, not only the inner paper workspace.
+
+- 2026-06-14 fullscreen fix: real SillyTavern host is iframe#TH-message--0--0; ST rewrites inline height, so fullscreen host CSS is now injected into parent document with !important rules.
+
+- 2026-06-14 fullscreen host-chain fix: real page confirmed `window.frameElement instanceof HTMLElement` is false inside the Tavern Helper iframe, so the plugin now accepts cross-realm frame elements via `nodeType === 1`.
+- Expanded host-chain takeover to include Tavern/SillyTavern wrappers: `#chat`, `#sheld`, `.mes`, `.mes_block`, `.mes_text`, `.mes_text_display`, and `.TH-render`, plus the iframe itself.
+- Manual DevTools verification on `http://127.0.0.1:8000/`: marking `iframe#TH-message--0--0 -> .TH-render -> .mes_text -> .mes_block -> .mes -> #chat` produced rect `x=0,y=0,width=2560,height=1249`.
+- Validation: `cmd /c pnpm build:dev` passed.
+
+2026-06-14 fullscreen / mobile sizing pass
+
+- Shifted the sizing work out of fullscreen host plumbing and into render/layout layers.
+- `render.ts` now marks full-screen reader decks and illustration-heavy workspaces with semantic classes so CSS can tune width/height by content type.
+- `styles.css` now uses variable-driven reader width, font size, line height, illustration height, and Saenai avatar sizing for fullscreen and phone-embedded modes.
+- `phone/render.ts` now emits viewport-derived CSS variables for shell size, home avatar size, chat avatar size, embedded reader height, and illustration height.
+- `phone/styles.css` now reads those variables so the phone UI scales with actual viewport space instead of fixed avatar/body sizes.
+- Validation: `cmd /c pnpm run build` passed.
+- Note: fullscreen host takeover logic in `plugins/fullscreen.ts` was left as-is after reverting the temporary live2d/waifu experiment.

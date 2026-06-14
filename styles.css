@@ -46,6 +46,14 @@
   --radius-sticker: 22px;
   --reader-body-height: clamp(420px, 62vh, 720px);
   --reader-body-height: clamp(420px, 62dvh, 720px);
+  --reader-content-max: min(1080px, calc(100vw - 120px));
+  --reader-preview-max: min(1040px, calc(100vw - 140px));
+  --reader-font-size: 1.04rem;
+  --reader-line-height: 1.78;
+  --saenai-avatar-size: 64px;
+  --saenai-avatar-radius: 16px;
+  --saenai-text-size: 1.14rem;
+  --saenai-line-height: 1.74;
 }
 
 html,
@@ -64,6 +72,16 @@ body,
   min-height: 100vh;
 }
 
+html.islandmilfcode-paper-fullscreen-root,
+body.islandmilfcode-paper-fullscreen-root,
+body.islandmilfcode-paper-fullscreen-root #app {
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  margin: 0;
+  overflow: hidden;
+}
+
 button,
 textarea {
   font: inherit;
@@ -80,6 +98,20 @@ button {
 .islandmilfcode-scene {
   min-height: 100vh;
   padding: 20px;
+}
+
+.islandmilfcode-scene.is-paper-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483645;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  padding: 0;
+  overflow: hidden;
+  background:
+    repeating-conic-gradient(var(--journal-warm) 0% 25%, transparent 0% 50%) 0 0 / 40px 40px,
+    linear-gradient(180deg, var(--journal-cream) 0%, #f0e7d5 100%);
 }
 
 /* ── 手帐本体 ── */
@@ -126,6 +158,76 @@ button {
   inset: 0;
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, transparent 30%);
   pointer-events: none;
+}
+
+.paper-workspace.is-paper-fullscreen {
+  --reader-body-height: clamp(360px, calc(100dvh - 324px), 980px);
+  --reader-content-max: min(1560px, calc(100vw - clamp(56px, 7vw, 180px)));
+  --reader-preview-max: min(1480px, calc(100vw - clamp(64px, 8vw, 200px)));
+  --reader-font-size: clamp(1.04rem, 0.97rem + 0.35vw, 1.18rem);
+  --reader-line-height: 1.84;
+  --saenai-avatar-size: clamp(56px, 4.2vw, 72px);
+  --saenai-avatar-radius: clamp(14px, 1.1vw, 18px);
+  --saenai-text-size: clamp(1.04rem, 0.98rem + 0.32vw, 1.2rem);
+  --saenai-line-height: 1.72;
+  position: relative;
+  z-index: 1;
+  width: 100vw;
+  height: 100dvh;
+  min-height: 100dvh;
+  max-height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-radius: 0;
+  padding: clamp(16px, 2.2vh, 30px) clamp(18px, 3vw, 52px) clamp(24px, 3vh, 42px) clamp(34px, 4vw, 58px);
+  box-shadow: none;
+  border-left-width: 4px;
+}
+
+.paper-workspace.is-paper-fullscreen .washi-strip--top {
+  top: 0;
+}
+
+/* 全屏模式下内容展开 */
+.paper-workspace.is-paper-fullscreen .reader-card {
+  width: 100%;
+  max-width: var(--reader-content-max);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.paper-workspace.is-paper-fullscreen .reader-preview {
+  max-width: var(--reader-preview-max);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.paper-workspace.is-paper-fullscreen .reader-card__text {
+  font-size: var(--reader-font-size, 1.04rem);
+  line-height: var(--reader-line-height, 1.78);
+}
+
+.paper-workspace.is-paper-fullscreen .saenai-dialogue {
+  grid-template-columns: var(--saenai-avatar-size, 64px) minmax(0, 1fr);
+  width: fit-content;
+  min-width: min(720px, 100%);
+  max-width: min(100%, 1180px);
+}
+
+.paper-workspace.is-paper-fullscreen .saenai-dialogue__avatar {
+  width: var(--saenai-avatar-size, 64px);
+  height: var(--saenai-avatar-size, 64px);
+  border-radius: var(--saenai-avatar-radius, 16px);
+  background-size: calc(var(--saenai-avatar-size, 64px) * 6) var(--saenai-avatar-size, 64px);
+}
+
+.paper-workspace.is-paper-fullscreen .saenai-dialogue__text {
+  font-size: var(--saenai-text-size, 1.14rem);
+  line-height: var(--saenai-line-height, 1.74);
+}
+
+.paper-workspace.is-paper-fullscreen .reader-card__body {
+  height: var(--reader-body-height);
 }
 
 /* ── 和纸胶带装饰条 ── */
@@ -178,6 +280,107 @@ button {
   height: 2px;
   background: repeating-linear-gradient(90deg, var(--washi-lavender) 0 6px, transparent 6px 10px);
   opacity: 0.6;
+}
+
+.journal-header__actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ── 全屏按钮 ── */
+.paper-fullscreen-btn {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--ink-soft);
+  background: rgba(255, 252, 245, 0.74);
+  border: 1.5px solid rgba(180, 160, 130, 0.22);
+  box-shadow: 0 4px 12px rgba(80, 60, 30, 0.08);
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.paper-fullscreen-btn:hover,
+.paper-fullscreen-btn.is-active {
+  color: var(--ink-assistant);
+  background: rgba(255, 252, 245, 0.94);
+  transform: translateY(-1px);
+}
+
+.paper-fullscreen-btn__icon {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.paper-fullscreen-btn__icon span {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-color: currentColor;
+  border-style: solid;
+}
+
+.paper-fullscreen-btn__icon span:nth-child(1) {
+  top: 0;
+  left: 0;
+  border-width: 2px 0 0 2px;
+}
+
+.paper-fullscreen-btn__icon span:nth-child(2) {
+  top: 0;
+  right: 0;
+  border-width: 2px 2px 0 0;
+}
+
+.paper-fullscreen-btn__icon span:nth-child(3) {
+  bottom: 0;
+  right: 0;
+  border-width: 0 2px 2px 0;
+}
+
+.paper-fullscreen-btn__icon span:nth-child(4) {
+  bottom: 0;
+  left: 0;
+  border-width: 0 0 2px 2px;
+}
+
+.paper-fullscreen-btn.is-active .paper-fullscreen-btn__icon span {
+  width: 5px;
+  height: 5px;
+}
+
+.paper-fullscreen-btn.is-active .paper-fullscreen-btn__icon span:nth-child(1) {
+  top: 2px;
+  left: 2px;
+  border-width: 0 0 2px 2px;
+}
+
+.paper-fullscreen-btn.is-active .paper-fullscreen-btn__icon span:nth-child(2) {
+  top: 2px;
+  right: 2px;
+  border-width: 0 2px 2px 0;
+}
+
+.paper-fullscreen-btn.is-active .paper-fullscreen-btn__icon span:nth-child(3) {
+  bottom: 2px;
+  right: 2px;
+  border-width: 2px 2px 0 0;
+}
+
+.paper-fullscreen-btn.is-active .paper-fullscreen-btn__icon span:nth-child(4) {
+  bottom: 2px;
+  left: 2px;
+  border-width: 2px 0 0 2px;
 }
 
 .journal-date-block {
@@ -357,7 +560,7 @@ button {
 /* 主消息区 - 直接显示在纸面上，无边框 */
 .reader-card {
   position: relative;
-  width: min(100%, 1080px);
+  width: min(100%, var(--reader-content-max, 1080px));
   margin: 4px auto;
   padding: 0 4px 0 18px;
   background: transparent;
@@ -568,8 +771,8 @@ button {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: 'Klee One', serif;
-  font-size: 1.04rem;
-  line-height: 1.78;
+  font-size: var(--reader-font-size, 1.04rem);
+  line-height: var(--reader-line-height, 1.78);
   color: var(--ink-dark);
 }
 
@@ -577,7 +780,7 @@ button {
 .saenai-dialogue {
   position: relative;
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-columns: var(--saenai-avatar-size, 64px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
   min-height: 76px;
@@ -601,13 +804,13 @@ button {
 
 .saenai-dialogue__avatar {
   display: block;
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
+  width: var(--saenai-avatar-size, 64px);
+  height: var(--saenai-avatar-size, 64px);
+  border-radius: var(--saenai-avatar-radius, 16px);
   overflow: hidden;
   background-image: url('https://eriribot.github.io/islandmilfcode/picresource/Saenai_sprites.jpg');
   background-repeat: no-repeat;
-  background-size: 384px 64px;
+  background-size: calc(var(--saenai-avatar-size, 64px) * 6) var(--saenai-avatar-size, 64px);
   box-shadow:
     0 8px 18px rgba(98, 72, 62, 0.16),
     0 0 0 3px rgba(255, 255, 255, 0.7),
@@ -615,23 +818,23 @@ button {
 }
 
 .saenai-dialogue__avatar--megumi {
-  background-position: -64px 0;
+  background-position: calc(var(--saenai-avatar-size, 64px) * -1) 0;
 }
 
 .saenai-dialogue__avatar--eriri {
-  background-position: -128px 0;
+  background-position: calc(var(--saenai-avatar-size, 64px) * -2) 0;
 }
 
 .saenai-dialogue__avatar--utaha {
-  background-position: -192px 0;
+  background-position: calc(var(--saenai-avatar-size, 64px) * -3) 0;
 }
 
 .saenai-dialogue__avatar--izumi {
-  background-position: -256px 0;
+  background-position: calc(var(--saenai-avatar-size, 64px) * -4) 0;
 }
 
 .saenai-dialogue__avatar--michiru {
-  background-position: -320px 0;
+  background-position: calc(var(--saenai-avatar-size, 64px) * -5) 0;
 }
 
 .saenai-dialogue__avatar--placeholder {
@@ -685,8 +888,8 @@ button {
   white-space: pre-wrap;
   word-break: break-word;
   font-family: 'Klee One', serif;
-  font-size: 1.14rem;
-  line-height: 1.74;
+  font-size: var(--saenai-text-size, 1.14rem);
+  line-height: var(--saenai-line-height, 1.74);
   color: var(--ink-dark);
 }
 
@@ -2277,10 +2480,28 @@ button {
     padding: 10px;
   }
 
+  .islandmilfcode-scene.is-paper-fullscreen {
+    padding: 0;
+  }
+
   .paper-workspace {
     min-height: calc(100vh - 20px);
     padding: 14px 12px 28px 32px;
     border-radius: 4px 14px 14px 4px;
+  }
+
+  .paper-workspace.is-paper-fullscreen {
+    --reader-body-height: clamp(280px, calc(100dvh - 244px), 640px);
+    --reader-content-max: calc(100vw - clamp(20px, 5vw, 60px));
+    --reader-preview-max: calc(100vw - clamp(24px, 6vw, 70px));
+    width: 100vw;
+    height: 100dvh;
+    min-height: 100dvh;
+    max-height: 100dvh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: clamp(12px, 2vh, 18px) clamp(10px, 3vw, 16px) clamp(20px, 3vh, 28px) clamp(28px, 4vw, 36px);
+    border-radius: 0;
   }
 
   .paper-workspace::before {
@@ -2395,7 +2616,7 @@ button {
   }
 
   .saenai-dialogue {
-    grid-template-columns: 50px minmax(0, 1fr);
+    grid-template-columns: var(--saenai-avatar-size, 50px) minmax(0, 1fr);
     gap: 10px;
     min-height: 62px;
     margin: 10px 0;
@@ -2404,30 +2625,30 @@ button {
   }
 
   .saenai-dialogue__avatar {
-    width: 50px;
-    height: 50px;
+    width: var(--saenai-avatar-size, 50px);
+    height: var(--saenai-avatar-size, 50px);
     border-radius: 13px;
-    background-size: 300px 50px;
+    background-size: calc(var(--saenai-avatar-size, 50px) * 6) var(--saenai-avatar-size, 50px);
   }
 
   .saenai-dialogue__avatar--megumi {
-    background-position: -50px 0;
+    background-position: calc(var(--saenai-avatar-size, 50px) * -1) 0;
   }
 
   .saenai-dialogue__avatar--eriri {
-    background-position: -100px 0;
+    background-position: calc(var(--saenai-avatar-size, 50px) * -2) 0;
   }
 
   .saenai-dialogue__avatar--utaha {
-    background-position: -150px 0;
+    background-position: calc(var(--saenai-avatar-size, 50px) * -3) 0;
   }
 
   .saenai-dialogue__avatar--izumi {
-    background-position: -200px 0;
+    background-position: calc(var(--saenai-avatar-size, 50px) * -4) 0;
   }
 
   .saenai-dialogue__avatar--michiru {
-    background-position: -250px 0;
+    background-position: calc(var(--saenai-avatar-size, 50px) * -5) 0;
   }
 
   .saenai-dialogue__name {
@@ -2445,5 +2666,31 @@ button {
 
   .composer-input {
     line-height: 1.7;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   超小屏幕优化（手机）
+   ═══════════════════════════════════════════════════════════════ */
+
+@media (max-width: 480px) {
+  :root {
+    --reader-content-max: calc(100vw - 30px);
+    --reader-preview-max: calc(100vw - 34px);
+  }
+
+  .paper-workspace {
+    padding: 12px 10px 24px 28px;
+  }
+
+  .islandmilfcode-scene {
+    padding: 6px;
+  }
+}
+
+/* 横屏小屏幕 */
+@media (max-width: 480px) and (orientation: landscape) {
+  .paper-workspace {
+    padding: 10px 12px 20px 24px;
   }
 }

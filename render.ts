@@ -7,6 +7,7 @@ import {
   getVisibleMessageText,
 } from './message-format';
 import { splitTextByImageGenerationAnchors } from './plugins/image-generation';
+import { isPaperWorkspaceFullscreen, renderPaperFullscreenButton } from './plugins/fullscreen';
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
 import type { SummaryStore } from './summary/types';
 import type {
@@ -261,6 +262,10 @@ function renderIllustrationPanel(messageId: string, illustrations: MessageIllust
   `;
 }
 
+function hasRenderableIllustrations(message: UiMessage | undefined) {
+  return Boolean(message?.illustrations?.some(illustration => Boolean(illustration.imageData?.trim())));
+}
+
 type SaenaiSpriteId = 'megumi' | 'eriri' | 'utaha' | 'izumi' | 'michiru';
 
 interface SaenaiDialogueLine {
@@ -307,6 +312,17 @@ function getSaenaiSprite(characterName: string): SaenaiSpriteId | null {
 function extractSaenaiBody(line: string) {
   const match = line.trim().match(/^[＠@]\s*saenai\s*[:：]\s*([\s\S]*)$/i);
   return match?.[1]?.trim() ?? '';
+}
+
+function extractWrappedSaenaiNarration(line: string) {
+  const match = line.trim().match(/^[{｛]\s*[＠@]\s*saenai\s*[:：]\s*([\s\S]*?)\s*[}｝]\s*$/i);
+  if (!match) return null;
+
+  const body = match[1]?.trim() ?? '';
+  const dialogue = parseSaenaiDialogueLine(`@saenai:${body}`);
+  if (dialogue?.text) return dialogue.text;
+
+  return body || null;
 }
 
 // Saenai 对话解析：识别正文里的 @saenai 行并渲染五小只头像，雪碧图第 0 格安艺伦也不参与映射。
@@ -459,6 +475,12 @@ function renderSaenaiDialogueBody(text: string) {
       return;
     }
     if (!dialogue) {
+      const wrappedNarration = extractWrappedSaenaiNarration(line);
+      if (wrappedNarration != null) {
+        textBuffer.push(wrappedNarration);
+        return;
+      }
+
       const trigger = parseSaenaiDialogueTriggerLine(line);
       if (trigger) {
         flushText();
@@ -683,7 +705,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
   const model = getReaderModel(state);
   if (!model.currentMessage) {
     return `
-      <section class="paper-reader">
+      <section class="paper-reader paper-reader--empty">
         <div class="paper-reader__lane paper-reader__lane--top"><div class="reader-preview reader-preview--ghost"></div></div>
         <article class="reader-card reader-card--system">
           <div class="reader-card__chrome">
@@ -707,7 +729,9 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
   const message = model.currentMessage;
   const visibleText = getVisibleMessageText(message);
   const illustrations = message.illustrations?.filter(illustration => illustration.imageData.trim()) ?? [];
-  const hasIllustrations = illustrations.length > 0;
+  const hasIllustrations = hasRenderableIllustrations(message);
+  const deckClasses = ['paper-reader'];
+  if (hasIllustrations) deckClasses.push('paper-reader--with-illustrations');
 
   const topLane = `
     <div class="paper-reader__lane paper-reader__lane--top">
@@ -722,13 +746,14 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
 
   if (!visibleText && !hasIllustrations && !message.streaming) {
     return `
-      <section class="paper-reader">
+      <section class="${deckClasses.join(' ')}">
         ${topLane}
 
         <article
           class="reader-card reader-card--${message.role} reader-card--empty"
           data-reader-index="${model.currentIndex}"
           data-reader-id="${escapeHtml(message.id)}"
+          data-has-illustrations="${hasIllustrations ? 'true' : 'false'}"
           ${flipDir ? ` data-flip="${flipDir}"` : ''}
         >
           <div class="reader-card__chrome">
@@ -752,13 +777,14 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
   }
 
   return `
-    <section class="paper-reader">
+    <section class="${deckClasses.join(' ')}">
       ${topLane}
 
       <article
-        class="reader-card reader-card--${message.role}"
+        class="reader-card reader-card--${message.role}${hasIllustrations ? ' reader-card--with-illustrations' : ''}"
         data-reader-index="${model.currentIndex}"
         data-reader-id="${escapeHtml(message.id)}"
+        data-has-illustrations="${hasIllustrations ? 'true' : 'false'}"
         ${flipDir ? ` data-flip="${flipDir}"` : ''}
       >
         <div class="reader-card__chrome">
@@ -798,7 +824,7 @@ function getWeekday(dateStr: string) {
   return '';
 }
 
-function renderJournalHeader(state: AppState) {
+function renderJournalHeader(state: AppState, controlsHtml = '') {
   const dateStr = formatDate(state.statusData.world.currentTime);
   const weekday = getWeekday(state.statusData.world.currentTime);
 
@@ -811,8 +837,11 @@ function renderJournalHeader(state: AppState) {
         </div>
         <div class="journal-location">地点 ${escapeHtml(state.statusData.world.currentLocation)}</div>
       </div>
-      <div class="journal-sticker">
-        ${escapeHtml(state.playerProfile.className || '主角档案')}
+      <div class="journal-header__actions">
+        ${controlsHtml}
+        <div class="journal-sticker">
+          ${escapeHtml(state.playerProfile.className || '主角档案')}
+        </div>
       </div>
     </header>
   `;
@@ -824,12 +853,20 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
   const readerMessages = getReaderMessages(state.uiMessages);
   const currentReaderIndex = Math.min(Math.max(state.focusedMessageIndex, 0), Math.max(readerMessages.length - 1, 0));
   const composerActionsButton = renderReaderActionsButton(state, currentReaderIndex, 'composer-floor-actions');
+  const fullscreenClass = !embedded && isPaperWorkspaceFullscreen(state) ? ' is-paper-fullscreen' : '';
+  const fullscreenButton = embedded ? '' : renderPaperFullscreenButton(state);
+  const readerFocusMessage = readerMessages[currentReaderIndex];
+  const readerHasIllustrations = hasRenderableIllustrations(readerFocusMessage);
+  const workspaceClasses = ['paper-workspace'];
+  if (embedded) workspaceClasses.push('paper-workspace--phone');
+  if (fullscreenClass) workspaceClasses.push('is-paper-fullscreen');
+  if (readerHasIllustrations) workspaceClasses.push('paper-workspace--with-illustrations');
   return `
-    <section class="paper-workspace ${embedded ? 'paper-workspace--phone' : ''}">
+    <section class="${workspaceClasses.join(' ')}">
       ${embedded ? '' : '<div class="washi-strip washi-strip--top" aria-hidden="true"></div>'}
       ${embedded ? '' : '<div class="washi-strip washi-strip--side" aria-hidden="true"></div>'}
 
-      ${embedded ? '' : renderJournalHeader(state)}
+      ${embedded ? '' : renderJournalHeader(state, fullscreenButton)}
 
       <div class="section-tab">
         <span class="section-tab__label">对话记录</span>
@@ -1468,8 +1505,9 @@ const phoneRenderers: PhoneRenderers = {
 };
 
 export function renderApp(state: AppState, flipDir: string = '') {
+  const fullscreenClass = isPaperWorkspaceFullscreen(state) ? ' is-paper-fullscreen' : '';
   return `
-    <main class="islandmilfcode-scene">
+    <main class="islandmilfcode-scene${fullscreenClass}">
       ${renderPaperWorkspace(state, flipDir)}
       ${renderTucaoFloatingPanel(state)}
       ${renderBackgroundTasks(state.backgroundTasks)}

@@ -44,7 +44,7 @@ import {
   createManualSave,
   createSave,
   deleteSave,
-  exportSaveAsJson,
+  exportSaveAsJsonParts,
   getAutosaveBranchSaveId,
   importAllSavesFromJson,
   loadSave,
@@ -105,6 +105,14 @@ import {
 import { loadMemoryConfig, saveMemoryConfig, resetMemoryConfig } from './memory-config';
 import { getImageGenerationPromptAtAnchor, isImageGenerationPluginAvailable, requestImageGeneration } from './plugins/image-generation';
 import { isChatu8PluginAvailable, openChatu8Plugin } from './plugins/chatu8-integration';
+import {
+  isEditableTarget,
+  isPaperFullscreenToggleShortcut,
+  isPaperWorkspaceFullscreen,
+  setPaperWorkspaceFullscreen,
+  syncPaperFullscreenHost,
+  togglePaperWorkspaceFullscreen,
+} from './plugins/fullscreen';
 
 const win = window as TavernWindow;
 const root = document.querySelector<HTMLDivElement>('#app');
@@ -395,8 +403,7 @@ async function downloadSaveBackup(saveId: string) {
   // 导出前确保已入队的写入全部落盘，再去读。
   await flushSaveStore();
   try {
-    const json = exportSaveAsJson(saveId);
-    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+    const blob = new Blob(exportSaveAsJsonParts(saveId), { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1888,6 +1895,13 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-message"]').forEach(button => {
     button.addEventListener('click', () => jumpMessage(Number(button.dataset.index ?? 0)));
   });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="toggle-paper-fullscreen"]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      togglePaperWorkspaceFullscreen(state);
+      render();
+    });
+  });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="reader-edit"]').forEach(button => {
     button.addEventListener('click', event => {
       event.stopPropagation();
@@ -2693,6 +2707,7 @@ function render() {
       persistToSave();
     }
     syncFocusedMessage(state);
+    syncPaperFullscreenHost(isPaperWorkspaceFullscreen(state));
     root.innerHTML = renderApp(state, flipDirection);
     bindEvents();
     restoreReaderBodyScroll(readerBodyScroll);
@@ -2709,10 +2724,12 @@ function render() {
       unmountRadarChart();
     }
   } else if (state.creatingCharacter) {
+    syncPaperFullscreenHost(false);
     // 角色创建界面。
     root.innerHTML = renderCharacterCreation();
     bindCharacterCreationEvents(root, titleCallbacks);
   } else {
+    syncPaperFullscreenHost(false);
     // 标题界面。
     root.innerHTML = renderTitleHome({ showSaves: state.showingSaveList });
     bindTitleHomeEvents(root, titleCallbacks);
@@ -2722,6 +2739,7 @@ function render() {
 // ── Global events ──
 
 window.addEventListener('resize', () => {
+  syncPaperFullscreenHost(isPaperWorkspaceFullscreen(state));
   ctx.closeReaderContextMenu(false);
   syncFloatingPhoneAfterResize(state);
   const tucao = getTucaoFloatFlag();
@@ -2729,6 +2747,10 @@ window.addEventListener('resize', () => {
     x: clamp(tucao.x, 8, Math.max(8, window.innerWidth - 260)),
     y: clamp(tucao.y, 8, Math.max(8, window.innerHeight - 44)),
   });
+  // 全屏模式下，安卓虚拟键盘弹出/收起会触发 resize；若此时重渲会替换掉焦点输入框，导致键盘被关闭。
+  if (isPaperWorkspaceFullscreen(state) && isEditableTarget(document.activeElement)) {
+    return;
+  }
   scheduleRender(); // 使用防抖渲染，避免 resize 时卡顿
 });
 
@@ -2761,6 +2783,18 @@ window.addEventListener('keydown', event => {
   if (event.key === 'Escape' && state.showingSaveList) {
     event.preventDefault();
     state.showingSaveList = false;
+    render();
+    return;
+  }
+  if (event.key === 'Escape' && isPaperWorkspaceFullscreen(state)) {
+    event.preventDefault();
+    setPaperWorkspaceFullscreen(state, false);
+    render();
+    return;
+  }
+  if (isPaperFullscreenToggleShortcut(event)) {
+    event.preventDefault();
+    togglePaperWorkspaceFullscreen(state);
     render();
     return;
   }

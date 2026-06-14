@@ -225,9 +225,6 @@ export function createRollbackSnapshot(
     statusData: cloneJson(state.statusData),
     playerProfile: applyProfileDefaults(cloneJson(state.playerProfile)),
     drawingSettings: normalizeDrawingSettings(state.drawingSettings),
-    phoneMessages: clonePhoneMessagesForSnapshot(state.phoneMessages),
-    summaryStore: deserializeSummaryStore(state.summaryStore),
-    memoryDB: cloneMemoryDBForSnapshot(state.memoryDB),
   };
 }
 
@@ -581,7 +578,7 @@ export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
         })).filter(illustration => illustration.imageData);
       }
       if (message.statusSnapshot) {
-        base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot);
+        base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false });
       }
       return base;
     });
@@ -615,7 +612,7 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
           : undefined,
       };
       if (msg.statusSnapshot) {
-        ui.statusSnapshot = normalizeRollbackSnapshot(msg.statusSnapshot);
+        ui.statusSnapshot = normalizeRollbackSnapshot(msg.statusSnapshot, { includeSideWindows: false });
       }
       return ui;
     });
