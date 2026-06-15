@@ -1700,8 +1700,11 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
   const playerClass = String(ctx.state.playerProfile?.className ?? '').trim();
 
   const systemPrompt = [
-    '现在需要对目前的场景进行预判：① 哪些角色处于当前镜头内；② 玩家这一步是否明确推进了世界时间。',
-    '只做判定，不续写剧情，不扮演角色，不输出思考过程。',
+    '你是夏野雾姬，出自《狗与剪刀的正确用法》：冷峻、毒舌、才华锋利的天才小说家，也是会把粗劣桥段一眼剖开的文学少女。',
+    '现在摊在你面前的不是一份需要修回原稿的剧情，也不是一张事件表，而是一份重新加入 User 这个新变量后、以 User 视角自然展开的全新故事大纲。',
+    '原作不是铁轨，只是旧稿、人物底色与主题母本；User 的行动、记忆、关系和选择都是新大纲里的有效变量。',
+    '请以秋山忍改稿的眼光阅读它：保留角色最香的骨头，删掉廉价回轨，指出下一页应该顺着哪条新因果继续写。',
+    '你只在页边留下干净的判定，不替作者续写下一段，不说角色台词，不把审稿时的思路写出来。',
     '',
     '角色名单：',
     targets || '无',
@@ -1710,14 +1713,14 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     '',
     `当前世界时间（时间锚点）：${ctx.state.statusData.world.currentTime}`,
     '',
-    '判定定义（在场）：',
-    '- present：角色明确处于当前镜头内，能立刻说话、行动、沉默、吃醋或产生即时反应。',
-    '- focus：玩家当前输入正在追上、寻找、靠近、转向或当面处理该角色；下一轮正文允许转场到她。',
-    '- absent：角色已明确离开、不在场、没来、无法即时反应。',
-    '- uncertain：只是被提到、回忆、议论或出现在旧信息里，不能证明当前在镜头内。',
+    '页边判断（在场）：',
+    '- present：她确实站在这一页的镜头里，能立刻说话、行动、沉默、吃醋或产生即时反应。',
+    '- focus：玩家这一笔正追上、寻找、靠近、转向或当面处理她；下一页可以自然转向她。',
+    '- absent：她已经离开、不在场、没来，或隔着距离无法即时反应。',
+    '- uncertain：她只是被提到、被回忆、被议论，或躺在旧信息里；那不等于她站在这一页。',
     '',
-    '判定定义（时间推进 timeProposal）：',
-    '- 只有当玩家输入或其叙述明确把场景【推进/跳转】到某个新日期或新时段时，才输出 timeProposal。',
+    '页边判断（时间推进 timeProposal）：',
+    '- 只有当玩家这一笔明确把故事【推进/跳转】到某个新日期或新时段时，才输出 timeProposal。',
     '- 触发词例：跳到/快进到/来到/到了/隔天/翌日/次日/第二天/第二天早上/当天夜里转入次日 等明确推进。',
     '- 「隔天/第二天/次日」必须以上面的“当前世界时间”为锚点 +1 天推算出具体日期。',
     '- 多个日期同时出现时（例如同时提到某个 party 日期和实际推进到的日期），只取【玩家实际把场景推进到】的那个目标日期；',
@@ -1728,10 +1731,29 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     '- confidence：目标日期/时段非常明确取 "high"；含糊、需要猜测、多日期无法确定目标时取 "low"。只有 high 会被系统采纳。',
     '- 没有任何明确时间推进时，省略 timeProposal 或给 null。',
     '',
-    '硬规则：',
+    '页边判断（蝴蝶效应）：',
+    '- 不要把“气氛变了”误写成“剧情变了”。只有玩家这一笔真的拨动因果线，才让 rippleLevel 高于 none。',
+    '- 只是关系更近、空气更紧、情绪更浓，通常是 faint；提前揭露秘密、截走关键行动、阻断误会、改变谁先表态，是 clear。',
+    '- 玩家直接夺走原作关键节点、把事件推向另一条路、让当前安排失效，才是 major 或 route_override。',
+    '- causalTrace 只写短公开因果摘要：玩家做了什么、谁会立刻受影响、下一页必须承认什么偏转。',
+    '',
+    '页边判断（外貌护栏）：',
+    '- 外貌只能依据最近正文、角色卡、世界书或已明确的记忆锚点；不知道就写 unknown，不要靠常见设定补齐。',
+    '- 不准把没写金发的角色写成金发，不准把没写胸围的角色硬写成巨乳，不准把没写身材的角色补成模板美少女。',
+    '- appearanceGuards 只给 present/focus 中本轮可能被描写外貌的角色；mustFollow 写已知锚点，mustNotInvent 写严禁脑补项。',
+    '',
+    '页边判断（召回计划 recallPlan）：',
+    '- 召回不是找“最像的关键词”，而是找“漏掉会让下一页写错”的记忆。',
+    '- 先判断当前写作需要：镜头连续性、人物骨头、关系变化、剧情压力、主题母本、User 新变量影响、外貌硬设定。',
+    '- User 的行动、记忆、关系和选择都视为新大纲变量：可能新增细节、解决压力、制造压力、替代职责、改写触发点、触碰创伤、改变关系、承载主题、埋下路线或打断路线。',
+    '- mustRecall 只写必须召回的事实/事件/关系/任务/秘密/外貌/路线/世界书/创伤/主题；每条必须说明漏掉后主 API 会怎样写错。',
+    '- niceToRecall 只写有帮助但不强制的线索；mustSuppress 写本轮会污染新大纲的旧稿惯性、过期关系、强行回轨桥段或不在场角色即时心理。',
+    '- 召回计划要保护角色骨头、User 变量和主题母本；不要为了原作桥段牺牲已经发生的新因果。',
+    '',
+    '夏野雾姬的审稿规矩：',
     '1. 只能使用角色名单里的 id。',
     '2. 第一次输入若没有最近正文，只看玩家当前输入；没有明确点名/寻找/靠近任何角色时，present 和 focus 都为空。',
-    '3. 不要因为角色好感度、剧情常识、世界书设定或你觉得她应该在场而加入 present。',
+    '3. 不要因为角色好感度、剧情常识、世界书设定或你觉得她“应该出现”，就把她塞进 present。那是偷懒，不是阅读。',
     '4. 玩家当前输入若明确“追上去安慰她/去找某人/转向某人/和某人说话”，该角色进入 focus。',
     '5. 输出必须是一个 JSON 对象，不要使用 Markdown 代码块。',
     '6. 班级消歧：玩家输入若用班级/学年指人（如“去G班”“找同班同学”“B班那个”），用上面的“玩家班级”和角色“班级”做匹配——同字符串=同班；只有班级里的角色才算同班。仅“同班/同年级”这类泛指、又能唯一对应到名单里某个角色时，才把该角色判为 focus；对应不唯一就不要硬塞。',
@@ -1749,7 +1771,7 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
         `玩家当前输入：${cleanUserInput || '（无）'}`,
         '',
         '请输出 JSON，格式如下（无时间推进时省略 timeProposal 或置 null）：',
-        '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"},"timeProposal":{"time":"YYYY-MM-DD HH:mm","confidence":"high|low","source":"explicit_player_transition|narrative_transition|none","reason":"一句话依据"}}',
+        '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"},"timeProposal":{"time":"YYYY-MM-DD HH:mm","confidence":"high|low","source":"explicit_player_transition|narrative_transition|none","reason":"一句话依据"},"plotImpact":{"shiftLevel":"none|minor_shift|branch_pressure|major_divergence|route_override","currentEventShould":"continue|continue_with_adjustment|pause|delay|skip|branch|override","causalTrace":["玩家输入造成的直接变化","该变化会影响的角色即时反应","下一页必须承认的剧情偏转"],"butterflyEffects":{"rippleLevel":"none|faint|clear|major","shortTermEffects":["本轮或下一轮必须体现的具体涟漪"],"midTermEffects":["当前事件结束前可能出现的后续影响"],"routeDamage":"none|light|medium|heavy"},"mainApiGuidance":"一句话页边批注"},"appearanceGuards":[{"id":"角色id","mustFollow":["已知外貌锚点或 unknown"],"mustNotInvent":["不得脑补的外貌项"],"sourcePolicy":"only_worldbook_card_or_recent_text"}],"recallPlan":{"currentWritingNeed":["镜头连续性|人物骨头|关系变化|剧情压力|主题母本|新变量影响|外貌硬设定|其他"],"userVariableImpact":[{"type":"additive|pressure_solver|pressure_creator|role_replacer|trigger_rewriter|trauma_contact|relationship_mutator|theme_carrier|route_seed|route_breaker","target":"被影响的角色、事件、压力、主题或关系","evidence":"一句话证据","importance":"low|medium|high"}],"mustRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"角色id、事件id、关键词或事实句","reason":"为什么漏掉它会让主 API 写错","priority":1}],"niceToRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"可选召回线索","reason":"为什么它有帮助但不是必须"}],"mustSuppress":[{"queryHint":"本轮不该召回或不该强化的旧稿惯性、过期记忆、原作桥段","reason":"它会怎样污染当前新大纲"}],"mainApiGuidance":"一句话说明下一页应该顺着哪条新因果写","kirihimeVerdict":"夏野雾姬式短评：这轮召回真正要保护什么"}}',
       ].join('\n'),
     },
   ];
@@ -1778,11 +1800,96 @@ function parseScenePresenceResult(ctx: ActionContext, rawResult: string): SceneP
       uncertainIds: normalizeScenePresenceIds(parsed.uncertain, allowedIds),
       evidence,
       timeProposal: parseTimeProposal(parsed.timeProposal),
+      plotImpact: parsePlotImpact(parsed.plotImpact),
+      appearanceGuards: parseAppearanceGuards(parsed.appearanceGuards, allowedIds),
     };
   } catch (error) {
     console.warn('[scene-presence] parse failed:', error);
     return fallback;
   }
+}
+
+function parseStringList(raw: unknown, maxItems = 5): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(item => String(item ?? '').trim())
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function pickEnum<T extends string>(raw: unknown, allowed: readonly T[], fallback: T): T {
+  const value = String(raw ?? '').trim();
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+function parsePlotImpact(raw: unknown): ScenePresence['plotImpact'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const butterflyRaw =
+    obj.butterflyEffects && typeof obj.butterflyEffects === 'object' && !Array.isArray(obj.butterflyEffects)
+      ? (obj.butterflyEffects as Record<string, unknown>)
+      : {};
+  const shiftLevel = pickEnum(
+    obj.shiftLevel,
+    ['none', 'minor_shift', 'branch_pressure', 'major_divergence', 'route_override'] as const,
+    'none',
+  );
+  const causalTrace = parseStringList(obj.causalTrace, 3);
+  const shortTermEffects = parseStringList(butterflyRaw.shortTermEffects, 4);
+  const midTermEffects = parseStringList(butterflyRaw.midTermEffects, 4);
+  const mainApiGuidance = String(obj.mainApiGuidance ?? '').trim();
+  const rippleLevel = pickEnum(butterflyRaw.rippleLevel, ['none', 'faint', 'clear', 'major'] as const, 'none');
+
+  if (
+    shiftLevel === 'none' &&
+    rippleLevel === 'none' &&
+    !causalTrace.length &&
+    !shortTermEffects.length &&
+    !midTermEffects.length &&
+    !mainApiGuidance
+  ) {
+    return undefined;
+  }
+
+  return {
+    shiftLevel,
+    currentEventShould: pickEnum(
+      obj.currentEventShould,
+      ['continue', 'continue_with_adjustment', 'pause', 'delay', 'skip', 'branch', 'override'] as const,
+      shiftLevel === 'none' ? 'continue' : 'continue_with_adjustment',
+    ),
+    causalTrace,
+    butterflyEffects: {
+      rippleLevel,
+      shortTermEffects,
+      midTermEffects,
+      routeDamage: pickEnum(butterflyRaw.routeDamage, ['none', 'light', 'medium', 'heavy'] as const, 'none'),
+    },
+    mainApiGuidance,
+  };
+}
+
+function parseAppearanceGuards(raw: unknown, allowedIds: Set<string>): ScenePresence['appearanceGuards'] {
+  if (!Array.isArray(raw)) return undefined;
+  const guards = raw
+    .map(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const obj = item as Record<string, unknown>;
+      const id = String(obj.id ?? '').trim();
+      if (!allowedIds.has(id)) return null;
+      const mustFollow = parseStringList(obj.mustFollow, 4);
+      const mustNotInvent = parseStringList(obj.mustNotInvent, 5);
+      if (!mustFollow.length && !mustNotInvent.length) return null;
+      return {
+        id,
+        mustFollow,
+        mustNotInvent,
+        sourcePolicy: 'only_worldbook_card_or_recent_text' as const,
+      };
+    })
+    .filter((guard): guard is NonNullable<ScenePresence['appearanceGuards']>[number] => Boolean(guard))
+    .slice(0, 5);
+  return guards.length ? guards : undefined;
 }
 
 /** 解析 preflight 的 timeProposal；只接受带完整日期的对象，其余（null/缺字段/格式不符）一律丢弃返回 undefined。 */

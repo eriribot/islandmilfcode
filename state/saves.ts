@@ -16,7 +16,7 @@ import type {
   StatusData,
 } from '../types';
 import { normalizeDrawingSettings, normalizePhoneMessageStore } from './store';
-import { defaultStatusData, normalizeStatusData } from '../variables/normalize';
+import { affinityStage, defaultStatusData, normalizeStatusData, obsessionStage } from '../variables/normalize';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import { migrateSummaryStoreToMemoryDB, hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
 import { sweepLegacyMemoryDB } from '../memorydatabase/sweep';
@@ -318,6 +318,122 @@ function normalizeGameState(gameState: Partial<GameState> | undefined, fallbackR
     currentMessageIndex: Math.max(0, Number(gameState?.currentMessageIndex ?? 0) || 0),
     worldState: gameState?.worldState ? cloneJson(gameState.worldState) : undefined,
     runtimeFlags,
+  };
+}
+
+function normalizeTargetIdentity(value: unknown) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[·・\s　._-]/g, '');
+}
+
+function getBuiltInTargetKeyFromStatusTarget(target: Partial<SavePayload['gameState']['statusData']['targets'][number]>) {
+  const identityHaystack = [target.id, target.name, target.meta?.worldbookEntryName]
+    .map(normalizeTargetIdentity)
+    .join('\n');
+  const haystack = [identityHaystack, target.alias].map(normalizeTargetIdentity).join('\n');
+  if (/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return 'sayuri';
+  if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
+  if (/英梨梨|英梨々|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
+  if (/霞之丘|霞ヶ丘|诗羽|詩羽|霞诗子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
+  if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
+  if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
+  return '';
+}
+
+function getTargetRecoveryKeys(target: SavePayload['gameState']['statusData']['targets'][number]) {
+  return [
+    `id:${normalizeTargetIdentity(target.id)}`,
+    `name:${normalizeTargetIdentity(target.name)}`,
+    `wb:${normalizeTargetIdentity(target.meta?.worldbookEntryName)}`,
+    `built:${getBuiltInTargetKeyFromStatusTarget(target)}`,
+  ].filter(key => !key.endsWith(':'));
+}
+
+function buildPreviousTargetRecoveryMap(previousStatusData: StatusData) {
+  const map = new Map<string, StatusData['targets'][number]>();
+  for (const target of previousStatusData.targets) {
+    for (const key of getTargetRecoveryKeys(target)) {
+      if (!map.has(key)) map.set(key, target);
+    }
+  }
+  return map;
+}
+
+function getObsessionSpikeLimit(targetKey: string) {
+  if (targetKey === 'megumi') return 8;
+  if (targetKey === 'michiru') return 12;
+  if (targetKey === 'izumi') return 15;
+  if (targetKey === 'utaha' || targetKey === 'eriri') return 18;
+  return 0;
+}
+
+function shouldRecoverAffinityReset(previous: number, next: number) {
+  return previous >= 10 && next === 0;
+}
+
+function shouldRecoverObsessionSpike(targetKey: string, previous: number, next: number) {
+  const spikeLimit = getObsessionSpikeLimit(targetKey);
+  if (!spikeLimit) return false;
+  return next > previous && next - previous > spikeLimit;
+}
+
+function protectStatusDataAgainstPayloadCorruption(
+  nextStatusData: StatusData,
+  previousStatusData: StatusData | null,
+): StatusData {
+  if (!previousStatusData?.targets?.length || !nextStatusData.targets.length) return nextStatusData;
+
+  const previousTargets = buildPreviousTargetRecoveryMap(previousStatusData);
+  let recovered = false;
+  const targets = nextStatusData.targets.map(target => {
+    const previous = getTargetRecoveryKeys(target)
+      .map(key => previousTargets.get(key))
+      .find(Boolean);
+    if (!previous) return target;
+
+    const nextTarget = { ...target };
+    const targetKey = getBuiltInTargetKeyFromStatusTarget(target);
+    if (shouldRecoverAffinityReset(Number(previous.affinity ?? 0), Number(target.affinity ?? 0))) {
+      nextTarget.affinity = previous.affinity;
+      nextTarget.stage = previous.stage || affinityStage(previous.affinity);
+      recovered = true;
+    }
+    if (shouldRecoverObsessionSpike(targetKey, Number(previous.obsession ?? 0), Number(target.obsession ?? 0))) {
+      nextTarget.obsession = previous.obsession;
+      nextTarget.obsessionStage = previous.obsessionStage || obsessionStage(previous.obsession);
+      recovered = true;
+    }
+    return nextTarget;
+  });
+
+  if (!recovered) return nextStatusData;
+  console.warn('[save-guard] recovered corrupted target relationship values from previous payload snapshot');
+  return {
+    ...nextStatusData,
+    targets,
+  };
+}
+
+function readPreviousPayloadStatusData(saveId: string): StatusData | null {
+  const previousPayload = readPayloadSync(saveId) as unknown as Partial<SavePayload> | null;
+  if (!previousPayload?.gameState) return null;
+  const runId = String(previousPayload.runId || previousPayload.gameState.runId || saveId);
+  return normalizeGameState(previousPayload.gameState, runId).statusData;
+}
+
+function protectPayloadAgainstPreviousPayloadCorruption(saveId: string, payload: SavePayload): SavePayload {
+  const previousStatusData = readPreviousPayloadStatusData(saveId);
+  if (!previousStatusData) return payload;
+  const statusData = protectStatusDataAgainstPayloadCorruption(payload.gameState.statusData, previousStatusData);
+  if (statusData === payload.gameState.statusData) return payload;
+  return {
+    ...payload,
+    gameState: {
+      ...payload.gameState,
+      statusData,
+    },
   };
 }
 
@@ -668,7 +784,7 @@ export function writeSave(
   const kind = data.kind ?? existing?.kind ?? (saveId.startsWith('autosave_') ? 'autosave' : 'manual');
   const label = data.label ?? existing?.label ?? (kind === 'autosave' ? '自动存档' : '手动存档');
 
-  const payload: SavePayload = {
+  const rawPayload: SavePayload = {
     saveId,
     runId: data.runId,
     gameState: normalizeGameState(data.gameState, data.runId),
@@ -677,6 +793,7 @@ export function writeSave(
     memoryDB: data.memoryDB ? cloneJson(data.memoryDB) : undefined,
     version: SAVE_VERSION,
   };
+  const payload = protectPayloadAgainstPreviousPayloadCorruption(saveId, rawPayload);
 
   const nextMeta = createMetaFromPayload(payload, {
     kind,

@@ -73,6 +73,14 @@ function getPhoneCharacterTheme(characterId: PhoneCharacterId) {
       bgmUrl: '',
     };
   }
+  if (characterId === 'sonoko') {
+    return {
+      label: '町田苑子',
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Sonoko_phone.png',
+      wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_sayuri.png',
+      bgmUrl: '',
+    };
+  }
   return PHONE_CHARACTER_THEMES[characterId] ?? PHONE_CHARACTER_THEMES.megumi;
 }
 

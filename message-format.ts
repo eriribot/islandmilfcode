@@ -922,6 +922,35 @@ function buildScenePresenceContext(statusData: StatusData, scenePresence?: Scene
       return text ? `- ${name}: ${text}` : '';
     })
     .filter(Boolean);
+  const plotImpact = scenePresence.plotImpact;
+  const butterfly = plotImpact?.butterflyEffects;
+  const plotImpactLines = plotImpact
+    ? [
+        '[夏野雾姬的因果页边批注]',
+        `剧情偏转：${plotImpact.shiftLevel}；当前事件处理：${plotImpact.currentEventShould}`,
+        butterfly
+          ? `蝴蝶效应：${butterfly.rippleLevel}；路线损伤：${butterfly.routeDamage}`
+          : '',
+        plotImpact.causalTrace?.length ? ['因果短链：', ...plotImpact.causalTrace.map(line => `- ${line}`)].join('\n') : '',
+        butterfly?.shortTermEffects?.length
+          ? ['本轮/下一轮必须承认的涟漪：', ...butterfly.shortTermEffects.map(line => `- ${line}`)].join('\n')
+          : '',
+        butterfly?.midTermEffects?.length
+          ? ['当前事件结束前的后续压力：', ...butterfly.midTermEffects.map(line => `- ${line}`)].join('\n')
+          : '',
+        plotImpact.mainApiGuidance ? `正文写作批注：${plotImpact.mainApiGuidance}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n')
+    : '';
+  const appearanceGuardLines = (scenePresence.appearanceGuards ?? [])
+    .map(guard => {
+      const name = targetById.get(guard.id)?.name ?? guard.id;
+      const mustFollow = guard.mustFollow?.length ? `必须遵守：${guard.mustFollow.join('；')}` : '';
+      const mustNotInvent = guard.mustNotInvent?.length ? `不得脑补：${guard.mustNotInvent.join('；')}` : '';
+      return [`- ${name}`, mustFollow, mustNotInvent].filter(Boolean).join('\n  ');
+    })
+    .filter(Boolean);
 
   return [
     '[镜头判定]',
@@ -933,6 +962,13 @@ function buildScenePresenceContext(statusData: StatusData, scenePresence?: Scene
     `本轮不注入完整关系指导：${unguidedNames}`,
     evidenceLines.length ? ['判定依据：', ...evidenceLines].join('\n') : '',
     '镜头规则：只有明确在场和转场目标可以应用完整关系指导、局部审计、即时台词/动作/心理反应；明确不在场或不确定角色不得默认插话、旁听、吃醋或产生即时反应。',
+    plotImpactLines,
+    [
+      '[外貌护栏]',
+      '角色外貌只许依据最近正文、角色卡、世界书或已明确记忆；信息不足就少写，不得靠模板脸补齐。',
+      '不得凭印象补发色、胸围、身材、年龄感或服装；没有明确锚点时，不要把泽村小百合之类角色误写成金发巨乳模板。',
+      ...appearanceGuardLines,
+    ].join('\n'),
   ]
     .filter(Boolean)
     .join('\n');

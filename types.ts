@@ -240,6 +240,24 @@ export type ScenePresence = {
   absentIds: string[];
   uncertainIds: string[];
   evidence?: Record<string, string>;
+  plotImpact?: {
+    shiftLevel: 'none' | 'minor_shift' | 'branch_pressure' | 'major_divergence' | 'route_override';
+    currentEventShould: 'continue' | 'continue_with_adjustment' | 'pause' | 'delay' | 'skip' | 'branch' | 'override';
+    causalTrace: string[];
+    butterflyEffects: {
+      rippleLevel: 'none' | 'faint' | 'clear' | 'major';
+      shortTermEffects: string[];
+      midTermEffects: string[];
+      routeDamage: 'none' | 'light' | 'medium' | 'heavy';
+    };
+    mainApiGuidance: string;
+  };
+  appearanceGuards?: Array<{
+    id: string;
+    mustFollow: string[];
+    mustNotInvent: string[];
+    sourcePolicy: 'only_worldbook_card_or_recent_text';
+  }>;
   /**
    * 生成前预判的时间推进建议。仅当玩家/正文明确把世界游标推进到某日期或时段时给出；
    * 倒叙/回忆/计划日期/被提及的旁人日期一律不产生 proposal。confidence='high' 才会被 commit。

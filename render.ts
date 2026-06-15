@@ -277,7 +277,7 @@ interface SaenaiDialogueLine {
 
 const SAENAI_SPRITE_ALIASES: Record<SaenaiSpriteId, string[]> = {
   megumi: ['加藤惠', '加藤恵', '惠', '恵', 'Megumi'],
-  eriri: ['泽村·斯宾塞·英梨梨', '澤村·斯賓塞·英梨梨', '泽村英梨梨', '澤村英梨梨', '英梨梨', 'Eriri'],
+  eriri: ['泽村·斯宾塞·英梨梨', '澤村·斯賓塞·英梨梨', '泽村英梨梨', '澤村英梨梨', '英梨梨', '英梨々', 'Eriri'],
   utaha: ['霞之丘诗羽', '霞之丘詩羽', '霞ヶ丘詩羽', '霞丘诗羽', '诗羽', '詩羽', 'Utaha'],
   izumi: ['波岛出海', '波島出海', '出海', 'Izumi'],
   michiru: ['冰堂美智留', '氷堂美智留', '美智留', 'Michiru'],

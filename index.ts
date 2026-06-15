@@ -400,6 +400,9 @@ async function persistManualSave() {
 }
 
 async function downloadSaveBackup(saveId: string) {
+  if (state.activeRunId && state.activeSaveId === saveId) {
+    persistToSave();
+  }
   // 导出前确保已入队的写入全部落盘，再去读。
   await flushSaveStore();
   try {

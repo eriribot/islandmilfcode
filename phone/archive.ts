@@ -1,8 +1,8 @@
 import { escapeHtml } from '../html';
-import type { TargetStatus } from '../types';
-import { affinityStage, attachmentStage, attachmentValue, obsessionStage } from '../variables/normalize';
 import { getImpressionsForTarget } from '../memorydatabase/query';
 import type { IslandMemoryDB } from '../memorydatabase/types';
+import type { TargetStatus } from '../types';
+import { affinityStage, attachmentStage, attachmentValue, obsessionStage } from '../variables/normalize';
 import { isPhoneArchiveGoldImpression, selectPhoneArchiveImpressions, type PhoneCharacterId } from './types';
 
 const LEGACY_IZUMI_FILM_AVATAR_URL = 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg';
@@ -183,10 +183,41 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     usesObsessionAxis: false,
     note: '小百合不属于五小只角色歌与旧情度轴；成人角色的独立关系变量等红坂朱音、町田苑子一起设计后再接入。',
   },
+  sonoko: {
+    id: 'sonoko',
+    archiveLabel: '特别档案',
+    name: '町田苑子',
+    romanName: 'Machida Sonoko',
+    panelMark: '苑子',
+    imageUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Sonoko_phone.png',
+    imageAlt: '町田苑子头像',
+    portraitCode: 'sharp professional editor',
+    foot: [
+      { label: '定位', value: '职业编辑 / 霞诗子责编' },
+      { label: '类型', value: '成熟 / 犀利 / 截稿管理' },
+      { label: '档案', value: '特别人物档案' },
+    ],
+    tags: ['责编', '成人角色', '特别档案'],
+    details: [
+      { label: '生日', value: '6月15日' },
+      { label: '身高', value: '168cm' },
+    ],
+    meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
+    usesObsessionAxis: false,
+    note: '苑子不属于五小只角色歌与旧情度轴；当前先作为成人编辑线的档案占位，关系变量接入后会显示实时阶段。',
+  },
 };
 
 // 中文注释：档案页顶部角色标签的显示顺序；新增角色必须同步到这里，档案页才会出现。
-const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru', 'sayuri'];
+const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = [
+  'megumi',
+  'eriri',
+  'utaha',
+  'izumi',
+  'michiru',
+  'sayuri',
+  'sonoko',
+];
 
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -208,9 +239,8 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
     .map(value => String(value ?? '').toLowerCase())
     .join('\n');
   const isSayuriIdentity = /泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack);
-  const haystack = [identityHaystack, target.alias]
-    .map(value => String(value ?? '').toLowerCase())
-    .join('\n');
+  const isSonokoIdentity = /町田苑子|町田|苑子|sonoko|machida/.test(identityHaystack);
+  const haystack = [identityHaystack, target.alias].map(value => String(value ?? '').toLowerCase()).join('\n');
 
   if (archive.id === 'eriri') return !isSayuriIdentity && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
   if (archive.id === 'megumi') return /加藤|惠|恵|megumi|katou|kato/.test(haystack);
@@ -218,6 +248,7 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
   if (archive.id === 'izumi') return /波岛|波島|出海|izumi|hashima/.test(haystack);
   if (archive.id === 'michiru') return /冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack);
   if (archive.id === 'sayuri') return isSayuriIdentity;
+  if (archive.id === 'sonoko') return isSonokoIdentity;
   return false;
 }
 
