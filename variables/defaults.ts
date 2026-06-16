@@ -79,6 +79,23 @@ export const builtInTargetSeeds: TargetStatus[] = [
     },
   },
   {
+    id: '町田苑子',
+    name: '町田苑子',
+    alias: '町田 / 苑子 / 町田编辑 / 町田編輯 / 苑子编辑 / 霞诗子责编 / 霞詩子责编 / まちだ そのこ / Machida Sonoko / Sonoko',
+    affinity: 0,
+    obsession: 0,
+    stage: '疏离戒备',
+    obsessionStage: '无旧情轴',
+    titles: {},
+    outfits: { ...DEFAULT_TARGET_OUTFITS },
+    meta: {
+      source: 'built-in-startup',
+      worldbookEntryName: '町田苑子',
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Sonoko_phone.png',
+      noObsessionAxis: true,
+    },
+  },
+  {
     id: '霞之丘诗羽',
     name: '霞之丘诗羽',
     alias: '霞之丘 / 诗羽 / 霞诗子 / Utaha Kasumigaoka',

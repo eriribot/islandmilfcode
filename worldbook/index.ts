@@ -29,6 +29,10 @@ const TARGET_AVATAR_RULES: Array<{ patterns: string[]; avatarUrl: string }> = [
     patterns: ['冰堂美智留', '氷堂美智留', '冰堂', '氷堂', '美智留', 'michiru', 'hyodo', 'hyoudou'],
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Michiru_phone.jpg',
   },
+  {
+    patterns: ['町田苑子', '町田', '苑子', 'まちだ そのこ', 'sonoko', 'machida'],
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Sonoko_phone.png',
+  },
 ];
 
 // 从世界书条目中提取目标信息的逻辑：
@@ -312,6 +316,9 @@ function normalizeBuiltInTargetName(name: string, alias = '', entryName = '') {
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) {
     return '冰堂美智留';
   }
+  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) {
+    return '町田苑子';
+  }
   return name;
 }
 
@@ -437,6 +444,27 @@ function parseKnownArchiveTarget(entry: WorldbookEntry): TargetStatus | null {
     .map(value => String(value ?? '').toLowerCase())
     .join('\n');
 
+  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) {
+    return {
+      id: '町田苑子',
+      name: '町田苑子',
+      alias: 'まちだ そのこ / Machida Sonoko / 苑子 / 町田编辑 / 霞诗子责编',
+      affinity: defaultTarget.affinity,
+      obsession: 0,
+      stage: affinityStage(defaultTarget.affinity),
+      obsessionStage: defaultTarget.obsessionStage,
+      titles: {},
+      outfits: { ...defaultTarget.outfits },
+      meta: {
+        source: 'character-worldbook',
+        worldbookEntryUid: entry.uid,
+        worldbookEntryName: entryName,
+        avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Sonoko_phone.png',
+        noObsessionAxis: true,
+      },
+    };
+  }
+
   if (!/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return null;
 
   return {
@@ -509,6 +537,7 @@ function getCharacterCardKey(entry: WorldbookEntry, target: TargetStatus | null)
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
   if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
+  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) return 'sonoko';
   return '';
 }
 
@@ -538,6 +567,7 @@ function getBuiltInTargetKeyFromIdentity(target: TargetStatus) {
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
   if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
+  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) return 'sonoko';
   return '';
 }
 

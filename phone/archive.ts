@@ -181,7 +181,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     ],
     meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
     usesObsessionAxis: false,
-    note: '小百合不属于五小只角色歌与旧情度轴；成人角色的独立关系变量等红坂朱音、町田苑子一起设计后再接入。',
+    note: '小百合不属于五小只角色歌与旧情度轴；她是已婚成人专例，不使用完璧/结缘闩锁。',
   },
   sonoko: {
     id: 'sonoko',
@@ -204,7 +204,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     ],
     meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
     usesObsessionAxis: false,
-    note: '苑子不属于五小只角色歌与旧情度轴；当前先作为成人编辑线的档案占位，关系变量接入后会显示实时阶段。',
+    note: '苑子不属于五小只角色歌与旧情度轴；作为成人未婚角色，亲密档案按五小只的完璧/结缘闩锁与计数器显示。',
   },
 };
 

@@ -1435,6 +1435,23 @@ function getPhoneTargetSearchTerms(target: TargetStatus) {
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) {
     builtInTerms.push('冰堂', '冰堂美智留', '氷堂', '氷堂美智留', '美智留', 'michiru', 'hyodo', 'hyoudou');
   }
+  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(haystack)) {
+    builtInTerms.push(
+      '町田苑子',
+      '町田',
+      '苑子',
+      '町田编辑',
+      '町田編輯',
+      '苑子编辑',
+      '霞诗子责编',
+      '霞詩子责编',
+      'まちだそのこ',
+      'まちだ そのこ',
+      'sonoko',
+      'machida',
+      'machida sonoko',
+    );
+  }
 
   return Array.from(new Set([...baseTerms, ...builtInTerms]));
 }

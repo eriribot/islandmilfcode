@@ -334,6 +334,7 @@ function getBuiltInTargetKeyFromStatusTarget(target: Partial<SavePayload['gameSt
     .join('\n');
   const haystack = [identityHaystack, target.alias].map(normalizeTargetIdentity).join('\n');
   if (/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return 'sayuri';
+  if (/町田苑子|町田|苑子|まちだそのこ|sonoko|machida/.test(haystack)) return 'sonoko';
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
   if (/英梨梨|英梨々|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
   if (/霞之丘|霞ヶ丘|诗羽|詩羽|霞诗子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
