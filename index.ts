@@ -99,6 +99,7 @@ import {
   expireMemoryRow,
   restoreMemoryRow,
   deleteMemoryRow,
+  deleteAllExpiredMemoryRows,
   insertMemoryRow,
   type MemoryTableName,
 } from './memorydatabase/editor';
@@ -2274,6 +2275,16 @@ function bindEvents() {
       renderMemoryKeepScroll();
     });
   });
+  root?.querySelector<HTMLButtonElement>('[data-action="memory-delete-all-expired"]')?.addEventListener('click', () => {
+    if (!confirm('确定要永久删除回收站里的全部记录吗？此操作不可撤销。')) return;
+    const deleted = deleteAllExpiredMemoryRows(state.memoryDB);
+    if (!deleted) return;
+    state.memoryEditor.expandedRowId = null;
+    state.memoryEditor.editingRowId = null;
+    state.memoryEditor.error = null;
+    persistToSave();
+    renderMemoryKeepScroll();
+  });
   root?.querySelector<HTMLButtonElement>('[data-action="memory-new-row"]')?.addEventListener('click', () => {
     state.memoryEditor.creating = true;
     state.memoryEditor.creatingDraft = '';
@@ -2285,7 +2296,11 @@ function bindEvents() {
       const newId = insertMemoryRow(
         state.memoryDB,
         'facts',
-        createUserEventMemoryPayload(state.memoryEditor.creatingDraft),
+        {
+          ...createUserEventMemoryPayload(state.memoryEditor.creatingDraft),
+          gameTime: state.statusData.world.currentTime,
+          extra: { location: state.statusData.world.currentLocation },
+        },
       );
       if (!newId) throw new Error('写入失败');
       state.memoryEditor.creating = false;

@@ -263,6 +263,23 @@ export function deleteMemoryRow(db: IslandMemoryDB, table: MemoryTableName, id: 
   return true;
 }
 
+function getTrashTables(): MemoryTableName[] {
+  return ['facts', ...USER_VISIBLE_TABLES];
+}
+
+export function deleteAllExpiredMemoryRows(db: IslandMemoryDB): number {
+  let deleted = 0;
+  for (const table of getTrashTables()) {
+    const rows = getTable(db, table);
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (!rows[i].expired) continue;
+      rows.splice(i, 1);
+      deleted += 1;
+    }
+  }
+  return deleted;
+}
+
 export function insertMemoryRow(
   db: IslandMemoryDB,
   table: MemoryTableName,
@@ -431,16 +448,17 @@ function previewRow(table: MemoryTableName, row: MemoryBaseRow): string {
 function renderReadableFields(table: MemoryTableName, row: MemoryBaseRow): string {
   const r = row as unknown as Record<string, unknown>;
   const fields: Array<[string, string]> = [];
+  const gameTime = String(r.gameTime ?? '').trim();
 
   switch (table) {
     case 'entities':
       fields.push(['名称', String(r.name ?? '')], ['类型', String(r.kind ?? '')]);
       break;
     case 'events':
-      fields.push(['标题', String(r.title ?? '')], ['事件', String(r.description ?? '')]);
+      fields.push(['时间', gameTime], ['标题', String(r.title ?? '')], ['事件', String(r.description ?? '')]);
       break;
     case 'facts':
-      fields.push(['对象', String(r.subject ?? '')], ['类型', localizeCategory(String(r.category ?? ''))], ['内容', String(r.content ?? '')]);
+      fields.push(['时间', gameTime], ['对象', String(r.subject ?? '')], ['类型', localizeCategory(String(r.category ?? ''))], ['内容', String(r.content ?? '')]);
       break;
     case 'relations':
       fields.push(['来源', String(r.fromId ?? '')], ['对象', String(r.toId ?? '')], ['关系', String(r.label ?? '')]);
@@ -449,13 +467,13 @@ function renderReadableFields(table: MemoryTableName, row: MemoryBaseRow): strin
       fields.push(['角色', String(r.targetId ?? '')], ['对象', String(r.subject ?? '')], ['印象', String(r.label ?? '')]);
       break;
     case 'tasks':
-      fields.push(['状态', localizeTaskStatus(String(r.status ?? ''))], ['事项', String(r.content ?? '')]);
+      fields.push(['时间', gameTime], ['状态', localizeTaskStatus(String(r.status ?? ''))], ['事项', String(r.content ?? '')]);
       break;
     case 'secrets':
-      fields.push(['主题', String(r.subject ?? '')], ['秘密', String(r.content ?? '')], ['风险', localizeSecretRisk(String(r.risk ?? ''))]);
+      fields.push(['时间', gameTime], ['主题', String(r.subject ?? '')], ['秘密', String(r.content ?? '')], ['风险', localizeSecretRisk(String(r.risk ?? ''))]);
       break;
     case 'items':
-      fields.push(['物品', String(r.name ?? '')], ['状态', String(r.state ?? '')], ['动作', localizeItemAction(String(r.action ?? ''))]);
+      fields.push(['时间', gameTime], ['物品', String(r.name ?? '')], ['状态', String(r.state ?? '')], ['动作', localizeItemAction(String(r.action ?? ''))]);
       break;
     case 'phoneMessages':
       fields.push(['对象', String(r.targetId ?? '')], ['角色', localizeRole(String(r.role ?? ''))], ['消息', String(r.textPreview ?? '')]);
@@ -578,10 +596,7 @@ function renderRowList(db: IslandMemoryDB, table: MemoryTableName, editor: Memor
 
 function renderTrashList(db: IslandMemoryDB, editor: MemoryEditorState): string {
   const allExpired: Array<{ table: MemoryTableName; row: MemoryBaseRow }> = [];
-  for (const row of getTable(db, 'facts')) {
-    if (row.expired) allExpired.push({ table: 'facts', row });
-  }
-  for (const name of USER_VISIBLE_TABLES) {
+  for (const name of getTrashTables()) {
     for (const row of getTable(db, name)) {
       if (row.expired) allExpired.push({ table: name, row });
     }
@@ -649,10 +664,7 @@ function renderCreateForm(editor: MemoryEditorState): string {
 
 function getTotalExpiredCount(db: IslandMemoryDB): number {
   let count = 0;
-  for (const row of getTable(db, 'facts')) {
-    if (row.expired) count += 1;
-  }
-  for (const name of USER_VISIBLE_TABLES) {
+  for (const name of getTrashTables()) {
     for (const row of getTable(db, name)) {
       if (row.expired) count += 1;
     }
@@ -715,12 +727,18 @@ function renderMemoryTablePage(state: AppState, table: MemoryTableName): string 
 function renderMemoryTrashPage(state: AppState): string {
   const db = state.memoryDB;
   const editor = state.memoryEditor;
+  const trashCount = getTotalExpiredCount(db);
 
   return `
     <div class="memory-editor">
       <div class="memory-sub-header">
         <button class="memory-action" data-action="memory-back-to-home">← 返回</button>
         <strong>回收站</strong>
+        ${
+          trashCount
+            ? `<button class="memory-action memory-action--danger" data-action="memory-delete-all-expired">全部永久删除</button>`
+            : ''
+        }
       </div>
       <div class="memory-row-list">
         ${renderTrashList(db, editor)}

@@ -51,6 +51,8 @@ export type KeyFact = {
   category: KeyFactCategory;
   subject: string;
   content: string;
+  /** 故事内发生/记录时间；为空表示摘要模型没有可靠时间依据。 */
+  gameTime?: string;
   sourceRange: [number, number];
   createdAt: string;
   /** 被新事实覆盖时标记，但保留可追溯。 */
@@ -248,6 +250,7 @@ function isValidKeyFact(entry: unknown): entry is KeyFact {
     typeof e.category === 'string' &&
     typeof e.subject === 'string' &&
     typeof e.content === 'string' &&
+    (e.gameTime === undefined || typeof e.gameTime === 'string') &&
     Array.isArray(e.sourceRange) &&
     e.sourceRange.length === 2 &&
     typeof e.sourceRange[0] === 'number' &&

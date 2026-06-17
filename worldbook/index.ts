@@ -33,6 +33,10 @@ const TARGET_AVATAR_RULES: Array<{ patterns: string[]; avatarUrl: string }> = [
     patterns: ['町田苑子', '町田', '苑子', 'まちだ そのこ', 'sonoko', 'machida'],
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Sonoko_phone.png',
   },
+  {
+    patterns: ['高坂茜', '红坂朱音', '紅坂朱音', '高坂', '红坂', '紅坂', '朱音', '茜', 'akane', 'kosaka', 'kousaka', 'kurenai'],
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Akane_phone.png',
+  },
 ];
 
 // 从世界书条目中提取目标信息的逻辑：
@@ -319,6 +323,9 @@ function normalizeBuiltInTargetName(name: string, alias = '', entryName = '') {
   if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) {
     return '町田苑子';
   }
+  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) {
+    return '高坂茜(红坂朱音)';
+  }
   return name;
 }
 
@@ -538,6 +545,7 @@ function getCharacterCardKey(entry: WorldbookEntry, target: TargetStatus | null)
   if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
   if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) return 'sonoko';
+  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) return 'akane';
   return '';
 }
 
@@ -568,6 +576,7 @@ function getBuiltInTargetKeyFromIdentity(target: TargetStatus) {
   if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
   if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) return 'sonoko';
+  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) return 'akane';
   return '';
 }
 
@@ -577,6 +586,15 @@ function canReuseExistingTargetVariables(worldbookTarget: TargetStatus, existing
   if (worldbookTarget.meta?.noObsessionAxis && existingKey && existingKey !== worldbookKey) return false;
   if (existing.meta?.noObsessionAxis && worldbookKey && existingKey !== worldbookKey) return false;
   return !worldbookKey || !existingKey || worldbookKey === existingKey;
+}
+
+function getTargetMergeKey(target: TargetStatus) {
+  const builtInKey = getBuiltInTargetKeyFromIdentity(target);
+  if (builtInKey) return `built:${builtInKey}`;
+  if (target.meta?.worldbookEntryUid !== undefined) return `wbuid:${String(target.meta.worldbookEntryUid)}`;
+  if (target.id) return `id:${target.id}`;
+  if (target.name) return `name:${target.name}`;
+  return '';
 }
 
 function repairKnownBuiltInTargetBleed(targets: TargetStatus[]) {
@@ -745,18 +763,21 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
       .map(target => [getBuiltInTargetKeyFromIdentity(target), target] as const)
       .filter(([key]) => Boolean(key)),
   );
+  const usedExistingMergeKeys = new Set<string>();
   const mergedTargets = worldbookTargets.map(worldbookTarget => {
     const worldbookKey = getBuiltInTargetKeyFromIdentity(worldbookTarget);
     const existing =
+      (worldbookKey ? existingByBuiltInKey.get(worldbookKey) : undefined) ??
       existingById.get(worldbookTarget.id) ??
       existingByName.get(worldbookTarget.name) ??
       (worldbookTarget.alias ? existingByAlias.get(worldbookTarget.alias) : undefined) ??
       (worldbookTarget.meta?.worldbookEntryUid !== undefined
         ? existingByWorldbookUid.get(String(worldbookTarget.meta.worldbookEntryUid))
-        : undefined) ??
-      (worldbookKey ? existingByBuiltInKey.get(worldbookKey) : undefined);
+        : undefined);
     if (!existing) return worldbookTarget;
     if (!canReuseExistingTargetVariables(worldbookTarget, existing)) return worldbookTarget;
+    const existingMergeKey = getTargetMergeKey(existing);
+    if (existingMergeKey) usedExistingMergeKeys.add(existingMergeKey);
 
     return {
       ...worldbookTarget,
@@ -782,7 +803,14 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
   });
 
   const worldbookIds = new Set(mergedTargets.map(target => target.id));
-  const customTargets = statusData.targets.filter(target => !worldbookIds.has(target.id) && target.id !== defaultTarget.id);
+  const worldbookMergeKeys = new Set(mergedTargets.map(getTargetMergeKey).filter(Boolean));
+  const customTargets = statusData.targets.filter(target => {
+    if (target.id === defaultTarget.id) return false;
+    if (worldbookIds.has(target.id)) return false;
+    const mergeKey = getTargetMergeKey(target);
+    if (mergeKey && (worldbookMergeKeys.has(mergeKey) || usedExistingMergeKeys.has(mergeKey))) return false;
+    return true;
+  });
   const targets = repairKnownBuiltInTargetBleed([...mergedTargets, ...customTargets]);
 
   return {

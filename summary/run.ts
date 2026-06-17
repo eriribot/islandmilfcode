@@ -72,8 +72,9 @@ function dedupeKeyFacts(store: SummaryStore): void {
 }
 
 function createKeyFacts(
-  parsed: Array<Pick<KeyFact, 'category' | 'subject' | 'content'>>,
+  parsed: Array<Pick<KeyFact, 'category' | 'subject' | 'content' | 'gameTime'>>,
   sourceRange: [number, number],
+  fallbackGameTime?: string,
 ): KeyFact[] {
   const now = new Date().toISOString();
   return parsed.map(p => ({
@@ -81,6 +82,7 @@ function createKeyFacts(
     category: p.category,
     subject: p.subject,
     content: p.content,
+    gameTime: p.gameTime || fallbackGameTime,
     sourceRange,
     createdAt: now,
   }));
@@ -277,7 +279,7 @@ export async function runSummary(
         const nextIndex = startIndex + unsummarized.length;
         const range: [number, number] = [startIndex, nextIndex - 1];
         const parsedFacts = parseKeyFactsFromSummary(raw);
-        const newFacts = createKeyFacts(parsedFacts, range);
+        const newFacts = createKeyFacts(parsedFacts, range, anchor?.time);
         store.minor.push({
           range,
           text,

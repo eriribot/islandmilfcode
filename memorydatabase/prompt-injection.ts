@@ -1,18 +1,12 @@
 import type {
   IslandMemoryDB,
-  MemoryAttributeRow,
-  MemoryEventRow,
   MemoryFactRow,
-  MemoryImpressionRow,
-  MemoryTaskRow,
-  MemorySecretRow,
 } from './types';
 import {
   getActiveFacts,
   getActiveTasks,
   getUnrevealedSecrets,
   getImpressionsForTarget,
-  getCurrentAttributes,
   getWorldState,
 } from './query';
 
@@ -103,6 +97,7 @@ export function buildMemoryPromptInjection(
   };
 
   const blocks: MemoryBlock[] = [];
+  buildTemporalAnchorBlock(db, blocks, context);
 
   // ── 1. 摘要层：global > major > minor（可配置窗口大小）──
   buildSummaryBlocks(db, blocks, config);
@@ -112,6 +107,8 @@ export function buildMemoryPromptInjection(
     buildIntegratedMemoryBlock(db, blocks, context, config);
   }
 
+  buildTimelineBlock(db, blocks, context);
+
   // ── 3. 角色印象（仅当前在场角色，精简）──
   if (config.includeImpressions) {
     buildImpressionBlocks(db, blocks, context);
@@ -119,6 +116,27 @@ export function buildMemoryPromptInjection(
 
   // ── 4. 按优先级排序，应用 token 预算 ──
   return assembleBlocks(blocks, config.tokenBudget);
+}
+
+function buildTemporalAnchorBlock(
+  db: IslandMemoryDB,
+  blocks: MemoryBlock[],
+  context: MemoryInjectionContext,
+): void {
+  const world = getWorldState(db);
+  const currentTime = context.currentTime || world?.currentTime || '未知';
+  const currentLocation = context.currentLocation || world?.currentLocation || '未知';
+  const lines = [
+    `当前故事时间: ${currentTime}`,
+    `当前地点: ${currentLocation}`,
+    '时间规则: 记忆行中的"发生时间/记录时间"是权威时序依据；只记得事件但没有时间时，不得把它自动归到昨天、今天或当前上午。',
+  ];
+  blocks.push({
+    title: '【记忆时间锚点】',
+    content: lines.join('\n'),
+    priority: 98,
+    estimatedChars: lines.join('\n').length + 20,
+  });
 }
 
 /**
@@ -202,7 +220,7 @@ function buildIntegratedMemoryBlock(
     if (tasks.length > 0) {
       lines.push('待办约定:');
       tasks.forEach(t => {
-        const parts = [`  - ${t.content}`];
+        const parts = [`  - ${formatMemoryTime(t.gameTime)} ${t.content}`];
         if (t.deadline) parts.push(` (截止: ${t.deadline})`);
         lines.push(parts.join(''));
       });
@@ -220,7 +238,7 @@ function buildIntegratedMemoryBlock(
       lines.push('保密事项:');
       secrets.forEach(s => {
         const hidden = s.hiddenFrom?.length ? ` (对${s.hiddenFrom.join('、')}保密)` : '';
-        lines.push(`  - ${s.subject}: ${s.content}${hidden}`);
+        lines.push(`  - ${formatMemoryTime(s.gameTime)} ${s.subject}: ${s.content}${hidden}`);
       });
     }
   }
@@ -229,7 +247,7 @@ function buildIntegratedMemoryBlock(
   if (config.includeFacts) {
     const facts = getActiveFacts(db);
 
-    // 按类别分组，每类只取 top 2
+    // 按类别分组，每类只取 top 3，优先保留有时间锚点的新近记录。
     const grouped = new Map<string, MemoryFactRow[]>();
     for (const fact of facts) {
       if (!grouped.has(fact.category)) {
@@ -239,13 +257,13 @@ function buildIntegratedMemoryBlock(
     }
 
     const importantFacts: string[] = [];
-    const priorityCategories = ['promise', 'secret', 'relation']; // 高优先级类别
+    const priorityCategories = ['promise', 'secret', 'relation', 'event', 'item']; // 高优先级类别
 
     for (const cat of priorityCategories) {
       const items = grouped.get(cat);
       if (items && items.length > 0) {
-        items.slice(0, 2).forEach(f => {
-          importantFacts.push(`${f.subject}: ${f.content}`);
+        sortRowsByMemoryTime(items).slice(0, 3).forEach(f => {
+          importantFacts.push(`${formatMemoryTime(f.gameTime)} ${f.subject}: ${f.content}`);
         });
       }
     }
@@ -268,6 +286,72 @@ function buildIntegratedMemoryBlock(
   }
 }
 
+function buildTimelineBlock(
+  db: IslandMemoryDB,
+  blocks: MemoryBlock[],
+  context: MemoryInjectionContext,
+): void {
+  const currentTargetIds = new Set(context.currentTargetIds);
+  const currentEventId = context.currentMainEventId;
+
+  const events = db.events
+    .filter(e => !e.expired)
+    .filter(e => {
+      if (currentEventId && e.relatedMainEventId === currentEventId) return true;
+      if (e.involvedTargetIds?.some(id => currentTargetIds.has(id))) return true;
+      return Boolean(e.gameTime || e.relatedMainEventId);
+    })
+    .sort(compareRowsByMemoryTimeDesc)
+    .slice(0, 8);
+
+  const eventFacts = getActiveFacts(db, { category: 'event' })
+    .sort(compareRowsByMemoryTimeDesc)
+    .slice(0, 6);
+
+  const items = db.items
+    .filter(i => !i.expired)
+    .sort(compareRowsByMemoryTimeDesc)
+    .slice(0, 6);
+
+  const lines: string[] = [];
+  if (events.length) {
+    lines.push('事件时间线:');
+    for (const event of events) {
+      const place = event.location ? ` @${event.location}` : '';
+      const outcome = event.outcome ? ` => ${event.outcome}` : '';
+      lines.push(`  - ${formatMemoryTime(event.gameTime)}${place} ${event.title}: ${event.description}${outcome}`);
+    }
+  }
+
+  if (eventFacts.length) {
+    if (lines.length) lines.push('');
+    lines.push('事件事实:');
+    for (const fact of eventFacts) {
+      lines.push(`  - ${formatMemoryTime(fact.gameTime)} ${fact.subject}: ${fact.content}`);
+    }
+  }
+
+  if (items.length) {
+    if (lines.length) lines.push('');
+    lines.push('物品变动:');
+    for (const item of items) {
+      const action = item.action ? `${item.action} ` : '';
+      const count = item.count !== undefined ? ` x${item.count}` : '';
+      const state = item.state ? ` - ${item.state}` : '';
+      lines.push(`  - ${formatMemoryTime(item.gameTime)} ${action}${item.name}${count}${state}`);
+    }
+  }
+
+  if (!lines.length) return;
+  const content = lines.join('\n');
+  blocks.push({
+    title: '【近期时间线】',
+    content,
+    priority: 88,
+    estimatedChars: content.length + 20,
+  });
+}
+
 /**
  * 构建印象块（当前在场角色，精简）
  */
@@ -286,7 +370,7 @@ function buildImpressionBlocks(
     if (impressions.length > 0) {
       lines.push(`${targetId} 对玩家印象:`);
       impressions.forEach(i => {
-        lines.push(`  - ${i.label} (权重${i.weight > 0 ? '+' : ''}${i.weight})`);
+        lines.push(`  - ${formatMemoryTime(i.gameTime)} ${i.label} (权重${i.weight > 0 ? '+' : ''}${i.weight})`);
       });
     }
   }
@@ -300,6 +384,30 @@ function buildImpressionBlocks(
       estimatedChars: content.length + 20,
     });
   }
+}
+
+function formatMemoryTime(gameTime: string | undefined): string {
+  const value = String(gameTime ?? '').trim();
+  return value ? `[发生时间: ${value}]` : '[时间未记录]';
+}
+
+function compareRowsByMemoryTimeDesc(
+  a: { gameTime?: string; createdAt?: string; updatedAt?: string },
+  b: { gameTime?: string; createdAt?: string; updatedAt?: string },
+): number {
+  const ak = getMemorySortKey(a);
+  const bk = getMemorySortKey(b);
+  return bk.localeCompare(ak);
+}
+
+function sortRowsByMemoryTime<T extends { gameTime?: string; createdAt?: string; updatedAt?: string }>(rows: T[]): T[] {
+  return [...rows].sort(compareRowsByMemoryTimeDesc);
+}
+
+function getMemorySortKey(row: { gameTime?: string; createdAt?: string; updatedAt?: string }): string {
+  const gameTime = String(row.gameTime ?? '').trim();
+  if (gameTime) return gameTime;
+  return String(row.createdAt || row.updatedAt || '');
 }
 
 /**

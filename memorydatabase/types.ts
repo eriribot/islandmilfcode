@@ -96,6 +96,8 @@ export type MemoryFactCategory =
 /** 稳定事实（从旧 KeyFact 迁移 + 新提取） */
 export type MemoryFactRow = MemoryBaseRow & {
   category: MemoryFactCategory;
+  /** 故事内发生/记录时间；缺失表示旧记录或时间依据不足 */
+  gameTime?: string;
   /** 事实主体（谁/什么） */
   subject: string;
   /** 事实内容 */
@@ -108,6 +110,8 @@ export type MemoryFactRow = MemoryBaseRow & {
 
 /** 角色间 / 角色与玩家间的关系 */
 export type MemoryRelationRow = MemoryBaseRow & {
+  /** 故事内形成/变化时间 */
+  gameTime?: string;
   /** 关系发起方（targetId 或 'player'） */
   fromId: string;
   /** 关系接收方 */
@@ -128,6 +132,8 @@ export type MemoryRelationRow = MemoryBaseRow & {
 
 /** 角色对玩家（或对事件）的印象 */
 export type MemoryImpressionRow = MemoryBaseRow & {
+  /** 故事内形成时间 */
+  gameTime?: string;
   /** 持有印象的角色 ID */
   targetId: string;
   /** 印象对象（玩家行为、事件、另一角色） */
@@ -148,6 +154,8 @@ export type MemoryTaskStatus = 'pending' | 'done' | 'expired' | 'archived';
 
 /** 承诺、待办、约定等可追踪事项 */
 export type MemoryTaskRow = MemoryBaseRow & {
+  /** 故事内创建/约定时间 */
+  gameTime?: string;
   /** 任务发起者 */
   ownerId?: string;
   /** 任务关联角色 */
@@ -168,6 +176,8 @@ export type MemoryTaskRow = MemoryBaseRow & {
 
 /** 秘密：特定角色知道但其他人不知道的信息 */
 export type MemorySecretRow = MemoryBaseRow & {
+  /** 故事内产生/得知时间 */
+  gameTime?: string;
   /** 秘密主题 */
   subject: string;
   /** 秘密内容 */
@@ -186,6 +196,8 @@ export type MemorySecretRow = MemoryBaseRow & {
 
 /** 物品归属、位置、状态变化记录 */
 export type MemoryItemRow = MemoryBaseRow & {
+  /** 故事内获得/丢失/记录时间 */
+  gameTime?: string;
   /** 物品名 */
   name: string;
   /** 所有者 */

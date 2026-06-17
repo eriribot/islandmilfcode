@@ -532,6 +532,7 @@ export function upsertItem(
     state?: string;
     holderId?: string;
     location?: string;
+    gameTime?: string;
     sourceRange?: [number, number];
     source?: MemoryBaseRow['source'];
   },
@@ -567,6 +568,7 @@ export function upsertItem(
     if (patch.state !== undefined) existing.state = patch.state;
     if (patch.holderId !== undefined) existing.holderId = patch.holderId;
     if (patch.location !== undefined) existing.location = patch.location;
+    if (patch.gameTime !== undefined) existing.gameTime = patch.gameTime;
     existing.action = patch.action;
     existing.updatedAt = now;
     existing.lastSeenAt = now;
@@ -583,6 +585,7 @@ export function upsertItem(
     ownerId: owner,
     holderId: patch.holderId,
     location: patch.location,
+    gameTime: patch.gameTime,
     state: patch.state,
     action: patch.action,
     count: delta,

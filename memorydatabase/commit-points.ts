@@ -8,6 +8,7 @@ import {
   upsertWorldState,
 } from './upsert';
 import type { IslandMemoryDB, MemoryFactCategory, MemorySummaryLevel, MemoryWriteBatch } from './types';
+import { getWorldState } from './query';
 
 /**
  * 把一次主回复的 ProgressUpdate 写入 memoryDB。
@@ -27,6 +28,9 @@ export function commitProgressToMemoryDB(
   if (!db) return;
 
   // ── 1. 世界状态：时间 / 地点 / 当前主线事件 → worldState 单例表 ──
+  const previousWorldState = getWorldState(db);
+  const commitGameTime = update.time || previousWorldState?.currentTime;
+  const commitLocation = update.location || previousWorldState?.currentLocation;
   const worldPatch: Parameters<typeof upsertWorldState>[1] = { sourceRange };
   let worldHasPatch = false;
   if (update.time) {
@@ -133,6 +137,8 @@ export function commitProgressToMemoryDB(
       relatedMainEventId: eventId,
       description: `主线事件状态变更: ${status}`,
       outcome: status,
+      gameTime: commitGameTime,
+      location: commitLocation,
       sourceRange,
     });
   }
@@ -142,6 +148,8 @@ export function commitProgressToMemoryDB(
     upsertEvent(db, {
       title: name,
       description: String(description ?? ''),
+      gameTime: commitGameTime,
+      location: commitLocation,
       sourceRange,
     });
   }
@@ -155,6 +163,8 @@ export function commitProgressToMemoryDB(
       action: 'gained',
       count: item.count ?? 1,
       state: item.description,
+      gameTime: commitGameTime,
+      location: commitLocation,
       sourceRange,
     });
   }
@@ -166,6 +176,8 @@ export function commitProgressToMemoryDB(
       ownerId: 'player',
       action: 'lost',
       count: 1,
+      gameTime: commitGameTime,
+      location: commitLocation,
       sourceRange,
     });
   }
@@ -239,6 +251,7 @@ export function commitSummaryToMemoryDB(
       .filter(fact => fact && !fact.superseded)
       .map(fact => ({
         category: KEY_FACT_TO_MEMORY_CATEGORY[fact.category] ?? 'custom',
+        gameTime: fact.gameTime,
         subject: fact.subject,
         content: fact.content,
         sourceRange: fact.sourceRange,

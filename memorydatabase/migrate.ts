@@ -80,6 +80,7 @@ export function hydrateSummaryStoreFromMemoryDB(
       category: reverseMapFactCategory(row.category),
       subject: row.subject,
       content: row.content,
+      gameTime: row.gameTime,
       sourceRange: row.sourceRange ?? [0, 0],
       createdAt: row.createdAt,
       superseded: row.expired ?? false,
@@ -196,6 +197,7 @@ function migrateSingleKeyFact(db: IslandMemoryDB, fact: KeyFact): void {
     sourceRange: fact.sourceRange,
     expired: fact.superseded ?? false,
     category,
+    gameTime: fact.gameTime,
     subject: fact.subject,
     content: fact.content,
   });
