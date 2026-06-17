@@ -81,6 +81,14 @@ function getPhoneCharacterTheme(characterId: PhoneCharacterId) {
       bgmUrl: '',
     };
   }
+  if (characterId === 'akane') {
+    return {
+      label: '高坂茜',
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Akane_phone.png',
+      wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_akane.jpg',
+      bgmUrl: '',
+    };
+  }
   return PHONE_CHARACTER_THEMES[characterId] ?? PHONE_CHARACTER_THEMES.megumi;
 }
 

@@ -206,6 +206,28 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     usesObsessionAxis: false,
     note: '苑子不属于五小只角色歌与旧情度轴；作为成人未婚角色，亲密档案按五小只的完璧/结缘闩锁与计数器显示。',
   },
+  akane: {
+    id: 'akane',
+    archiveLabel: '特别档案',
+    name: '高坂茜(红坂朱音)',
+    romanName: 'Kosaka Akane',
+    panelMark: '茜',
+    imageUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Akane_phone.png',
+    imageAlt: '高坂茜头像',
+    portraitCode: 'legendary doujin creator',
+    foot: [
+      { label: '类型', value: '成熟 / 创作者 / 业界暴君' },
+      { label: '档案', value: '特别人物档案' },
+    ],
+    tags: ['成人角色', '创作者', '特别档案'],
+    details: [
+      { label: '生日', value: '5月28日' },
+      { label: '身高', value: '168cm' },
+    ],
+    meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
+    usesObsessionAxis: false,
+    note: '茜不属于五小只角色歌与旧情度轴；作为成人未婚角色，亲密档案按五小只的完璧/结缘闩锁与计数器显示。',
+  },
 };
 
 // 中文注释：档案页顶部角色标签的显示顺序；新增角色必须同步到这里，档案页才会出现。
@@ -217,6 +239,7 @@ const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = [
   'michiru',
   'sayuri',
   'sonoko',
+  'akane',
 ];
 
 function clampPercent(value: number) {
@@ -240,6 +263,9 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
     .join('\n');
   const isSayuriIdentity = /泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack);
   const isSonokoIdentity = /町田苑子|町田|苑子|sonoko|machida/.test(identityHaystack);
+  const isAkaneIdentity = /高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(
+    identityHaystack,
+  );
   const haystack = [identityHaystack, target.alias].map(value => String(value ?? '').toLowerCase()).join('\n');
 
   if (archive.id === 'eriri') return !isSayuriIdentity && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
@@ -249,6 +275,7 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
   if (archive.id === 'michiru') return /冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack);
   if (archive.id === 'sayuri') return isSayuriIdentity;
   if (archive.id === 'sonoko') return isSonokoIdentity;
+  if (archive.id === 'akane') return isAkaneIdentity;
   return false;
 }
 
