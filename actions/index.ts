@@ -1452,6 +1452,34 @@ function getPhoneTargetSearchTerms(target: TargetStatus) {
       'machida sonoko',
     );
   }
+  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(haystack)) {
+    builtInTerms.push(
+      '高坂茜',
+      '红坂朱音',
+      '紅坂朱音',
+      '高坂',
+      '红坂',
+      '紅坂',
+      '朱音',
+      '茜',
+      '红坂小姐',
+      '紅坂小姐',
+      '高坂小姐',
+      '红朱企画',
+      '紅朱企画',
+      '红朱企划',
+      '紅朱企劃',
+      'rouge en rouge',
+      'akane',
+      'kosaka',
+      'kousaka',
+      'kurenai',
+      'akane kosaka',
+      'akane kousaka',
+      'kosaka akane',
+      'kousaka akane',
+    );
+  }
 
   return Array.from(new Set([...baseTerms, ...builtInTerms]));
 }

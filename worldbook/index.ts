@@ -472,6 +472,27 @@ function parseKnownArchiveTarget(entry: WorldbookEntry): TargetStatus | null {
     };
   }
 
+  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) {
+    return {
+      id: '高坂茜(红坂朱音)',
+      name: '高坂茜(红坂朱音)',
+      alias: '红坂朱音 / 紅坂朱音 / Akane Kosaka / Akane Kousaka / 茜 / 朱音 / 红朱企画 / rouge en rouge',
+      affinity: defaultTarget.affinity,
+      obsession: 0,
+      stage: affinityStage(defaultTarget.affinity),
+      obsessionStage: defaultTarget.obsessionStage,
+      titles: {},
+      outfits: { ...defaultTarget.outfits },
+      meta: {
+        source: 'character-worldbook',
+        worldbookEntryUid: entry.uid,
+        worldbookEntryName: entryName,
+        avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Akane_phone.png',
+        noObsessionAxis: true,
+      },
+    };
+  }
+
   if (!/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return null;
 
   return {

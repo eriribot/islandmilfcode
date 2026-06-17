@@ -96,6 +96,23 @@ export const builtInTargetSeeds: TargetStatus[] = [
     },
   },
   {
+    id: '高坂茜(红坂朱音)',
+    name: '高坂茜(红坂朱音)',
+    alias: '高坂茜 / 红坂朱音 / 紅坂朱音 / 高坂 / 红坂 / 紅坂 / 朱音 / 茜 / Akane Kosaka / Akane Kousaka / Kosaka Akane / Kousaka Akane',
+    affinity: 0,
+    obsession: 0,
+    stage: '疏离戒备',
+    obsessionStage: '无旧情轴',
+    titles: {},
+    outfits: { ...DEFAULT_TARGET_OUTFITS },
+    meta: {
+      source: 'built-in-startup',
+      worldbookEntryName: '高坂茜(红坂朱音)',
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Akane_phone.png',
+      noObsessionAxis: true,
+    },
+  },
+  {
     id: '霞之丘诗羽',
     name: '霞之丘诗羽',
     alias: '霞之丘 / 诗羽 / 霞诗子 / Utaha Kasumigaoka',

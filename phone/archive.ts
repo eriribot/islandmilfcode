@@ -281,15 +281,7 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
 
 function getTargetForArchive(characterId: PhoneCharacterId, targets: TargetStatus[]) {
   const archive = getArchive(characterId);
-  const target = targets.find(item => isTargetForArchive(item, archive)) ?? null;
-  if (
-    archive.id === 'akane' &&
-    target?.meta?.source === 'built-in-startup' &&
-    target.meta.worldbookEntryUid === undefined
-  ) {
-    return null;
-  }
-  return target;
+  return targets.find(item => isTargetForArchive(item, archive)) ?? null;
 }
 
 function getArchiveImage(archive: CharacterArchive, target: TargetStatus | null) {
