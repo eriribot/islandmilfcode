@@ -39,6 +39,8 @@ DeepSeek 模式不是重写角色卡，也不是替换现有世界书。它是�
 - [FIRST_APPEARANCE_BOOTSTRAP.md](./FIRST_APPEARANCE_BOOTSTRAP.md)：针对初登场链路空窗，定义 scenePresence 前置的短外貌/身份索引；首批重点覆盖出海、町田苑子、红坂朱音。
 - [TOOL_CALLING_JS_TS.md](./TOOL_CALLING_JS_TS.md)：说明外貌或设计小细节不确定时，如何由 JS/TS 工具执行器完成搜索、抓取、缓存和证据包蒸馏。
 - [CACHE_HIT_STRATEGY.md](./CACHE_HIT_STRATEGY.md)：说明 DeepSeek context cache 的前缀命中规则，以及同层卡 prompt 如何按稳定前缀/动态尾部组织。
+- [DS_AGENT_CAPABILITY_ASSESSMENT.md](./DS_AGENT_CAPABILITY_ASSESSMENT.md)：评估 DeepSeek 在本项目里的 agent 程度，修正 HideWebSearch 的真实作用，并给出基于 SillyTavern WebSearch 结果的证据包方案。
+- [PROJECT_AGENT_ARCHITECTURE_ASSESSMENT.md](./PROJECT_AGENT_ARCHITECTURE_ASSESSMENT.md)：评估项目代码本身的 agent 化程度，说明如何用代码外骨骼驱动 DeepSeek 这类弱扮演模型提高同人卡质量。
 
 ## 与现有指南的关系
 

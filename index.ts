@@ -123,6 +123,7 @@ const READER_CONTEXT_MENU_WIDTH = 240;
 const READER_CONTEXT_MENU_HEIGHT = 176;
 const STATUS_CACHE_KEY_PREFIX = 'islandmilfcode:status-cache:v2:';
 const DRAWING_ENABLED_KEY_PREFIX = 'islandmilfcode:drawing-enabled:v1:';
+const DEEPSEEK_MODE_ENABLED_KEY = 'islandmilfcode-ui:deepseek-mode-enabled:v1';
 
 let flipDirection: 'forward' | 'backward' | '' = '';
 let phoneBgmAudio: HTMLAudioElement | null = null;
@@ -212,6 +213,24 @@ function resolveReaderIndex(readerIndex: number, readerId?: string | null) {
 let adapter: VariableAdapter;
 const state = createInitialState(loadFloatingPhonePosition());
 const eventStops: Array<() => void> = [];
+
+function readDeepSeekModeEnabledPreference() {
+  try {
+    return localStorage.getItem(DEEPSEEK_MODE_ENABLED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function writeDeepSeekModeEnabledPreference(enabled: boolean) {
+  try {
+    localStorage.setItem(DEEPSEEK_MODE_ENABLED_KEY, enabled ? 'true' : 'false');
+  } catch {
+    /* ignore */
+  }
+}
+
+state.deepSeekModeEnabled = readDeepSeekModeEnabledPreference();
 
 // ── StatusData localStorage 缓存 ──
 // 会话期间以内存里的 state.statusData 作为权威状态。
@@ -341,6 +360,12 @@ function commitDrawingSettingsToRuntimeFlags() {
   state.runtimeFlags.drawingSettings = JSON.parse(JSON.stringify(state.drawingSettings));
 }
 
+function stripGlobalRuntimeFlags<T extends Record<string, unknown>>(flags: T): T {
+  delete flags.deepSeekMode;
+  delete flags.deepSeekWebLookup;
+  return flags;
+}
+
 function syncRuntimeProfile() {
   state.playerProfile = normalizePlayerProfile(state.playerProfile);
   state.runtimeFlags.playerProfile = JSON.parse(JSON.stringify(state.playerProfile));
@@ -354,7 +379,7 @@ function buildGameState(statusData: StatusData = state.statusData): GameState {
     statusData: JSON.parse(JSON.stringify(statusData)),
     currentMessageIndex: Math.max(getReaderMessages(state.uiMessages).length - 1, 0),
     runtimeFlags: {
-      ...JSON.parse(JSON.stringify(state.runtimeFlags)),
+      ...stripGlobalRuntimeFlags(JSON.parse(JSON.stringify(state.runtimeFlags)) as Record<string, unknown>),
       playerProfile: JSON.parse(JSON.stringify(state.playerProfile)),
       phoneMessages: JSON.parse(JSON.stringify(state.phoneMessages)),
       drawingSettings: JSON.parse(JSON.stringify(state.drawingSettings)),
@@ -505,7 +530,9 @@ function enterSave(saveId: string) {
       className: save.meta.playerProfile?.className ?? '2年A班',
     },
   );
-  state.runtimeFlags = JSON.parse(JSON.stringify(save.payload.gameState.runtimeFlags ?? {}));
+  state.runtimeFlags = stripGlobalRuntimeFlags(
+    JSON.parse(JSON.stringify(save.payload.gameState.runtimeFlags ?? {})) as Record<string, unknown>,
+  );
   state.drawingSettings = normalizeDrawingSettings(state.runtimeFlags.drawingSettings);
   commitDrawingSettingsToRuntimeFlags();
   applyDrawingEnabledPreference();
@@ -756,11 +783,18 @@ async function deleteReaderFloor(readerIndex: number) {
 
 function navigatePhone(route: PhoneRoute) {
   syncDrawingSettingsFromMountedControls();
+  if (route === 'app:deepseek-web' && !state.deepSeekModeEnabled) {
+    navigatePhoneRoute(state, 'home', ctx);
+    return;
+  }
   navigatePhoneRoute(state, route, ctx);
 }
 
 function navigatePhoneBack() {
   syncDrawingSettingsFromMountedControls();
+  if (state.phoneRouteHistory[state.phoneRouteHistory.length - 1] === 'app:deepseek-web' && !state.deepSeekModeEnabled) {
+    state.phoneRouteHistory = state.phoneRouteHistory.filter(route => route !== 'app:deepseek-web');
+  }
   navigatePhoneBackRoute(state, ctx);
 }
 
@@ -769,6 +803,10 @@ function switchTab(tab: TabKey) {
 }
 
 function openPhone(targetRoute?: PhoneRoute) {
+  if (targetRoute === 'app:deepseek-web' && !state.deepSeekModeEnabled) {
+    openPhoneRoute(state, ctx, 'home');
+    return;
+  }
   openPhoneRoute(state, ctx, targetRoute);
 }
 
@@ -2682,10 +2720,16 @@ function bindEvents() {
 const titleCallbacks: TitleCallbacks = {
   enterSave,
   returnToTitle,
-  startCreating: () => {
+  startCreating: opts => {
+    state.deepSeekModeEnabled = Boolean(opts?.deepSeekMode);
+    writeDeepSeekModeEnabledPreference(state.deepSeekModeEnabled);
     state.creatingCharacter = true;
     state.showingSaveList = false;
     render();
+  },
+  setDeepSeekMode: enabled => {
+    state.deepSeekModeEnabled = enabled;
+    writeDeepSeekModeEnabledPreference(enabled);
   },
   showSaves: () => {
     state.showingSaveList = true;
@@ -2696,6 +2740,8 @@ const titleCallbacks: TitleCallbacks = {
     render();
   },
   createAndEnter: opts => {
+    state.deepSeekModeEnabled = opts.deepSeekMode ?? state.deepSeekModeEnabled;
+    writeDeepSeekModeEnabledPreference(state.deepSeekModeEnabled);
     const save = createSave(opts);
     enterSave(save.saveId);
   },
@@ -2779,12 +2825,15 @@ function render() {
   } else if (state.creatingCharacter) {
     syncPaperFullscreenHost(false);
     // 角色创建界面。
-    root.innerHTML = renderCharacterCreation();
+    root.innerHTML = renderCharacterCreation({ deepSeekMode: state.deepSeekModeEnabled });
     bindCharacterCreationEvents(root, titleCallbacks);
   } else {
     syncPaperFullscreenHost(false);
     // 标题界面。
-    root.innerHTML = renderTitleHome({ showSaves: state.showingSaveList });
+    root.innerHTML = renderTitleHome({
+      showSaves: state.showingSaveList,
+      deepSeekMode: state.deepSeekModeEnabled,
+    });
     bindTitleHomeEvents(root, titleCallbacks);
   }
 }

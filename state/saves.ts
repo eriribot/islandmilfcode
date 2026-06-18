@@ -311,6 +311,8 @@ function normalizeGameState(gameState: Partial<GameState> | undefined, fallbackR
   if (runtimeFlags && typeof runtimeFlags === 'object') {
     runtimeFlags.playerProfile = normalizePlayerProfile((runtimeFlags as Record<string, unknown>).playerProfile);
     runtimeFlags.phoneMessages = normalizePhoneMessageStore((runtimeFlags as Record<string, unknown>).phoneMessages);
+    delete (runtimeFlags as Record<string, unknown>).deepSeekMode;
+    delete (runtimeFlags as Record<string, unknown>).deepSeekWebLookup;
   }
   return {
     runId: String(gameState?.runId || fallbackRunId),

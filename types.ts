@@ -369,6 +369,7 @@ export type AppState = {
   activeRunId: string | null;
   activeSaveId: string | null;
   creatingCharacter: boolean;
+  deepSeekModeEnabled: boolean;
   showingSaveList: boolean;
   playerProfile: PlayerProfile;
   playerProfileEditing: boolean;

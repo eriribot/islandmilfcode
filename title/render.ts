@@ -102,6 +102,7 @@ function renderFilmStrip() {
 
 type TitleHomeOptions = {
   showSaves?: boolean;
+  deepSeekMode?: boolean;
 };
 
 export function renderTitleHome(options: TitleHomeOptions = {}) {
@@ -162,6 +163,18 @@ export function renderTitleHome(options: TitleHomeOptions = {}) {
         </div>
 
         <div class="gal-title__actions">
+          <label class="gal-ds-mode">
+            <input
+              type="checkbox"
+              data-field="deepseek-mode"
+              ${options.deepSeekMode ? 'checked' : ''}
+            />
+            <span class="gal-ds-mode__mark" aria-hidden="true"></span>
+            <span class="gal-ds-mode__text">
+              <strong>DeepSeek 模式</strong>
+              <small>DS 专用护栏与联网证据包</small>
+            </span>
+          </label>
           <button class="gal-btn gal-btn--primary" data-action="new-game">
             新建角色 →
           </button>
@@ -184,7 +197,7 @@ export function renderTitleHome(options: TitleHomeOptions = {}) {
   `;
 }
 
-export function renderCharacterCreation() {
+export function renderCharacterCreation(options: { deepSeekMode?: boolean } = {}) {
   return `
     <div class="gal-title">
       ${renderSakuraField(28)}
@@ -301,7 +314,7 @@ export function renderCharacterCreation() {
                     </span>
                     <span class="gal-class-detail__character">
                       <span class="gal-class-detail__sprite gal-class-detail__sprite--megumi" role="img" aria-label="加藤惠"></span>
-                      <span class="gal-class-detail__name">加藤惠</span>
+                      <span class="gal-class-detail__name">加藤惠（2012-04-05分班后）</span>
                     </span>
                   </div>
                 </div>
@@ -336,6 +349,8 @@ export function renderCharacterCreation() {
               </label>
             </div>
           </div>
+
+          <input type="hidden" name="deepSeekMode" value="${options.deepSeekMode ? 'on' : ''}" />
 
           <div class="gal-create-actions">
             <button type="button" class="gal-btn gal-btn--ghost" data-action="back-to-title">

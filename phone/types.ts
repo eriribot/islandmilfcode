@@ -10,6 +10,7 @@ export type PhoneRoute =
   | 'app:memory'
   | 'app:music'
   | 'app:drawing'
+  | 'app:deepseek-web'
   | 'app:settings';
 
 export const PHONE_THEME_CHARACTER_IDS = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru'] as const;

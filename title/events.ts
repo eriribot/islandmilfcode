@@ -3,7 +3,8 @@ import type { Difficulty, PlayerStats } from '../types';
 export type TitleCallbacks = {
   enterSave: (saveId: string) => void;
   returnToTitle: () => void;
-  startCreating: () => void;
+  startCreating: (opts?: { deepSeekMode?: boolean }) => void;
+  setDeepSeekMode: (enabled: boolean) => void;
   showSaves: () => void;
   hideSaves: () => void;
   createAndEnter: (opts: {
@@ -15,6 +16,7 @@ export type TitleCallbacks = {
     className: string;
     stats?: PlayerStats;
     difficulty?: Difficulty;
+    deepSeekMode?: boolean;
   }) => void;
   deleteSave: (saveId: string) => void;
   exportSave: (saveId: string) => void;
@@ -80,8 +82,13 @@ function bindTitleMusicEvents(root: HTMLElement | null) {
 export function bindTitleHomeEvents(root: HTMLElement | null, cb: TitleCallbacks) {
   bindTitleMusicEvents(root);
 
+  root?.querySelector<HTMLInputElement>('[data-field="deepseek-mode"]')?.addEventListener('change', event => {
+    cb.setDeepSeekMode((event.currentTarget as HTMLInputElement).checked);
+  });
+
   root?.querySelector<HTMLButtonElement>('[data-action="new-game"]')?.addEventListener('click', () => {
-    cb.startCreating();
+    const deepSeekMode = Boolean(root.querySelector<HTMLInputElement>('[data-field="deepseek-mode"]')?.checked);
+    cb.startCreating({ deepSeekMode });
   });
 
   root?.querySelector<HTMLButtonElement>('[data-action="show-saves"]')?.addEventListener('click', event => {
@@ -159,6 +166,7 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
       className: (fd.get('className') as string)?.trim() || '2年B班',
       stats: normalizedStats,
       difficulty,
+      deepSeekMode: fd.get('deepSeekMode') === 'on',
     });
   });
 }

@@ -922,6 +922,7 @@ function buildScenePresenceContext(statusData: StatusData, scenePresence?: Scene
       return text ? `- ${name}: ${text}` : '';
     })
     .filter(Boolean);
+  const worldStateLines = buildSaenaiWorldStateFactLines(statusData.world.currentTime);
   const plotImpact = scenePresence.plotImpact;
   const butterfly = plotImpact?.butterflyEffects;
   const plotImpactLines = plotImpact
@@ -960,6 +961,7 @@ function buildScenePresenceContext(statusData: StatusData, scenePresence?: Scene
     `明确不在场：${nameList(scenePresence.absentIds ?? [])}`,
     `不确定/仅被提及：${nameList(scenePresence.uncertainIds ?? [])}`,
     `本轮不注入完整关系指导：${unguidedNames}`,
+    worldStateLines.length ? ['世界状态事实（可被蝴蝶效应/已发生正文覆盖）：', ...worldStateLines].join('\n') : '',
     evidenceLines.length ? ['判定依据：', ...evidenceLines].join('\n') : '',
     '镜头规则：只有明确在场和转场目标可以应用完整关系指导、局部审计、即时台词/动作/心理反应；明确不在场或不确定角色不得默认插话、旁听、吃醋或产生即时反应。',
     plotImpactLines,
@@ -972,6 +974,28 @@ function buildScenePresenceContext(statusData: StatusData, scenePresence?: Scene
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function buildSaenaiWorldStateFactLines(currentTime: string) {
+  const date = getDatePart(currentTime);
+  const lines = [
+    '- 《恋爱节拍器》在2011年已完结；当前线可引用销量、读者余波和创作伤口，不要把它默认写成仍在连载。',
+  ];
+
+  if (!date || date < '2012-04-05') {
+    lines.push(
+      '- 2012-04-05才开二年级分班；在此之前不要用2年B班/2年G班判断同班、隔壁班、座位靠窗后排或教室距离。',
+      '- 加藤惠在2012-04-05分班后才是安艺伦也的2年B班同班同学；若当前时间更早，不能把“同班”当作已发生事实。',
+    );
+  }
+
+  if (!date || date < '2013-02-01') {
+    lines.push(
+      '- 红坂朱音到2013年2月才开始挖走黑金二人组；在此之前只能作为业界人物/未来压力背景，不能写成已经发生。',
+    );
+  }
+
+  return lines;
 }
 
 function buildRelationshipGuidanceList(

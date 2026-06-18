@@ -873,6 +873,52 @@
   margin: 0;
 }
 
+.gal-ds-mode {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid rgba(220, 210, 195, 0.62);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.56);
+  cursor: pointer;
+}
+
+.gal-ds-mode input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gal-ds-mode__mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1.5px solid rgba(184, 92, 110, 0.36);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.8);
+}
+
+.gal-ds-mode input:checked ~ .gal-ds-mode__mark {
+  background: #b85c6e;
+  border-color: rgba(184, 92, 110, 0.72);
+}
+
+.gal-ds-mode__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #3a3028;
+  font-size: 0.86rem;
+}
+
+.gal-ds-mode__text small {
+  color: #8c7a66;
+  font-size: 0.68rem;
+}
+
 /* ╔═══════════════════════════════════════╗
    ║   角色创建表单                         ║
    ╚═══════════════════════════════════════╝ */

@@ -370,6 +370,17 @@ function renderPhoneHome(state: AppState) {
       label: '画图',
       meta: state.drawingSettings.enabled ? '独立生图已启用' : '手动控制',
     },
+    ...(state.deepSeekModeEnabled
+      ? [
+          {
+            route: 'app:deepseek-web' as PhoneRoute,
+            icon: 'https://img.icons8.com/color/512/deepseek.png',
+            iconType: 'image' as const,
+            label: '联网',
+            meta: 'DeepSeek 插件',
+          },
+        ]
+      : []),
     {
       route: 'app:settings',
       icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cGF0aCBmaWxsPSIjNjA3ZDhiIiBkPSJNMzkuNiAyNy4yYy4xLS43LjItMS40LjItMi4ycy0uMS0xLjUtLjItMi4ybDQuNS0zLjJjLjQtLjMuNi0uOS4zLTEuNEw0MCAxMC44Yy0uMy0uNS0uOC0uNy0xLjMtLjRsLTUgMi4zYy0xLjItLjktMi40LTEuNi0zLjgtMi4yTDI5LjQgNWMtLjEtLjUtLjUtLjktMS0uOWgtOC42Yy0uNSAwLTEgLjQtMSAuOWwtLjUgNS41Yy0xLjQuNi0yLjcgMS4zLTMuOCAyLjJsLTUtMi4zYy0uNS0uMi0xLjEgMC0xLjMuNGwtNC4zIDcuNGMtLjMuNS0uMSAxLjEuMyAxLjRsNC41IDMuMmMtLjEuNy0uMiAxLjQtLjIgMi4ycy4xIDEuNS4yIDIuMkw0IDMwLjRjLS40LjMtLjYuOS0uMyAxLjRMOCAzOS4yYy4zLjUuOC43IDEuMy40bDUtMi4zYzEuMi45IDIuNCAxLjYgMy44IDIuMmwuNSA1LjVjLjEuNS41LjkgMSAuOWg4LjZjLjUgMCAxLS40IDEtLjlsLjUtNS41YzEuNC0uNiAyLjctMS4zIDMuOC0yLjJsNSAyLjNjLjUuMiAxLjEgMCAxLjMtLjRsNC4zLTcuNGMuMy0uNS4xLTEuMS0uMy0xLjR6TTI0IDM1Yy01LjUgMC0xMC00LjUtMTAtMTBzNC41LTEwIDEwLTEwczEwIDQuNSAxMCAxMHMtNC41IDEwLTEwIDEwIi8+PHBhdGggZmlsbD0iIzQ1NWE2NCIgZD0iTTI0IDEzYy02LjYgMC0xMiA1LjQtMTIgMTJzNS40IDEyIDEyIDEyczEyLTUuNCAxMi0xMnMtNS40LTEyLTEyLTEybTAgMTdjLTIuOCAwLTUtMi4yLTUtNXMyLjItNSA1LTVzNSAyLjIgNSA1cy0yLjIgNS01IDUiLz48L3N2Zz4=',
@@ -1215,6 +1226,39 @@ function renderMemoryPhonePage(state: AppState) {
   `;
 }
 
+function renderDeepSeekWebPhonePage(state: AppState) {
+  if (!state.deepSeekModeEnabled) return renderPhoneHome(state);
+
+  return `
+    <section class="phone-route-page phone-app-page phone-app-page--deepseek-web" data-phone-route-view="app:deepseek-web">
+      ${renderPhoneAppHeader(state, 'DeepSeek 联网', '插件路由')}
+      <div class="phone-page-scroll phone-deepseek-scroll">
+        <section class="phone-deepseek-card phone-deepseek-card--hero">
+          <span class="phone-deepseek-logo" aria-hidden="true">DS</span>
+          <div class="phone-deepseek-copy">
+            <strong>联网插件</strong>
+            <span>等待前端搜索聚合桥接入</span>
+          </div>
+        </section>
+        <section class="phone-deepseek-card">
+          <div class="phone-deepseek-row">
+            <span>模式状态</span>
+            <strong>已启用</strong>
+          </div>
+          <div class="phone-deepseek-row">
+            <span>路由可见性</span>
+            <strong>仅 DS 模式</strong>
+          </div>
+          <div class="phone-deepseek-row">
+            <span>提示词注入</span>
+            <strong>关闭</strong>
+          </div>
+        </section>
+      </div>
+    </section>
+  `;
+}
+
 function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:messages') return renderMessagesPhonePage(state);
   if (state.phoneRoute === 'app:chat') return renderPhoneChatPage(state);
@@ -1226,6 +1270,7 @@ function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:memory') return renderMemoryPhonePage(state);
   if (state.phoneRoute === 'app:music') return renderMusicPhonePage(state);
   if (state.phoneRoute === 'app:drawing') return renderDrawingPhonePage(state);
+  if (state.phoneRoute === 'app:deepseek-web') return renderDeepSeekWebPhonePage(state);
   if (state.phoneRoute === 'app:settings') return renderSettingsPhonePage(state, renderers);
   return renderPhoneHome(state);
 }

@@ -665,6 +665,18 @@ body.floating-phone-dragging {
   background: linear-gradient(145deg, #53606d, #87939c);
 }
 
+.phone-app-icon[data-phone-route='app:deepseek-web'] .phone-app-icon__glyph {
+  background:
+    radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.36), transparent 34%),
+    linear-gradient(145deg, #1f9bb4, #3150a8);
+  padding: 7px;
+}
+
+.phone-app-icon[data-phone-route='app:deepseek-web'] .phone-app-icon__image {
+  border-radius: 6px;
+  object-fit: contain;
+}
+
 .phone-app-icon__label {
   max-width: 74px;
   overflow: hidden;
@@ -781,6 +793,86 @@ body.floating-phone-dragging {
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+}
+
+.phone-app-page--deepseek-web {
+  --phone-deepseek-accent: #2378b8;
+}
+
+.phone-deepseek-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.phone-deepseek-card {
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 252, 245, 0.72);
+  border: 1px solid rgba(180, 160, 130, 0.16);
+  box-shadow: 0 8px 18px rgba(67, 76, 90, 0.08);
+}
+
+.phone-deepseek-card--hero {
+  display: grid;
+  grid-template-columns: 46px 1fr;
+  align-items: center;
+  gap: 10px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.28), transparent 34%),
+    linear-gradient(145deg, #1f9bb4, #3150a8);
+}
+
+.phone-deepseek-logo {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.phone-deepseek-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.phone-deepseek-copy strong {
+  font-size: 14px;
+}
+
+.phone-deepseek-copy span {
+  font-size: 11px;
+  opacity: 0.78;
+}
+
+.phone-deepseek-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(180, 160, 130, 0.14);
+  font-size: 12px;
+}
+
+.phone-deepseek-row:last-child {
+  border-bottom: 0;
+}
+
+.phone-deepseek-row span {
+  color: var(--ink-faint);
+}
+
+.phone-deepseek-row strong {
+  color: var(--phone-deepseek-accent);
+  font-size: 12px;
 }
 
 /* ── Memory editor ── */

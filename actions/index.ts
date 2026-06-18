@@ -1716,7 +1716,37 @@ function normalizeScenePresenceIds(ids: unknown, allowedIds: Set<string>) {
   return Array.from(new Set(ids.map(id => String(id ?? '').trim()).filter(id => allowedIds.has(id))));
 }
 
-function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[], userInput: string): RawPrompt[] {
+function getDatePart(value: string) {
+  return String(value ?? '').match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
+}
+
+function buildSaenaiWorldStateFactLines(currentTime: string) {
+  const date = getDatePart(currentTime);
+  const lines = [
+    '- 《恋爱节拍器》在2011年已完结；当前线可引用销量、读者余波和创作伤口，不要把它默认写成仍在连载。',
+  ];
+
+  if (!date || date < '2012-04-05') {
+    lines.push(
+      '- 2012-04-05才开二年级分班；在此之前不要用2年B班/2年G班判断同班、隔壁班、座位靠窗后排或教室距离。',
+      '- 加藤惠在2012-04-05分班后才是安艺伦也的2年B班同班同学；若当前时间更早，不能把“同班”当作已发生事实。在2012-04-05之前的时间,加藤惠不能出现我是二年级B班或者“同班同学”之类的台词。',
+    );
+  }
+
+  if (!date || date < '2013-02-01') {
+    lines.push(
+      '- 红坂朱音到2013年2月才开始挖走黑金二人组；在此之前只能作为业界人物/未来压力背景，不能写成已经发生。',
+    );
+  }
+
+  return lines;
+}
+
+function buildScenePresencePrompts(
+  ctx: ActionContext,
+  promptHistory: UiMessage[],
+  userInput: string,
+): RawPrompt[] {
   const cleanUserInput = sanitizePromptInputText(userInput);
   const recentVisible = promptHistory
     .filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
@@ -1743,6 +1773,8 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     .join('\n');
 
   const playerClass = String(ctx.state.playerProfile?.className ?? '').trim();
+  const currentWorldTime = ctx.state.statusData.world.currentTime;
+  const worldStateFacts = buildSaenaiWorldStateFactLines(currentWorldTime);
 
   const systemPrompt = [
     '你是夏野雾姬，出自《狗与剪刀的正确用法》：冷峻、毒舌、才华锋利的天才小说家，也是会把粗劣桥段一眼剖开的文学少女。',
@@ -1756,7 +1788,11 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     '',
     `玩家(user)班级：${playerClass || '未知'}`,
     '',
-    `当前世界时间（时间锚点）：${ctx.state.statusData.world.currentTime}`,
+    `当前世界时间（时间锚点）：${currentWorldTime}`,
+    '',
+    '世界状态事实（用于 absent/focus/uncertain 判定，可被蝴蝶效应或已发生正文事实覆盖）：',
+    ...worldStateFacts,
+    '- 如果最近正文或玩家输入已经明确造成蝴蝶效应/新因果覆盖上述缺省状态，请在 plotImpact.causalTrace 与 evidence 中写明覆盖原因，再按新因果判定。',
     '',
     '页边判断（在场）：',
     '- present：她确实站在这一页的镜头里，能立刻说话、行动、沉默、吃醋或产生即时反应。',
@@ -1802,6 +1838,7 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     '4. 玩家当前输入若明确“追上去安慰她/去找某人/转向某人/和某人说话”，该角色进入 focus。',
     '5. 输出必须是一个 JSON 对象，不要使用 Markdown 代码块。',
     '6. 班级消歧：玩家输入若用班级/学年指人（如“去G班”“找同班同学”“B班那个”），用上面的“玩家班级”和角色“班级”做匹配——同字符串=同班；只有班级里的角色才算同班。仅“同班/同年级”这类泛指、又能唯一对应到名单里某个角色时，才把该角色判为 focus；对应不唯一就不要硬塞。',
+    '   但如果世界状态事实说明当前尚未分班，则班级匹配失效：不要因为“同班”“B班”“座位”这类未发生信息把加藤惠或任何角色塞进 focus/present。',
     '7. 原作关系只锚定到“安艺伦也”：名单里的“原作关系”（青梅竹马/学姐/表姐等）描述的是该角色与伦也的关系，不是与 user 的关系。不要因为这些原作关系就默认该角色与 user 亲近、在场或应进入 focus；user 与角色的关系以实际剧情与好感度为准。',
   ].join('\n');
 

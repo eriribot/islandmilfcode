@@ -623,6 +623,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     activeRunId: null,
     activeSaveId: null,
     creatingCharacter: false,
+    deepSeekModeEnabled: false,
     showingSaveList: false,
     playerProfile: {
       name: '',
