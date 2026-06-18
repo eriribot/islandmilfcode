@@ -827,6 +827,17 @@ function getWeekday(dateStr: string) {
 function renderJournalHeader(state: AppState, controlsHtml = '') {
   const dateStr = formatDate(state.statusData.world.currentTime);
   const weekday = getWeekday(state.statusData.world.currentTime);
+  const jumpComposerButton = `
+    <button
+      class="paper-fullscreen-btn paper-jump-composer-btn"
+      data-action="jump-to-composer"
+      type="button"
+      title="直达底部输入框"
+      aria-label="直达底部输入框"
+    >
+      <span class="paper-jump-composer-btn__icon" aria-hidden="true"></span>
+    </button>
+  `;
 
   return `
     <header class="journal-header">
@@ -838,6 +849,7 @@ function renderJournalHeader(state: AppState, controlsHtml = '') {
         <div class="journal-location">地点 ${escapeHtml(state.statusData.world.currentLocation)}</div>
       </div>
       <div class="journal-header__actions">
+        ${jumpComposerButton}
         ${controlsHtml}
         <div class="journal-sticker">
           ${escapeHtml(state.playerProfile.className || '主角档案')}
@@ -853,6 +865,19 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
   const readerMessages = getReaderMessages(state.uiMessages);
   const currentReaderIndex = Math.min(Math.max(state.focusedMessageIndex, 0), Math.max(readerMessages.length - 1, 0));
   const composerActionsButton = renderReaderActionsButton(state, currentReaderIndex, 'composer-floor-actions');
+  const composerTopButton = embedded
+    ? ''
+    : `
+      <button
+        class="composer-top-btn"
+        data-action="jump-to-paper-top"
+        type="button"
+        title="回到顶部"
+        aria-label="回到顶部"
+      >
+        <span class="composer-top-btn__icon" aria-hidden="true"></span>
+      </button>
+    `;
   const fullscreenClass = !embedded && isPaperWorkspaceFullscreen(state) ? ' is-paper-fullscreen' : '';
   const fullscreenButton = embedded ? '' : renderPaperFullscreenButton(state);
   const readerFocusMessage = readerMessages[currentReaderIndex];
@@ -890,6 +915,7 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
         >${escapeHtml(state.draft)}</textarea>
 
         <div class="composer-actions">
+          ${composerTopButton}
           ${composerActionsButton}
           ${state.generating ? '<span class="composer-tip">写入中……</span>' : ''}
           <button class="send-btn" data-action="send">${state.generating ? '取消' : '记录'}</button>

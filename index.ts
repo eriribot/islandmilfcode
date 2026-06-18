@@ -636,6 +636,29 @@ function focusComposer(placeCursorAtEnd = true) {
   });
 }
 
+function getPaperScrollTarget(workspace: HTMLElement | null | undefined) {
+  return workspace?.classList.contains('is-paper-fullscreen') ? workspace : document.scrollingElement;
+}
+
+function jumpToComposer(button: HTMLElement) {
+  const workspace = button.closest<HTMLElement>('.paper-workspace');
+  const textarea = workspace?.querySelector<HTMLTextAreaElement>('.composer-input');
+  const scrollTarget = getPaperScrollTarget(workspace);
+
+  // 直达输入框：全屏滚纸面，普通模式滚页面。
+  scrollTarget?.scrollTo({ top: scrollTarget.scrollHeight, behavior: 'smooth' });
+  window.requestAnimationFrame(() => {
+    textarea?.focus();
+    const end = textarea?.value.length ?? 0;
+    textarea?.setSelectionRange(end, end);
+  });
+}
+
+function jumpToPaperTop(button: HTMLElement) {
+  // 回顶：和直达输入框共用滚动容器判断。
+  getPaperScrollTarget(button.closest<HTMLElement>('.paper-workspace'))?.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 function injectComposerDraft(text: string) {
   state.draft = text;
   const textareas = Array.from(root?.querySelectorAll<HTMLTextAreaElement>('.composer-input') ?? []);
@@ -1904,6 +1927,18 @@ function bindEvents() {
       event.stopPropagation();
       togglePaperWorkspaceFullscreen(state);
       render();
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-to-composer"]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      jumpToComposer(button);
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-to-paper-top"]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      jumpToPaperTop(button);
     });
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="reader-edit"]').forEach(button => {
