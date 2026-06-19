@@ -496,6 +496,24 @@ function formatIsoDateKey(year: number, monthIndex: number, day: number) {
   return `${year}-${pad2(monthIndex + 1)}-${pad2(day)}`;
 }
 
+function isCalendarDateKey(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function safeCalendarText(value: unknown, fallback = '') {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return fallback;
+}
+
+function safeCalendarTextArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .map(item => safeCalendarText(item).trim())
+        .filter(Boolean)
+    : [];
+}
+
 function formatCalendarDateLabel(dateKey: string) {
   const match = dateKey.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return dateKey;
@@ -528,25 +546,25 @@ function buildCalendarEventItem(
   event: PlotEventCard & { schedule: NonNullable<PlotEventCard['schedule']> },
   statusData: StatusData,
 ): CalendarEventItem {
+  const date = isCalendarDateKey(event.schedule.date) ? event.schedule.date : '2012-03-31';
+  const endDate = isCalendarDateKey(event.schedule.endDate) && event.schedule.endDate >= date ? event.schedule.endDate : date;
+  const id = safeCalendarText(event.id, 'unknown-event');
   return {
-    id: event.id,
-    title: event.title || event.id,
-    date: event.schedule.date,
-    endDate:
-      event.schedule.endDate && event.schedule.endDate >= event.schedule.date
-        ? event.schedule.endDate
-        : event.schedule.date,
-    timeSegments: event.schedule.timeSegments ?? [],
-    locations: event.schedule.locations ?? [],
-    summary: event.summary ?? '',
-    status: statusData.world.mainEvents?.[event.id] ?? '',
+    id,
+    title: safeCalendarText(event.title, id) || id,
+    date,
+    endDate,
+    timeSegments: safeCalendarTextArray(event.schedule.timeSegments),
+    locations: safeCalendarTextArray(event.schedule.locations),
+    summary: safeCalendarText(event.summary),
+    status: safeCalendarText(statusData.world.mainEvents?.[event.id]),
   };
 }
 
 function collectCalendarEvents(state: AppState): CalendarEventItem[] {
   return Object.values(state.plotLibrary.events)
     .filter((event): event is PlotEventCard & { schedule: NonNullable<PlotEventCard['schedule']> } =>
-      Boolean(event.schedule?.date),
+      isCalendarDateKey(event.schedule?.date),
     )
     .map(event => buildCalendarEventItem(event, state.statusData))
     .sort((a, b) => a.date.localeCompare(b.date) || a.endDate.localeCompare(b.endDate) || a.id.localeCompare(b.id));

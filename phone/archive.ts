@@ -242,6 +242,8 @@ const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = [
   'akane',
 ];
 
+const OBSESSION_ARCHIVE_IDS = new Set<PhoneCharacterId>(['megumi', 'eriri', 'utaha', 'izumi', 'michiru']);
+
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
@@ -270,7 +272,12 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
 
   if (archive.id === 'eriri') return !isSayuriIdentity && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
   if (archive.id === 'megumi') return /加藤|惠|恵|megumi|katou|kato/.test(haystack);
-  if (archive.id === 'utaha') return /霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack);
+  if (archive.id === 'utaha') {
+    return (
+      !isSonokoIdentity &&
+      /霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)
+    );
+  }
   if (archive.id === 'izumi') return /波岛|波島|出海|izumi|hashima/.test(haystack);
   if (archive.id === 'michiru') return /冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack);
   if (archive.id === 'sayuri') return isSayuriIdentity;
@@ -293,7 +300,9 @@ function resolveArchive(characterId: PhoneCharacterId, targets: TargetStatus[]):
   const archive = getArchive(characterId);
   const target = getTargetForArchive(characterId, targets);
   const affinity = clampPercent(target?.affinity ?? 0);
-  const usesObsessionAxis = archive.usesObsessionAxis !== false && target?.meta?.noObsessionAxis !== true;
+  const usesObsessionAxis =
+    archive.usesObsessionAxis !== false &&
+    (OBSESSION_ARCHIVE_IDS.has(archive.id) || target?.meta?.noObsessionAxis !== true);
   const obsession = usesObsessionAxis ? clampPercent(target?.obsession ?? 0) : 0;
   const stage = target?.stage || affinityStage(affinity);
   const obsStage = usesObsessionAxis ? target?.obsessionStage || obsessionStage(obsession) : '';
