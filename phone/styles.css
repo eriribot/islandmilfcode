@@ -875,6 +875,187 @@ body.floating-phone-dragging {
   font-size: 12px;
 }
 
+.phone-deepseek-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.phone-deepseek-section-head strong,
+.phone-deepseek-card--fan summary {
+  color: var(--ink-dark);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.phone-deepseek-section-head small {
+  color: var(--ink-faint);
+  font-size: 10px;
+}
+
+.phone-deepseek-toggle {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.phone-deepseek-toggle strong,
+.phone-deepseek-toggle small {
+  display: block;
+}
+
+.phone-deepseek-toggle strong {
+  color: var(--ink-dark);
+  font-size: 12px;
+}
+
+.phone-deepseek-toggle small {
+  margin-top: 3px;
+  color: var(--ink-faint);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.phone-deepseek-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.phone-deepseek-form label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  color: var(--ink-faint);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.phone-deepseek-form-wide {
+  grid-column: 1 / -1;
+}
+
+.phone-deepseek-form input,
+.phone-deepseek-form select,
+.phone-deepseek-form textarea,
+.phone-deepseek-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(180, 160, 130, 0.22);
+  border-radius: 6px;
+  padding: 8px;
+  color: var(--ink-dark);
+  background: rgba(255, 252, 245, 0.82);
+  font: inherit;
+  font-size: 11px;
+}
+
+.phone-deepseek-form textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
+.phone-deepseek-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.phone-deepseek-actions button {
+  appearance: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--ink-dark);
+  background: rgba(255, 252, 245, 0.78);
+  border: 1px solid rgba(180, 160, 130, 0.16);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.phone-deepseek-actions button.is-primary {
+  color: #fff;
+  background: var(--phone-deepseek-accent);
+}
+
+.phone-deepseek-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.phone-deepseek-empty,
+.phone-deepseek-result,
+.phone-deepseek-generated {
+  margin-top: 8px;
+  padding: 9px;
+  border-radius: 6px;
+  background: rgba(255, 252, 245, 0.64);
+  border: 1px solid rgba(180, 160, 130, 0.14);
+  font-size: 11px;
+}
+
+.phone-deepseek-empty--error {
+  color: #9a2e3b;
+  background: rgba(255, 230, 230, 0.7);
+}
+
+.phone-deepseek-result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.phone-deepseek-result-meta span {
+  max-width: 100%;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #5d5143;
+  background: rgba(226, 214, 190, 0.45);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.phone-deepseek-result strong,
+.phone-deepseek-generated strong {
+  display: block;
+  color: var(--ink-dark);
+  font-size: 12px;
+}
+
+.phone-deepseek-result small {
+  display: block;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: var(--ink-faint);
+}
+
+.phone-deepseek-result p {
+  margin: 6px 0 0;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.phone-deepseek-textarea--preview,
+.phone-deepseek-textarea--script {
+  min-height: 180px;
+  margin-top: 8px;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
+.phone-deepseek-textarea--script {
+  min-height: 110px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 10px;
+}
+
 /* ── Memory editor ── */
 
 .phone-app-page--memory {

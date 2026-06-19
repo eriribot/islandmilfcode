@@ -963,6 +963,7 @@ function buildScenePresenceContext(statusData: StatusData, scenePresence?: Scene
     `本轮不注入完整关系指导：${unguidedNames}`,
     worldStateLines.length ? ['世界状态事实（可被蝴蝶效应/已发生正文覆盖）：', ...worldStateLines].join('\n') : '',
     evidenceLines.length ? ['判定依据：', ...evidenceLines].join('\n') : '',
+    scenePresence.webEvidenceContext,
     '镜头规则：只有明确在场和转场目标可以应用完整关系指导、局部审计、即时台词/动作/心理反应；明确不在场或不确定角色不得默认插话、旁听、吃醋或产生即时反应。',
     plotImpactLines,
     [
@@ -986,6 +987,8 @@ function buildSaenaiWorldStateFactLines(currentTime: string) {
     lines.push(
       '- 2012-04-05才开二年级分班；在此之前不要用2年B班/2年G班判断同班、隔壁班、座位靠窗后排或教室距离。',
       '- 加藤惠在2012-04-05分班后才是安艺伦也的2年B班同班同学；若当前时间更早，不能把“同班”当作已发生事实。',
+      '- 2012-04-05分班后,英梨梨才是2年G班的学生,不与安艺伦也,加藤惠同班',
+      '- 2012-04-05分班后,霞之丘诗羽是3年级C班学生,是英梨梨,加藤惠,安艺伦也的学姐',
     );
   }
 

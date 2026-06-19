@@ -1228,16 +1228,25 @@ function renderMemoryPhonePage(state: AppState) {
 
 function renderDeepSeekWebPhonePage(state: AppState) {
   if (!state.deepSeekModeEnabled) return renderPhoneHome(state);
+  const webLookup =
+    state.runtimeFlags.deepSeekWebLookup && typeof state.runtimeFlags.deepSeekWebLookup === 'object'
+      ? (state.runtimeFlags.deepSeekWebLookup as Record<string, unknown>)
+      : {};
+  const webLookupEnabled = Boolean(webLookup.enabled);
+  const searchSource = String(webLookup.searchSource || 'ddg');
+  const ddgRegion = String(webLookup.searchDdgRegion || 'wt-wt');
+  const timeoutMs = Math.max(1000, Math.min(30_000, Math.round(Number(webLookup.timeoutMs ?? 12_000) || 12_000)));
+  const maxResults = Math.max(1, Math.min(8, Math.round(Number(webLookup.maxEvidencePacks ?? 4) || 4)));
 
   return `
     <section class="phone-route-page phone-app-page phone-app-page--deepseek-web" data-phone-route-view="app:deepseek-web">
-      ${renderPhoneAppHeader(state, 'DeepSeek 联网', '插件路由')}
+      ${renderPhoneAppHeader(state, 'DeepSeek 联网', '正文校准')}
       <div class="phone-page-scroll phone-deepseek-scroll">
         <section class="phone-deepseek-card phone-deepseek-card--hero">
           <span class="phone-deepseek-logo" aria-hidden="true">DS</span>
           <div class="phone-deepseek-copy">
             <strong>联网插件</strong>
-            <span>等待前端搜索聚合桥接入</span>
+            <span>默认关闭，勾选后随正文校准</span>
           </div>
         </section>
         <section class="phone-deepseek-card">
@@ -1250,10 +1259,44 @@ function renderDeepSeekWebPhonePage(state: AppState) {
             <strong>仅 DS 模式</strong>
           </div>
           <div class="phone-deepseek-row">
-            <span>提示词注入</span>
-            <strong>关闭</strong>
+            <span>正文随查</span>
+            <strong>${webLookupEnabled ? '已启用' : '关闭'}</strong>
           </div>
         </section>
+        <section class="phone-deepseek-card phone-deepseek-card--fan">
+          <label class="phone-deepseek-toggle">
+            <span>
+              <strong>正文外貌/时间点校准</strong>
+              <small>生成前直接用 DuckDuckGo 查公开网页，校准时间线、外貌和用户输入里的店名/地点等事实，不写世界书。</small>
+            </span>
+            <input type="checkbox" data-field="deepseek-web-enabled" ${webLookupEnabled ? 'checked' : ''} />
+          </label>
+        </section>
+        <details class="phone-deepseek-card phone-deepseek-card--fan" open>
+          <summary>正文搜索配置</summary>
+          <div class="phone-deepseek-empty">DuckDuckGo 不用 API key。“百科优先”会按路人女主 Wiki、百度百科、萌娘百科的顺序找资料；查不到再换普通 DDG。</div>
+          <div class="phone-deepseek-form">
+            <label>
+              <span>搜索范围</span>
+              <select data-field="deepseek-web-search-source">
+                <option value="ddg" ${searchSource === 'ddg' ? 'selected' : ''}>DuckDuckGo 全网</option>
+                <option value="encyclopedia" ${searchSource === 'encyclopedia' ? 'selected' : ''}>路人女主Wiki/百度/萌娘优先</option>
+              </select>
+            </label>
+            <label>
+              <span>DDG 地区</span>
+              <input data-field="deepseek-web-ddg-region" value="${escapeHtml(ddgRegion)}" placeholder="wt-wt / jp-jp / cn-zh" />
+            </label>
+            <label>
+              <span>超时 ms</span>
+              <input data-field="deepseek-web-timeout" type="number" min="1000" max="30000" step="1000" value="${timeoutMs}" />
+            </label>
+            <label>
+              <span>结果数</span>
+              <input data-field="deepseek-web-max-results" type="number" min="1" max="8" step="1" value="${maxResults}" />
+            </label>
+          </div>
+        </details>
       </div>
     </section>
   `;

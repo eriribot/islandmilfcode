@@ -152,6 +152,62 @@ export type PhoneProactiveState = {
   lastQueuedAt?: number;
 };
 
+export type DeepSeekFanSearchProvider = 'offline' | 'encyclopedia' | 'jina' | 'jina_reader' | 'searxng' | 'ddg';
+
+export type DeepSeekFanSearchResult = {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+  focus?: 'timeline' | 'appearance' | 'profile';
+  priority?: number;
+};
+
+export type DeepSeekFanGeneratedProfile = {
+  name: string;
+  sourceWork: string;
+  aliases: string[];
+  gender: string;
+  age: string;
+  birthday: string;
+  identity: string;
+  appearance: string;
+  personality: string;
+  speech: string;
+  psychologyBehavior: string;
+  abilities: string;
+  background: string;
+  relationships: Array<{ name: string; text: string }>;
+  uncertain: string[];
+  entryTitle: string;
+  content: string;
+};
+
+export type DeepSeekFanLookupState = {
+  workTitle: string;
+  characterName: string;
+  targetRoleId: string;
+  worldbookName: string;
+  worldbookCandidates: string[];
+  extra: string;
+  searchProvider: DeepSeekFanSearchProvider;
+  searchApiKey: string;
+  searchSearxngUrl: string;
+  searchDdgRegion: string;
+  searchTimeoutMs: number;
+  searchMaxResults: number;
+  readerResultCount: number;
+  status: 'idle' | 'searching' | 'searched' | 'generating' | 'generated' | 'saved' | 'writing' | 'written' | 'error';
+  error: string;
+  searchQuery: string;
+  searchContext: string;
+  searchResults: DeepSeekFanSearchResult[];
+  generatedText: string;
+  generatedProfile: DeepSeekFanGeneratedProfile | null;
+  worldbookEntryText: string;
+  lastUpdatedAt: number;
+};
+
 export type TargetStatus = {
   id: string;
   name: string;
@@ -258,6 +314,17 @@ export type ScenePresence = {
     mustNotInvent: string[];
     sourcePolicy: 'only_worldbook_card_or_recent_text';
   }>;
+  recallPlan?: {
+    mustRecall: Array<{ type: string; queryHint: string; reason: string; priority?: number }>;
+    niceToRecall?: Array<{ type: string; queryHint: string; reason: string }>;
+  };
+  webLookupPlan?: Array<{
+    intent: 'fact_check' | 'appearance' | 'canon_timeline' | 'detail';
+    query: string;
+    reason: string;
+  }>;
+  // 只在本轮正文 prompt 中使用的联网证据摘要；不写入 StatusData / 世界书 / 记忆库。
+  webEvidenceContext?: string;
   /**
    * 生成前预判的时间推进建议。仅当玩家/正文明确把世界游标推进到某日期或时段时给出；
    * 倒叙/回忆/计划日期/被提及的旁人日期一律不产生 proposal。confidence='high' 才会被 commit。
@@ -468,6 +535,8 @@ export type TavernWindow = Window &
     getCurrentMessageId?: () => number;
     getCharWorldbookNames?: (characterName: 'current' | string) => CharWorldbooks;
     getWorldbook?: (worldbookName: string) => Promise<WorldbookEntry[]>;
+    createWorldbookEntries?: (worldbookName: string, entries: Array<Partial<WorldbookEntry>>) => Promise<unknown>;
+    setWorldbook?: (worldbookName: string, entries: WorldbookEntry[]) => Promise<unknown>;
     eventOn?: (eventType: string, listener: (...args: any[]) => void) => { stop: () => void };
     eventEmit?: (eventType: string, ...args: any[]) => Promise<void> | void;
     eventRemoveListener?: (eventType: string, listener: (...args: any[]) => void) => void;

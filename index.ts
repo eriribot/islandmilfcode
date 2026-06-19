@@ -80,7 +80,7 @@ import {
 import type { SummaryApiConfig, SummaryModelOption } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
-import type { GameState, NotificationState, StatusData, TabKey, TavernWindow } from './types';
+import type { DeepSeekFanLookupState, GameState, NotificationState, StatusData, TabKey, TavernWindow } from './types';
 import {
   isPhoneArchiveGoldImpression,
   isPhoneThemeCharacterId,
@@ -106,6 +106,14 @@ import {
 import { loadMemoryConfig, saveMemoryConfig, resetMemoryConfig } from './memory-config';
 import { getImageGenerationPromptAtAnchor, isImageGenerationPluginAvailable, requestImageGeneration } from './plugins/image-generation';
 import { isChatu8PluginAvailable, openChatu8Plugin } from './plugins/chatu8-integration';
+import {
+  buildFallbackFanGeneratedProfile,
+  buildDeepSeekFanGenerationPrompt,
+  buildFanProfilePreviewText,
+  normalizeDeepSeekFanLookupState,
+  normalizeFanGeneratedProfile,
+  searchDeepSeekFanCharacter,
+} from './plugins/deepseek-web-lookup';
 import {
   isEditableTarget,
   isPaperFullscreenToggleShortcut,
@@ -509,6 +517,194 @@ async function refreshCharacterWorldbookTargets() {
   render();
 }
 
+function getDeepSeekFanState(): DeepSeekFanLookupState {
+  return normalizeDeepSeekFanLookupState(state.runtimeFlags.deepSeekFanLookup);
+}
+
+function setDeepSeekFanState(next: DeepSeekFanLookupState) {
+  state.runtimeFlags.deepSeekFanLookup = JSON.parse(JSON.stringify(next));
+  persistToSave();
+}
+
+function readDeepSeekFanForm(): DeepSeekFanLookupState {
+  const current = getDeepSeekFanState();
+  const value = (field: string) =>
+    root?.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[data-field="${field}"]`)?.value ??
+    null;
+  return normalizeDeepSeekFanLookupState({
+    ...current,
+    workTitle: value('deepseek-fan-work-title') ?? current.workTitle,
+    characterName: value('deepseek-fan-character-name') ?? current.characterName,
+    targetRoleId: value('deepseek-fan-target-role') ?? current.targetRoleId,
+    worldbookName: value('deepseek-fan-worldbook') ?? current.worldbookName,
+    extra: value('deepseek-fan-extra') ?? current.extra,
+    searchProvider: value('deepseek-fan-search-provider') ?? current.searchProvider,
+    searchApiKey: value('deepseek-fan-search-api-key') ?? current.searchApiKey,
+    searchSearxngUrl: value('deepseek-fan-searxng-url') ?? current.searchSearxngUrl,
+    searchDdgRegion: value('deepseek-fan-ddg-region') ?? current.searchDdgRegion,
+    searchTimeoutMs: Number(value('deepseek-fan-timeout') ?? current.searchTimeoutMs),
+    searchMaxResults: Number(value('deepseek-fan-max-results') ?? current.searchMaxResults),
+    readerResultCount: Number(value('deepseek-fan-reader-count') ?? current.readerResultCount),
+  });
+}
+
+function syncDeepSeekFanForm(shouldRender = false) {
+  if (!state.deepSeekModeEnabled || state.phoneRoute !== 'app:deepseek-web') return;
+  setDeepSeekFanState(readDeepSeekFanForm());
+  if (shouldRender) render();
+}
+
+function guardDeepSeekFanAction() {
+  return state.deepSeekModeEnabled && state.phoneRoute === 'app:deepseek-web';
+}
+
+function updateDeepSeekFanState(patch: Partial<DeepSeekFanLookupState>, shouldRender = true) {
+  const next = normalizeDeepSeekFanLookupState({
+    ...getDeepSeekFanState(),
+    ...patch,
+    lastUpdatedAt: Date.now(),
+  });
+  setDeepSeekFanState(next);
+  if (shouldRender) render();
+  return next;
+}
+
+function setDeepSeekWebLookupEnabled(enabled: boolean) {
+  if (!state.deepSeekModeEnabled || state.phoneRoute !== 'app:deepseek-web') return;
+  const current =
+    state.runtimeFlags.deepSeekWebLookup && typeof state.runtimeFlags.deepSeekWebLookup === 'object'
+      ? (state.runtimeFlags.deepSeekWebLookup as Record<string, unknown>)
+      : {};
+  state.runtimeFlags.deepSeekWebLookup = {
+    ...current,
+    enabled,
+    timeoutMs: Number(current.timeoutMs ?? 12000) || 12000,
+    maxEvidencePacks: Number(current.maxEvidencePacks ?? 4) || 4,
+    searchSource: String(current.searchSource || 'ddg'),
+    searchDdgRegion: String(current.searchDdgRegion || 'wt-wt'),
+  };
+  render();
+}
+
+function updateDeepSeekWebLookupSettingsFromControls(shouldRender = false) {
+  if (!state.deepSeekModeEnabled || state.phoneRoute !== 'app:deepseek-web') return;
+  const value = (field: string) =>
+    document.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${field}"]`)?.value?.trim();
+  const current =
+    state.runtimeFlags.deepSeekWebLookup && typeof state.runtimeFlags.deepSeekWebLookup === 'object'
+      ? (state.runtimeFlags.deepSeekWebLookup as Record<string, unknown>)
+      : {};
+  state.runtimeFlags.deepSeekWebLookup = {
+    ...current,
+    enabled: Boolean(current.enabled),
+    timeoutMs: Number(value('deepseek-web-timeout') ?? current.timeoutMs ?? 12000) || 12000,
+    maxEvidencePacks: Number(value('deepseek-web-max-results') ?? current.maxEvidencePacks ?? 4) || 4,
+    searchSource: value('deepseek-web-search-source') || current.searchSource || 'ddg',
+    searchDdgRegion: value('deepseek-web-ddg-region') || current.searchDdgRegion || 'wt-wt',
+  };
+  if (shouldRender) render();
+}
+
+function normalizeDeepSeekFanActionError(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (/AuthenticationRequiredError|Authorization header|API key|unauthorized|forbidden/i.test(message)) {
+    return fallback;
+  }
+  return message || fallback;
+}
+
+function isAuthenticationError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  return /AuthenticationRequiredError|Authorization header|API key|unauthorized|forbidden/i.test(message);
+}
+
+async function runDeepSeekFanSearch() {
+  if (!guardDeepSeekFanAction()) return;
+  const form = readDeepSeekFanForm();
+  updateDeepSeekFanState({ ...form, status: 'searching', error: '' });
+  try {
+    const result = await searchDeepSeekFanCharacter(form);
+    updateDeepSeekFanState({
+      status: 'searched',
+      error: '',
+      searchQuery: result.query,
+      searchContext: result.context,
+      searchResults: result.results,
+    });
+  } catch (error) {
+    updateDeepSeekFanState({
+      status: 'error',
+      error: normalizeDeepSeekFanActionError(
+        error,
+        '搜索服务要求鉴权。普通玩家不需要准备模型 API key；请改用 DDG，或填写自己的 SearXNG 地址。',
+      ),
+    });
+  }
+}
+
+async function generateDeepSeekFanProfile() {
+  if (!guardDeepSeekFanAction()) return;
+  const form = readDeepSeekFanForm();
+  updateDeepSeekFanState({ ...form, status: 'generating', error: '' });
+  const promptState = normalizeDeepSeekFanLookupState({ ...form, status: 'generating' });
+  const prompt = buildDeepSeekFanGenerationPrompt(promptState);
+  try {
+    const generationId = `deepseek-fan-${crypto.randomUUID()}`;
+    const raw =
+      typeof win.generateRaw === 'function'
+        ? String(
+            (await win.generateRaw({
+              should_silence: true,
+              should_stream: false,
+              generation_id: generationId,
+              ordered_prompts: [{ role: 'system', content: prompt }],
+            })) ?? '',
+          )
+        : typeof win.generate === 'function'
+          ? String(
+              (await win.generate({
+                should_silence: true,
+                should_stream: false,
+                generation_id: generationId,
+                user_input: prompt,
+              })) ?? '',
+            )
+          : '';
+    if (!raw) throw new Error('当前环境没有可用的 generateRaw/generate。');
+    const profile = normalizeFanGeneratedProfile(raw, {
+      workTitle: form.workTitle,
+      characterName: form.characterName,
+    });
+    if (!profile) throw new Error('生成结果不是可解析的角色 JSON。');
+    updateDeepSeekFanState({
+      status: 'generated',
+      error: '',
+      generatedText: raw,
+      generatedProfile: profile,
+      worldbookEntryText: buildFanProfilePreviewText(profile),
+    });
+  } catch (error) {
+    if (isAuthenticationError(error)) {
+      const fallbackProfile = buildFallbackFanGeneratedProfile(form);
+      updateDeepSeekFanState({
+        status: 'generated',
+        error: '生成模型要求 API key，已改用本地保守草稿。搜索资料不会交给模型联网。',
+        generatedText: fallbackProfile.content,
+        generatedProfile: fallbackProfile,
+        worldbookEntryText: buildFanProfilePreviewText(fallbackProfile),
+      });
+      return;
+    }
+    updateDeepSeekFanState({
+      status: 'error',
+      error: normalizeDeepSeekFanActionError(
+        error,
+        '生成设定需要酒馆当前已有可用模型配置/API key；搜索资料本身不交给模型，也不会接入正文生成。',
+      ),
+    });
+  }
+}
+
 function enterSave(saveId: string) {
   const save = loadSave(saveId);
   if (!save) return;
@@ -783,6 +979,7 @@ async function deleteReaderFloor(readerIndex: number) {
 
 function navigatePhone(route: PhoneRoute) {
   syncDrawingSettingsFromMountedControls();
+  syncDeepSeekFanForm(false);
   if (route === 'app:deepseek-web' && !state.deepSeekModeEnabled) {
     navigatePhoneRoute(state, 'home', ctx);
     return;
@@ -792,6 +989,7 @@ function navigatePhone(route: PhoneRoute) {
 
 function navigatePhoneBack() {
   syncDrawingSettingsFromMountedControls();
+  syncDeepSeekFanForm(false);
   if (state.phoneRouteHistory[state.phoneRouteHistory.length - 1] === 'app:deepseek-web' && !state.deepSeekModeEnabled) {
     state.phoneRouteHistory = state.phoneRouteHistory.filter(route => route !== 'app:deepseek-web');
   }
@@ -812,6 +1010,7 @@ function openPhone(targetRoute?: PhoneRoute) {
 
 function closePhone() {
   syncDrawingSettingsFromMountedControls();
+  syncDeepSeekFanForm(false);
   closePhoneRoute(state, ctx);
 }
 
@@ -2109,6 +2308,32 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="music-next"]').forEach(button => {
     button.addEventListener('click', () => void playNextSearchTrack());
   });
+
+  root
+    ?.querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+    >('[data-field^="deepseek-fan-"]')
+    .forEach(input => {
+      input.addEventListener('input', () => syncDeepSeekFanForm(false));
+      input.addEventListener('change', () => syncDeepSeekFanForm(false));
+    });
+  root?.querySelector<HTMLButtonElement>('[data-action="deepseek-fan-search"]')?.addEventListener('click', () => {
+    void runDeepSeekFanSearch();
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="deepseek-fan-generate"]')?.addEventListener('click', () => {
+    void generateDeepSeekFanProfile();
+  });
+  root?.querySelector<HTMLInputElement>('[data-field="deepseek-web-enabled"]')?.addEventListener('change', event => {
+    setDeepSeekWebLookupEnabled((event.target as HTMLInputElement).checked);
+  });
+  root
+    ?.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+      '[data-field="deepseek-web-search-source"], [data-field="deepseek-web-ddg-region"], [data-field="deepseek-web-timeout"], [data-field="deepseek-web-max-results"]',
+    )
+    .forEach(input => {
+      input.addEventListener('input', () => updateDeepSeekWebLookupSettingsFromControls(false));
+      input.addEventListener('change', () => updateDeepSeekWebLookupSettingsFromControls(false));
+    });
 
   root
     ?.querySelectorAll<

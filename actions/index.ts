@@ -67,6 +67,10 @@ import {
   isImageGenerationPluginAvailable,
   requestImageGeneration,
 } from '../plugins/image-generation';
+import {
+  buildDeepSeekEvidenceContext,
+  collectDeepSeekWebLookupEvidence,
+} from '../plugins/deepseek-web-lookup';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
@@ -1088,6 +1092,11 @@ export async function submitMessage(
       recordGenerationDebug(ctx, 'submit:cancelled-after-preflight', { requestGenerationId });
       return;
     }
+    scenePresence = await enrichScenePresenceWithDeepSeekEvidence(ctx, scenePresence, preflightHistory, cleanUserInput);
+    if (isGenerationRunCancelled(ctx, generationToken)) {
+      recordGenerationDebug(ctx, 'submit:cancelled-after-deepseek-web', { requestGenerationId });
+      return;
+    }
     commitPreGenerationTimeProposal(ctx, scenePresence);
   }
 
@@ -1831,6 +1840,20 @@ function buildScenePresencePrompts(
     '- niceToRecall 只写有帮助但不强制的线索；mustSuppress 写本轮会污染新大纲的旧稿惯性、过期关系、强行回轨桥段或不在场角色即时心理。',
     '- 召回计划要保护角色骨头、User 变量和主题母本；不要为了原作桥段牺牲已经发生的新因果。',
     '',
+    '页边判断（联网搜索计划 webLookupPlan）：',
+    '- 任务类型：只生成“外部公开资料核验”的搜索计划；recallPlan 负责本地世界书/角色卡/记忆召回，二者不要混用。',
+    '- 判断顺序：先看角色卡、世界书、最近正文、世界状态事实能不能解决；只有下一页会因外部事实错误而写错，且本地资料不足时，才填写 webLookupPlan。',
+    '- 适合联网：真实店名/地点/机构/作品条目、原作公开事实争议、官方外貌设定、明确剧情时间线、特定物品/场所/事件的百科资料。',
+    '- 不适合联网：玩家吐槽、玩家对系统的抱怨、整句玩家输入、抽象主题分析、普通角色基础性格、已经在世界状态事实里写明的时间/分班规则。',
+    '- 如果只是识别镜头里的波波头女生、判断某人是否尚未分班、判断“存在感低/平凡/毒舌”等角色骨头，通常属于本地推理或 recallPlan，不要联网。',
+    '- query 写成“核心实体 + 待核验属性”的短搜索词，核心实体必须放在最前；优先用作品名、角色名、地点名、店名、官方条目名。',
+    '- query 不要写成问题句、剧情评论、主题概括或系统抱怨；不要把玩家整句话复制进去。',
+    '- reason 必须说明这个搜索会校准哪一个具体事实，例如“核验作品结尾具体事件”或“核验该地点在原作中的位置/性质”。',
+    '- 每轮最多 1-2 条；没有必要联网时输出空数组 []。',
+    '- 好例：玩家明确追问作品结尾事实 -> {"intent":"fact_check","query":"秒速5厘米 结局 列车 擦肩而过","reason":"核验作品结尾具体事件"}。',
+    '- 好例：玩家要求校准现实/作品地点 -> {"intent":"detail","query":"トリアノン洋菓子店 作品 地点 设定","reason":"核验该店名对应的场所性质与位置"}。',
+    '- 坏例：把“风和日丽的清晨我目睹了眼镜男和波波头女生的邂逅……”整句放进 query；坏例：用“加藤惠 基础设定 平凡 存在感低”搜索普通角色骨头。',
+    '',
     '夏野雾姬的审稿规矩：',
     '1. 只能使用角色名单里的 id。',
     '2. 第一次输入若没有最近正文，只看玩家当前输入；没有明确点名/寻找/靠近任何角色时，present 和 focus 都为空。',
@@ -1853,7 +1876,7 @@ function buildScenePresencePrompts(
         `玩家当前输入：${cleanUserInput || '（无）'}`,
         '',
         '请输出 JSON，格式如下（无时间推进时省略 timeProposal 或置 null）：',
-        '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"},"timeProposal":{"time":"YYYY-MM-DD HH:mm","confidence":"high|low","source":"explicit_player_transition|narrative_transition|none","reason":"一句话依据"},"plotImpact":{"shiftLevel":"none|minor_shift|branch_pressure|major_divergence|route_override","currentEventShould":"continue|continue_with_adjustment|pause|delay|skip|branch|override","causalTrace":["玩家输入造成的直接变化","该变化会影响的角色即时反应","下一页必须承认的剧情偏转"],"butterflyEffects":{"rippleLevel":"none|faint|clear|major","shortTermEffects":["本轮或下一轮必须体现的具体涟漪"],"midTermEffects":["当前事件结束前可能出现的后续影响"],"routeDamage":"none|light|medium|heavy"},"mainApiGuidance":"一句话页边批注"},"appearanceGuards":[{"id":"角色id","mustFollow":["已知外貌锚点或 unknown"],"mustNotInvent":["不得脑补的外貌项"],"sourcePolicy":"only_worldbook_card_or_recent_text"}],"recallPlan":{"currentWritingNeed":["镜头连续性|人物骨头|关系变化|剧情压力|主题母本|新变量影响|外貌硬设定|其他"],"userVariableImpact":[{"type":"additive|pressure_solver|pressure_creator|role_replacer|trigger_rewriter|trauma_contact|relationship_mutator|theme_carrier|route_seed|route_breaker","target":"被影响的角色、事件、压力、主题或关系","evidence":"一句话证据","importance":"low|medium|high"}],"mustRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"角色id、事件id、关键词或事实句","reason":"为什么漏掉它会让主 API 写错","priority":1}],"niceToRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"可选召回线索","reason":"为什么它有帮助但不是必须"}],"mustSuppress":[{"queryHint":"本轮不该召回或不该强化的旧稿惯性、过期记忆、原作桥段","reason":"它会怎样污染当前新大纲"}],"mainApiGuidance":"一句话说明下一页应该顺着哪条新因果写","kirihimeVerdict":"夏野雾姬式短评：这轮召回真正要保护什么"}}',
+        '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"},"timeProposal":{"time":"YYYY-MM-DD HH:mm","confidence":"high|low","source":"explicit_player_transition|narrative_transition|none","reason":"一句话依据"},"plotImpact":{"shiftLevel":"none|minor_shift|branch_pressure|major_divergence|route_override","currentEventShould":"continue|continue_with_adjustment|pause|delay|skip|branch|override","causalTrace":["玩家输入造成的直接变化","该变化会影响的角色即时反应","下一页必须承认的剧情偏转"],"butterflyEffects":{"rippleLevel":"none|faint|clear|major","shortTermEffects":["本轮或下一轮必须体现的具体涟漪"],"midTermEffects":["当前事件结束前可能出现的后续影响"],"routeDamage":"none|light|medium|heavy"},"mainApiGuidance":"一句话页边批注"},"appearanceGuards":[{"id":"角色id","mustFollow":["已知外貌锚点或 unknown"],"mustNotInvent":["不得脑补项"],"sourcePolicy":"only_worldbook_card_or_recent_text"}],"recallPlan":{"currentWritingNeed":["镜头连续性|人物骨头|关系变化|剧情压力|主题母本|新变量影响|外貌硬设定|其他"],"userVariableImpact":[{"type":"additive|pressure_solver|pressure_creator|role_replacer|trigger_rewriter|trauma_contact|relationship_mutator|theme_carrier|route_seed|route_breaker","target":"被影响的角色、事件、压力、主题或关系","evidence":"一句话证据","importance":"low|medium|high"}],"mustRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"本地召回关键词","reason":"为什么漏掉它会让主 API 写错","priority":1}],"niceToRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"可选本地召回线索","reason":"为什么它有帮助但不是必须"}],"mustSuppress":[{"queryHint":"本轮不该召回或不该强化的旧稿惯性、过期记忆、原作桥段","reason":"它会怎样污染当前新大纲"}],"mainApiGuidance":"一句话说明下一页应该顺着哪条新因果写","kirihimeVerdict":"夏野雾姬式短评：这轮召回真正要保护什么"},"webLookupPlan":[{"intent":"fact_check|appearance|canon_timeline|detail","query":"核心实体在前 + 待核验属性的短搜索词；无需联网时输出空数组","reason":"要校准的具体外部事实与本地资料不足原因"}]}',
       ].join('\n'),
     },
   ];
@@ -1884,6 +1907,8 @@ function parseScenePresenceResult(ctx: ActionContext, rawResult: string): SceneP
       timeProposal: parseTimeProposal(parsed.timeProposal),
       plotImpact: parsePlotImpact(parsed.plotImpact),
       appearanceGuards: parseAppearanceGuards(parsed.appearanceGuards, allowedIds),
+      recallPlan: parseRecallPlan(parsed.recallPlan),
+      webLookupPlan: parseWebLookupPlan(parsed.webLookupPlan),
     };
   } catch (error) {
     console.warn('[scene-presence] parse failed:', error);
@@ -1974,6 +1999,54 @@ function parseAppearanceGuards(raw: unknown, allowedIds: Set<string>): ScenePres
   return guards.length ? guards : undefined;
 }
 
+function parseRecallPlan(raw: unknown): ScenePresence['recallPlan'] {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const parseItems = (items: unknown, limit: number) =>
+    (Array.isArray(items) ? items : [])
+      .map(item => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+        const row = item as Record<string, unknown>;
+        const queryHint = String(row.queryHint ?? '').trim();
+        if (!queryHint) return null;
+        return {
+          type: String(row.type ?? '').trim(),
+          queryHint,
+          reason: String(row.reason ?? '').trim(),
+          priority: Number(row.priority ?? 0) || undefined,
+        };
+      })
+      .filter((item): item is { type: string; queryHint: string; reason: string; priority?: number } => Boolean(item))
+      .slice(0, limit);
+  const mustRecall = parseItems(obj.mustRecall, 5);
+  const niceToRecall = parseItems(obj.niceToRecall, 3).map(({ type, queryHint, reason }) => ({ type, queryHint, reason }));
+  return mustRecall.length || niceToRecall.length ? { mustRecall, niceToRecall } : undefined;
+}
+
+function parseWebLookupPlan(raw: unknown): ScenePresence['webLookupPlan'] {
+  if (!Array.isArray(raw)) return undefined;
+  const rows = raw
+    .map(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const obj = item as Record<string, unknown>;
+      const query = String(obj.query ?? '').trim();
+      if (!query) return null;
+      const intent = pickEnum(
+        obj.intent,
+        ['fact_check', 'appearance', 'canon_timeline', 'detail'] as const,
+        'fact_check',
+      );
+      return {
+        intent,
+        query,
+        reason: String(obj.reason ?? '').trim(),
+      };
+    })
+    .filter((item): item is NonNullable<ScenePresence['webLookupPlan']>[number] => Boolean(item))
+    .slice(0, 4);
+  return rows.length ? rows : undefined;
+}
+
 /** 解析 preflight 的 timeProposal；只接受带完整日期的对象，其余（null/缺字段/格式不符）一律丢弃返回 undefined。 */
 function parseTimeProposal(raw: unknown): ScenePresence['timeProposal'] {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
@@ -2023,6 +2096,100 @@ async function detectScenePresence(
     uncertainIds: presence.uncertainIds,
   });
   return presence;
+}
+
+async function enrichScenePresenceWithDeepSeekEvidence(
+  ctx: ActionContext,
+  presence: ScenePresence,
+  promptHistory: UiMessage[],
+  userInput: string,
+): Promise<ScenePresence> {
+  const settings =
+    ctx.state.deepSeekModeEnabled && typeof ctx.state.runtimeFlags.deepSeekWebLookup === 'object'
+      ? (ctx.state.runtimeFlags.deepSeekWebLookup as Record<string, unknown>)
+      : null;
+  if (!settings) return presence;
+
+  const recentText = promptHistory
+    .slice(-6)
+    .map(message => getVisibleMessageText(message))
+    .filter(Boolean)
+    .join('\n')
+    .slice(-6000);
+  const result = await collectDeepSeekWebLookupEvidence({
+    settings,
+    statusData: ctx.state.statusData,
+    scenePresence: presence,
+    userInput,
+    recentText,
+  }).catch(error => {
+    recordGenerationDebug(ctx, 'deepseek-web:failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  });
+
+  if (!result || !result.enabled || (!result.evidencePacks.length && !result.context.trim())) {
+    recordGenerationDebug(ctx, 'deepseek-web:skipped', {
+      reason: result?.skippedReason ?? result?.error ?? 'no-result',
+      requests: result?.requests.length ?? 0,
+    });
+    return presence;
+  }
+
+  const webEvidenceContext =
+    result.context.trim() || buildDeepSeekEvidenceContext(result.evidencePacks, result.requests, result.errors ?? []);
+  const evidence = { ...(presence.evidence ?? {}) };
+  const appearanceGuards = [...(presence.appearanceGuards ?? [])];
+  const causalTrace = [...(presence.plotImpact?.causalTrace ?? [])];
+  for (const pack of result.evidencePacks) {
+    if (pack.characterId) {
+      const current = evidence[pack.characterId];
+      const facts = pack.facts.slice(0, 3).join('；');
+      evidence[pack.characterId] = [current, facts ? `联网校准：${facts}` : pack.source].filter(Boolean).join('；');
+    }
+    if (pack.kind === 'APPEARANCE' && pack.characterId) {
+      const existing = appearanceGuards.find(guard => guard.id === pack.characterId);
+      const mustFollow = [...(pack.mustFollow ?? []), ...pack.facts].filter(Boolean).slice(0, 8);
+      const mustNotInvent = pack.mustNotInfer?.length ? pack.mustNotInfer : ['不得补充未在世界书、近期正文或联网证据中出现的外貌细节'];
+      if (existing) {
+        existing.mustFollow = Array.from(new Set([...(existing.mustFollow ?? []), ...mustFollow])).slice(0, 8);
+        existing.mustNotInvent = Array.from(new Set([...(existing.mustNotInvent ?? []), ...mustNotInvent])).slice(0, 8);
+      } else {
+        appearanceGuards.push({
+          id: pack.characterId,
+          mustFollow,
+          mustNotInvent,
+          sourcePolicy: 'only_worldbook_card_or_recent_text',
+        });
+      }
+    }
+    if (pack.kind === 'CANON_FACT') {
+      causalTrace.push(...pack.facts.slice(0, 3).map(fact => `联网时间线校准：${fact}`));
+    }
+    if (pack.kind === 'DETAIL') {
+      causalTrace.push(...pack.facts.slice(0, 3).map(fact => `联网事实校准：${fact}`));
+    }
+  }
+
+  recordGenerationDebug(ctx, 'deepseek-web:applied', {
+    requests: result.requests.length,
+    packs: result.evidencePacks.length,
+    contextLength: webEvidenceContext.length,
+    errors: result.errors?.length ?? 0,
+  });
+  return {
+    ...presence,
+    evidence,
+    appearanceGuards,
+    webEvidenceContext,
+    plotImpact: presence.plotImpact
+      ? {
+          ...presence.plotImpact,
+          causalTrace: Array.from(new Set(causalTrace)).slice(0, 8),
+        }
+      : presence.plotImpact,
+  };
 }
 
 // preflight 时间建议的统一提交：只收 high 置信的明确推进，过统一时间门（normalize + 单调闸），
