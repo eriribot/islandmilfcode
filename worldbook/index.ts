@@ -1,5 +1,5 @@
 import type { CharacterCard, CharacterCardLibrary, PlotEventCard, PlotEventSchedule, PlotLibrary, StatusData, TargetStatus, TavernWindow, VolumeWritingProtocol, WorldbookEntry } from '../types';
-import { affinityStage, defaultTarget } from '../variables/normalize';
+import { affinityStage, defaultTarget, obsessionStage } from '../variables/normalize';
 
 const TARGET_KIND = 'islandmilfcode.target';
 const PLOT_KIND = 'islandmilfcode.plot_event';
@@ -303,6 +303,12 @@ function normalizeBuiltInTargetName(name: string, alias = '', entryName = '') {
   if (/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) {
     return '泽村小百合';
   }
+  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) {
+    return '町田苑子';
+  }
+  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) {
+    return '高坂茜(红坂朱音)';
+  }
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) {
     return '加藤惠';
   }
@@ -319,12 +325,6 @@ function normalizeBuiltInTargetName(name: string, alias = '', entryName = '') {
   }
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) {
     return '冰堂美智留';
-  }
-  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) {
-    return '町田苑子';
-  }
-  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) {
-    return '高坂茜(红坂朱音)';
   }
   return name;
 }
@@ -560,13 +560,13 @@ function getCharacterCardKey(entry: WorldbookEntry, target: TargetStatus | null)
     : '';
   const haystack = [identityHaystack, aliasHaystack].join('\n');
   if (/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return 'sayuri';
+  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) return 'sonoko';
+  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) return 'akane';
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
   if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
   if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
-  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) return 'sonoko';
-  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) return 'akane';
   return '';
 }
 
@@ -591,13 +591,13 @@ function getBuiltInTargetKeyFromIdentity(target: TargetStatus) {
   const identityHaystack = [target.id, target.name].map(value => String(value ?? '').toLowerCase()).join('\n');
   const haystack = [identityHaystack, target.alias].map(value => String(value ?? '').toLowerCase()).join('\n');
   if (/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return 'sayuri';
+  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) return 'sonoko';
+  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) return 'akane';
   if (/加藤|惠|恵|megumi|katou|kato/.test(haystack)) return 'megumi';
   if (/英梨梨|泽村|澤村|eriri|sawamura/.test(haystack)) return 'eriri';
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
   if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
-  if (/町田苑子|町田|苑子|まちだ\s*そのこ|sonoko|machida/.test(identityHaystack)) return 'sonoko';
-  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) return 'akane';
   return '';
 }
 
@@ -623,6 +623,13 @@ function repairKnownBuiltInTargetBleed(targets: TargetStatus[]) {
   for (const target of targets) {
     const key = getBuiltInTargetKeyFromIdentity(target);
     if (key && !byKey.has(key)) byKey.set(key, target);
+    if (key && ['megumi', 'eriri', 'utaha', 'izumi', 'michiru'].includes(key) && target.meta?.noObsessionAxis) {
+      target.meta = { ...(target.meta ?? {}) };
+      delete target.meta.noObsessionAxis;
+      if (String(target.obsessionStage ?? '') === '无旧情轴') {
+        target.obsessionStage = obsessionStage(Number(target.obsession ?? 0) || 0);
+      }
+    }
   }
 
   const megumi = byKey.get('megumi');

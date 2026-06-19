@@ -221,6 +221,8 @@ function resolveReaderIndex(readerIndex: number, readerId?: string | null) {
 let adapter: VariableAdapter;
 const state = createInitialState(loadFloatingPhonePosition());
 const eventStops: Array<() => void> = [];
+let worldbookRefreshRetryTimer: number | null = null;
+let worldbookRefreshRetryToken = 0;
 
 function readDeepSeekModeEnabledPreference() {
   try {
@@ -501,16 +503,28 @@ async function refreshCharacterWorldbookTargets() {
   const { targets, plotLibrary, characterCardLibrary } = await loadCharacterWorldbookData(win);
   const previousPlotEventCount = Object.keys(state.plotLibrary.events).length;
   const previousCardCount = Object.keys(state.characterCardLibrary.cards).length;
-  state.plotLibrary = plotLibrary;
-  state.characterCardLibrary = characterCardLibrary;
+  const nextPlotEventCount = Object.keys(plotLibrary.events).length;
+  const nextCardCount = Object.keys(characterCardLibrary.cards).length;
+  const keepPreviousPlotLibrary = previousPlotEventCount > 0 && nextPlotEventCount === 0;
+  const keepPreviousCharacterCards = previousCardCount > 0 && nextCardCount === 0;
+  if (keepPreviousPlotLibrary) {
+    console.warn('[worldbook] plot events reload returned empty; keeping previous plot library');
+  } else {
+    state.plotLibrary = plotLibrary;
+  }
+  if (keepPreviousCharacterCards) {
+    console.warn('[worldbook] character cards reload returned empty; keeping previous character card library');
+  } else {
+    state.characterCardLibrary = characterCardLibrary;
+  }
 
   const previous = JSON.stringify(state.statusData.targets);
   if (targets.length) {
     state.statusData = mergeWorldbookTargets(state.statusData, targets);
   }
   const targetsChanged = JSON.stringify(state.statusData.targets) !== previous;
-  const plotChanged = Object.keys(plotLibrary.events).length !== previousPlotEventCount;
-  const cardsChanged = Object.keys(characterCardLibrary.cards).length !== previousCardCount;
+  const plotChanged = !keepPreviousPlotLibrary && nextPlotEventCount !== previousPlotEventCount;
+  const cardsChanged = !keepPreviousCharacterCards && nextCardCount !== previousCardCount;
   if (!targetsChanged && !plotChanged && !cardsChanged) return;
 
   guardedAdapterSave(state.statusData);
@@ -705,10 +719,41 @@ async function generateDeepSeekFanProfile() {
   }
 }
 
+function clearWorldbookRefreshRetry() {
+  worldbookRefreshRetryToken += 1;
+  if (worldbookRefreshRetryTimer !== null) {
+    window.clearTimeout(worldbookRefreshRetryTimer);
+    worldbookRefreshRetryTimer = null;
+  }
+}
+
+function scheduleWorldbookRefreshRetry(runId: string | null, attempt = 1) {
+  const retryDelays = [800, 1600, 3000, 5000, 8000];
+  if (!runId || attempt > retryDelays.length) return;
+  if (Object.keys(state.plotLibrary.events).length > 0) return;
+
+  const token = worldbookRefreshRetryToken;
+  worldbookRefreshRetryTimer = window.setTimeout(() => {
+    worldbookRefreshRetryTimer = null;
+    if (token !== worldbookRefreshRetryToken || state.activeRunId !== runId) return;
+    void refreshCharacterWorldbookTargets()
+      .catch(error => {
+        console.warn('[worldbook] delayed refresh failed:', error);
+      })
+      .finally(() => {
+        if (token !== worldbookRefreshRetryToken || state.activeRunId !== runId) return;
+        if (Object.keys(state.plotLibrary.events).length === 0) {
+          scheduleWorldbookRefreshRetry(runId, attempt + 1);
+        }
+      });
+  }, retryDelays[attempt - 1]);
+}
+
 function enterSave(saveId: string) {
   const save = loadSave(saveId);
   if (!save) return;
   restoringSave = true;
+  clearWorldbookRefreshRetry();
   state.activeRunId = save.payload.runId;
   state.activeSaveId = saveId;
   setActiveRunId(save.payload.runId);
@@ -747,10 +792,14 @@ function enterSave(saveId: string) {
     })
     .finally(() => {
       restoringSave = false;
+      if (Object.keys(state.plotLibrary.events).length === 0) {
+        scheduleWorldbookRefreshRetry(state.activeRunId);
+      }
     });
 }
 
 function returnToTitle() {
+  clearWorldbookRefreshRetry();
   if (state.activeRunId) {
     persistToSave();
   }
@@ -2973,6 +3022,7 @@ const titleCallbacks: TitleCallbacks = {
   deleteSave: id => {
     deleteSave(id);
     if (state.activeSaveId === id) {
+      clearWorldbookRefreshRetry();
       state.activeRunId = null;
       state.activeSaveId = null;
       setActiveRunId(null);
