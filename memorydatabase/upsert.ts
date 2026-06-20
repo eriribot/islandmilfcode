@@ -545,6 +545,11 @@ export function upsertItem(
 
   if (patch.action === 'lost') {
     if (!existing) return { action: 'unchanged', rowId: '' };
+    if (existing.locked) {
+      existing.updatedAt = now;
+      existing.lastSeenAt = now;
+      return { action: 'unchanged', rowId: existing.id };
+    }
     const next = (existing.count ?? 1) - delta;
     if (next <= 0) {
       existing.expired = true;

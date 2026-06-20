@@ -100,6 +100,7 @@ import {
   restoreMemoryRow,
   deleteMemoryRow,
   deleteAllExpiredMemoryRows,
+  expireAllUnlockedItems,
   insertMemoryRow,
   type MemoryTableName,
 } from './memorydatabase/editor';
@@ -2486,6 +2487,8 @@ function bindEvents() {
         includeTasks: getInjectionValue('includeTasks')?.checked ?? true,
         includeSecrets: getInjectionValue('includeSecrets')?.checked ?? true,
         includeImpressions: getInjectionValue('includeImpressions')?.checked ?? true,
+        includeItems: getInjectionValue('includeItems')?.checked ?? true,
+        onlyPromptRelevantItems: getInjectionValue('onlyPromptRelevantItems')?.checked ?? true,
       },
       summaryTrigger: {
         minorThreshold: parseInt(getTriggerValue('minorThreshold')?.value ?? '5'),
@@ -2595,7 +2598,9 @@ function bindEvents() {
     button.addEventListener('click', () => {
       const rowId = button.dataset.rowId ?? '';
       const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
-      expireMemoryRow(state.memoryDB, table, rowId);
+      const row = table === 'items' ? state.memoryDB.items.find(item => item.id === rowId) : null;
+      const expired = expireMemoryRow(state.memoryDB, table, rowId);
+      if (expired && row?.name) delete state.statusData.player.inventory[row.name];
       persistToSave();
       renderMemoryKeepScroll();
     });
@@ -2604,7 +2609,36 @@ function bindEvents() {
     button.addEventListener('click', () => {
       const rowId = button.dataset.rowId ?? '';
       const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
-      restoreMemoryRow(state.memoryDB, table, rowId);
+      const row = table === 'items' ? state.memoryDB.items.find(item => item.id === rowId) : null;
+      const restored = restoreMemoryRow(state.memoryDB, table, rowId);
+      if (restored && row?.name) {
+        state.statusData.player.inventory[row.name] = {
+          description: row.state || state.statusData.player.inventory[row.name]?.description || '暂无描述',
+          count: row.count ?? 1,
+        };
+      }
+      persistToSave();
+      renderMemoryKeepScroll();
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-toggle-item-lock"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const rowId = button.dataset.rowId ?? '';
+      const item = state.memoryDB.items.find(row => row.id === rowId);
+      if (!item) return;
+      updateMemoryRow(state.memoryDB, 'items', rowId, { locked: !item.locked });
+      state.memoryEditor.error = null;
+      persistToSave();
+      renderMemoryKeepScroll();
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="memory-toggle-item-prompt"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const rowId = button.dataset.rowId ?? '';
+      const item = state.memoryDB.items.find(row => row.id === rowId);
+      if (!item) return;
+      updateMemoryRow(state.memoryDB, 'items', rowId, { promptRelevant: !item.promptRelevant });
+      state.memoryEditor.error = null;
       persistToSave();
       renderMemoryKeepScroll();
     });
@@ -2614,7 +2648,9 @@ function bindEvents() {
       const rowId = button.dataset.rowId ?? '';
       const table = (button.dataset.table ?? state.memoryEditor.selectedTable) as MemoryTableName;
       if (!rowId) return;
-      deleteMemoryRow(state.memoryDB, table, rowId);
+      const row = table === 'items' ? state.memoryDB.items.find(item => item.id === rowId) : null;
+      const deleted = deleteMemoryRow(state.memoryDB, table, rowId);
+      if (deleted && row?.name) delete state.statusData.player.inventory[row.name];
       state.memoryEditor.expandedRowId = null;
       state.memoryEditor.editingRowId = null;
       state.memoryEditor.error = null;
@@ -2624,8 +2660,28 @@ function bindEvents() {
   });
   root?.querySelector<HTMLButtonElement>('[data-action="memory-delete-all-expired"]')?.addEventListener('click', () => {
     if (!confirm('确定要永久删除回收站里的全部记录吗？此操作不可撤销。')) return;
+    const expiredItemNames = state.memoryDB.items
+      .filter(item => item.expired)
+      .map(item => item.name)
+      .filter(Boolean);
     const deleted = deleteAllExpiredMemoryRows(state.memoryDB);
     if (!deleted) return;
+    for (const name of expiredItemNames) delete state.statusData.player.inventory[name];
+    state.memoryEditor.expandedRowId = null;
+    state.memoryEditor.editingRowId = null;
+    state.memoryEditor.error = null;
+    persistToSave();
+    renderMemoryKeepScroll();
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="memory-expire-all-unlocked-items"]')?.addEventListener('click', () => {
+    if (!confirm('确定要删除全部未锁定物品吗？锁定物品会保留。')) return;
+    const names = state.memoryDB.items
+      .filter(item => !item.expired && !item.locked)
+      .map(item => item.name)
+      .filter(Boolean);
+    const expired = expireAllUnlockedItems(state.memoryDB);
+    if (!expired) return;
+    for (const name of names) delete state.statusData.player.inventory[name];
     state.memoryEditor.expandedRowId = null;
     state.memoryEditor.editingRowId = null;
     state.memoryEditor.error = null;

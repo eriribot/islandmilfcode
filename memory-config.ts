@@ -36,6 +36,8 @@ export const DEFAULT_MEMORY_CONFIG: Required<FullMemoryConfig> = {
     includeTasks: true,
     includeSecrets: true,
     includeImpressions: true,
+    includeItems: true,
+    onlyPromptRelevantItems: true,
   },
   summaryTrigger: {
     minorThreshold: 5,
@@ -62,6 +64,8 @@ export function loadFullMemoryConfig(): Required<FullMemoryConfig> {
         includeTasks: parsed.injection?.includeTasks ?? DEFAULT_MEMORY_CONFIG.injection.includeTasks,
         includeSecrets: parsed.injection?.includeSecrets ?? DEFAULT_MEMORY_CONFIG.injection.includeSecrets,
         includeImpressions: parsed.injection?.includeImpressions ?? DEFAULT_MEMORY_CONFIG.injection.includeImpressions,
+        includeItems: parsed.injection?.includeItems ?? DEFAULT_MEMORY_CONFIG.injection.includeItems,
+        onlyPromptRelevantItems: parsed.injection?.onlyPromptRelevantItems ?? DEFAULT_MEMORY_CONFIG.injection.onlyPromptRelevantItems,
       },
       summaryTrigger: {
         minorThreshold: parsed.summaryTrigger?.minorThreshold ?? DEFAULT_MEMORY_CONFIG.summaryTrigger.minorThreshold,
@@ -129,4 +133,3 @@ export function resetMemoryConfig(): void {
     console.error('[memory-config] Failed to reset config:', error);
   }
 }
-

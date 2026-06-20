@@ -242,6 +242,7 @@ export function updateMemoryRow(
 export function expireMemoryRow(db: IslandMemoryDB, table: MemoryTableName, id: string): boolean {
   const row = findRow(db, table, id);
   if (!row) return false;
+  if (table === 'items' && (row as unknown as { locked?: boolean }).locked) return false;
   row.expired = true;
   row.updatedAt = new Date().toISOString();
   return true;
@@ -278,6 +279,18 @@ export function deleteAllExpiredMemoryRows(db: IslandMemoryDB): number {
     }
   }
   return deleted;
+}
+
+export function expireAllUnlockedItems(db: IslandMemoryDB): number {
+  const now = new Date().toISOString();
+  let expired = 0;
+  for (const row of db.items) {
+    if (row.expired || row.locked) continue;
+    row.expired = true;
+    row.updatedAt = now;
+    expired += 1;
+  }
+  return expired;
 }
 
 export function insertMemoryRow(
@@ -431,7 +444,7 @@ function previewRow(table: MemoryTableName, row: MemoryBaseRow): string {
     case 'secrets':
       return `${String(r.subject ?? '')} (${localizeSecretRisk(String(r.risk ?? ''))}/${r.revealed ? '已暴露' : '未暴露'})`;
     case 'items':
-      return `${String(r.name ?? '')} ${r.count !== undefined ? `×${r.count}` : ''}`;
+      return `${r.locked ? '[锁定] ' : ''}${String(r.name ?? '')} ${r.count !== undefined ? `×${r.count}` : ''}`;
     case 'phoneMessages':
       return `${String(r.targetId ?? '')}: ${String(r.textPreview ?? '').slice(0, 54)}`;
     case 'summaries': {
@@ -473,7 +486,14 @@ function renderReadableFields(table: MemoryTableName, row: MemoryBaseRow): strin
       fields.push(['时间', gameTime], ['主题', String(r.subject ?? '')], ['秘密', String(r.content ?? '')], ['风险', localizeSecretRisk(String(r.risk ?? ''))]);
       break;
     case 'items':
-      fields.push(['时间', gameTime], ['物品', String(r.name ?? '')], ['状态', String(r.state ?? '')], ['动作', localizeItemAction(String(r.action ?? ''))]);
+      fields.push(
+        ['时间', gameTime],
+        ['物品', String(r.name ?? '')],
+        ['状态', String(r.state ?? '')],
+        ['动作', localizeItemAction(String(r.action ?? ''))],
+        ['锁定', r.locked ? '是' : '否'],
+        ['特殊含义', r.promptRelevant ? '会注入 prompt' : '不注入 prompt'],
+      );
       break;
     case 'phoneMessages':
       fields.push(['对象', String(r.targetId ?? '')], ['角色', localizeRole(String(r.role ?? ''))], ['消息', String(r.textPreview ?? '')]);
@@ -505,6 +525,7 @@ function renderReadableFields(table: MemoryTableName, row: MemoryBaseRow): strin
 
 function renderRowDetail(table: MemoryTableName, row: MemoryBaseRow, editor: MemoryEditorState): string {
   const isEditing = editor.editingRowId === row.id;
+  const r = row as unknown as Record<string, unknown>;
 
   if (isEditing) {
     return `
@@ -533,7 +554,19 @@ function renderRowDetail(table: MemoryTableName, row: MemoryBaseRow, editor: Mem
             ? `<button class="memory-action" data-action="memory-edit-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">编辑内容</button>`
             : ''
         }
-        <button class="memory-action memory-action--danger" data-action="memory-expire-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">删除</button>
+        ${
+          table === 'items'
+            ? `
+              <button class="memory-action" data-action="memory-toggle-item-lock" data-row-id="${escapeHtml(row.id)}">${r.locked ? '取消锁定' : '锁定物品'}</button>
+              <button class="memory-action" data-action="memory-toggle-item-prompt" data-row-id="${escapeHtml(row.id)}">${r.promptRelevant ? '取消特殊含义' : '标记特殊含义'}</button>
+            `
+            : ''
+        }
+        ${
+          table === 'items' && r.locked
+            ? `<button class="memory-action memory-action--danger" disabled>已锁定</button>`
+            : `<button class="memory-action memory-action--danger" data-action="memory-expire-row" data-table="${table}" data-row-id="${escapeHtml(row.id)}">删除</button>`
+        }
       </div>
     </div>
   `;
@@ -709,12 +742,20 @@ function renderMemoryHome(db: IslandMemoryDB): string {
 function renderMemoryTablePage(state: AppState, table: MemoryTableName): string {
   const db = state.memoryDB;
   const editor = state.memoryEditor;
+  const unlockedItemCount = table === 'items'
+    ? db.items.filter(row => !row.expired && !row.locked).length
+    : 0;
 
   return `
     <div class="memory-editor">
       <div class="memory-sub-header">
         <button class="memory-action" data-action="memory-back-to-home">← 返回</button>
         <strong>${escapeHtml(TABLE_LABELS[table])}</strong>
+        ${
+          table === 'items' && unlockedItemCount
+            ? `<button class="memory-action memory-action--danger" data-action="memory-expire-all-unlocked-items">全部删除未锁定</button>`
+            : ''
+        }
       </div>
       ${table === 'facts' ? renderCreateForm(editor) : ''}
       <div class="memory-row-list">

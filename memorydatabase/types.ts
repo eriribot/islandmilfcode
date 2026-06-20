@@ -208,6 +208,10 @@ export type MemoryItemRow = MemoryBaseRow & {
   location?: string;
   /** 物品状态描述 */
   state?: string;
+  /** 是否锁定：锁定后不会被批量删除或自动丢失覆盖 */
+  locked?: boolean;
+  /** 是否有特殊叙事含义；默认只有这类物品注入 prompt */
+  promptRelevant?: boolean;
   /** 变动类型 */
   action?: 'gained' | 'lost' | 'transformed' | 'noted';
   /** 数量 */

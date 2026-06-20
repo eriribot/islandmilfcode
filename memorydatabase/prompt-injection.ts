@@ -28,6 +28,10 @@ export type MemoryInjectionConfig = {
   includeSecrets?: boolean;
   /** 是否注入 impressions（默认 true）*/
   includeImpressions?: boolean;
+  /** 是否注入物品变动（默认 true）*/
+  includeItems?: boolean;
+  /** 是否只注入有特殊含义的物品（默认 true）*/
+  onlyPromptRelevantItems?: boolean;
 };
 
 /**
@@ -94,6 +98,8 @@ export function buildMemoryPromptInjection(
     includeTasks: context.config?.includeTasks ?? true,
     includeSecrets: context.config?.includeSecrets ?? true,
     includeImpressions: context.config?.includeImpressions ?? true,
+    includeItems: context.config?.includeItems ?? true,
+    onlyPromptRelevantItems: context.config?.onlyPromptRelevantItems ?? true,
   };
 
   const blocks: MemoryBlock[] = [];
@@ -107,7 +113,7 @@ export function buildMemoryPromptInjection(
     buildIntegratedMemoryBlock(db, blocks, context, config);
   }
 
-  buildTimelineBlock(db, blocks, context);
+  buildTimelineBlock(db, blocks, context, config);
 
   // ── 3. 角色印象（仅当前在场角色，精简）──
   if (config.includeImpressions) {
@@ -257,7 +263,7 @@ function buildIntegratedMemoryBlock(
     }
 
     const importantFacts: string[] = [];
-    const priorityCategories = ['promise', 'secret', 'relation', 'event', 'item']; // 高优先级类别
+    const priorityCategories = ['promise', 'secret', 'relation', 'event']; // 物品由 items 表按特殊含义单独控制
 
     for (const cat of priorityCategories) {
       const items = grouped.get(cat);
@@ -290,6 +296,7 @@ function buildTimelineBlock(
   db: IslandMemoryDB,
   blocks: MemoryBlock[],
   context: MemoryInjectionContext,
+  config: Required<MemoryInjectionConfig>,
 ): void {
   const currentTargetIds = new Set(context.currentTargetIds);
   const currentEventId = context.currentMainEventId;
@@ -308,10 +315,13 @@ function buildTimelineBlock(
     .sort(compareRowsByMemoryTimeDesc)
     .slice(0, 6);
 
-  const items = db.items
-    .filter(i => !i.expired)
-    .sort(compareRowsByMemoryTimeDesc)
-    .slice(0, 6);
+  const items = config.includeItems
+    ? db.items
+        .filter(i => !i.expired)
+        .filter(i => !config.onlyPromptRelevantItems || i.promptRelevant === true)
+        .sort(compareRowsByMemoryTimeDesc)
+        .slice(0, 6)
+    : [];
 
   const lines: string[] = [];
   if (events.length) {

@@ -19,6 +19,7 @@ import type {
   UiMessage,
 } from './types';
 import { loadFullMemoryConfig } from './memory-config';
+import type { IslandMemoryDB } from './memorydatabase/types';
 
 /**
  * 把摘要 range（对话序号，不含系统/streaming 楼层）映射成 UI 楼层号（getReaderMessages 渲染出的 #N）。
@@ -1347,6 +1348,21 @@ export function renderSummaryConfigSection(state: AppState): string {
           </label>
         </div>
 
+        <div class="chip-card">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" data-injection-field="includeItems" ${memoryConfig.injection.includeItems ? 'checked' : ''}>
+            <span>注入物品变动</span>
+          </label>
+        </div>
+
+        <div class="chip-card">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" data-injection-field="onlyPromptRelevantItems" ${memoryConfig.injection.onlyPromptRelevantItems ? 'checked' : ''}>
+            <span>只注入特殊含义物品</span>
+          </label>
+          <p style="font-size:11px;opacity:0.65;margin:6px 0 0">默认开启，普通库存不会占用 prompt</p>
+        </div>
+
         <button class="summary-config-save" data-action="memory-config-save">保存记忆配置</button>
         <button class="mini-btn" data-action="memory-config-reset" style="width:100%;margin-top:8px">重置为默认</button>
       </div>
@@ -1487,8 +1503,23 @@ export function renderStatusPanel(state: AppState): string {
   `;
 }
 
-export function renderInventoryPanel(statusData: StatusData) {
-  const inventory = Object.entries(statusData.player.inventory);
+function getDisplayInventory(statusData: StatusData, memoryDB?: IslandMemoryDB) {
+  const playerMemoryItems = memoryDB?.items?.filter(item => (item.ownerId ?? 'player') === 'player');
+  if (!playerMemoryItems?.length) return Object.entries(statusData.player.inventory);
+
+  return playerMemoryItems
+    .filter(item => !item.expired && (item.count ?? 0) > 0)
+    .map(item => [
+      item.name,
+      {
+        description: item.state || statusData.player.inventory[item.name]?.description || '暂无描述',
+        count: item.count ?? 1,
+      },
+    ] as const);
+}
+
+export function renderInventoryPanel(statusData: StatusData, memoryDB?: IslandMemoryDB) {
+  const inventory = getDisplayInventory(statusData, memoryDB);
 
   return `
     <section class="panel-card panel-card--generic">

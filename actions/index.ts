@@ -967,6 +967,18 @@ function filterAdultMarriedVirginityFlags(ctx: ActionContext, update: ProgressUp
   return virginityFlags.length === update.virginityFlags.length ? update : { ...update, virginityFlags };
 }
 
+function filterLockedItemsLost(ctx: ActionContext, update: ProgressUpdate): ProgressUpdate {
+  if (!update.itemsLost.length) return update;
+  const lockedNames = new Set(
+    ctx.memoryDB.items
+      .filter(item => !item.expired && item.locked && (item.ownerId ?? 'player') === 'player')
+      .map(item => item.name),
+  );
+  if (!lockedNames.size) return update;
+  const itemsLost = update.itemsLost.filter(name => !lockedNames.has(name));
+  return itemsLost.length === update.itemsLost.length ? update : { ...update, itemsLost };
+}
+
 function applyFullProgressUpdate(
   ctx: ActionContext,
   update: ProgressUpdate | null,
@@ -978,7 +990,7 @@ function applyFullProgressUpdate(
   const legacyDelta = clampLegacyAffinityDelta(ctx, sanitized, targetId);
   // 主场景没有明确对象时，丢弃旧单目标着装更新，避免误写到 activeTargetId。
   const outfitChanges = targetId ? sanitized.outfitChanges : {};
-  const contextualized: ProgressUpdate = { ...sanitized, affinityDelta: legacyDelta, outfitChanges };
+  const contextualized: ProgressUpdate = filterLockedItemsLost(ctx, { ...sanitized, affinityDelta: legacyDelta, outfitChanges });
   applyProgressUpdate(ctx.state.statusData, contextualized, targetId ?? null, ctx.state.plotLibrary);
   const targetedAffinityChanged = applyTargetedAffinityDeltas(ctx, contextualized, targetId, scenePresence);
   const targetedObsessionChanged = applyTargetedObsessionDeltas(ctx, contextualized, targetId, scenePresence);
@@ -1862,7 +1874,8 @@ function buildScenePresencePrompts(
     '5. 输出必须是一个 JSON 对象，不要使用 Markdown 代码块。',
     '6. 班级消歧：玩家输入若用班级/学年指人（如“去G班”“找同班同学”“B班那个”），用上面的“玩家班级”和角色“班级”做匹配——同字符串=同班；只有班级里的角色才算同班。仅“同班/同年级”这类泛指、又能唯一对应到名单里某个角色时，才把该角色判为 focus；对应不唯一就不要硬塞。',
     '   但如果世界状态事实说明当前尚未分班，则班级匹配失效：不要因为“同班”“B班”“座位”这类未发生信息把加藤惠或任何角色塞进 focus/present。',
-    '7. 原作关系只锚定到“安艺伦也”：名单里的“原作关系”（青梅竹马/学姐/表姐等）描述的是该角色与伦也的关系，不是与 user 的关系。不要因为这些原作关系就默认该角色与 user 亲近、在场或应进入 focus；user 与角色的关系以实际剧情与好感度为准。',
+    '7. 原作关系只锚定到“安艺伦也”：名单里的“原作关系”（青梅竹马/学姐/表姐等）描述的是该角色与伦也的关系，不是与 user 的关系。不要因为这些原作关系就默认该角色与 user 亲近、在场或应进入 focus；user 与角色的关系以实际剧情与好感度为准。尤其是注意青梅竹马不论是美智留还是英梨梨除非user特别设定,这个设定都不能适用于user,她们都与伦也的青梅竹马',
+    '8. 注意事项,伦也不是阴暗的宅男,他对感情极其迟钝,在User和其他女性暗中夺心的过程中,他的聚焦点一直在游戏中,哪怕没有实权(虽然他就是大部分时候没实权的在原著中)只要做出他喜欢的美少女游戏符合他御宅兴趣的他都会甘之若饴但他不是无条件顺从不是他心里理想的作品他最后都会爆发出他独有的御宅族的偏执,严禁出现阴暗跟踪偷窥狂的伦也',
   ].join('\n');
 
   return [

@@ -15,6 +15,7 @@ import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute, P
 import { isPlayerPhonePseudoTarget } from './types';
 import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
 import { renderMemoryEditor } from '../memorydatabase/editor';
+import type { IslandMemoryDB } from '../memorydatabase/types';
 
 type PhoneCharacterThemeId = PhoneThemeCharacterId;
 
@@ -93,7 +94,7 @@ function getPhoneCharacterTheme(characterId: PhoneCharacterId) {
 }
 
 export type PhoneRenderers = {
-  renderInventoryPanel: (statusData: StatusData) => string;
+  renderInventoryPanel: (statusData: StatusData, memoryDB?: IslandMemoryDB) => string;
   renderPaperWorkspace: (state: AppState, flipDir?: string, options?: { embedded?: boolean }) => string;
   renderStatusPanel: (state: AppState) => string;
   renderSummaryConfigSection: (state: AppState) => string;
@@ -286,7 +287,7 @@ function renderPhoneHome(state: AppState) {
   const phoneThreadCount = Object.values(state.phoneMessages.threads).filter(thread => thread.messages.length).length;
   const summaryCount =
     state.summaryStore.minor.length + state.summaryStore.major.length + (state.summaryStore.global ? 1 : 0);
-  const inventoryCount = Object.keys(state.statusData.player.inventory).length;
+  const inventoryCount = getPhoneInventoryCount(state);
   const apps: Array<{
     route: PhoneRoute;
     icon: string;
@@ -951,12 +952,19 @@ function renderArchivePhonePage(state: AppState) {
 }
 
 function renderInventoryPhonePage(statusData: StatusData, state: AppState, renderers: PhoneRenderers) {
+  const inventoryCount = getPhoneInventoryCount(state);
   return `
     <section class="phone-route-page phone-app-page" data-phone-route-view="app:inventory">
-      ${renderPhoneAppHeader(state, '背包', `${Object.keys(statusData.player.inventory).length} 件物品`)}
-      ${renderers.renderInventoryPanel(statusData)}
+      ${renderPhoneAppHeader(state, '背包', `${inventoryCount} 件物品`)}
+      ${renderers.renderInventoryPanel(statusData, state.memoryDB)}
     </section>
   `;
+}
+
+function getPhoneInventoryCount(state: AppState): number {
+  const playerMemoryItems = state.memoryDB.items.filter(item => (item.ownerId ?? 'player') === 'player');
+  if (!playerMemoryItems.length) return Object.keys(state.statusData.player.inventory).length;
+  return playerMemoryItems.filter(item => !item.expired && (item.count ?? 0) > 0).length;
 }
 
 function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
