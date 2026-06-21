@@ -71,11 +71,41 @@ function getFrameElement() {
   }
 }
 
+function isTauriTavernHost() {
+  const hasMarker = (value: unknown) => Boolean(value && typeof value === 'object');
+  try {
+    if (hasMarker((window as typeof window & { __TAURITAVERN__?: unknown }).__TAURITAVERN__)) return true;
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (window.parent && hasMarker((window.parent as typeof window & { __TAURITAVERN__?: unknown }).__TAURITAVERN__)) {
+      return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+function isMobileFullscreenHost() {
+  try {
+    if (window.matchMedia?.('(pointer: coarse), (max-width: 720px)').matches) return true;
+  } catch {
+    /* ignore */
+  }
+  return window.innerWidth <= 720;
+}
+
+function shouldUseConservativeHostStyles() {
+  return isTauriTavernHost() || isMobileFullscreenHost();
+}
+
 function getDirectHostChain() {
   const scene = document.querySelector<HTMLElement>('.islandmilfcode-scene');
   if (!scene) return [];
 
-  const chain: HTMLElement[] = [];
+  const chain: HTMLElement[] = [scene];
   let cursor = scene.parentElement;
   while (cursor && cursor !== document.body && chain.length < 6) {
     chain.push(cursor);
@@ -97,17 +127,23 @@ function getHostChain() {
   const frame = getFrameElement();
   if (!frame) return getDirectHostChain();
 
+  const conservativeHost = shouldUseConservativeHostStyles();
   const chain: HTMLElement[] = [frame];
   const parentDocument = frame.ownerDocument;
 
   parentDocument.querySelectorAll<HTMLElement>(HOST_CHAIN_SELECTOR).forEach(element => {
+    if (conservativeHost && element.matches('#chat, #sheld')) return;
     if (element.contains(frame)) chain.push(element);
   });
 
   let cursor = frame.parentElement;
   while (cursor && cursor !== parentDocument.body && chain.length < 8) {
     const style = parentDocument.defaultView?.getComputedStyle(cursor);
-    if (style && (style.overflow !== 'visible' || style.transform !== 'none' || style.position !== 'static')) {
+    const isMessageWrapper = cursor.matches(
+      '.mes, .mes_block, .mes_text, .mes_text_display, .custom-content, .stscript, .TH-render',
+    );
+    const isAllowedWrapper = !conservativeHost || isMessageWrapper;
+    if (style && isAllowedWrapper && (style.overflow !== 'visible' || style.transform !== 'none' || style.position !== 'static')) {
       chain.push(cursor);
     }
     cursor = cursor.parentElement;
@@ -126,29 +162,53 @@ function snapshotHostStyles(elements: HTMLElement[]) {
 function applyFullscreenHostStyles(elements: HTMLElement[]) {
   const hostDocument = elements[0]?.ownerDocument;
   injectFullscreenHostStyle(hostDocument);
+  const frame = getFrameElement();
+  const directFullscreenTarget = frame ? null : document.querySelector<HTMLElement>('.islandmilfcode-scene');
+  const conservativeWrappers = shouldUseConservativeHostStyles();
 
-  elements.forEach((element, index) => {
-    element.setAttribute(HOST_STYLE_ATTR, index === 0 ? 'frame' : 'wrapper');
+  elements.forEach(element => {
+    const isFrame = Boolean(frame && element === frame);
+    const isDirectTarget = Boolean(directFullscreenTarget && element === directFullscreenTarget);
+    element.setAttribute(HOST_STYLE_ATTR, isFrame ? 'frame' : 'wrapper');
+
+    if (isFrame || isDirectTarget || !conservativeWrappers) {
+      element.setAttribute(HOST_STYLE_ATTR, isFrame ? 'frame' : isDirectTarget ? 'direct' : 'host-fixed');
+      Object.assign(element.style, {
+        position: 'fixed',
+        inset: '0',
+        top: '0',
+        right: '0',
+        bottom: '0',
+        left: '0',
+        zIndex: isFrame ? '2147483646' : '2147483645',
+        width: '100vw',
+        height: '100dvh',
+        maxWidth: '100vw',
+        maxHeight: '100dvh',
+        margin: '0',
+        padding: '0',
+        border: '0',
+        borderRadius: '0',
+        overflow: 'visible',
+        transform: 'none',
+        contain: 'none',
+        display: 'block',
+      });
+      return;
+    }
+
     Object.assign(element.style, {
-      position: 'fixed',
-      inset: '0',
-      top: '0',
-      right: '0',
-      bottom: '0',
-      left: '0',
-      zIndex: '2147483646',
-      width: '100vw',
-      height: '100dvh',
-      maxWidth: '100vw',
-      maxHeight: '100dvh',
-      margin: '0',
-      padding: '0',
-      border: '0',
-      borderRadius: '0',
       overflow: 'visible',
       transform: 'none',
-      display: 'block',
+      contain: 'none',
+      filter: 'none',
+      clipPath: 'none',
+      zIndex: '2147483645',
     });
+
+    if (window.getComputedStyle(element).position === 'static') {
+      element.style.position = 'relative';
+    }
   });
 }
 
@@ -177,7 +237,9 @@ function injectFullscreenHostStyle(hostDocument: Document | undefined) {
   const style = hostDocument.createElement('style');
   style.id = HOST_STYLE_ID;
   style.textContent = `
-    [${HOST_STYLE_ATTR}] {
+    [${HOST_STYLE_ATTR}="frame"],
+    [${HOST_STYLE_ATTR}="direct"],
+    [${HOST_STYLE_ATTR}="host-fixed"] {
       position: fixed !important;
       inset: 0 !important;
       top: 0 !important;
@@ -197,7 +259,23 @@ function injectFullscreenHostStyle(hostDocument: Document | undefined) {
       border-radius: 0 !important;
       overflow: visible !important;
       transform: none !important;
+      contain: none !important;
       display: block !important;
+      box-sizing: border-box !important;
+    }
+    [${HOST_STYLE_ATTR}="direct"] {
+      z-index: 2147483645 !important;
+    }
+    [${HOST_STYLE_ATTR}="host-fixed"] {
+      z-index: 2147483645 !important;
+    }
+    [${HOST_STYLE_ATTR}="wrapper"] {
+      overflow: visible !important;
+      transform: none !important;
+      contain: none !important;
+      filter: none !important;
+      clip-path: none !important;
+      z-index: 2147483645 !important;
       box-sizing: border-box !important;
     }
   `;
