@@ -2859,7 +2859,7 @@ function bindEvents() {
     // 在开始摘要前，先运行一次自动修复，清理遗留问题
     try {
       const repairResult = repairSummaryStore(state.summaryStore, state.uiMessages, {
-        removeOrphanedMinors: true,
+        removeOrphanedMinors: false,
         fixLastSummarizedIndex: true,
         removeOverlapping: true,
       });

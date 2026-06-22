@@ -500,6 +500,29 @@ function filterHydratedEntriesAfterRollback<T extends { range: [number, number] 
   return entries.filter(entry => rangeSurvivesRollbackBoundary(entry.range, summaryFloorCount));
 }
 
+function restoreRolledBackMinorSummaries(state: AppState, conversationCount: number, readerMessageCount: number) {
+  const now = new Date().toISOString();
+  const boundary = Math.min(conversationCount, readerMessageCount);
+  const activeMajorRanges = state.memoryDB.summaries
+    .filter(row => !row.expired && row.level === 'major')
+    .map(row => row.range);
+  const latestMinorByStart = new Map<number, (typeof state.memoryDB.summaries)[number]>();
+  for (const row of state.memoryDB.summaries) {
+    if (!row.expired || row.level !== 'minor') continue;
+    if (isRangePastRollbackBoundary(row.range, boundary, readerMessageCount)) continue;
+    if (activeMajorRanges.some(range => row.range[0] >= range[0] && row.range[1] <= range[1])) continue;
+    const start = Number(row.range?.[0] ?? 0);
+    const previous = latestMinorByStart.get(start);
+    if (!previous || row.createdAt > previous.createdAt) {
+      latestMinorByStart.set(start, row);
+    }
+  }
+  for (const row of latestMinorByStart.values()) {
+    row.expired = false;
+    row.updatedAt = now;
+  }
+}
+
 function pruneMemoryAndSummariesAfterRollback(
   state: AppState,
   previousSummaryStore?: SummaryStore | null,
@@ -517,8 +540,14 @@ function pruneMemoryAndSummariesAfterRollback(
     mergeSummaryStoreAfterSnapshotRestore(state, previousSummaryStore, pruneThreshold);
     mergeMemoryDBAfterSnapshotRestore(state, previousMemoryDB, pruneThreshold);
   }
+<<<<<<< HEAD
   pruneSummaryStoreAfterSummaryFloorCount(state, pruneThreshold);
   pruneMemoryRowsAfterSummaryFloorCount(state, pruneThreshold);
+=======
+  pruneSummaryStoreAfterConversationCount(state, pruneThreshold, readerMessageCount);
+  pruneMemoryRowsAfterConversationCount(state, pruneThreshold, readerMessageCount);
+  restoreRolledBackMinorSummaries(state, pruneThreshold, readerMessageCount);
+>>>>>>> b0d30ff50a6d8edd2432a79a113a7b332606c4ae
 
   const hydrated = hydrateSummaryStoreFromMemoryDB(state.memoryDB);
   state.summaryStore.global = hydrated.global;
@@ -803,8 +832,13 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   state.focusedMessageIndex = Math.max(getReaderMessages(state.uiMessages).length - 1, 0);
   state.focusedMessagePage = 0;
   prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
+<<<<<<< HEAD
   pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackSummaryFloorIndex, {
     mergePrevious: false,
+=======
+  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackConversationIndex, {
+    mergePrevious: true,
+>>>>>>> b0d30ff50a6d8edd2432a79a113a7b332606c4ae
   });
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
@@ -843,8 +877,13 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
   state.uiMessages = state.uiMessages.filter(message => message.id !== targetMessage.id);
   syncFocusedMessage(state);
   prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
+<<<<<<< HEAD
   pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, deletedSummaryFloorIndex, {
     mergePrevious: false,
+=======
+  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, deletedConversationIndex, {
+    mergePrevious: true,
+>>>>>>> b0d30ff50a6d8edd2432a79a113a7b332606c4ae
   });
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
