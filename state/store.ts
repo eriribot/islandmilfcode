@@ -1,4 +1,4 @@
-import { getReaderMessages, isFrontendHtmlShell } from '../message-format';
+import { getReaderMessages, getSummaryMessages, isFrontendHtmlShell } from '../message-format';
 import { createDefaultSummaryStore, deserializeSummaryStore, type SummaryStore } from '../summary/types';
 import { hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
 import type { FloatingPhonePosition } from '../phone/types';
@@ -324,50 +324,48 @@ function prunePhoneMessagesAfterFloor(state: AppState, floorIndex: number) {
   }
 }
 
-function countRollbackConversationMessages(state: Pick<AppState, 'uiMessages'>) {
-  return state.uiMessages.filter(message => message.role === 'user' || message.role === 'assistant').length;
+function countSummaryFloors(state: Pick<AppState, 'uiMessages'>) {
+  return getSummaryMessages(state.uiMessages, true).length;
 }
 
-function countConversationMessagesBeforeUiIndex(state: Pick<AppState, 'uiMessages'>, uiIndex: number) {
-  return state.uiMessages
-    .slice(0, Math.max(0, uiIndex))
-    .filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant')).length;
+function countSummaryFloorsBeforeUiIndex(state: Pick<AppState, 'uiMessages'>, uiIndex: number) {
+  return getSummaryMessages(state.uiMessages.slice(0, Math.max(0, uiIndex)), true).length;
 }
 
-function isRangePastConversation(range: unknown, conversationCount: number) {
-  if (!Array.isArray(range) || range.length < 2) return false;
-  const end = Number(range[1]);
-  return Number.isFinite(end) && end >= conversationCount;
-}
-
-function isRangePastRollbackBoundary(range: unknown, conversationCount: number, readerMessageCount: number) {
+function isRangePastRollbackBoundary(range: unknown, summaryFloorCount: number) {
   if (!Array.isArray(range) || range.length < 2) return false;
   const end = Number(range[1]);
   if (!Number.isFinite(end)) return false;
-  return end >= conversationCount || end >= readerMessageCount;
+  return end >= summaryFloorCount;
 }
 
-function pruneSummaryStoreAfterConversationCount(state: AppState, conversationCount: number, readerMessageCount: number) {
+function rangeSurvivesRollbackBoundary(
+  range: unknown,
+  summaryFloorCount: number,
+): range is [number, number] {
+  return Array.isArray(range) && range.length >= 2 && !isRangePastRollbackBoundary(range, summaryFloorCount);
+}
+
+function pruneSummaryStoreAfterSummaryFloorCount(state: AppState, summaryFloorCount: number) {
   state.summaryStore.minor = state.summaryStore.minor.filter(
-    entry => !isRangePastRollbackBoundary(entry.range, conversationCount, readerMessageCount),
+    entry => !isRangePastRollbackBoundary(entry.range, summaryFloorCount),
   );
   state.summaryStore.major = state.summaryStore.major.filter(
-    entry => !isRangePastRollbackBoundary(entry.range, conversationCount, readerMessageCount),
+    entry => !isRangePastRollbackBoundary(entry.range, summaryFloorCount),
   );
   state.summaryStore.keyFacts = state.summaryStore.keyFacts.filter(
-    fact => !isRangePastRollbackBoundary(fact.sourceRange, conversationCount, readerMessageCount),
+    fact => !isRangePastRollbackBoundary(fact.sourceRange, summaryFloorCount),
   );
-  if (state.summaryStore.global && state.summaryStore.lastSummarizedIndex > Math.min(conversationCount, readerMessageCount)) {
+  if (state.summaryStore.global && state.summaryStore.lastSummarizedIndex > summaryFloorCount) {
     state.summaryStore.global = null;
   }
   state.summaryStore.lastSummarizedIndex = Math.min(
     state.summaryStore.lastSummarizedIndex,
-    conversationCount,
-    readerMessageCount,
+    summaryFloorCount,
   );
 }
 
-function pruneMemoryRowsAfterConversationCount(state: AppState, conversationCount: number, readerMessageCount: number) {
+function pruneMemoryRowsAfterSummaryFloorCount(state: AppState, summaryFloorCount: number) {
   const updatedAt = new Date().toISOString();
   for (const tableName of MEMORY_ROW_TABLES) {
     const table = state.memoryDB[tableName] as MemoryBaseRow[];
@@ -375,8 +373,8 @@ function pruneMemoryRowsAfterConversationCount(state: AppState, conversationCoun
       if (row.expired) continue;
       const summaryRange = 'range' in row ? (row as { range?: unknown }).range : undefined;
       if (
-        isRangePastRollbackBoundary(row.sourceRange, conversationCount, readerMessageCount) ||
-        isRangePastRollbackBoundary(summaryRange, conversationCount, readerMessageCount)
+        isRangePastRollbackBoundary(row.sourceRange, summaryFloorCount) ||
+        isRangePastRollbackBoundary(summaryRange, summaryFloorCount)
       ) {
         row.expired = true;
         row.updatedAt = updatedAt;
@@ -388,7 +386,7 @@ function pruneMemoryRowsAfterConversationCount(state: AppState, conversationCoun
     for (const table of Object.values(state.memoryDB.extensions)) {
       for (const row of table) {
         if (row.expired) continue;
-        if (isRangePastRollbackBoundary(row.sourceRange, conversationCount, readerMessageCount)) {
+        if (isRangePastRollbackBoundary(row.sourceRange, summaryFloorCount)) {
           row.expired = true;
           row.updatedAt = updatedAt;
         }
@@ -396,19 +394,26 @@ function pruneMemoryRowsAfterConversationCount(state: AppState, conversationCoun
     }
   }
 
-  state.memoryDB.lastProcessedIndex = Math.min(state.memoryDB.lastProcessedIndex, conversationCount, readerMessageCount);
+  for (const row of state.memoryDB.summaries) {
+    if (row.expired) continue;
+    if (!rangeSurvivesRollbackBoundary(row.range, summaryFloorCount)) {
+      row.expired = true;
+      row.updatedAt = updatedAt;
+    }
+  }
+
+  state.memoryDB.lastProcessedIndex = Math.min(state.memoryDB.lastProcessedIndex, summaryFloorCount);
 }
 
 function mergeSummaryEntries<T extends { range: [number, number]; text: string }>(
   current: T[],
   previous: T[],
-  conversationCount: number,
-  readerMessageCount: number,
+  summaryFloorCount: number,
 ) {
   const seen = new Set(current.map(entry => `${entry.range[0]}:${entry.range[1]}:${entry.text}`));
   const merged = [...current];
   for (const entry of previous) {
-    if (isRangePastRollbackBoundary(entry.range, conversationCount, readerMessageCount)) continue;
+    if (isRangePastRollbackBoundary(entry.range, summaryFloorCount)) continue;
     const key = `${entry.range[0]}:${entry.range[1]}:${entry.text}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -420,36 +425,34 @@ function mergeSummaryEntries<T extends { range: [number, number]; text: string }
 function mergeSummaryStoreAfterSnapshotRestore(
   state: AppState,
   previous: SummaryStore | null | undefined,
-  conversationCount: number,
-  readerMessageCount: number,
+  summaryFloorCount: number,
 ) {
   if (!previous) return;
-  state.summaryStore.minor = mergeSummaryEntries(state.summaryStore.minor, previous.minor, conversationCount, readerMessageCount);
-  state.summaryStore.major = mergeSummaryEntries(state.summaryStore.major, previous.major, conversationCount, readerMessageCount);
+  state.summaryStore.minor = mergeSummaryEntries(state.summaryStore.minor, previous.minor, summaryFloorCount);
+  state.summaryStore.major = mergeSummaryEntries(state.summaryStore.major, previous.major, summaryFloorCount);
 
   const factIds = new Set(state.summaryStore.keyFacts.map(fact => fact.id));
   for (const fact of previous.keyFacts) {
-    if (isRangePastRollbackBoundary(fact.sourceRange, conversationCount, readerMessageCount)) continue;
+    if (isRangePastRollbackBoundary(fact.sourceRange, summaryFloorCount)) continue;
     if (factIds.has(fact.id)) continue;
     factIds.add(fact.id);
     state.summaryStore.keyFacts.push(cloneJson(fact));
   }
 
-  if (!state.summaryStore.global && previous.global && previous.lastSummarizedIndex <= Math.min(conversationCount, readerMessageCount)) {
+  if (!state.summaryStore.global && previous.global && previous.lastSummarizedIndex <= summaryFloorCount) {
     state.summaryStore.global = previous.global;
   }
   state.summaryStore.lastSummarizedIndex = Math.min(
     Math.max(state.summaryStore.lastSummarizedIndex, previous.lastSummarizedIndex),
-    conversationCount,
-    readerMessageCount,
+    summaryFloorCount,
   );
 }
 
-function rowSurvivesRollback(row: MemoryBaseRow, conversationCount: number, readerMessageCount: number) {
+function rowSurvivesRollback(row: MemoryBaseRow, summaryFloorCount: number) {
   const summaryRange = 'range' in row ? (row as { range?: unknown }).range : undefined;
   if (row.sourceRange || summaryRange) {
-    return !isRangePastRollbackBoundary(row.sourceRange, conversationCount, readerMessageCount) &&
-      !isRangePastRollbackBoundary(summaryRange, conversationCount, readerMessageCount);
+    return !isRangePastRollbackBoundary(row.sourceRange, summaryFloorCount) &&
+      !isRangePastRollbackBoundary(summaryRange, summaryFloorCount);
   }
   return false;
 }
@@ -457,8 +460,7 @@ function rowSurvivesRollback(row: MemoryBaseRow, conversationCount: number, read
 function mergeMemoryDBAfterSnapshotRestore(
   state: AppState,
   previous: IslandMemoryDB | null | undefined,
-  conversationCount: number,
-  readerMessageCount: number,
+  summaryFloorCount: number,
 ) {
   if (!previous) return;
 
@@ -467,7 +469,7 @@ function mergeMemoryDBAfterSnapshotRestore(
     const previousTable = previous[tableName] as MemoryBaseRow[];
     const ids = new Set(currentTable.map(row => row.id));
     for (const row of previousTable) {
-      if (!rowSurvivesRollback(row, conversationCount, readerMessageCount)) continue;
+      if (!rowSurvivesRollback(row, summaryFloorCount)) continue;
       if (ids.has(row.id)) continue;
       ids.add(row.id);
       currentTable.push(cloneJson(row));
@@ -480,7 +482,7 @@ function mergeMemoryDBAfterSnapshotRestore(
       const currentTable = (state.memoryDB.extensions[tableName] ??= []);
       const ids = new Set(currentTable.map(row => row.id));
       for (const row of previousTable) {
-        if (!rowSurvivesRollback(row, conversationCount, readerMessageCount)) continue;
+        if (!rowSurvivesRollback(row, summaryFloorCount)) continue;
         if (ids.has(row.id)) continue;
         ids.add(row.id);
         currentTable.push(cloneJson(row));
@@ -488,44 +490,47 @@ function mergeMemoryDBAfterSnapshotRestore(
     }
   }
 
-  state.memoryDB.lastProcessedIndex = Math.min(
-    Math.max(state.memoryDB.lastProcessedIndex, previous.lastProcessedIndex),
-    conversationCount,
-    readerMessageCount,
-  );
+  state.memoryDB.lastProcessedIndex = Math.min(state.memoryDB.lastProcessedIndex, summaryFloorCount);
+}
+
+function filterHydratedEntriesAfterRollback<T extends { range: [number, number] }>(
+  entries: T[],
+  summaryFloorCount: number,
+) {
+  return entries.filter(entry => rangeSurvivesRollbackBoundary(entry.range, summaryFloorCount));
 }
 
 function pruneMemoryAndSummariesAfterRollback(
   state: AppState,
   previousSummaryStore?: SummaryStore | null,
   previousMemoryDB?: IslandMemoryDB | null,
-  pruneFromConversationIndex?: number,
+  pruneFromSummaryFloorIndex?: number,
   options: { mergePrevious?: boolean } = {},
 ) {
   const { mergePrevious = true } = options;
-  const conversationCount = countRollbackConversationMessages(state);
-  const readerMessageCount = getReaderMessages(state.uiMessages, true).filter(
-    message => !message.streaming && (message.role === 'user' || message.role === 'assistant'),
-  ).length;
+  const summaryFloorCount = countSummaryFloors(state);
   const pruneThreshold = Math.max(
     0,
-    Math.min(conversationCount, readerMessageCount, Math.floor(pruneFromConversationIndex ?? conversationCount)),
+    Math.min(summaryFloorCount, Math.floor(pruneFromSummaryFloorIndex ?? summaryFloorCount)),
   );
   if (mergePrevious) {
-    mergeSummaryStoreAfterSnapshotRestore(state, previousSummaryStore, pruneThreshold, readerMessageCount);
-    mergeMemoryDBAfterSnapshotRestore(state, previousMemoryDB, pruneThreshold, readerMessageCount);
+    mergeSummaryStoreAfterSnapshotRestore(state, previousSummaryStore, pruneThreshold);
+    mergeMemoryDBAfterSnapshotRestore(state, previousMemoryDB, pruneThreshold);
   }
-  pruneSummaryStoreAfterConversationCount(state, pruneThreshold, readerMessageCount);
-  pruneMemoryRowsAfterConversationCount(state, pruneThreshold, readerMessageCount);
+  pruneSummaryStoreAfterSummaryFloorCount(state, pruneThreshold);
+  pruneMemoryRowsAfterSummaryFloorCount(state, pruneThreshold);
 
   const hydrated = hydrateSummaryStoreFromMemoryDB(state.memoryDB);
   state.summaryStore.global = hydrated.global;
-  state.summaryStore.major = hydrated.major;
-  state.summaryStore.minor = hydrated.minor;
+  state.summaryStore.major = filterHydratedEntriesAfterRollback(hydrated.major, pruneThreshold);
+  state.summaryStore.minor = filterHydratedEntriesAfterRollback(hydrated.minor, pruneThreshold);
   state.summaryStore.keyFacts = hydrated.keyFacts.filter(
-    fact => !isRangePastRollbackBoundary(fact.sourceRange, conversationCount, readerMessageCount),
+    fact => rangeSurvivesRollbackBoundary(fact.sourceRange, pruneThreshold),
   );
-  state.summaryStore.lastSummarizedIndex = Math.min(state.summaryStore.lastSummarizedIndex, conversationCount, readerMessageCount);
+  if (state.summaryStore.global && state.summaryStore.lastSummarizedIndex > pruneThreshold) {
+    state.summaryStore.global = null;
+  }
+  state.summaryStore.lastSummarizedIndex = Math.min(state.summaryStore.lastSummarizedIndex, pruneThreshold);
 }
 
 function mapChatMessageToUiMessage(
@@ -769,7 +774,7 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   if (!target) return null;
   const previousSummaryStore = cloneJson(state.summaryStore);
   const previousMemoryDB = cloneJson(state.memoryDB);
-  const rollbackConversationIndex = countConversationMessagesBeforeUiIndex(state, target.sourceUserIndex);
+  const rollbackSummaryFloorIndex = countSummaryFloorsBeforeUiIndex(state, target.sourceUserIndex);
 
   const removedMessageIds = state.uiMessages
     .slice(target.sourceUserIndex)
@@ -798,7 +803,7 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   state.focusedMessageIndex = Math.max(getReaderMessages(state.uiMessages).length - 1, 0);
   state.focusedMessagePage = 0;
   prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
-  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackConversationIndex, {
+  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackSummaryFloorIndex, {
     mergePrevious: false,
   });
   state.currentGenerationId = '';
@@ -816,7 +821,7 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
 
   const targetUiIndex = state.uiMessages.findIndex(message => message.id === targetMessage.id);
   if (targetUiIndex < 0) return false;
-  const deletedConversationIndex = countConversationMessagesBeforeUiIndex(state, targetUiIndex);
+  const deletedSummaryFloorIndex = countSummaryFloorsBeforeUiIndex(state, targetUiIndex);
 
   if (typeof targetMessage.tavernMessageId === 'number' && typeof win?.deleteChatMessages === 'function') {
     try {
@@ -838,7 +843,7 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
   state.uiMessages = state.uiMessages.filter(message => message.id !== targetMessage.id);
   syncFocusedMessage(state);
   prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
-  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, deletedConversationIndex, {
+  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, deletedSummaryFloorIndex, {
     mergePrevious: false,
   });
   state.currentGenerationId = '';

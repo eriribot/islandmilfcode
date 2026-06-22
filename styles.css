@@ -27,6 +27,20 @@
   --ink-user: #3d7a8a;
   --ink-assistant: #6b4e9e;
 
+  /* ── 可切换纸面 ── */
+  --paper-bg-start: var(--journal-cream);
+  --paper-bg-end: var(--journal-warm);
+  --paper-surface: rgba(255, 252, 245, 0.7);
+  --paper-surface-soft: rgba(255, 253, 247, 0.65);
+  --paper-surface-strong: rgba(255, 252, 245, 0.94);
+  --paper-input-bg: transparent;
+  --paper-line: rgba(180, 160, 130, 0.22);
+  --paper-line-strong: rgba(180, 160, 130, 0.4);
+  --paper-scroll: rgba(180, 160, 130, 0.4);
+  --paper-shadow: rgba(80, 60, 30, 0.12);
+  --paper-shadow-soft: rgba(80, 60, 30, 0.08);
+  --paper-gloss: rgba(255, 255, 255, 0.18);
+
   /* ── 和纸胶带 / 贴纸 ── */
   --washi-pink: #f2b5c4;
   --washi-mint: #a8dbc5;
@@ -124,13 +138,110 @@ button {
   background:
     radial-gradient(circle, var(--dot-color) var(--dot-size), transparent var(--dot-size)) 12px 12px / var(--dot-gap)
       var(--dot-gap),
-    linear-gradient(180deg, var(--journal-cream) 0%, var(--journal-warm) 100%);
+    linear-gradient(180deg, var(--paper-bg-start) 0%, var(--paper-bg-end) 100%);
   box-shadow:
     -4px 0 0 var(--journal-edge),
     -7px 0 0 var(--journal-kraft),
-    0 8px 32px rgba(80, 60, 30, 0.12),
-    0 2px 8px rgba(80, 60, 30, 0.08);
+    0 8px 32px var(--paper-shadow),
+    0 2px 8px var(--paper-shadow-soft);
   border-left: 3px solid var(--washi-peach);
+}
+
+.paper-workspace.paper-theme--eye-care {
+  color-scheme: light;
+  --journal-cream: #eef3df;
+  --journal-warm: #e3ead2;
+  --journal-kraft: #d7dfc3;
+  --journal-edge: #c7d0af;
+  --paper-bg-start: #eef3df;
+  --paper-bg-end: #dfe8ce;
+  --paper-surface: rgba(250, 255, 238, 0.64);
+  --paper-surface-soft: rgba(247, 253, 235, 0.72);
+  --paper-surface-strong: rgba(250, 255, 238, 0.94);
+  --paper-input-bg: rgba(250, 255, 238, 0.28);
+  --paper-line: rgba(114, 139, 98, 0.24);
+  --paper-line-strong: rgba(92, 121, 80, 0.42);
+  --paper-scroll: rgba(91, 119, 78, 0.38);
+  --paper-shadow: rgba(46, 75, 42, 0.12);
+  --paper-shadow-soft: rgba(46, 75, 42, 0.08);
+  --paper-gloss: rgba(255, 255, 245, 0.14);
+  --dot-color: rgba(92, 121, 80, 0.18);
+  --ink-dark: #283323;
+  --ink-soft: #58664b;
+  --ink-faint: #879678;
+  --ink-user: #2f746b;
+  --ink-assistant: #596c3c;
+  --washi-lavender: #8dab76;
+  --washi-mint: #8fc2a1;
+  --washi-peach: #c8b978;
+  --tag-bg: rgba(89, 108, 60, 0.1);
+  --tag-border: rgba(89, 108, 60, 0.22);
+}
+
+.islandmilfcode-scene.paper-theme--eye-care {
+  --journal-cream: #eef3df;
+  --journal-warm: #e3ead2;
+  --journal-kraft: #d7dfc3;
+  --journal-edge: #c7d0af;
+  --paper-bg-start: #eef3df;
+  --paper-bg-end: #dfe8ce;
+  --paper-surface: rgba(250, 255, 238, 0.64);
+  --paper-surface-soft: rgba(247, 253, 235, 0.72);
+  --paper-surface-strong: rgba(250, 255, 238, 0.94);
+  --paper-input-bg: rgba(250, 255, 238, 0.28);
+  --paper-line: rgba(114, 139, 98, 0.24);
+  --paper-line-strong: rgba(92, 121, 80, 0.42);
+  --paper-scroll: rgba(91, 119, 78, 0.38);
+  --paper-shadow: rgba(46, 75, 42, 0.12);
+  --paper-shadow-soft: rgba(46, 75, 42, 0.08);
+  --paper-gloss: rgba(255, 255, 245, 0.14);
+  --dot-color: rgba(92, 121, 80, 0.18);
+  --ink-dark: #283323;
+  --ink-soft: #58664b;
+  --ink-faint: #879678;
+  --ink-user: #2f746b;
+  --ink-assistant: #596c3c;
+  --washi-lavender: #8dab76;
+  --washi-mint: #8fc2a1;
+  --washi-peach: #c8b978;
+  --tag-bg: rgba(89, 108, 60, 0.1);
+  --tag-border: rgba(89, 108, 60, 0.22);
+}
+
+.paper-workspace.paper-theme--night,
+.islandmilfcode-scene.paper-theme--night {
+  color-scheme: dark;
+  --journal-cream: #20242a;
+  --journal-warm: #171b20;
+  --journal-kraft: #30323a;
+  --journal-edge: #24272f;
+  --paper-bg-start: #22262d;
+  --paper-bg-end: #171b20;
+  --paper-surface: rgba(43, 48, 56, 0.74);
+  --paper-surface-soft: rgba(34, 39, 46, 0.78);
+  --paper-surface-strong: rgba(52, 58, 68, 0.94);
+  --paper-input-bg: rgba(17, 20, 25, 0.28);
+  --paper-line: rgba(189, 181, 152, 0.2);
+  --paper-line-strong: rgba(205, 197, 165, 0.38);
+  --paper-scroll: rgba(205, 197, 165, 0.32);
+  --paper-shadow: rgba(0, 0, 0, 0.24);
+  --paper-shadow-soft: rgba(0, 0, 0, 0.16);
+  --paper-gloss: rgba(255, 255, 255, 0.06);
+  --dot-color: rgba(205, 197, 165, 0.13);
+  --ink-dark: #e8dfc9;
+  --ink-soft: #bdb292;
+  --ink-faint: #887f68;
+  --ink-system: #e18ba0;
+  --ink-user: #8ccbd4;
+  --ink-assistant: #bea7ec;
+  --washi-pink: #9b5266;
+  --washi-mint: #598a78;
+  --washi-lavender: #74649c;
+  --washi-butter: #95864f;
+  --washi-peach: #9b7158;
+  --washi-sky: #547b92;
+  --tag-bg: rgba(190, 167, 236, 0.13);
+  --tag-border: rgba(190, 167, 236, 0.28);
 }
 
 /* 装订线 */
@@ -147,7 +258,7 @@ button {
     var(--journal-edge) 18px 19px,
     transparent 19px 20px
   );
-  border-right: 1.5px dashed rgba(180, 160, 130, 0.35);
+  border-right: 1.5px dashed var(--paper-line-strong);
   pointer-events: none;
 }
 
@@ -156,7 +267,7 @@ button {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, transparent 30%);
+  background: linear-gradient(135deg, var(--paper-gloss) 0%, transparent 30%);
   pointer-events: none;
 }
 
@@ -299,9 +410,9 @@ button {
   border-radius: 8px;
   cursor: pointer;
   color: var(--ink-soft);
-  background: rgba(255, 252, 245, 0.74);
-  border: 1.5px solid rgba(180, 160, 130, 0.22);
-  box-shadow: 0 4px 12px rgba(80, 60, 30, 0.08);
+  background: var(--paper-surface);
+  border: 1.5px solid var(--paper-line);
+  box-shadow: 0 4px 12px var(--paper-shadow-soft);
   transition:
     background 0.15s ease,
     color 0.15s ease,
@@ -311,7 +422,7 @@ button {
 .paper-fullscreen-btn:hover,
 .paper-fullscreen-btn.is-active {
   color: var(--ink-assistant);
-  background: rgba(255, 252, 245, 0.94);
+  background: var(--paper-surface-strong);
   transform: translateY(-1px);
 }
 
@@ -390,6 +501,46 @@ button {
   border-right: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
   transform: translateY(-2px) rotate(45deg);
+}
+
+.paper-theme-switch {
+  position: relative;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: -8px 0 14px;
+  padding: 4px;
+  border: 1px solid var(--paper-line);
+  border-radius: 999px;
+  background: var(--paper-surface);
+  box-shadow:
+    0 4px 12px var(--paper-shadow-soft),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+}
+
+.paper-theme-switch__btn {
+  min-width: 44px;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--ink-soft);
+  background: transparent;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 28px;
+  cursor: pointer;
+}
+
+.paper-theme-switch__btn:hover {
+  color: var(--ink-dark);
+  background: var(--paper-surface-soft);
+}
+
+.paper-theme-switch__btn.is-active {
+  color: #fff;
+  background: var(--ink-assistant);
+  box-shadow: 0 3px 10px rgba(60, 42, 16, 0.14);
 }
 
 .journal-date-block {
@@ -512,7 +663,7 @@ button {
   width: min(100%, 1040px);
   margin-left: 12px;
   padding: 10px 18px;
-  border: 1.5px solid rgba(180, 160, 130, 0.2);
+  border: 1.5px solid var(--paper-line);
   border-radius: var(--radius-soft);
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
@@ -521,7 +672,7 @@ button {
   text-align: left;
   cursor: pointer;
   color: var(--ink-faint);
-  background: rgba(255, 252, 245, 0.7);
+  background: var(--paper-surface);
   backdrop-filter: blur(4px);
   transition:
     transform 0.15s ease,
@@ -529,7 +680,7 @@ button {
 }
 
 .reader-preview:hover {
-  background: rgba(255, 252, 245, 0.9);
+  background: var(--paper-surface-strong);
 }
 
 .reader-preview--before {
@@ -697,14 +848,14 @@ button {
   border-radius: 999px;
   font-size: 0.84rem;
   line-height: 1;
-  border: 1px dashed rgba(180, 160, 130, 0.24);
-  background: rgba(255, 252, 245, 0.72);
+  border: 1px dashed var(--paper-line);
+  background: var(--paper-surface);
   color: var(--ink-faint);
 }
 
 .reader-card__hint.is-active {
   color: var(--ink-soft);
-  border-color: rgba(180, 160, 130, 0.4);
+  border-color: var(--paper-line-strong);
 }
 
 .reader-card__hint.is-disabled {
@@ -753,12 +904,12 @@ button {
   height: var(--reader-body-height);
   min-height: 120px;
   padding: 8px 8px 12px 4px;
-  border-top: 1px dashed rgba(180, 160, 130, 0.2);
+  border-top: 1px dashed var(--paper-line);
   overflow-y: auto;
   overscroll-behavior: contain;
   touch-action: pan-y;
   scrollbar-width: thin;
-  scrollbar-color: rgba(180, 160, 130, 0.4) transparent;
+  scrollbar-color: var(--paper-scroll) transparent;
   cursor: text;
 }
 
@@ -772,7 +923,7 @@ button {
 
 .reader-card__body::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(180, 160, 130, 0.35);
+  background: var(--paper-scroll);
 }
 
 .reader-card__text {
@@ -795,11 +946,11 @@ button {
   min-height: 76px;
   margin: 14px 0;
   padding: 12px 18px 14px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.52);
+  border: 1px solid var(--paper-line);
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.72), rgba(255, 252, 245, 0.46)),
-    rgba(255, 252, 245, 0.38);
+    linear-gradient(135deg, var(--paper-surface-strong), var(--paper-surface)),
+    var(--paper-surface-soft);
   backdrop-filter: blur(10px) saturate(1.08);
   box-shadow:
     0 10px 26px rgba(98, 72, 62, 0.08),
@@ -1371,13 +1522,13 @@ button {
   max-height: 60vh;
   resize: vertical;
   border-radius: 12px;
-  border: 1px solid rgba(182, 156, 122, 0.4);
+  border: 1px solid var(--paper-line-strong);
   padding: 12px;
   font-family: inherit;
   font-size: 0.9rem;
   line-height: 1.55;
   color: var(--ink-dark);
-  background: rgba(255, 253, 247, 0.85);
+  background: var(--paper-surface-soft);
 }
 
 .reader-editor__actions {
@@ -1414,9 +1565,9 @@ button {
 .paper-composer-card {
   position: relative;
   padding: 14px 18px;
-  border: 1.5px dashed rgba(180, 160, 130, 0.3);
+  border: 1.5px dashed var(--paper-line-strong);
   border-radius: var(--radius-card);
-  background: rgba(255, 253, 247, 0.65);
+  background: var(--paper-surface-soft);
 }
 
 .paper-composer-card__label {
@@ -1438,7 +1589,7 @@ button {
   padding: 0;
   margin: 0;
   color: var(--ink-dark);
-  background: transparent;
+  background: var(--paper-input-bg);
   line-height: 2;
   font-size: 1rem;
   font-family: 'Klee One', serif;
@@ -1468,7 +1619,7 @@ button {
   display: grid;
   place-items: center;
   color: var(--ink-assistant);
-  background: rgba(255, 252, 245, 0.9);
+  background: var(--paper-surface-strong);
   font-size: 1.25rem;
   font-weight: 900;
   line-height: 1;
@@ -1554,9 +1705,9 @@ button {
 .top-card,
 .tab-bar,
 .panel-card {
-  border: 1.5px solid rgba(180, 160, 130, 0.2);
+  border: 1.5px solid var(--paper-line);
   border-radius: var(--radius-soft);
-  background: rgba(255, 252, 245, 0.6);
+  background: var(--paper-surface);
   backdrop-filter: blur(4px);
 }
 
@@ -1660,8 +1811,8 @@ button {
 
 .tab-btn.active {
   color: var(--ink-dark);
-  background: rgba(255, 252, 245, 0.8);
-  box-shadow: 0 2px 6px rgba(80, 60, 30, 0.06);
+  background: var(--paper-surface-strong);
+  box-shadow: 0 2px 6px var(--paper-shadow-soft);
 }
 
 /* ── 面板 ── */
@@ -1688,7 +1839,7 @@ button {
   overflow-y: auto;
   padding-right: 4px;
   scrollbar-width: thin;
-  scrollbar-color: rgba(180, 160, 130, 0.4) transparent;
+  scrollbar-color: var(--paper-scroll) transparent;
 }
 
 .panel-scroll::-webkit-scrollbar {
@@ -1697,7 +1848,7 @@ button {
 
 .panel-scroll::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(180, 160, 130, 0.35);
+  background: var(--paper-scroll);
 }
 
 /* ── 卡片们 ── */
@@ -1709,8 +1860,8 @@ button {
 .empty-card,
 .variable-sheet {
   border-radius: 12px;
-  background: rgba(255, 252, 245, 0.5);
-  border: 1px solid rgba(180, 160, 130, 0.15);
+  background: var(--paper-surface-soft);
+  border: 1px solid var(--paper-line);
 }
 
 .hero-card,

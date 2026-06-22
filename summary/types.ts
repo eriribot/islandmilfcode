@@ -1,6 +1,6 @@
-/** 单条摘要条目：记录消息范围、摘要文本和创建时间。 */
+/** 单条摘要条目：记录 Reader 可摘要楼层范围、摘要文本和创建时间。 */
 export type SummaryEntry = {
-  /** 该摘要覆盖的消息索引范围 [起始, 结束]。 */
+  /** 该摘要覆盖的 Reader 可见完成楼层 0-based 范围 [起始, 结束]。 */
   range: [number, number];
   /** 摘要正文。 */
   text: string;
@@ -72,11 +72,11 @@ export type SummaryStore = {
   global: string | null;
   /** 大摘要列表（由多条小摘要合并而来）。 */
   major: SummaryEntry[];
-  /** 小摘要列表（每 5 条消息生成一条）。 */
+  /** 小摘要列表（默认每 5 个 Reader 可摘要楼层生成一条）。 */
   minor: SummaryEntry[];
   /** 关键事实沉淀层：独立于压缩链条，作为主 prompt 的 pinned facts。 */
   keyFacts: KeyFact[];
-  /** 已被摘要覆盖的消息数量游标；新消息从此索引之后开始计入下次摘要。 */
+  /** 已被摘要覆盖的 Reader 可摘要楼层数量游标；新楼层从此索引之后开始计入下次摘要。 */
   lastSummarizedIndex: number;
   /** 连续失败次数；达到 3 次时自动暂停。 */
   consecutiveFailures: number;

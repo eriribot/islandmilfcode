@@ -182,10 +182,7 @@ export function commitProgressToMemoryDB(
     });
   }
 
-  // ── 7. 推进游标 ──
-  if (sourceRange) {
-    db.lastProcessedIndex = Math.max(db.lastProcessedIndex, sourceRange[1]);
-  }
+  // Progress 行只记录 sourceRange 供回退裁剪；摘要游标只由 commitSummaryToMemoryDB 推进。
 }
 
 /** 内部：读取某 targetId+key 的当前数值属性，缺省为 0。 */
@@ -262,7 +259,8 @@ export function commitSummaryToMemoryDB(
     source: SUMMARY_SOURCE_MAP[level],
     inserts,
     expire: expireSummaryIds.length ? { summaries: expireSummaryIds } : undefined,
-    advanceCursor: range[1],
+    // 摘要游标表示“已覆盖楼层数/下一个起点”，range[1] 是 0-based 结束楼层。
+    advanceCursor: range[1] + 1,
   });
 }
 
@@ -293,7 +291,7 @@ export function updateSummaryTextInMemoryDB(
       return;
     }
 
-    commitSummaryToMemoryDB(db, 'global', text, range ?? [0, Math.max(0, db.lastProcessedIndex)]);
+    commitSummaryToMemoryDB(db, 'global', text, range ?? [0, Math.max(0, db.lastProcessedIndex - 1)]);
     return;
   }
 

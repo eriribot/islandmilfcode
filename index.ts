@@ -17,7 +17,7 @@ import './title/styles.css';
 import { cancelCurrentGeneration, retryBackgroundProgressUpdate, submitMessage, submitPhoneMessage, type ActionContext } from './actions';
 import { clearBackgroundTask } from './background-tasks';
 import { setupStreamingHooks } from './actions/streaming';
-import { extractContextReply, getReaderMessages, invalidateReaderMessagesCache } from './message-format';
+import { extractContextReply, getReaderMessages, getSummaryMessages, invalidateReaderMessagesCache } from './message-format';
 import { bindFloatingPhoneEvents, loadFloatingPhonePosition, syncFloatingPhoneAfterResize } from './phone/floating';
 import {
   closePhoneRoute,
@@ -215,6 +215,14 @@ function resolveReaderIndex(readerIndex: number, readerId?: string | null) {
   }
   if (Number.isFinite(readerIndex)) return readerIndex;
   return state.focusedMessageIndex;
+}
+
+function setPaperTheme(theme: string | undefined) {
+  const nextTheme = theme === 'eye-care' || theme === 'night' ? theme : 'classic';
+  if (state.runtimeFlags.paperTheme === nextTheme) return;
+  state.runtimeFlags.paperTheme = nextTheme;
+  persistToSave();
+  render();
 }
 
 // ── State & adapter ──
@@ -2216,6 +2224,12 @@ function bindEvents() {
       render();
     });
   });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="set-paper-theme"]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      setPaperTheme(button.dataset.paperTheme);
+    });
+  });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-to-composer"]').forEach(button => {
     button.addEventListener('click', event => {
       event.stopPropagation();
@@ -2850,7 +2864,6 @@ function bindEvents() {
         removeOverlapping: true,
       });
       if (repairResult.fixed) {
-        console.log('[summary] 自动修复完成:', repairResult.changes);
         persistToSave();
       }
     } catch (error) {
@@ -2861,14 +2874,14 @@ function bindEvents() {
       if (mode === 'minor') {
         let safety = 20;
         while (safety-- > 0) {
-          if (countPendingConversations() < 5) break;
+          if (countPendingSummaryFloors() < 5) break;
           if (state.summaryStore.autoPaused) break;
           await runSummary(ctxArg, 'minor');
         }
       } else if (mode === 'major') {
         let safety = 10;
         while (safety-- > 0) {
-          if (!state.summaryStore.minor.length) break;
+          if (countUnmergedMinorSummaries() === 0) break;
           if (state.summaryStore.autoPaused) break;
           const beforeMajorCount = state.summaryStore.major.length;
           await runSummary(ctxArg, 'major');
@@ -2887,8 +2900,8 @@ function bindEvents() {
     }
   }
 
-  function countPendingConversations() {
-    const total = state.uiMessages.filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant')).length;
+  function countPendingSummaryFloors() {
+    const total = getSummaryMessages(state.uiMessages).length;
     return Math.max(0, total - state.summaryStore.lastSummarizedIndex);
   }
 
@@ -2986,7 +2999,7 @@ function bindEvents() {
         state.summaryStore.global = newText || null;
         updateSummaryTextInMemoryDB(state.memoryDB, 'global', state.summaryStore.global, [
           0,
-          Math.max(0, state.summaryStore.lastSummarizedIndex),
+          Math.max(0, state.summaryStore.lastSummarizedIndex - 1),
         ]);
       } else if (level === 'major' && index >= 0 && index < state.summaryStore.major.length) {
         state.summaryStore.major[index].text = newText;

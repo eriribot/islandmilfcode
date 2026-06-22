@@ -7,6 +7,7 @@ import {
   extractTaggedReply,
   getReaderMessages,
   getPromptMessageText,
+  getSummaryMessages,
   type ProgressUpdate,
   getVisibleMessageText,
   parseProgressUpdate,
@@ -17,6 +18,7 @@ import { SecondaryTaskCancelledError, runSecondaryTask, type SecondaryTaskKind }
 import { createRollbackSnapshot, pushMessage } from '../state/store';
 import {
   buildFactAnchorFromStatus,
+  repairSummaryStore,
   runSummary,
   shouldRunGlobalCompression,
   shouldRunMajorSummary,
@@ -755,6 +757,29 @@ function getLatestCompletedTurnMessages(messages: UiMessage[]) {
   return [messages[latestAssistantIndex]];
 }
 
+function getSummaryFloorIndexForMessage(messages: UiMessage[], message: UiMessage | null | undefined) {
+  if (!message) return -1;
+  return getSummaryMessages(messages).findIndex(item => item.id === message.id);
+}
+
+function getLatestCompletedTurnSummaryRange(messages: UiMessage[]): [number, number] | undefined {
+  const turnMessages = getLatestCompletedTurnMessages(messages);
+  const indices = turnMessages
+    .map(message => getSummaryFloorIndexForMessage(messages, message))
+    .filter(index => index >= 0);
+  if (!indices.length) return undefined;
+  return [Math.min(...indices), Math.max(...indices)];
+}
+
+function getPhoneProgressSourceRange(ctx: ActionContext, fallbackFloorIndex?: number): [number, number] | undefined {
+  const floorIndex = Number.isFinite(fallbackFloorIndex)
+    ? Number(fallbackFloorIndex)
+    : getCurrentReaderFloorIndex(ctx);
+  if (!Number.isFinite(floorIndex) || floorIndex < 0) return undefined;
+  const safeFloorIndex = Math.floor(floorIndex);
+  return [safeFloorIndex, safeFloorIndex];
+}
+
 function targetTermsForPresence(target: TargetStatus) {
   return getPhoneTargetSearchTerms(target)
     .map(term => term.trim())
@@ -833,7 +858,6 @@ function clampAffinityByVerdict(delta: number, verdict: AffinityVerdict): number
 }
 
 function clampLegacyAffinityDelta(
-  ctx: ActionContext,
   update: ProgressUpdate,
   targetId?: string | null,
 ): number | undefined {
@@ -984,10 +1008,11 @@ function applyFullProgressUpdate(
   update: ProgressUpdate | null,
   targetId?: string | null,
   scenePresence?: ScenePresence | null,
+  sourceRange?: [number, number],
 ) {
   if (!update) return false;
   const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary, ctx.state.statusData);
-  const legacyDelta = clampLegacyAffinityDelta(ctx, sanitized, targetId);
+  const legacyDelta = clampLegacyAffinityDelta(sanitized, targetId);
   // 主场景没有明确对象时，丢弃旧单目标着装更新，避免误写到 activeTargetId。
   const outfitChanges = targetId ? sanitized.outfitChanges : {};
   const contextualized: ProgressUpdate = filterLockedItemsLost(ctx, { ...sanitized, affinityDelta: legacyDelta, outfitChanges });
@@ -998,7 +1023,7 @@ function applyFullProgressUpdate(
   const countersChanged = applyIntimacyCounters(ctx, contextualized);
   const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, contextualized);
   ctx.adapter.save(ctx.state.statusData);
-  commitProgressToMemoryDB(ctx.memoryDB, filterAdultMarriedVirginityFlags(ctx, contextualized));
+  commitProgressToMemoryDB(ctx.memoryDB, filterAdultMarriedVirginityFlags(ctx, contextualized), sourceRange);
   return targetedAffinityChanged || targetedObsessionChanged || virginityChanged || countersChanged || statsChanged || true;
 }
 
@@ -1308,7 +1333,11 @@ export async function submitMessage(
           includePhoneMessages: !phoneDirective,
         }),
         null,
-        { scenePresence, isCancelled: () => isGenerationRunCancelled(ctx, generationToken) },
+        {
+          scenePresence,
+          isCancelled: () => isGenerationRunCancelled(ctx, generationToken),
+          sourceRange: getLatestCompletedTurnSummaryRange(state.uiMessages),
+        },
       );
       if (isGenerationRunCancelled(ctx, generationToken)) {
         recordGenerationDebug(ctx, 'submit:cancelled-after-progress', { requestGenerationId });
@@ -1332,8 +1361,16 @@ export async function submitMessage(
       //    历史教训：旧设计让 minor 分支用小总结回写变量，但小总结读的是滞后历史块
       //    （lastSummarizedIndex+5），把几轮前的旧时间/旧事件写回权威状态（8月13日退回8月11日 /
       //    SAE_03-8 退回 SAE_03-6）。现在总结链路只压缩历史，变量永远由上面 ① 的最新回合 progress 负责。
+      const repairResult = repairSummaryStore(ctx.summaryStore, state.uiMessages, {
+        removeOrphanedMinors: true,
+        fixLastSummarizedIndex: true,
+        removeOverlapping: true,
+      });
+      if (repairResult.fixed) {
+        ctx.onSummaryStoreUpdated();
+      }
       const postTurnMode = ctx.summaryApiConfig
-        ? pickPostTurnBackgroundMode(ctx.summaryStore, countCompletedConversationMessages(state.uiMessages))
+        ? pickPostTurnBackgroundMode(ctx.summaryStore, countCompletedSummaryFloors(state.uiMessages))
         : 'auto';
       const summaryCtx: SummaryContext = {
         win,
@@ -1717,18 +1754,17 @@ async function generateSilentAnalysis(
   }).catch(() => '');
 }
 
-function countCompletedConversationMessages(messages: UiMessage[]): number {
-  return messages.filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
-    .length;
+function countCompletedSummaryFloors(messages: UiMessage[]): number {
+  return getSummaryMessages(messages).length;
 }
 
 function pickPostTurnBackgroundMode(
   summaryStore: SummaryStore,
-  messageCount: number,
+  summaryFloorCount: number,
 ): 'progress' | 'minor' | 'major' | 'global' {
   if (shouldRunGlobalCompression(summaryStore)) return 'global';
   if (shouldRunMajorSummary(summaryStore)) return 'major';
-  if (shouldRunMinorSummary(summaryStore, messageCount)) return 'minor';
+  if (shouldRunMinorSummary(summaryStore, summaryFloorCount)) return 'minor';
   return 'progress';
 }
 
@@ -2236,7 +2272,12 @@ async function runSecondaryProgressUpdate(
   generationId: string,
   prompts: RawPrompt[],
   targetId?: string | null,
-  options: { showTask?: boolean; scenePresence?: ScenePresence | null; isCancelled?: () => boolean } = {},
+  options: {
+    showTask?: boolean;
+    scenePresence?: ScenePresence | null;
+    isCancelled?: () => boolean;
+    sourceRange?: [number, number];
+  } = {},
 ): Promise<boolean> {
   const showTask = options.showTask ?? true;
   if (options.isCancelled?.()) return false;
@@ -2257,7 +2298,7 @@ async function runSecondaryProgressUpdate(
       if (showTask) clearBackgroundTask(ctx.state, 'progress');
       return false;
     }
-    const committed = commitProgressAnalysis(ctx, raw, targetId, options.scenePresence);
+    const committed = commitProgressAnalysis(ctx, raw, targetId, options.scenePresence, options.sourceRange);
     if (showTask) clearBackgroundTask(ctx.state, 'progress');
     if (committed.applied) {
       // 成功路径也要重渲染：否则徽章在 state 里清了、变量也更新了，但 UI 不刷新，
@@ -2282,6 +2323,7 @@ function commitProgressAnalysis(
   raw: string,
   targetId?: string | null,
   scenePresence?: ScenePresence | null,
+  sourceRange?: [number, number],
 ): { applied: boolean; update: ProgressUpdate | null } {
   // 主回合 progress 现在合并了 phone_messages 提取；如果 raw 里带 <phone_messages> 块，
   // 解析并暂存，由 maybeQueueProactivePhoneMessage 接力消费、跳过原本 phone-scene-extract 副 API。
@@ -2295,7 +2337,7 @@ function commitProgressAnalysis(
 
   const update = parseProgressUpdate(raw);
   if (!update) return { applied: false, update: null };
-  applyFullProgressUpdate(ctx, update, targetId, scenePresence);
+  applyFullProgressUpdate(ctx, update, targetId, scenePresence, sourceRange);
   return { applied: true, update };
 }
 
@@ -2810,7 +2852,10 @@ async function sendPhoneMessageFromDirective(
         messages: thread.messages,
       }),
       target.id,
-      isCancelled ? { isCancelled } : undefined,
+      {
+        ...(isCancelled ? { isCancelled } : {}),
+        sourceRange: getPhoneProgressSourceRange(ctx, assistantMessage.floorIndex),
+      },
     );
     if (isCancelled?.()) {
       throw new SecondaryTaskCancelledError('phone-progress', String(state.currentGenerationId || target.id));
@@ -2946,6 +2991,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
         messages: thread.messages,
       }),
       target.id,
+      { sourceRange: getPhoneProgressSourceRange(ctx, assistantMessage.floorIndex) },
     );
 
     assistantMessage.statusSnapshot = createRollbackSnapshot(state);

@@ -1,4 +1,4 @@
-import { getPromptMessageText } from '../message-format';
+import { getPromptMessageText, getSummaryMessages } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
 import { SecondaryTaskCancelledError, runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
 import type { AppState, TavernWindow, UiMessage } from '../types';
@@ -175,19 +175,14 @@ function clearFailureState(store: SummaryStore): void {
   store.lastError = null;
 }
 
-/** 获取可参与摘要的会话消息；摘要 range 和游标都以这个数组的序号为准。 */
-function getConversationMessages(messages: UiMessage[]): UiMessage[] {
-  return messages.filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant'));
-}
-
 /** 获取一个固定大小的小摘要块，避免游标落后时一次吞掉全部历史。 */
 function getNextMinorSummaryChunk(messages: UiMessage[], lastIndex: number): UiMessage[] {
-  return getConversationMessages(messages).slice(lastIndex, lastIndex + MINOR_THRESHOLD);
+  return getSummaryMessages(messages).slice(lastIndex, lastIndex + MINOR_THRESHOLD);
 }
 
-/** 统计非流式的用户/助手消息总数（用作 lastSummarizedIndex 的基准）。 */
-function countConversationMessages(messages: UiMessage[]): number {
-  return getConversationMessages(messages).length;
+/** 统计 Reader 可见且已完成的楼层总数（用作 lastSummarizedIndex 的基准）。 */
+function countSummaryFloors(messages: UiMessage[]): number {
+  return getSummaryMessages(messages).length;
 }
 
 function rangeContains(outer: [number, number], inner: [number, number]) {
@@ -233,7 +228,7 @@ export async function runSummary(
   mode: 'auto' | 'minor' | 'major' | 'global' = 'auto',
 ): Promise<SummaryRunResult> {
   const { win, summaryStore: store, summaryApiConfig, uiMessages } = ctx;
-  const messageCount = countConversationMessages(uiMessages);
+  const summaryFloorCount = countSummaryFloors(uiMessages);
   const anchor = ctx.getFactAnchor?.() ?? null;
   const pinnedFacts = () => store.keyFacts.filter(f => !f.superseded);
   let taskStarted = false;
@@ -261,9 +256,9 @@ export async function runSummary(
   };
 
   // 小摘要：自动模式达到阈值时运行，或 mode=minor 时强制运行。
-  const runMinor = mode === 'minor' || (mode === 'auto' && shouldRunMinorSummary(store, messageCount));
+  const runMinor = mode === 'minor' || (mode === 'auto' && shouldRunMinorSummary(store, summaryFloorCount));
   if (runMinor) {
-    const startIndex = Math.max(0, Math.min(store.lastSummarizedIndex, messageCount));
+    const startIndex = Math.max(0, Math.min(store.lastSummarizedIndex, summaryFloorCount));
     const unsummarized = getNextMinorSummaryChunk(uiMessages, startIndex);
     if (unsummarized.length > 0) {
       try {
@@ -356,12 +351,7 @@ export async function runSummary(
           });
         }
         // 清理被此大摘要覆盖的所有小摘要（修复：确保完全清理）
-        const beforeMinorCount = store.minor.length;
         store.minor = store.minor.filter(entry => !rangeContains(majorRange, entry.range));
-        const removedMinorCount = beforeMinorCount - store.minor.length;
-        if (removedMinorCount > 0) {
-          console.log(`[summary] 大摘要 [${majorRange[0]}, ${majorRange[1]}] 清理了 ${removedMinorCount} 条小摘要`);
-        }
         clearFailureState(store);
         commitSummaryToMemoryDB(ctx.memoryDB, 'major', text, majorRange);
       } catch (error) {
@@ -443,7 +433,7 @@ export async function rerollSummaryEntry(
   if (level === 'minor') {
     const entry = store.minor[entryIndex];
     if (!entry) return;
-    const selected = getConversationMessages(uiMessages).slice(entry.range[0], entry.range[1] + 1);
+    const selected = getSummaryMessages(uiMessages).slice(entry.range[0], entry.range[1] + 1);
     if (!selected.length) return;
 
     try {
@@ -479,7 +469,7 @@ export async function rerollSummaryEntry(
     if (!entry) return;
     // 收集范围落在该大摘要内的小摘要来重建 prompt。
     // 如果没有可用小摘要，就直接使用原始消息。
-    const messagesInRange = getConversationMessages(uiMessages).slice(entry.range[0], entry.range[1] + 1);
+    const messagesInRange = getSummaryMessages(uiMessages).slice(entry.range[0], entry.range[1] + 1);
     if (!messagesInRange.length) return;
 
     try {

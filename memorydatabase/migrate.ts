@@ -65,12 +65,6 @@ export function hydrateSummaryStoreFromMemoryDB(
     return rest;
   });
 
-  // ── 兜底：如果没有 global 但有 major，合并 major 作为临时 global ──
-  // 这修复了旧存档迁移后 global 丢失的问题
-  if (!global && major.length > 0) {
-    global = major.map(e => e.text).join('\n\n');
-  }
-
   // ── 从 facts 表恢复关键事实 ──
   for (const row of db.facts) {
     if (row.expired) continue;
@@ -163,7 +157,7 @@ export function migrateSummaryStoreToMemoryDB(
       updatedAt: now,
       source: 'migration',
       level: 'global',
-      range: [0, summaryStore.lastSummarizedIndex],
+      range: [0, Math.max(0, summaryStore.lastSummarizedIndex - 1)],
       text: summaryStore.global,
     });
   }

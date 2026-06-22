@@ -1,6 +1,6 @@
 import type { SummaryStore } from '../summary/types';
 import { createDefaultSummaryStore } from '../summary/types';
-import { extractContextReply, isFrontendHtmlShell } from '../message-format';
+import { extractContextReply, getSummaryMessages, isFrontendHtmlShell } from '../message-format';
 import type {
   Difficulty,
   GameState,
@@ -18,6 +18,7 @@ import type {
 import { normalizeDrawingSettings, normalizePhoneMessageStore } from './store';
 import { affinityStage, defaultStatusData, normalizeStatusData, obsessionStage } from '../variables/normalize';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
+import type { IslandMemoryDB } from '../memorydatabase/types';
 import { migrateSummaryStoreToMemoryDB, hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
 import { sweepLegacyMemoryDB } from '../memorydatabase/sweep';
 import {
@@ -441,6 +442,23 @@ function protectPayloadAgainstPreviousPayloadCorruption(saveId: string, payload:
   };
 }
 
+function getSummaryCursorFromMemoryDB(memoryDB: IslandMemoryDB): number {
+  const ranges = memoryDB.summaries
+    .filter(row => !row.expired && Array.isArray(row.range) && row.range.length >= 2)
+    .map(row => [Number(row.range[0]), Number(row.range[1])] as [number, number])
+    .filter(range => Number.isFinite(range[0]) && Number.isFinite(range[1]))
+    .map(range => [Math.max(0, Math.floor(range[0])), Math.max(0, Math.floor(range[1]))] as [number, number])
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range[1] < cursor) continue;
+    if (range[0] > cursor) break;
+    cursor = Math.max(cursor, range[1] + 1);
+  }
+  return cursor;
+}
+
 function getLatestVisiblePreview(messages: PersistedMessage[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -587,14 +605,24 @@ function readPayload(saveId: string): SavePayload | null {
   // 这一步是为了修复存档加载后摘要丢失、全部历史被塞进 prompt 的问题。
   const hydrated = hydrateSummaryStoreFromMemoryDB(memoryDB);
   const chatLog = normalizePersistedMessages(payload.chatLog);
+  const summaryFloorCount = getSummaryMessages(
+    chatLog.map(message => ({
+      id: crypto.randomUUID(),
+      role: message.role,
+      speaker: message.speaker,
+      text: message.text,
+      rawText: message.rawText,
+      illustrations: message.illustrations,
+    })),
+    true,
+  ).length;
+  const summaryCursor = Math.min(summaryFloorCount, getSummaryCursorFromMemoryDB(memoryDB));
+  memoryDB.lastProcessedIndex = summaryCursor;
 
   const summaryStore = {
     ...createDefaultSummaryStore(),
     ...hydrated,
-    lastSummarizedIndex: Math.max(
-      Number(rawSummaryStore.lastSummarizedIndex ?? 0) || 0,
-      Number(memoryDB.lastProcessedIndex ?? 0) || 0,
-    ),
+    lastSummarizedIndex: summaryCursor,
     consecutiveFailures: Math.max(0, Number(rawSummaryStore.consecutiveFailures ?? 0) || 0),
     autoPaused: Boolean(rawSummaryStore.autoPaused),
     lastError: rawSummaryStore.lastError ?? null,

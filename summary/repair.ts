@@ -1,17 +1,18 @@
 /**
  * 摘要系统修复工具
- * 用于诊断和修复小总结未被清理、消息覆盖范围不连续等问题
+ * 用于诊断和修复小总结未被清理、Reader 楼层覆盖范围不连续等问题
  */
 
 import type { SummaryStore, SummaryEntry } from './types';
 import type { UiMessage } from '../types';
+import { getSummaryMessages } from '../message-format';
 
 export type SummaryDiagnostic = {
-  /** 总消息数（会话消息，不含流式和系统消息） */
+  /** Reader 可见且已完成的可摘要楼层总数 */
   totalMessages: number;
   /** 最后已总结索引 */
   lastSummarizedIndex: number;
-  /** 待总结消息数 */
+  /** 待总结楼层数 */
   pendingMessages: number;
   /** 小总结条数 */
   minorCount: number;
@@ -19,13 +20,13 @@ export type SummaryDiagnostic = {
   majorCount: number;
   /** 是否有全局总结 */
   hasGlobal: boolean;
-  /** 小总结覆盖的消息范围 */
+  /** 小总结覆盖的 Reader 楼层范围（0-based） */
   minorRanges: Array<[number, number]>;
-  /** 大总结覆盖的消息范围 */
+  /** 大总结覆盖的 Reader 楼层范围（0-based） */
   majorRanges: Array<[number, number]>;
   /** 被大总结覆盖但未清理的小总结 */
   orphanedMinors: SummaryEntry[];
-  /** 未被任何总结覆盖的消息段（空洞） */
+  /** 未被任何总结覆盖的 Reader 楼层段（空洞，0-based） */
   uncoveredGaps: Array<[number, number]>;
   /** 重复覆盖的范围（不应该发生） */
   overlappingRanges: Array<{ type: 'minor-minor' | 'major-major' | 'minor-major'; ranges: [[number, number], [number, number]] }>;
@@ -39,16 +40,33 @@ function rangesOverlap(a: [number, number], b: [number, number]): boolean {
   return !(a[1] < b[0] || b[1] < a[0]);
 }
 
-function getConversationMessages(messages: UiMessage[]): UiMessage[] {
-  return messages.filter(m => !m.streaming && (m.role === 'user' || m.role === 'assistant'));
+function getContinuousCoveredIndex(store: SummaryStore): number {
+  const ranges = [...store.major.map(m => m.range), ...store.minor.map(m => m.range)]
+    .filter(range => Array.isArray(range) && range.length >= 2)
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
+  if (!ranges.length) return 0;
+
+  let cursor = 0;
+  if (store.global && ranges[0][0] > 0) {
+    cursor = ranges[0][0];
+  }
+
+  for (const range of ranges) {
+    if (range[1] < cursor) continue;
+    if (range[0] > cursor) break;
+    cursor = Math.max(cursor, range[1] + 1);
+  }
+
+  return cursor;
 }
 
 /**
  * 诊断摘要系统状态，识别问题
  */
 export function diagnoseSummaryStore(store: SummaryStore, uiMessages: UiMessage[]): SummaryDiagnostic {
-  const conversationMessages = getConversationMessages(uiMessages);
-  const totalMessages = conversationMessages.length;
+  const summaryMessages = getSummaryMessages(uiMessages);
+  const totalMessages = summaryMessages.length;
 
   const minorRanges = store.minor.map(m => m.range);
   const majorRanges = store.major.map(m => m.range);
@@ -97,7 +115,7 @@ export function diagnoseSummaryStore(store: SummaryStore, uiMessages: UiMessage[
     }
   }
 
-  // 找出未被覆盖的消息段（0 到 lastSummarizedIndex 之间的空洞）
+  // 找出未被覆盖的 Reader 楼层段（0 到 lastSummarizedIndex 之间的空洞）
   const uncoveredGaps: Array<[number, number]> = [];
   if (store.lastSummarizedIndex > 0) {
     const allRanges = [...minorRanges, ...majorRanges].sort((a, b) => a[0] - b[0]);
@@ -153,7 +171,7 @@ export function repairSummaryStore(
   options: {
     /** 是否清理被大总结覆盖的小总结 */
     removeOrphanedMinors?: boolean;
-    /** 是否修正 lastSummarizedIndex 到实际覆盖的最大索引 */
+    /** 是否修正 lastSummarizedIndex 到实际连续覆盖的楼层游标 */
     fixLastSummarizedIndex?: boolean;
     /** 是否清理重叠的总结（保留范围更大的） */
     removeOverlapping?: boolean;
@@ -163,7 +181,7 @@ export function repairSummaryStore(
   changes: string[];
   diagnostic: SummaryDiagnostic;
 } {
-  const conversationCount = getConversationMessages(uiMessages).length;
+  const summaryFloorCount = getSummaryMessages(uiMessages).length;
   const changes: string[] = [];
   const diagnostic = diagnoseSummaryStore(store, uiMessages);
 
@@ -237,41 +255,14 @@ export function repairSummaryStore(
     }
   }
 
-  // 3. 修正 lastSummarizedIndex
-  // ⚠️ 关键修复：lastSummarizedIndex 只增不减，防止消息污染
+  // 3. 修正 lastSummarizedIndex。回退/重生成后游标必须回到实际连续覆盖点，
+  // 否则空洞会被当作“已总结”，导致小总结/大总结不再触发。
   if (options.fixLastSummarizedIndex !== false) {
-    const allRanges = [...store.minor.map(m => m.range), ...store.major.map(m => m.range)];
-    
-    if (allRanges.length > 0) {
-      const maxCovered = Math.max(...allRanges.map(r => r[1]));
-      const correctedIndex = maxCovered + 1;
-      
-      // 情况1：lastSummarizedIndex 超出了消息总数（错误状态，需要回退）
-      if (store.lastSummarizedIndex > conversationCount) {
-        const oldIndex = store.lastSummarizedIndex;
-        store.lastSummarizedIndex = Math.min(conversationCount, correctedIndex);
-        changes.push(`修正 lastSummarizedIndex（超出消息总数）: ${oldIndex} → ${store.lastSummarizedIndex}`);
-      }
-      // 情况2：lastSummarizedIndex 小于实际覆盖范围（需要前进）
-      else if (store.lastSummarizedIndex < correctedIndex) {
-        const oldIndex = store.lastSummarizedIndex;
-        store.lastSummarizedIndex = correctedIndex;
-        changes.push(`修正 lastSummarizedIndex（向前推进）: ${oldIndex} → ${correctedIndex}`);
-      }
-      // 情况3：lastSummarizedIndex 大于实际覆盖范围
-      // ⚠️ 这种情况下，消息 (maxCovered+1) 到 (lastSummarizedIndex-1) 之间有空洞
-      // 但是这些消息已经存在于 uiMessages 中，不应该回退 lastSummarizedIndex
-      // 因为回退会导致这些旧消息被重复包含在 prompt 中
-      else if (store.lastSummarizedIndex > correctedIndex) {
-        // 不回退！只记录警告
-        const gapSize = store.lastSummarizedIndex - correctedIndex;
-        changes.push(`⚠️ 检测到消息空洞: [${correctedIndex}, ${store.lastSummarizedIndex - 1}] (${gapSize} 条消息未被总结，但保留 lastSummarizedIndex 以防止消息污染)`);
-      }
-    } else if (store.lastSummarizedIndex > conversationCount) {
-      // 没有任何摘要，但 lastSummarizedIndex 超出消息数
+    const correctedIndex = Math.min(summaryFloorCount, getContinuousCoveredIndex(store));
+    if (store.lastSummarizedIndex !== correctedIndex) {
       const oldIndex = store.lastSummarizedIndex;
-      store.lastSummarizedIndex = conversationCount;
-      changes.push(`修正 lastSummarizedIndex（无摘要状态）: ${oldIndex} → ${conversationCount}`);
+      store.lastSummarizedIndex = correctedIndex;
+      changes.push(`修正 lastSummarizedIndex（按连续覆盖范围）: ${oldIndex} → ${correctedIndex}`);
     }
   }
 
@@ -291,7 +282,7 @@ export function formatDiagnosticReport(diagnostic: SummaryDiagnostic): string {
   lines.push('=== 摘要系统诊断报告 ===');
   lines.push('');
   lines.push('基本状态：');
-  lines.push(`  总消息数: ${diagnostic.totalMessages}`);
+  lines.push(`  总楼层数: ${diagnostic.totalMessages}`);
   lines.push(`  已总结到: ${diagnostic.lastSummarizedIndex}`);
   lines.push(`  待总结: ${diagnostic.pendingMessages} 条`);
   lines.push(`  小总结: ${diagnostic.minorCount} 条`);
@@ -314,10 +305,10 @@ export function formatDiagnosticReport(diagnostic: SummaryDiagnostic): string {
   }
 
   if (diagnostic.uncoveredGaps.length > 0) {
-    lines.push(`⚠️ 发现问题：${diagnostic.uncoveredGaps.length} 个未被覆盖的消息段`);
+    lines.push(`⚠️ 发现问题：${diagnostic.uncoveredGaps.length} 个未被覆盖的楼层段`);
     for (const gap of diagnostic.uncoveredGaps) {
       const gapSize = gap[1] - gap[0] + 1;
-      lines.push(`  - 消息 [${gap[0]}, ${gap[1]}] (${gapSize} 条消息未被总结)`);
+      lines.push(`  - 楼层 #${gap[0] + 1}-#${gap[1] + 1} (${gapSize} 个楼层未被总结)`);
     }
     lines.push('');
   }

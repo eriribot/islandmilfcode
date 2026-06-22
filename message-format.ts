@@ -462,6 +462,11 @@ export function getReaderMessages(messages: UiMessage[], forceRebuild = false) {
   return cachedReaderMessages;
 }
 
+/** 摘要系统使用的楼层列表：与 Reader 可见楼层一致，但只统计已经完成的楼层。 */
+export function getSummaryMessages(messages: UiMessage[], forceRebuild = false) {
+  return getReaderMessages(messages, forceRebuild).filter(message => !message.streaming);
+}
+
 /**
  * 清空 reader 消息缓存，在删除/编辑消息后调用。
  */
@@ -1224,12 +1229,13 @@ export function buildPrompt(
         : '';
   const mainEventsContext = buildMainEventsContext(statusData);
   const plotContext = buildCurrentPlotContext(statusData, options?.plotLibrary);
-  // 取 lastSummarizedIndex 和「总消息数 - 保留窗口」中较小的那个，
+  const summaryMessages = getSummaryMessages(uiMessages);
+  // 取 lastSummarizedIndex 和「可摘要楼层数 - 保留窗口」中较小的那个，
   // 保证即使全部消息都已被摘要，最近几条原文仍会出现在 prompt 中。
   const historyStartIndex = hasSummary
-    ? Math.min(summaryStore.lastSummarizedIndex, Math.max(0, uiMessages.length - SUMMARY_KEEP_RECENT))
+    ? Math.min(summaryStore.lastSummarizedIndex, Math.max(0, summaryMessages.length - SUMMARY_KEEP_RECENT))
     : 0;
-  const conversationHistory = buildConversationHistory(uiMessages, historyStartIndex);
+  const conversationHistory = buildConversationHistory(summaryMessages, historyStartIndex);
   const scenePresenceContext = buildScenePresenceContext(statusData, options?.scenePresence);
   const relationshipGuidanceList = buildRelationshipGuidanceList(statusData, playerProfile, options?.scenePresence);
   const activeCharacterCards = buildActiveCharacterCards(

@@ -4,6 +4,7 @@ import {
   extractOptionsBlock,
   extractTucaoBlocks,
   getReaderMessages,
+  getSummaryMessages,
   getVisibleMessageText,
 } from './message-format';
 import { splitTextByImageGenerationAnchors } from './plugins/image-generation';
@@ -21,26 +22,47 @@ import type {
 import { loadFullMemoryConfig } from './memory-config';
 import type { IslandMemoryDB } from './memorydatabase/types';
 
+type PaperTheme = 'classic' | 'eye-care' | 'night';
+
+const PAPER_THEMES: Array<{ id: PaperTheme; label: string; title: string }> = [
+  { id: 'classic', label: '原纸', title: '使用默认手帐纸面' },
+  { id: 'eye-care', label: '护眼', title: '切换为低亮度绿调纸面' },
+  { id: 'night', label: '夜读', title: '切换为深色夜读纸面' },
+];
+
+function getPaperTheme(state: AppState): PaperTheme {
+  const raw = state.runtimeFlags.paperTheme;
+  return raw === 'eye-care' || raw === 'night' ? raw : 'classic';
+}
+
+function renderPaperThemeControls(state: AppState) {
+  const activeTheme = getPaperTheme(state);
+  return `
+    <div class="paper-theme-switch" role="group" aria-label="纸张颜色">
+      ${PAPER_THEMES.map(
+        theme => `
+          <button
+            class="paper-theme-switch__btn ${theme.id === activeTheme ? 'is-active' : ''}"
+            data-action="set-paper-theme"
+            data-paper-theme="${theme.id}"
+            type="button"
+            title="${escapeHtml(theme.title)}"
+            aria-pressed="${theme.id === activeTheme ? 'true' : 'false'}"
+          >
+            ${escapeHtml(theme.label)}
+          </button>
+        `,
+      ).join('')}
+    </div>
+  `;
+}
+
 /**
- * 把摘要 range（对话序号，不含系统/streaming 楼层）映射成 UI 楼层号（getReaderMessages 渲染出的 #N）。
- * 摘要内部存的 range 用对话序号是为了让 rerollSummaryEntry 能正确切片，不能改；
- * 但展示给用户看的应当是 UI 上能看到的楼层号，否则 #155 与"消息 140-144"对不上。
+ * 摘要 range 使用 Reader 可见且已完成楼层的 0-based 下标。
+ * UI 展示只需要 +1，对齐读者界面里的 #N。
  */
-function mapConversationRangeToUiRange(
-  uiMessages: UiMessage[],
-  range: [number, number],
-): [number, number] {
-  // 与 summary/run.ts 的 getConversationMessages 保持一致：!streaming && (user|assistant)
-  const conversationUiIndices: number[] = [];
-  uiMessages.forEach((m, idx) => {
-    if (!m.streaming && (m.role === 'user' || m.role === 'assistant')) {
-      conversationUiIndices.push(idx);
-    }
-  });
-  // UI 楼层号从 1 开始（与渲染里 #${i+1} 对齐），所以 +1。
-  const startUi = (conversationUiIndices[range[0]] ?? range[0]) + 1;
-  const endUi = (conversationUiIndices[range[1]] ?? range[1]) + 1;
-  return [startUi, endUi];
+function mapSummaryRangeToUiRange(range: [number, number]): [number, number] {
+  return [range[0] + 1, range[1] + 1];
 }
 import { formatDate, formatTime, getInventoryIcon } from './variables/normalize';
 
@@ -883,7 +905,9 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
   const fullscreenButton = embedded ? '' : renderPaperFullscreenButton(state);
   const readerFocusMessage = readerMessages[currentReaderIndex];
   const readerHasIllustrations = hasRenderableIllustrations(readerFocusMessage);
+  const paperTheme = getPaperTheme(state);
   const workspaceClasses = ['paper-workspace'];
+  workspaceClasses.push(`paper-theme--${paperTheme}`);
   if (embedded) workspaceClasses.push('paper-workspace--phone');
   if (fullscreenClass) workspaceClasses.push('is-paper-fullscreen');
   if (readerHasIllustrations) workspaceClasses.push('paper-workspace--with-illustrations');
@@ -893,6 +917,8 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
       ${embedded ? '' : '<div class="washi-strip washi-strip--side" aria-hidden="true"></div>'}
 
       ${embedded ? '' : renderJournalHeader(state, fullscreenButton)}
+
+      ${embedded ? '' : renderPaperThemeControls(state)}
 
       <div class="section-tab">
         <span class="section-tab__label">对话记录</span>
@@ -1097,7 +1123,7 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
         <div class="subsection-title">大总结 <span style="opacity:0.5;font-size:11px">(${store.major.length}条)</span></div>
         <div class="chip-list">${store.major
           .map((e, i) => {
-            const [uiStart, uiEnd] = mapConversationRangeToUiRange(uiMessages, e.range);
+            const [uiStart, uiEnd] = mapSummaryRangeToUiRange(e.range);
             return `<div class="chip-card summary-edit-card" data-summary-card style="border-left:3px solid var(--accent-primary,#7c6ca8)">
                 <div class="summary-edit-card__header">
                   <strong>#${i + 1} · 楼层 ${uiStart}-${uiEnd}</strong>
@@ -1121,7 +1147,7 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
         <div class="subsection-title">小总结 <span style="opacity:0.5;font-size:11px">(${store.minor.length}条)</span></div>
         <div class="chip-list">${store.minor
           .map((e, i) => {
-            const [uiStart, uiEnd] = mapConversationRangeToUiRange(uiMessages, e.range);
+            const [uiStart, uiEnd] = mapSummaryRangeToUiRange(e.range);
             return `<div class="chip-card summary-edit-card" data-summary-card>
                 <div class="summary-edit-card__header">
                   <strong>#${i + 1} · 楼层 ${uiStart}-${uiEnd}</strong>
@@ -1146,16 +1172,10 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
   const unmergedMinorCount = store.minor.filter(
     minor => !store.major.some(major => rangeContains(major.range, minor.range)),
   ).length;
-  // lastSummarizedIndex 是对话序号，把它也映射成 UI 楼层号让用户能直接对上 #N。
-  const lastSummarizedUi = store.lastSummarizedIndex > 0
-    ? mapConversationRangeToUiRange(uiMessages, [store.lastSummarizedIndex - 1, store.lastSummarizedIndex - 1])[1]
-    : 0;
-  // 计算未总结的对话差额。conversationCount 是非 streaming 的 user/assistant 消息数。
-  // pending 是当前对话总数减去已总结进度。pending >= 5 时显示提醒，让用户能手动点小总结补救。
-  const conversationCount = uiMessages.filter(
-    m => !m.streaming && (m.role === 'user' || m.role === 'assistant'),
-  ).length;
-  const pendingCount = Math.max(0, conversationCount - store.lastSummarizedIndex);
+  // lastSummarizedIndex 是已覆盖的 Reader 可见完成楼层数，直接等于 UI 上“已总结到 #N”的 N。
+  const lastSummarizedUi = store.lastSummarizedIndex;
+  const summaryFloorCount = getSummaryMessages(uiMessages).length;
+  const pendingCount = Math.max(0, summaryFloorCount - store.lastSummarizedIndex);
   const minorThreshold = Math.max(1, Number(loadFullMemoryConfig().summaryTrigger.minorThreshold) || 5);
   const pendingMinorText =
     pendingCount >= minorThreshold
@@ -1164,7 +1184,7 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
   const statusLine = `已总结到楼层 #${lastSummarizedUi} · ${pendingMinorText} · 小总结 ${store.minor.length}（待大总结 ${unmergedMinorCount}） · 大总结 ${store.major.length} · 全局 ${store.global ? '有' : '无'}`;
   const pendingHint = pendingCount
     ? pendingCount >= minorThreshold
-      ? `<div class="summary-pending" style="font-size:11px;color:#c97c5d;margin-bottom:8px;padding:4px 8px;background:rgba(201,124,93,0.08);border-radius:6px">还有 <strong>${pendingCount}</strong> 条对话未被小总结吞掉，可点下方「小总结」推进摘要游标。</div>`
+      ? `<div class="summary-pending" style="font-size:11px;color:#c97c5d;margin-bottom:8px;padding:4px 8px;background:rgba(201,124,93,0.08);border-radius:6px">还有 <strong>${pendingCount}</strong> 个楼层未被小总结吞掉，可点下方「小总结」推进摘要游标。</div>`
       : `<div class="summary-pending" style="font-size:11px;color:#8a7a62;margin-bottom:8px;padding:4px 8px;background:rgba(138,122,98,0.08);border-radius:6px">小总结还差 <strong>${minorThreshold - pendingCount}</strong> 条触发；大总结只消化已有小总结，不推进楼层游标。</div>`
     : '';
   // 大总结补救提示：只计算尚未被大总结覆盖的小总结，历史小总结仍保留展示。
@@ -1563,8 +1583,9 @@ const phoneRenderers: PhoneRenderers = {
 
 export function renderApp(state: AppState, flipDir: string = '') {
   const fullscreenClass = isPaperWorkspaceFullscreen(state) ? ' is-paper-fullscreen' : '';
+  const paperThemeClass = ` paper-theme--${getPaperTheme(state)}`;
   return `
-    <main class="islandmilfcode-scene${fullscreenClass}">
+    <main class="islandmilfcode-scene${fullscreenClass}${paperThemeClass}">
       ${renderPaperWorkspace(state, flipDir)}
       ${renderTucaoFloatingPanel(state)}
       ${renderBackgroundTasks(state.backgroundTasks)}

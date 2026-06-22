@@ -12,19 +12,24 @@ const GLOBAL_THRESHOLD = 4;
 
 // ── 阈值判断 ──
 
-/** 是否应运行小摘要：未暂停且新消息数达到阈值。 */
-export function shouldRunMinorSummary(store: SummaryStore, messageCount: number): boolean {
+/** 是否应运行小摘要：未暂停且新增 Reader 可摘要楼层数达到阈值。 */
+export function shouldRunMinorSummary(store: SummaryStore, summaryFloorCount: number): boolean {
   if (store.autoPaused) return false;
   const config = loadSummaryTriggerConfig();
   const threshold = config.minorThreshold ?? MINOR_THRESHOLD;
-  return messageCount - store.lastSummarizedIndex >= threshold;
+  return summaryFloorCount - store.lastSummarizedIndex >= threshold;
 }
 
 /** 是否应运行大摘要：小摘要条数达到阈值。 */
 export function shouldRunMajorSummary(store: SummaryStore): boolean {
   const config = loadSummaryTriggerConfig();
   const threshold = config.majorThreshold ?? MAJOR_THRESHOLD;
-  return store.minor.length >= threshold;
+  const rangeContains = (outer: [number, number], inner: [number, number]) =>
+    inner[0] >= outer[0] && inner[1] <= outer[1];
+  const uncoveredMinorCount = store.minor.filter(
+    minor => !store.major.some(major => rangeContains(major.range, minor.range)),
+  ).length;
+  return uncoveredMinorCount >= threshold;
 }
 
 /** 是否应运行全局压缩：大摘要条数达到阈值。 */
@@ -152,7 +157,7 @@ const MAJOR_SUMMARY_FRAMEWORK = [
   '角色：你是时间线归档员，负责把多条小总结整理成一个阶段级记录。',
   '输入：你会收到多段小总结、状态快照，以及可能存在的关键事实清单。小总结可能含有局部冲突、未确认转场或旧错误。',
   '处理步骤：',
-  '1. 按每段小总结的时间、消息范围和内容建立时间线，不要改变事件顺序。',
+  '1. 按每段小总结的时间、楼层范围和内容建立时间线，不要改变事件顺序。',
   '2. 合并重复事件，保留最新的玩家纠正和状态快照，不要让旧错误继续扩散。',
   '3. 把明确发生的剧情节点写进“事件及时间线”；把关系/能力/心理阶段变化写进“成长线”。',
   '4. 对地点、时间、事件状态存在冲突或证据不足的内容，单独写进“未确认/冲突”，不要当成事实结论。',
@@ -263,7 +268,7 @@ export function buildMajorSummaryPrompt(
   pinnedFacts: KeyFact[] = [],
 ): OrderedPrompt[] {
   const formatted = minors
-    .map((entry, i) => `[片段${i + 1} | 消息 ${entry.range[0]}-${entry.range[1]}]\n${entry.text}`)
+    .map((entry, i) => `[片段${i + 1} | 楼层 ${entry.range[0] + 1}-${entry.range[1] + 1}]\n${entry.text}`)
     .join('\n\n');
   const anchorBlock = renderFactAnchor(anchor);
   const pinnedBlock = renderPinnedFacts(pinnedFacts);
@@ -319,7 +324,7 @@ export function buildGlobalCompressionPrompt(
   pinnedFacts: KeyFact[] = [],
 ): OrderedPrompt[] {
   const majorFormatted = majors
-    .map((entry, i) => `[总结${i + 1} | 消息 ${entry.range[0]}-${entry.range[1]}]\n${entry.text}`)
+    .map((entry, i) => `[总结${i + 1} | 楼层 ${entry.range[0] + 1}-${entry.range[1] + 1}]\n${entry.text}`)
     .join('\n\n');
 
   const contextBlock = oldGlobal ? `已有全局摘要：\n${oldGlobal}\n\n新增总结：\n${majorFormatted}` : majorFormatted;

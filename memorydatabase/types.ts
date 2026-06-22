@@ -308,7 +308,7 @@ export type IslandMemoryDB = {
   version: number;
   /** 所属存档的 runId */
   runId: string;
-  /** 已处理到的消息索引（游标） */
+  /** 已处理到的 Reader 可摘要楼层数量游标；摘要写入时表示下一个未处理楼层。 */
   lastProcessedIndex: number;
 
   // 核心表
