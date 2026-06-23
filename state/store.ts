@@ -20,6 +20,7 @@ import { createDefaultMemoryEditorState } from '../memorydatabase/editor';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import type { IslandMemoryDB, MemoryBaseRow } from '../memorydatabase/types';
 import { createEmptyCharacterCardLibrary } from '../worldbook';
+import { isInlineImageDataUrl, persistInlineImageDataAsAssetSync } from './image-assets';
 
 export const MESSAGE_MARKER = 'islandmilfcode';
 const PROFILE_KEYS = {
@@ -43,6 +44,19 @@ const MEMORY_ROW_TABLES = [
   'attributes',
   'worldState',
 ] as const;
+
+const serializedMessageCache = new WeakMap<
+  UiMessage,
+  {
+    role: UiMessage['role'];
+    speaker: string;
+    text: string;
+    rawText: string | undefined;
+    statusSnapshot: UiMessage['statusSnapshot'];
+    illustrationSignature: string;
+    value: PersistedMessage | null;
+  }
+>();
 
 function applyProfileDefaults<T extends Record<string, unknown>>(profile: T): T {
   return {
@@ -71,6 +85,113 @@ function normalizeImageRerollContext(context?: ImageRerollContext): ImageRerollC
   assignString('generationWorldBook');
   assignString('userInput');
   return Object.keys(normalized).length ? normalized : undefined;
+}
+
+function normalizeIllustrationForPersistence(illustration: NonNullable<UiMessage['illustrations']>[number]) {
+  const prompt = illustration.prompt ? String(illustration.prompt) : undefined;
+  const assetId = illustration.assetId
+    || (isInlineImageDataUrl(illustration.imageData)
+      ? persistInlineImageDataAsAssetSync(illustration.imageData, { prompt })
+      : '');
+  if (!assetId) return null;
+
+  return {
+    id: String(illustration.id || crypto.randomUUID()),
+    assetId,
+    prompt,
+    anchorIndex: Number.isFinite(Number(illustration.anchorIndex))
+      ? Math.max(0, Math.floor(Number(illustration.anchorIndex)))
+      : undefined,
+    rerollContext: normalizeImageRerollContext(illustration.rerollContext),
+    createdAt: Number(illustration.createdAt) || Date.now(),
+  };
+}
+
+function normalizeIllustrationForUi(illustration: NonNullable<PersistedMessage['illustrations']>[number]) {
+  const prompt = illustration.prompt ? String(illustration.prompt) : undefined;
+  const assetId = illustration.assetId
+    || (isInlineImageDataUrl(illustration.imageData)
+      ? persistInlineImageDataAsAssetSync(illustration.imageData, { prompt })
+      : '');
+  if (!assetId && !illustration.imageData) return null;
+
+  return {
+    id: String(illustration.id || crypto.randomUUID()),
+    assetId: assetId || undefined,
+    imageData: assetId ? undefined : String(illustration.imageData || ''),
+    prompt,
+    anchorIndex: Number.isFinite(Number(illustration.anchorIndex))
+      ? Math.max(0, Math.floor(Number(illustration.anchorIndex)))
+      : undefined,
+    rerollContext: normalizeImageRerollContext(illustration.rerollContext),
+    createdAt: Number(illustration.createdAt) || Date.now(),
+  };
+}
+
+function getIllustrationSignature(illustrations: UiMessage['illustrations']) {
+  if (!illustrations?.length) return '';
+  return illustrations
+    .map(illustration => [
+      illustration.id,
+      illustration.assetId || '',
+      illustration.imageData ? `inline:${illustration.imageData.length}` : '',
+      illustration.prompt || '',
+      illustration.anchorIndex ?? '',
+      illustration.createdAt || '',
+      illustration.rerollContext?.prompt || '',
+      illustration.rerollContext?.negativePrompt || '',
+      illustration.rerollContext?.change || '',
+    ].join('|'))
+    .join('\n');
+}
+
+function serializeMessage(message: UiMessage): PersistedMessage | null {
+  if (message.role !== 'user' && message.role !== 'assistant') return null;
+  const speaker = String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User'));
+  const text = String(message.text ?? '');
+  const rawText = message.rawText ? String(message.rawText) : undefined;
+  const illustrationSignature = getIllustrationSignature(message.illustrations);
+  const cached = serializedMessageCache.get(message);
+  if (
+    cached &&
+    cached.role === message.role &&
+    cached.speaker === speaker &&
+    cached.text === text &&
+    cached.rawText === rawText &&
+    cached.statusSnapshot === message.statusSnapshot &&
+    cached.illustrationSignature === illustrationSignature
+  ) {
+    return cached.value;
+  }
+
+  const base: PersistedMessage = {
+    role: message.role,
+    speaker,
+    text,
+  };
+  if (rawText) {
+    base.rawText = rawText;
+  }
+  if (message.illustrations?.length) {
+    const illustrations = message.illustrations
+      .map(normalizeIllustrationForPersistence)
+      .filter((illustration): illustration is NonNullable<typeof illustration> => Boolean(illustration));
+    if (illustrations.length) base.illustrations = illustrations;
+  }
+  if (message.statusSnapshot) {
+    base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false });
+  }
+
+  serializedMessageCache.set(message, {
+    role: message.role,
+    speaker,
+    text,
+    rawText,
+    statusSnapshot: message.statusSnapshot,
+    illustrationSignature,
+    value: base,
+  });
+  return base;
 }
 
 function createSystemMessage(): UiMessage {
@@ -540,14 +661,8 @@ function pruneMemoryAndSummariesAfterRollback(
     mergeSummaryStoreAfterSnapshotRestore(state, previousSummaryStore, pruneThreshold);
     mergeMemoryDBAfterSnapshotRestore(state, previousMemoryDB, pruneThreshold);
   }
-<<<<<<< HEAD
   pruneSummaryStoreAfterSummaryFloorCount(state, pruneThreshold);
   pruneMemoryRowsAfterSummaryFloorCount(state, pruneThreshold);
-=======
-  pruneSummaryStoreAfterConversationCount(state, pruneThreshold, readerMessageCount);
-  pruneMemoryRowsAfterConversationCount(state, pruneThreshold, readerMessageCount);
-  restoreRolledBackMinorSummaries(state, pruneThreshold, readerMessageCount);
->>>>>>> b0d30ff50a6d8edd2432a79a113a7b332606c4ae
 
   const hydrated = hydrateSummaryStoreFromMemoryDB(state.memoryDB);
   state.summaryStore.global = hydrated.global;
@@ -586,36 +701,8 @@ function isLegacyHiddenMessage(message: NonNullable<ReturnType<NonNullable<Taver
 /** 将界面消息序列化为存档槽里的 PersistedMessage[]。 */
 export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
   return messages
-    .filter(
-      (message): message is UiMessage & { role: 'user' | 'assistant' } =>
-        message.role === 'user' || message.role === 'assistant',
-    )
-    .map(message => {
-      const base: PersistedMessage = {
-        role: message.role,
-        speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
-        text: String(message.text ?? ''),
-      };
-      if (message.rawText) {
-        base.rawText = String(message.rawText);
-      }
-      if (message.illustrations?.length) {
-        base.illustrations = message.illustrations.map(illustration => ({
-          id: String(illustration.id || crypto.randomUUID()),
-          imageData: String(illustration.imageData || ''),
-          prompt: illustration.prompt ? String(illustration.prompt) : undefined,
-          anchorIndex: Number.isFinite(Number(illustration.anchorIndex))
-            ? Math.max(0, Math.floor(Number(illustration.anchorIndex)))
-            : undefined,
-          rerollContext: normalizeImageRerollContext(illustration.rerollContext),
-          createdAt: Number(illustration.createdAt) || Date.now(),
-        })).filter(illustration => illustration.imageData);
-      }
-      if (message.statusSnapshot) {
-        base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false });
-      }
-      return base;
-    });
+    .map(serializeMessage)
+    .filter((message): message is PersistedMessage => Boolean(message));
 }
 
 /** 将存档槽里的 PersistedMessage[] 反序列化为界面消息。 */
@@ -632,17 +719,8 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
         rawText: msg.rawText ? String(msg.rawText) : undefined,
         illustrations: Array.isArray(msg.illustrations)
           ? msg.illustrations
-              .map(illustration => ({
-                id: String(illustration.id || crypto.randomUUID()),
-                imageData: String(illustration.imageData || ''),
-                prompt: illustration.prompt ? String(illustration.prompt) : undefined,
-                anchorIndex: Number.isFinite(Number(illustration.anchorIndex))
-                  ? Math.max(0, Math.floor(Number(illustration.anchorIndex)))
-                  : undefined,
-                rerollContext: normalizeImageRerollContext(illustration.rerollContext),
-                createdAt: Number(illustration.createdAt) || Date.now(),
-              }))
-              .filter(illustration => illustration.imageData)
+              .map(normalizeIllustrationForUi)
+              .filter((illustration): illustration is NonNullable<typeof illustration> => Boolean(illustration))
           : undefined,
       };
       if (msg.statusSnapshot) {
@@ -832,13 +910,8 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   state.focusedMessageIndex = Math.max(getReaderMessages(state.uiMessages).length - 1, 0);
   state.focusedMessagePage = 0;
   prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
-<<<<<<< HEAD
   pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackSummaryFloorIndex, {
     mergePrevious: false,
-=======
-  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackConversationIndex, {
-    mergePrevious: true,
->>>>>>> b0d30ff50a6d8edd2432a79a113a7b332606c4ae
   });
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
@@ -877,13 +950,8 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
   state.uiMessages = state.uiMessages.filter(message => message.id !== targetMessage.id);
   syncFocusedMessage(state);
   prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
-<<<<<<< HEAD
   pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, deletedSummaryFloorIndex, {
     mergePrevious: false,
-=======
-  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, deletedConversationIndex, {
-    mergePrevious: true,
->>>>>>> b0d30ff50a6d8edd2432a79a113a7b332606c4ae
   });
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';

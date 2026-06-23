@@ -28,6 +28,14 @@ import {
   writePayloadSync,
   writeSaveIndexSync,
 } from './save-store';
+import {
+  exportImageAssetsForIds,
+  flushImageAssetStore,
+  isInlineImageDataUrl,
+  persistInlineImageDataAsAssetSync,
+  restoreImageAssetFromBackup,
+  type ImageAssetBackupRecord,
+} from './image-assets';
 
 const SAVE_INDEX_STORAGE_KEY = 'islandmilfcode:save-index:v2';
 const SAVE_PAYLOAD_STORAGE_PREFIX = 'islandmilfcode:save-payload:v2:';
@@ -51,6 +59,37 @@ function normalizeImageRerollContext(context?: ImageRerollContext): ImageRerollC
   assignString('generationWorldBook');
   assignString('userInput');
   return Object.keys(normalized).length ? normalized : undefined;
+}
+
+function normalizePersistedIllustration(illustration: NonNullable<PersistedMessage['illustrations']>[number]) {
+  if (!illustration || typeof illustration !== 'object') return null;
+  const prompt = illustration.prompt ? String(illustration.prompt) : undefined;
+  const assetId = illustration.assetId
+    || (isInlineImageDataUrl(illustration.imageData)
+      ? persistInlineImageDataAsAssetSync(illustration.imageData, { prompt })
+      : '');
+  if (!assetId) return null;
+
+  return {
+    id: String(illustration.id || crypto.randomUUID()),
+    assetId,
+    prompt,
+    anchorIndex: Number.isFinite(Number(illustration.anchorIndex))
+      ? Math.max(0, Math.floor(Number(illustration.anchorIndex)))
+      : undefined,
+    rerollContext: normalizeImageRerollContext(illustration.rerollContext),
+    createdAt: Number(illustration.createdAt) || Date.now(),
+  };
+}
+
+function collectPayloadImageAssetIds(payload: Partial<SavePayload> | null | undefined) {
+  const ids = new Set<string>();
+  for (const message of payload?.chatLog ?? []) {
+    for (const illustration of message.illustrations ?? []) {
+      if (illustration.assetId) ids.add(String(illustration.assetId));
+    }
+  }
+  return ids;
 }
 
 type LegacySaveSlot = {
@@ -270,6 +309,16 @@ function shouldCompactPersistedMessages(messages: unknown): boolean {
   return messages.some(message => hasHeavyPersistedStatusSnapshot((message as Partial<PersistedMessage> | null)?.statusSnapshot));
 }
 
+function hasInlinePersistedImageData(messages: unknown): boolean {
+  if (!Array.isArray(messages)) return false;
+  return messages.some(message =>
+    Array.isArray((message as Partial<PersistedMessage> | null)?.illustrations) &&
+    ((message as Partial<PersistedMessage>).illustrations ?? []).some(illustration =>
+      isInlineImageDataUrl(illustration.imageData),
+    ),
+  );
+}
+
 function normalizePersistedMessages(messages: PersistedMessage[] | undefined): PersistedMessage[] {
   if (!Array.isArray(messages)) return [];
   return messages
@@ -289,17 +338,8 @@ function normalizePersistedMessages(messages: PersistedMessage[] | undefined): P
         ...(Array.isArray(message.illustrations) && message.illustrations.length
           ? {
               illustrations: message.illustrations
-                .map(illustration => ({
-                  id: String(illustration.id || crypto.randomUUID()),
-                  imageData: String(illustration.imageData || ''),
-                  prompt: illustration.prompt ? String(illustration.prompt) : undefined,
-                  anchorIndex: Number.isFinite(Number(illustration.anchorIndex))
-                    ? Math.max(0, Math.floor(Number(illustration.anchorIndex)))
-                    : undefined,
-                  rerollContext: normalizeImageRerollContext(illustration.rerollContext),
-                  createdAt: Number(illustration.createdAt) || Date.now(),
-                }))
-                .filter(illustration => illustration.imageData),
+                .map(normalizePersistedIllustration)
+                .filter((illustration): illustration is NonNullable<typeof illustration> => Boolean(illustration)),
             }
           : {}),
         ...(statusSnapshot ? { statusSnapshot } : {}),
@@ -604,6 +644,7 @@ function readPayload(saveId: string): SavePayload | null {
   // 从 memoryDB 把摘要/事实水合回 summaryStore，让旧消费方（buildPrompt / UI）继续工作。
   // 这一步是为了修复存档加载后摘要丢失、全部历史被塞进 prompt 的问题。
   const hydrated = hydrateSummaryStoreFromMemoryDB(memoryDB);
+  const hadInlineImages = hasInlinePersistedImageData(payload.chatLog);
   const chatLog = normalizePersistedMessages(payload.chatLog);
   const summaryFloorCount = getSummaryMessages(
     chatLog.map(message => ({
@@ -633,7 +674,8 @@ function readPayload(saveId: string): SavePayload | null {
     JSON.stringify(rawSummaryStore) !== JSON.stringify(summaryStore) ||
     !payload.memoryDB ||
     sweepHadEffect ||
-    shouldCompactPersistedMessages(payload.chatLog)
+    shouldCompactPersistedMessages(payload.chatLog) ||
+    hadInlineImages
   ) {
     writePayloadSync(saveId, {
       ...payload,
@@ -927,6 +969,7 @@ export type SingleSaveBackupPayload = {
   saveId: string;
   meta: SaveMeta;
   payload: SavePayload;
+  imageAssets?: ImageAssetBackupRecord[];
 };
 
 const BACKUP_KEY_PREFIX = 'islandmilfcode:';
@@ -1003,6 +1046,20 @@ export function exportAllSavesAsJsonParts(): string[] {
   return parts;
 }
 
+export async function exportAllSavesAsJsonPartsWithAssets(): Promise<string[]> {
+  const parts = exportAllSavesAsJsonParts();
+  const index = readSaveIndex();
+  const ids = new Set<string>();
+  for (const saveId of Object.keys(index)) {
+    const payload = readPayload(saveId);
+    collectPayloadImageAssetIds(payload).forEach(id => ids.add(id));
+  }
+  const imageAssets = await exportImageAssetsForIds(ids);
+  if (!imageAssets.length) return parts;
+  const text = parts.join('');
+  return [text.slice(0, -1), ',', JSON.stringify('imageAssets'), ':', JSON.stringify(imageAssets), '}'];
+}
+
 export function exportAllSavesAsJson(): string {
   return exportAllSavesAsJsonParts().join('');
 }
@@ -1028,11 +1085,25 @@ export function exportSaveAsJsonParts(saveId: string): string[] {
   return parts;
 }
 
+export async function exportSaveAsJsonPartsWithAssets(saveId: string): Promise<string[]> {
+  const parts = exportSaveAsJsonParts(saveId);
+  const payload = readPayload(saveId);
+  const imageAssets = await exportImageAssetsForIds(collectPayloadImageAssetIds(payload));
+  if (!imageAssets.length) return parts;
+  const text = parts.join('');
+  return [text.slice(0, -1), ',', JSON.stringify('imageAssets'), ':', JSON.stringify(imageAssets), '}'];
+}
+
 export function exportSaveAsJson(saveId: string): string {
   return exportSaveAsJsonParts(saveId).join('');
 }
 
 function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): { imported: number; skipped: number; saveId: string } {
+  if (Array.isArray(parsed.imageAssets)) {
+    parsed.imageAssets.forEach(asset => {
+      restoreImageAssetFromBackup(asset).catch(error => console.warn('[saves] image asset import failed:', error));
+    });
+  }
   const rawPayload = parsed.payload as Partial<SavePayload> | undefined;
   const rawMeta = parsed.meta as Partial<SaveMeta> | undefined;
   const saveId = String(parsed.saveId || rawPayload?.saveId || rawMeta?.saveId || '').trim();
@@ -1088,6 +1159,11 @@ export function importAllSavesFromJson(json: string): { imported: number; skippe
   }
   let imported = 0;
   let skipped = 0;
+  if (Array.isArray((parsed as SaveBackupPayload & { imageAssets?: ImageAssetBackupRecord[] }).imageAssets)) {
+    for (const asset of (parsed as SaveBackupPayload & { imageAssets?: ImageAssetBackupRecord[] }).imageAssets ?? []) {
+      restoreImageAssetFromBackup(asset).catch(error => console.warn('[saves] image asset import failed:', error));
+    }
+  }
 
   // 全量备份的 entries 使用旧 localStorage key 格式。
   // 现在存储已迁移到 IndexedDB，需要把 index/payload 写入 save-store 而非 localStorage。

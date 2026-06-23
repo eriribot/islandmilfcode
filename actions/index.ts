@@ -73,6 +73,7 @@ import {
   buildDeepSeekEvidenceContext,
   collectDeepSeekWebLookupEvidence,
 } from '../plugins/deepseek-web-lookup';
+import { saveImageDataUrlAsAsset } from '../state/image-assets';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
@@ -550,7 +551,7 @@ function buildDrawingHistoryContext(ctx: ActionContext, userInput: string) {
   return lines.join('\n\n');
 }
 
-function attachIllustrationToMessage(
+async function attachIllustrationToMessage(
   ctx: ActionContext,
   messageId: string,
   imageData: string,
@@ -562,12 +563,13 @@ function attachIllustrationToMessage(
   if (!message || message.role !== 'assistant' || !imageData.trim()) return false;
 
   const illustrations = message.illustrations ?? [];
-  if (illustrations.some(illustration => illustration.imageData === imageData)) return false;
+  const assetId = await saveImageDataUrlAsAsset(imageData, { prompt });
+  if (illustrations.some(illustration => illustration.assetId === assetId)) return false;
   message.illustrations = [
     ...illustrations,
     {
       id: crypto.randomUUID(),
-      imageData,
+      assetId,
       prompt,
       anchorIndex,
       rerollContext,
@@ -675,7 +677,7 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
       }
       if (result.reason === 'timeout') timeoutCount += 1;
       if (!result.error && result.imageData) {
-        const attached = attachIllustrationToMessage(
+        const attached = await attachIllustrationToMessage(
           ctx,
           targetMessageId,
           result.imageData,

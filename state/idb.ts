@@ -2,9 +2,10 @@
 // 上层 save-store 负责内存 Map / 写队列 / BroadcastChannel。
 
 const DB_NAME = 'islandmilfcode';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 export const IDB_STORE_INDEX = 'save-index';
 export const IDB_STORE_PAYLOAD = 'save-payload';
+export const IDB_STORE_IMAGE_ASSETS = 'image-assets';
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -19,6 +20,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(IDB_STORE_PAYLOAD)) {
         db.createObjectStore(IDB_STORE_PAYLOAD, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(IDB_STORE_IMAGE_ASSETS)) {
+        db.createObjectStore(IDB_STORE_IMAGE_ASSETS, { keyPath: 'id' });
       }
     };
     req.onsuccess = () => resolve(req.result);

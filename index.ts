@@ -44,7 +44,7 @@ import {
   createManualSave,
   createSave,
   deleteSave,
-  exportSaveAsJsonParts,
+  exportSaveAsJsonPartsWithAssets,
   getAutosaveBranchSaveId,
   importAllSavesFromJson,
   loadSave,
@@ -54,6 +54,12 @@ import {
   writeAutosave,
 } from './state/saves';
 import { flushSaveStore, initSaveStore } from './state/save-store';
+import {
+  flushImageAssetStore,
+  hydrateImageAssetElements,
+  initImageAssetStore,
+  saveImageDataUrlAsAsset,
+} from './state/image-assets';
 import {
   clampFocusedMessageIndex,
   createInitialState,
@@ -232,6 +238,8 @@ const state = createInitialState(loadFloatingPhonePosition());
 const eventStops: Array<() => void> = [];
 let worldbookRefreshRetryTimer: number | null = null;
 let worldbookRefreshRetryToken = 0;
+const AUTOSAVE_DEBOUNCE_MS = 400;
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function readDeepSeekModeEnabledPreference() {
   try {
@@ -406,7 +414,7 @@ function buildGameState(statusData: StatusData = state.statusData): GameState {
   };
 }
 
-function persistToSave() {
+function writeCurrentAutosave() {
   if (!state.activeRunId || restoringSave) return;
   const saveId = getAutosaveBranchSaveId({
     activeSaveId: state.activeSaveId,
@@ -428,8 +436,26 @@ function persistToSave() {
   }
 }
 
+function persistToSave() {
+  if (!state.activeRunId || restoringSave) return;
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = null;
+    writeCurrentAutosave();
+  }, AUTOSAVE_DEBOUNCE_MS);
+}
+
+function flushPendingAutosave() {
+  if (autosaveTimer) {
+    clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+  }
+  writeCurrentAutosave();
+}
+
 async function persistManualSave() {
   if (!state.activeRunId) return;
+  flushPendingAutosave();
   const meta = createManualSave({
     runId: state.activeRunId,
     label: '手动存档',
@@ -441,17 +467,17 @@ async function persistManualSave() {
   state.activeSaveId = meta.saveId;
   setActiveSaveId(meta.saveId);
   // 用户主动存档：等 IndexedDB 落盘完成，避免下一秒刷新就丢。
-  await flushSaveStore();
+  await Promise.all([flushImageAssetStore(), flushSaveStore()]);
 }
 
 async function downloadSaveBackup(saveId: string) {
   if (state.activeRunId && state.activeSaveId === saveId) {
-    persistToSave();
+    flushPendingAutosave();
   }
   // 导出前确保已入队的写入全部落盘，再去读。
-  await flushSaveStore();
+  await Promise.all([flushImageAssetStore(), flushSaveStore()]);
   try {
-    const blob = new Blob(exportSaveAsJsonParts(saveId), { type: 'application/json;charset=utf-8' });
+    const blob = new Blob(await exportSaveAsJsonPartsWithAssets(saveId), { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1476,12 +1502,13 @@ async function generateReaderImage(messageId: string, anchorIndex: number) {
 
   if (result.imageData && !result.error) {
     const illustrations = message.illustrations ?? [];
-    if (!illustrations.some(illustration => illustration.imageData === result.imageData)) {
+    const assetId = await saveImageDataUrlAsAsset(result.imageData, { prompt: result.prompt ?? imagePrompt.prompt });
+    if (!illustrations.some(illustration => illustration.assetId === assetId)) {
       message.illustrations = [
         ...illustrations,
         {
           id: crypto.randomUUID(),
-          imageData: result.imageData,
+          assetId,
           prompt: result.prompt ?? imagePrompt.prompt,
           anchorIndex,
           rerollContext: {
@@ -1622,11 +1649,13 @@ async function rerollReaderImage(
   });
 
   if (result.imageData && !result.error) {
+    const assetId = await saveImageDataUrlAsAsset(result.imageData, { prompt: result.prompt ?? prompt });
     message.illustrations = (message.illustrations ?? []).map(item =>
       item.id === illustrationId
         ? {
             ...item,
-            imageData: result.imageData ?? item.imageData,
+            assetId,
+            imageData: undefined,
             prompt: result.prompt ?? prompt,
             rerollContext: {
               prompt: result.prompt ?? prompt,
@@ -2775,7 +2804,7 @@ function bindEvents() {
       const text = new TextDecoder('utf-8').decode(await file.arrayBuffer());
       const result = importAllSavesFromJson(text);
       // 等待 IndexedDB 写入全部落盘后再刷新，否则异步写入可能丢失。
-      await flushSaveStore();
+      await Promise.all([flushImageAssetStore(), flushSaveStore()]);
       window.alert(`导入完成：成功 ${result.imported} 条，跳过 ${result.skipped} 条。即将刷新页面。`);
       location.reload();
     } catch (error) {
@@ -3154,6 +3183,7 @@ function render() {
     root.innerHTML = renderApp(state, flipDirection);
     bindEvents();
     restoreReaderBodyScroll(readerBodyScroll);
+    hydrateImageAssetElements(root, `floor:${state.focusedMessageIndex}`);
 
     // 状态页打开时挂载 P5 雷达图
     const radarEl = root.querySelector<HTMLElement>('#status-radar');
@@ -3261,6 +3291,7 @@ window.addEventListener('keydown', event => {
 async function init() {
   // 必须在任何同步存档读写（render 之前）完成；内部会一次性把 localStorage 旧数据迁到 IndexedDB。
   await initSaveStore();
+  await initImageAssetStore();
   adapter = await createVariableAdapter(win);
   state.summaryApiConfig = loadSummaryApiConfig();
   setupStreamingHooks(ctx, eventStops);
@@ -3271,11 +3302,13 @@ async function init() {
     window.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
         syncDrawingSettingsFromMountedControls();
-        flushSaveStore().catch(err => console.warn('[init] flush on hidden failed:', err));
+        flushPendingAutosave();
+        Promise.all([flushImageAssetStore(), flushSaveStore()]).catch(err => console.warn('[init] flush on hidden failed:', err));
       }
     });
     window.addEventListener('beforeunload', () => {
       syncDrawingSettingsFromMountedControls();
+      flushPendingAutosave();
     });
   }
   render();

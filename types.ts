@@ -95,7 +95,9 @@ export type PersistedMessage = {
 
 export type MessageIllustration = {
   id: string;
-  imageData: string;
+  /** Legacy/transient inline image data. New saves should persist assetId instead. */
+  imageData?: string;
+  assetId?: string;
   prompt?: string;
   anchorIndex?: number;
   rerollContext?: ImageRerollContext;

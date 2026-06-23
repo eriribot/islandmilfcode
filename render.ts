@@ -9,6 +9,7 @@ import {
 } from './message-format';
 import { splitTextByImageGenerationAnchors } from './plugins/image-generation';
 import { isPaperWorkspaceFullscreen, renderPaperFullscreenButton } from './plugins/fullscreen';
+import { getCachedImageAssetObjectUrl } from './state/image-assets';
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
 import type { SummaryStore } from './summary/types';
 import type {
@@ -229,6 +230,10 @@ function renderIllustrationFigures(
   return illustrations
     .map(illustration => {
       const isEditing = editing?.messageId === messageId && editing.illustrationId === illustration.id;
+      const assetId = illustration.assetId?.trim();
+      const cachedUrl = assetId ? getCachedImageAssetObjectUrl(assetId) : '';
+      const inlineSrc = illustration.imageData?.trim() || '';
+      const imageSrc = cachedUrl || inlineSrc;
       return `
         <figure class="reader-illustration">
           <button
@@ -241,8 +246,9 @@ function renderIllustrationFigures(
             title="重 roll 图片"
           >重 roll</button>
           <img
-            class="reader-illustration__image"
-            src="${escapeHtml(illustration.imageData)}"
+            class="reader-illustration__image${imageSrc ? ' is-loaded' : ' is-pending'}"
+            ${imageSrc ? `src="${escapeHtml(imageSrc)}"` : ''}
+            ${assetId ? `data-image-asset-id="${escapeHtml(assetId)}"` : ''}
             alt="${escapeHtml(illustration.prompt || 'generated illustration')}"
             loading="lazy"
           />
@@ -286,7 +292,7 @@ function renderIllustrationPanel(messageId: string, illustrations: MessageIllust
 }
 
 function hasRenderableIllustrations(message: UiMessage | undefined) {
-  return Boolean(message?.illustrations?.some(illustration => Boolean(illustration.imageData?.trim())));
+  return Boolean(message?.illustrations?.some(illustration => Boolean(illustration.assetId?.trim() || illustration.imageData?.trim())));
 }
 
 type SaenaiSpriteId = 'megumi' | 'eriri' | 'utaha' | 'izumi' | 'michiru';
@@ -555,7 +561,7 @@ function renderAnchoredMessageBody(
   visibleText: string,
   editing: AppState['imageRerollEditing'],
 ) {
-  const illustrations = message.illustrations?.filter(illustration => illustration.imageData.trim()) ?? [];
+  const illustrations = message.illustrations?.filter(illustration => illustration.assetId?.trim() || illustration.imageData?.trim()) ?? [];
   const anchored = new Map<number, MessageIllustration[]>();
   const trailing: MessageIllustration[] = [];
 
@@ -751,7 +757,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
 
   const message = model.currentMessage;
   const visibleText = getVisibleMessageText(message);
-  const illustrations = message.illustrations?.filter(illustration => illustration.imageData.trim()) ?? [];
+  const illustrations = message.illustrations?.filter(illustration => illustration.assetId?.trim() || illustration.imageData?.trim()) ?? [];
   const hasIllustrations = hasRenderableIllustrations(message);
   const deckClasses = ['paper-reader'];
   if (hasIllustrations) deckClasses.push('paper-reader--with-illustrations');
