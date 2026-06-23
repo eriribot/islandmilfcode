@@ -424,6 +424,55 @@ function shouldRecoverObsessionSpike(targetKey: string, previous: number, next: 
   return next > previous && next - previous > spikeLimit;
 }
 
+function normalizePositiveCounterMap(input: unknown): Record<string, number> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const result: Record<string, number> = {};
+  for (const [field, value] of Object.entries(input as Record<string, unknown>)) {
+    const n = Number(value);
+    if (field && Number.isFinite(n) && n > 0) result[field] = n;
+  }
+  return result;
+}
+
+function recoverSexStatusMeta(
+  target: StatusData['targets'][number],
+  previous: StatusData['targets'][number],
+): { target: StatusData['targets'][number]; recovered: boolean } {
+  const previousMeta = previous.meta ?? {};
+  const nextMeta = target.meta ?? {};
+  const nextRecoveredMeta: Record<string, unknown> = { ...nextMeta };
+  let recovered = false;
+
+  // 中文注释：贞操闩锁和身体计数器属于 sexStatus 的真相源；若本轮快照突然清空，就按上一轮 IndexedDB 快照自愈。
+  if (previousMeta.virginity === 'lost' && nextMeta.virginity !== 'lost') {
+    nextRecoveredMeta.virginity = 'lost';
+    recovered = true;
+  }
+
+  const previousCounters = normalizePositiveCounterMap(previousMeta.bodyCounters);
+  const nextCounters = normalizePositiveCounterMap(nextMeta.bodyCounters);
+  for (const [field, previousValue] of Object.entries(previousCounters)) {
+    const nextValue = nextCounters[field] ?? 0;
+    if (nextValue < previousValue) {
+      nextCounters[field] = previousValue;
+      recovered = true;
+    }
+  }
+  if (recovered && Object.keys(nextCounters).length) {
+    nextRecoveredMeta.bodyCounters = nextCounters;
+  }
+
+  return recovered
+    ? {
+        target: {
+          ...target,
+          meta: nextRecoveredMeta,
+        },
+        recovered,
+      }
+    : { target, recovered };
+}
+
 function protectStatusDataAgainstPayloadCorruption(
   nextStatusData: StatusData,
   previousStatusData: StatusData | null,
@@ -450,11 +499,13 @@ function protectStatusDataAgainstPayloadCorruption(
       nextTarget.obsessionStage = previous.obsessionStage || obsessionStage(previous.obsession);
       recovered = true;
     }
-    return nextTarget;
+    const sexStatusRecovery = recoverSexStatusMeta(nextTarget, previous);
+    if (sexStatusRecovery.recovered) recovered = true;
+    return sexStatusRecovery.target;
   });
 
   if (!recovered) return nextStatusData;
-  console.warn('[save-guard] recovered corrupted target relationship values from previous payload snapshot');
+  console.warn('[save-guard] recovered corrupted target values from previous payload snapshot');
   return {
     ...nextStatusData,
     targets,
