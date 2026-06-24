@@ -31,6 +31,7 @@ import type {
 export const PRIMARY_VISIBLE_TAG = 'content';
 // 兼容用户自定义预设里要求的中文正文标签，避免模型输出 <正文> 时被当成未知标签吞掉。
 export const FALLBACK_VISIBLE_TAGS = ['正文', 'context', 'story_scene'];
+export const OPTION_LINE_PREFIXES = ['>选项一：', '>选项二：', '>选项三：', '>选项四：'] as const;
 const MAIN_EVENT_NOT_STARTED = '未进行';
 const MAIN_EVENT_RUNNING = '进行中';
 const MAIN_EVENT_FINISHED = '已结束';
@@ -285,52 +286,98 @@ export function extractOptionsBlock(text: string, { streaming = false }: { strea
   const raw = String(text ?? '');
   if (!raw) return [];
 
-  const options: string[] = [];
-  const closedTag = /<options\b[^>]*>([\s\S]*?)<\/options>/gi;
-  const match = closedTag.exec(raw);
+  const strictOptions = extractStrictOptionsBlock(raw, { streaming });
+  if (strictOptions.length) return strictOptions;
 
-  if (match) {
-    const content = (match[1] ?? '').trim();
-    // 解析每个选项，格式：>选项一：[内容]
-    const lines = content
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean);
-    for (const line of lines) {
-      const optionMatch = line.match(/^>(?:选项[一二三四]：)?\s*\[?(.+?)\]?$/);
-      if (optionMatch) {
-        options.push(optionMatch[1].trim());
-      }
-    }
+  return extractLooseOptionsBlock(raw, { streaming });
+}
+
+function parseStrictOptionLines(content: string, { allowPartial = false }: { allowPartial?: boolean } = {}) {
+  const normalized = String(content ?? '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) return [];
+
+  const lines = normalized.split('\n').map(line => line.trim());
+  if (!allowPartial && lines.length !== OPTION_LINE_PREFIXES.length) return [];
+  if (allowPartial && lines.length > OPTION_LINE_PREFIXES.length) return [];
+  if (lines.some(line => !line)) return [];
+
+  const options: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? '';
+    const prefix = OPTION_LINE_PREFIXES[index];
+    if (!prefix || !line.startsWith(prefix)) return [];
+
+    const value = line.slice(prefix.length).trim();
+    if (!value) return [];
+    options.push(value);
   }
 
-  // 流式模式下处理未闭合的标签
-  if (streaming && options.length === 0) {
-    const opens = Array.from(raw.matchAll(/<options\b[^>]*>/gi));
-    const closes = Array.from(raw.matchAll(/<\/options>/gi));
-    const lastOpen = opens[opens.length - 1];
-    const lastClose = closes[closes.length - 1];
+  return options;
+}
 
-    if (lastOpen?.index != null && (!lastClose?.index || lastOpen.index > lastClose.index)) {
-      const start = lastOpen.index + lastOpen[0].length;
-      const content = raw
-        .slice(start)
-        .replace(/<[^>]*$/, '')
-        .trim();
-      const lines = content
-        .split('\n')
-        .map(line => line.trim())
-        .filter(Boolean);
-      for (const line of lines) {
-        const optionMatch = line.match(/^>(?:选项[一二三四]：)?\s*\[?(.+?)\]?$/);
-        if (optionMatch) {
-          options.push(optionMatch[1].trim());
-        }
-      }
+function extractStrictOptionsBlock(raw: string, { streaming = false }: { streaming?: boolean } = {}) {
+  // 新协议：<options> 必须紧跟在 </content> 后面，且内部必须正好四行固定前缀。
+  const closedPattern = new RegExp(
+    `<\\/${escapeRegExp(PRIMARY_VISIBLE_TAG)}\\b[^>]*>\\s*<options\\b[^>]*>([\\s\\S]*?)<\\/options>`,
+    'i',
+  );
+  const closedMatch = raw.match(closedPattern);
+  if (closedMatch) {
+    return parseStrictOptionLines(closedMatch[1] ?? '');
+  }
+
+  if (!streaming) return [];
+
+  const openedPattern = new RegExp(`<\\/${escapeRegExp(PRIMARY_VISIBLE_TAG)}\\b[^>]*>\\s*<options\\b[^>]*>([\\s\\S]*)$`, 'i');
+  const openedMatch = raw.match(openedPattern);
+  if (!openedMatch) return [];
+
+  return parseStrictOptionLines((openedMatch[1] ?? '').replace(/<[^>]*$/, '').trim(), { allowPartial: true });
+}
+
+function parseLooseOptionLines(content: string) {
+  const options: string[] = [];
+  const lines = String(content ?? '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const optionMatch = line.match(/^>(?:选项[一二三四][：:]?)?\s*\[?(.+?)\]?$/);
+    if (optionMatch) {
+      options.push(optionMatch[1].trim());
     }
   }
 
   return options;
+}
+
+function extractLooseOptionsBlock(raw: string, { streaming = false }: { streaming?: boolean } = {}) {
+  const closedTag = /<options\b[^>]*>([\s\S]*?)<\/options>/i;
+  const match = raw.match(closedTag);
+  if (match) {
+    return parseLooseOptionLines(match[1] ?? '');
+  }
+
+  if (!streaming) return [];
+
+  const opens = Array.from(raw.matchAll(/<options\b[^>]*>/gi));
+  const closes = Array.from(raw.matchAll(/<\/options>/gi));
+  const lastOpen = opens[opens.length - 1];
+  const lastClose = closes[closes.length - 1];
+
+  if (lastOpen?.index == null || (lastClose?.index != null && lastOpen.index <= lastClose.index)) {
+    return [];
+  }
+
+  const start = lastOpen.index + lastOpen[0].length;
+  const content = raw
+    .slice(start)
+    .replace(/<[^>]*$/, '')
+    .trim();
+
+  return parseLooseOptionLines(content);
 }
 
 export function extractContextReply(text: string, { streaming = false }: { streaming?: boolean } = {}) {
