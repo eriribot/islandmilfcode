@@ -162,11 +162,16 @@ export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string
 // ── 去重规则 ──
 
 /**
- * 事实去重：检查是否已存在相同 subject + content 的活跃事实。
+ * 事实去重：检查是否已存在相同 category + subject + content 的活跃事实。
  * - 完全相同 → 只更新 lastSeenAt，返回 'duplicate'
- * - 同 subject 不同 content → 标记旧行 supersededBy，返回 'supersede'
+ * - 单例类别的同 subject 不同 content → 标记旧行 supersededBy，返回 'supersede'
+ * - promise/secret/event/item 等可并存类别不互相覆盖
  * - 无匹配 → 返回 'new'
  */
+function isSingletonFactCategory(category: string): boolean {
+  return category === 'location' || category === 'profile' || category === 'relation';
+}
+
 export function deduplicateFact(
   db: IslandMemoryDB,
   incoming: { category: string; subject: string; content: string },
@@ -174,15 +179,19 @@ export function deduplicateFact(
   const now = new Date().toISOString();
   const activeFacts = db.facts.filter(f => !f.expired);
 
-  // 完全匹配：同 subject + 同 content
-  const exact = activeFacts.find(f => f.subject === incoming.subject && f.content === incoming.content);
+  const exact = activeFacts.find(
+    f => f.category === incoming.category && f.subject === incoming.subject && f.content === incoming.content,
+  );
   if (exact) {
     exact.lastSeenAt = now;
     exact.updatedAt = now;
     return { action: 'duplicate', existingId: exact.id };
   }
 
-  // 同 subject 不同 content：supersede
+  if (!isSingletonFactCategory(incoming.category)) {
+    return { action: 'new' };
+  }
+
   const sameSubject = activeFacts.find(f => f.subject === incoming.subject && f.category === incoming.category);
   if (sameSubject) {
     return { action: 'supersede', existingId: sameSubject.id };

@@ -481,12 +481,16 @@ const WEEKDAY_HEADERS = ['周日', '周一', '周二', '周三', '周四', '周�
 type CalendarEventItem = {
   id: string;
   title: string;
+  content: string;
   date: string;
   endDate: string;
   timeSegments: string[];
   locations: string[];
   summary: string;
   status: string;
+  sourceEntryName: string;
+  sourceEntryUid: number;
+  volumeId: string;
 };
 
 function pad2(n: number) {
@@ -553,12 +557,16 @@ function buildCalendarEventItem(
   return {
     id,
     title: safeCalendarText(event.title, id) || id,
+    content: safeCalendarText(event.content),
     date,
     endDate,
     timeSegments: safeCalendarTextArray(event.schedule.timeSegments),
     locations: safeCalendarTextArray(event.schedule.locations),
     summary: safeCalendarText(event.summary),
     status: safeCalendarText(statusData.world.mainEvents?.[event.id]),
+    sourceEntryName: safeCalendarText(event.sourceEntryName),
+    sourceEntryUid: Number.isFinite(event.sourceEntryUid) ? event.sourceEntryUid : 0,
+    volumeId: safeCalendarText(event.volumeId),
   };
 }
 
@@ -616,7 +624,13 @@ function renderCalendarEventRow(event: CalendarEventItem) {
   const timeLine = [formatCalendarDateRange(event), event.timeSegments.join(' / ')].filter(Boolean).join(' · ');
   const locationLine = event.locations.join('、');
   return `
-    <article class="phone-calendar-event phone-calendar-event--${statusClass}">
+    <article
+      class="phone-calendar-event phone-calendar-event--${statusClass}"
+      data-action="calendar-open-event"
+      data-event-id="${escapeHtml(event.id)}"
+      role="button"
+      tabindex="0"
+    >
       <span class="phone-calendar-event__rail"></span>
       <span class="phone-calendar-event__body">
         <span class="phone-calendar-event__top">
@@ -628,6 +642,60 @@ function renderCalendarEventRow(event: CalendarEventItem) {
         ${event.summary ? `<span class="phone-calendar-event__summary">${escapeHtml(event.summary)}</span>` : ''}
       </span>
     </article>
+  `;
+}
+
+function renderCalendarDetailRow(label: string, value: string) {
+  const text = value.trim();
+  if (!text) return '';
+  return `
+    <div class="phone-calendar-popup__detail">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(text)}</strong>
+    </div>
+  `;
+}
+
+function renderCalendarEventPopup(state: AppState) {
+  if (!calendarOpenEventId) return '';
+  const event = collectCalendarEvents(state).find(item => item.id === calendarOpenEventId);
+  if (!event) return '';
+
+  const statusLabel = getCalendarStatusLabel(event.status);
+  const timeLine = [formatCalendarDateRange(event), event.timeSegments.join(' / ')].filter(Boolean).join(' · ');
+  const locationLine = event.locations.join('、');
+  const sourceLine = [event.sourceEntryName, event.sourceEntryUid ? `#${event.sourceEntryUid}` : ''].filter(Boolean).join(' ');
+  const bodyText = event.content || event.summary || '（无详细正文）';
+
+  return `
+    <div class="phone-calendar-popup" role="dialog" aria-modal="true" aria-label="${escapeHtml(event.title)}">
+      <button class="phone-calendar-popup__backdrop" data-action="calendar-close-event" type="button" aria-label="关闭"></button>
+      <article class="phone-calendar-popup__panel">
+        <header class="phone-calendar-popup__header">
+          <div>
+            <small>${escapeHtml(statusLabel)}</small>
+            <h3>${escapeHtml(event.title)}</h3>
+          </div>
+          <button class="phone-calendar-popup__close" data-action="calendar-close-event" type="button" aria-label="关闭">×</button>
+        </header>
+        <div class="phone-calendar-popup__details">
+          ${renderCalendarDetailRow('时间', timeLine || event.id)}
+          ${renderCalendarDetailRow('地点', locationLine)}
+          ${renderCalendarDetailRow('事件 ID', event.id)}
+          ${renderCalendarDetailRow('来源', sourceLine)}
+          ${renderCalendarDetailRow('卷 ID', event.volumeId)}
+        </div>
+        ${
+          event.summary
+            ? `<section class="phone-calendar-popup__summary"><span>摘要</span><p>${escapeHtml(event.summary)}</p></section>`
+            : ''
+        }
+        <section class="phone-calendar-popup__content">
+          <span>正文</span>
+          <p>${escapeHtml(bodyText)}</p>
+        </section>
+      </article>
+    </div>
   `;
 }
 
@@ -731,6 +799,7 @@ function renderCalendarGrid(state: AppState, monthOffset: number): string {
 /** 日历月份偏移量（由 index.ts 管理） */
 let calendarMonthOffset = 0;
 let calendarSelectedDateKey: string | null = null;
+let calendarOpenEventId: string | null = null;
 
 export function setCalendarMonthOffset(offset: number) {
   calendarMonthOffset = offset;
@@ -742,6 +811,14 @@ export function getCalendarMonthOffset(): number {
 
 export function setCalendarSelectedDate(dateKey: string | null) {
   calendarSelectedDateKey = dateKey;
+}
+
+export function setCalendarOpenEventId(eventId: string | null) {
+  calendarOpenEventId = eventId;
+}
+
+export function getCalendarOpenEventId(): string | null {
+  return calendarOpenEventId;
 }
 
 function renderCalendarPhonePage(state: AppState) {
@@ -1386,6 +1463,7 @@ export function renderPhone(state: AppState, renderers: PhoneRenderers) {
           </div>
         </div>
       </section>
+      ${state.phoneOpen ? renderCalendarEventPopup(renderedState) : ''}
     </div>
   `;
 }
@@ -1405,3 +1483,5 @@ export function renderFloatingPhone(state: AppState) {
     </button>
   `;
 }
+
+

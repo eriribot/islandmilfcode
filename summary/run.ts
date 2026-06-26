@@ -1,4 +1,4 @@
-import { getPromptMessageText, getSummaryMessages } from '../message-format';
+﻿import { getPromptMessageText, getSummaryMessages } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
 import { SecondaryTaskCancelledError, runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
 import type { AppState, TavernWindow, UiMessage } from '../types';
@@ -47,7 +47,11 @@ function normalizeFactKey(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, '');
 }
 
-/** 按 category + 主体 + 内容 去重；同主体新事实会让旧事实 superseded=true。 */
+function isSingletonKeyFactCategory(category: KeyFact['category']): boolean {
+  return category === 'location' || category === 'profile' || category === 'relation';
+}
+
+/** 按 category + 主体 + 内容 去重；只让适合单例覆盖的类别按同主体替换旧事实。 */
 function dedupeKeyFacts(store: SummaryStore): void {
   const active = store.keyFacts.filter(f => !f.superseded);
   const byIdentity = new Map<string, KeyFact>();
@@ -62,9 +66,10 @@ function dedupeKeyFacts(store: SummaryStore): void {
       continue;
     }
     byIdentity.set(identityKey, fact);
+    if (!isSingletonKeyFactCategory(fact.category)) continue;
     const prev = bySubjectCategory.get(subjectKey);
     if (prev && prev.id !== fact.id) {
-      // 同主体同类别但内容不同：旧的标 superseded。
+      // 单例类别同主体但内容不同：旧的标 superseded。
       prev.superseded = true;
     }
     bySubjectCategory.set(subjectKey, fact);
@@ -74,15 +79,16 @@ function dedupeKeyFacts(store: SummaryStore): void {
 function createKeyFacts(
   parsed: Array<Pick<KeyFact, 'category' | 'subject' | 'content' | 'gameTime'>>,
   sourceRange: [number, number],
-  fallbackGameTime?: string,
+  anchor?: FactAnchor | null,
 ): KeyFact[] {
   const now = new Date().toISOString();
+  const recordTime = anchor?.time ? `记录时间 ${anchor.time}` : undefined;
   return parsed.map(p => ({
     id: crypto.randomUUID(),
     category: p.category,
     subject: p.subject,
     content: p.content,
-    gameTime: p.gameTime || fallbackGameTime,
+    gameTime: p.gameTime || recordTime,
     sourceRange,
     createdAt: now,
   }));
@@ -274,7 +280,7 @@ export async function runSummary(
         const nextIndex = startIndex + unsummarized.length;
         const range: [number, number] = [startIndex, nextIndex - 1];
         const parsedFacts = parseKeyFactsFromSummary(raw);
-        const newFacts = createKeyFacts(parsedFacts, range, anchor?.time);
+        const newFacts = createKeyFacts(parsedFacts, range, anchor);
         store.minor.push({
           range,
           text,
@@ -313,10 +319,14 @@ export async function runSummary(
   // 大摘要：自动模式达到阈值时运行，或 mode=major 时强制运行。
   const runMajor = mode === 'major' || (mode === 'auto' && shouldRunMajorSummary(store));
   if (runMajor) {
-    const consumed = getUncoveredMinorSummaries(store);
+    const consumed = getUncoveredMinorSummaries(store).sort((a, b) => a.range[0] - b.range[0]);
     const config = loadSummaryTriggerConfig();
     const majorThreshold = config.majorThreshold ?? 4;
-    const sourceMinor = consumed.length ? consumed : mode === 'major' ? store.minor : [];
+    const sourceMinor = consumed.length
+      ? consumed
+      : mode === 'major'
+        ? [...store.minor].sort((a, b) => a.range[0] - b.range[0])
+        : [];
     if (sourceMinor.length === 0 || (mode === 'auto' && sourceMinor.length < majorThreshold)) {
       // 没有可提升的摘要。
       if (mode === 'major') {
@@ -444,7 +454,7 @@ export async function rerollSummaryEntry(
       const raw = await callGenerateRaw(win, prompts, summaryApiConfig, 'summary-minor');
       const text = parseRequiredSummaryResult(raw, 'summary-minor');
       const parsedFacts = parseKeyFactsFromSummary(raw);
-      const newFacts = createKeyFacts(parsedFacts, entry.range);
+      const newFacts = createKeyFacts(parsedFacts, entry.range, anchor);
       store.minor[entryIndex] = {
         ...entry,
         text,
@@ -511,3 +521,6 @@ export function resumeAutoSummary(store: SummaryStore): void {
   store.consecutiveFailures = 0;
   store.lastError = null;
 }
+
+
+

@@ -62,7 +62,7 @@ import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
 import { indexPhoneMessage } from '../memorydatabase/phone-repository';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import { isPlotEventAllowedByRoute } from '../plot-routing';
-import { isPlayerPhonePseudoTarget } from '../phone/types';
+import { isPhoneArchiveGoldImpression, isPlayerPhonePseudoTarget } from '../phone/types';
 import { emitCharacterDataImportFromResponse } from '../plugins/character-data-import';
 import {
   extractImageGenerationPrompts,
@@ -1801,6 +1801,56 @@ function buildSaenaiWorldStateFactLines(currentTime: string) {
   return lines;
 }
 
+function isPlayerMemoryId(value: string | undefined) {
+  return /^(user|player|玩家|主角)$/.test(String(value ?? '').trim().toLowerCase());
+}
+
+function mentionsPlayer(value: string | undefined) {
+  return /\buser\b|\bplayer\b|玩家|主角/.test(String(value ?? ''));
+}
+
+function buildEstablishedRelationshipFactLines(ctx: ActionContext): string[] {
+  const targetNames = new Map(ctx.state.statusData.targets.map(target => [target.id, target.name]));
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  const push = (text: string) => {
+    const line = text.trim().replace(/\s+/g, ' ');
+    if (!line || seen.has(line) || lines.length >= 8) return;
+    seen.add(line);
+    lines.push(`- ${line.length > 120 ? `${line.slice(0, 117)}...` : line}`);
+  };
+
+  for (const fact of ctx.memoryDB.facts.filter(row => !row.expired)) {
+    if (fact.category !== 'relation' && fact.category !== 'profile') continue;
+    if (
+      fact.category !== 'relation' &&
+      !mentionsPlayer(fact.subject) &&
+      !mentionsPlayer(fact.content) &&
+      !fact.relatedEntityIds?.some(isPlayerMemoryId)
+    ) {
+      continue;
+    }
+    push(`${fact.subject}: ${fact.content}`);
+  }
+
+  for (const relation of ctx.memoryDB.relations.filter(row => !row.expired)) {
+    if (!isPlayerMemoryId(relation.fromId) && !isPlayerMemoryId(relation.toId)) continue;
+    const from = targetNames.get(relation.fromId) ?? relation.fromId;
+    const to = targetNames.get(relation.toId) ?? relation.toId;
+    const stage = relation.stage ? `（${relation.stage}）` : '';
+    const reason = relation.reason ? `；${relation.reason}` : '';
+    push(`${from} -> ${to}: ${relation.label}${stage}${reason}`);
+  }
+
+  for (const impression of ctx.memoryDB.impressions.filter(row => !row.expired)) {
+    if (!isPlayerMemoryId(impression.subject) || !isPhoneArchiveGoldImpression(impression)) continue;
+    const target = targetNames.get(impression.targetId) ?? impression.targetId;
+    push(`${target}对user的锁定印象: ${impression.label}`);
+  }
+
+  return lines;
+}
+
 function buildScenePresencePrompts(
   ctx: ActionContext,
   promptHistory: UiMessage[],
@@ -1834,6 +1884,7 @@ function buildScenePresencePrompts(
   const playerClass = String(ctx.state.playerProfile?.className ?? '').trim();
   const currentWorldTime = ctx.state.statusData.world.currentTime;
   const worldStateFacts = buildSaenaiWorldStateFactLines(currentWorldTime);
+  const establishedRelationshipFacts = buildEstablishedRelationshipFactLines(ctx);
 
   const systemPrompt = [
     '你是夏野雾姬，出自《狗与剪刀的正确用法》：冷峻、毒舌、才华锋利的天才小说家，也是会把粗劣桥段一眼剖开的文学少女。',
@@ -1852,6 +1903,14 @@ function buildScenePresencePrompts(
     '世界状态事实（用于 absent/focus/uncertain 判定，可被蝴蝶效应或已发生正文事实覆盖）：',
     ...worldStateFacts,
     '- 如果最近正文或玩家输入已经明确造成蝴蝶效应/新因果覆盖上述缺省状态，请在 plotImpact.causalTrace 与 evidence 中写明覆盖原因，再按新因果判定。',
+    ...(establishedRelationshipFacts.length
+      ? [
+          '',
+          '已成立关系事实（权威；优先级高于原作关系和角色初始印象）：',
+          ...establishedRelationshipFacts,
+          '- 上述内容是当前新大纲已经发生的结果，不是待审核猜测；不得按原作印象回滚。',
+        ]
+      : []),
     '',
     '页边判断（在场）：',
     '- present：她确实站在这一页的镜头里，能立刻说话、行动、沉默、吃醋或产生即时反应。',
@@ -1913,7 +1972,9 @@ function buildScenePresencePrompts(
     '6. 班级消歧：玩家输入若用班级/学年指人（如“去G班”“找同班同学”“B班那个”），用上面的“玩家班级”和角色“班级”做匹配——同字符串=同班；只有班级里的角色才算同班。仅“同班/同年级”这类泛指、又能唯一对应到名单里某个角色时，才把该角色判为 focus；对应不唯一就不要硬塞。',
     '   但如果世界状态事实说明当前尚未分班，则班级匹配失效：不要因为“同班”“B班”“座位”这类未发生信息把加藤惠或任何角色塞进 focus/present。',
     '7. 原作关系只锚定到“安艺伦也”：名单里的“原作关系”（青梅竹马/学姐/表姐等）描述的是该角色与伦也的关系，不是与 user 的关系。不要因为这些原作关系就默认该角色与 user 亲近、在场或应进入 focus；user 与角色的关系以实际剧情与好感度为准。尤其是注意青梅竹马不论是美智留还是英梨梨除非user特别设定,这个设定都不能适用于user,她们都与伦也的青梅竹马',
-    '8. 注意事项,伦也不是阴暗的宅男,他对感情极其迟钝,在User和其他女性暗中夺心的过程中,他的聚焦点一直在游戏中,哪怕没有实权(虽然他就是大部分时候没实权的在原著中)只要做出他喜欢的美少女游戏符合他御宅兴趣的他都会甘之若饴但他不是无条件顺从不是他心里理想的作品他最后都会爆发出他独有的御宅族的偏执,严禁出现阴暗跟踪偷窥狂的伦也',
+    '8. 已成立关系事实是新大纲的既定事实：如果事实说明 user 已经拥有某个身份、关系、约定或锁定印象，就按已经发生处理，必要时写进 recallPlan.mustRecall 或 mainApiGuidance；不要把它当成“可能性”或“待原作校验”。',
+    '9. 不要因为原作里角色更亲近伦也，就否定 user 已建立的关系事实。若原作惯性与已成立事实冲突，把原作惯性写入 mustSuppress，而不是把新关系回滚。',
+    '10. 注意事项,伦也不是阴暗的宅男,他对感情极其迟钝,在User和其他女性暗中夺心的过程中,他的聚焦点一直在游戏中,哪怕没有实权(虽然他就是大部分时候没实权的在原著中)只要做出他喜欢的美少女游戏符合他御宅兴趣的他都会甘之若饴但他不是无条件顺从不是他心里理想的作品他最后都会爆发出他独有的御宅族的偏执,严禁出现阴暗跟踪偷窥狂的伦也',
   ].join('\n');
 
   return [

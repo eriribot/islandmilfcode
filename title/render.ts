@@ -2,6 +2,7 @@ import { listSaves } from '../state/saves';
 import { renderLoadSaveModal } from './loadsave';
 // 复用统一的 escapeHtml：用运行时构造的实体，避免发布时被 HTML 解码破坏（见 ../html.ts）。
 import { escapeHtml } from '../html';
+import { PLAYER_BACKGROUND_OPTIONS } from '../player-backgrounds';
 
 // 发布角色卡前，把这里替换为可直接访问的远程音频 URL。
 const TITLE_MUSIC_URL = 'https://eriribot.github.io/islandmilfcode/Aimer_星屑ビーナス.mp3';
@@ -30,6 +31,18 @@ function renderStatRow(key: string, label: string, defaultValue: number): string
       <button type="button" class="gal-stat-row__btn" data-stat-action="inc" data-stat-key="${key}" aria-label="${escapeHtml(label)}增加">+</button>
     </div>
   `;
+}
+
+function renderBackgroundOptions(): string {
+  return PLAYER_BACKGROUND_OPTIONS.map(option => `
+    <label class="gal-background-option">
+      <input type="checkbox" name="backgroundIds" value="${escapeHtml(option.id)}" data-background-cost="${option.cost}" />
+      <span class="gal-background-option__card">
+        <strong>${escapeHtml(option.label)}</strong>
+        <small>${option.cost} 点 · ${escapeHtml(option.description)}</small>
+      </span>
+    </label>
+  `).join('');
 }
 
 // 播放音乐
@@ -289,6 +302,15 @@ export function renderCharacterCreation(options: { deepSeekMode?: boolean } = {}
               ${renderStatRow('proficiency', '灵巧', 0)}
               ${renderStatRow('kindness', '体贴', 0)}
               ${renderStatRow('courage', '勇气', 0)}
+            </div>
+          </div>
+
+          <div class="gal-field">
+            <span class="gal-field__label">
+              背景经历 <span class="gal-field__hint">每项消耗点数，影响开局印象</span>
+            </span>
+            <div class="gal-background-options">
+              ${renderBackgroundOptions()}
             </div>
           </div>
 

@@ -55,6 +55,9 @@ export type PlayerProfile = {
   className?: string;
   stats?: PlayerStats;
   difficulty?: Difficulty;
+  backgroundIds?: string[];
+  backgrounds?: string[];
+  backgroundCost?: number;
 };
 
 export type GameState = {

@@ -1,4 +1,8 @@
 import type { Difficulty, PlayerStats } from '../types';
+import {
+  getPlayerBackgroundCost,
+  normalizePlayerBackgroundIds,
+} from '../player-backgrounds';
 
 export type TitleCallbacks = {
   enterSave: (saveId: string) => void;
@@ -16,6 +20,7 @@ export type TitleCallbacks = {
     className: string;
     stats?: PlayerStats;
     difficulty?: Difficulty;
+    backgroundIds?: string[];
     deepSeekMode?: boolean;
   }) => void;
   deleteSave: (saveId: string) => void;
@@ -148,6 +153,8 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
 
     const difficulty = normalizeDifficulty(fd.get('difficulty'));
     const config = DIFFICULTY_CONFIG[difficulty] ?? DIFFICULTY_CONFIG.normal;
+    const backgroundIds = normalizePlayerBackgroundIds(fd.getAll('backgroundIds'));
+    const statBudget = Math.max(0, config.total - getPlayerBackgroundCost(backgroundIds));
     const stats: PlayerStats = {
       knowledge: readStatValue(fd, 'knowledge'),
       charm: readStatValue(fd, 'charm'),
@@ -155,7 +162,7 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
       kindness: readStatValue(fd, 'kindness'),
       courage: readStatValue(fd, 'courage'),
     };
-    const normalizedStats = normalizeStatsForConfig(stats, config);
+    const normalizedStats = normalizeStatsForConfig(stats, { ...config, total: statBudget });
 
     cb.createAndEnter({
       familyName,
@@ -166,6 +173,7 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
       className: (fd.get('className') as string)?.trim() || '2年B班',
       stats: normalizedStats,
       difficulty,
+      backgroundIds,
       deepSeekMode: fd.get('deepSeekMode') === 'on',
     });
   });
@@ -180,7 +188,7 @@ const DIFFICULTY_CONFIG = {
 
 const STAT_KEYS = ['knowledge', 'charm', 'proficiency', 'kindness', 'courage'] as const;
 const STAT_STEP = 10;
-type DifficultyConfig = (typeof DIFFICULTY_CONFIG)[Difficulty];
+type DifficultyConfig = { total: number; default: number; min: number; max: number };
 
 function normalizeDifficulty(value: FormDataEntryValue | null): Difficulty {
   return value === 'easy' || value === 'hard' || value === 'normal' ? value : 'normal';
@@ -230,9 +238,16 @@ function bindStatAllocatorEvents(root: HTMLElement | null) {
       const input = container!.querySelector<HTMLInputElement>(`input[name="stat-${key}"]`);
       used += Number(input?.value ?? config.default);
     }
+    used += getSelectedBackgroundCost();
     const remaining = config.total - used;
     const el = root!.querySelector<HTMLElement>('[data-stat-remaining]');
     if (el) el.textContent = String(remaining);
+  }
+
+  function getSelectedBackgroundCost(except?: HTMLInputElement | null) {
+    return Array.from(root!.querySelectorAll<HTMLInputElement>('input[name="backgroundIds"]:checked'))
+      .filter(input => input !== except)
+      .reduce((total, input) => total + Math.max(0, Number(input.dataset.backgroundCost ?? 0) || 0), 0);
   }
 
   function resetToDefaults() {
@@ -269,6 +284,7 @@ function bindStatAllocatorEvents(root: HTMLElement | null) {
         const inp = container!.querySelector<HTMLInputElement>(`input[name="stat-${k}"]`);
         used += Number(inp?.value ?? config.default);
       }
+      used += getSelectedBackgroundCost();
 
       if (action === 'inc') {
         const remaining = config.total - used;
@@ -294,7 +310,7 @@ function bindStatAllocatorEvents(root: HTMLElement | null) {
       const otherUsed = STAT_KEYS.filter(item => item !== key).reduce((total, item) => {
         const other = container!.querySelector<HTMLInputElement>(`input[name="stat-${item}"]`);
         return total + Number(other?.value ?? config.default);
-      }, 0);
+      }, getSelectedBackgroundCost());
       const maxAllowed = Math.min(config.max, config.total - otherUsed);
       const nextValue = Math.min(clampStatValue(Number(input.value || oldValue), config), Math.max(config.min, maxAllowed));
       input.value = String(nextValue);
@@ -304,6 +320,21 @@ function bindStatAllocatorEvents(root: HTMLElement | null) {
     };
     input.addEventListener('change', normalizeInput);
     input.addEventListener('input', normalizeInput);
+  });
+
+  root.querySelectorAll<HTMLInputElement>('input[name="backgroundIds"]').forEach(input => {
+    input.addEventListener('change', () => {
+      const config = getConfig();
+      const usedStats = STAT_KEYS.reduce((total, key) => {
+        const statInput = container!.querySelector<HTMLInputElement>(`input[name="stat-${key}"]`);
+        return total + Number(statInput?.value ?? config.default);
+      }, 0);
+      const nextCost = getSelectedBackgroundCost();
+      if (input.checked && usedStats + nextCost > config.total) {
+        input.checked = false;
+      }
+      recalcRemaining();
+    });
   });
 
   recalcRemaining();

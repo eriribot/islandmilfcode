@@ -21,6 +21,13 @@ import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import { migrateSummaryStoreToMemoryDB, hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
 import { sweepLegacyMemoryDB } from '../memorydatabase/sweep';
+import { createDefaultMemoryDB } from '../memorydatabase/defaults';
+import {
+  applyPlayerBackgroundsToInitialState,
+  getPlayerBackgroundCost,
+  normalizePlayerBackgroundIds,
+  normalizePlayerBackgroundLabels,
+} from '../player-backgrounds';
 import {
   deletePayloadSync,
   readPayloadSync,
@@ -140,6 +147,8 @@ function normalizeDifficulty(input: unknown): Difficulty {
 
 export function normalizePlayerProfile(input: unknown): PlayerProfile {
   const raw = typeof input === 'object' && input ? (input as Partial<PlayerProfile>) : {};
+  const backgroundIds = normalizePlayerBackgroundIds(raw.backgroundIds);
+  const backgrounds = normalizePlayerBackgroundLabels(raw.backgrounds, backgroundIds);
 
   // 旧存档兼容：如果没有 familyName/givenName，从 name 自动拆分
   let familyName = raw.familyName ? String(raw.familyName) : '';
@@ -183,6 +192,9 @@ export function normalizePlayerProfile(input: unknown): PlayerProfile {
     className: raw.className ? String(raw.className) : '2年A班',
     stats: normalizeStats(raw.stats),
     difficulty: normalizeDifficulty(raw.difficulty),
+    backgroundIds,
+    backgrounds,
+    backgroundCost: getPlayerBackgroundCost(backgroundIds),
   });
 }
 
@@ -759,11 +771,27 @@ function buildInitialPayload(opts: {
   className?: string;
   stats?: PlayerStats;
   difficulty?: Difficulty;
+  backgroundIds?: string[];
   kind: SaveKind;
   label: string;
 }): SavePayload {
   const statusData = normalizeStatusData(defaultStatusData);
   const characterName = opts.familyName + opts.givenName;
+  const memoryDB = createDefaultMemoryDB(opts.runId);
+  const backgroundResult = applyPlayerBackgroundsToInitialState(statusData, memoryDB, opts.backgroundIds ?? []);
+  const playerProfile = normalizePlayerProfile({
+    name: characterName,
+    familyName: opts.familyName,
+    givenName: opts.givenName,
+    personality: opts.personality,
+    appearance: opts.appearance,
+    className: opts.className,
+    stats: opts.stats,
+    difficulty: opts.difficulty,
+    backgroundIds: backgroundResult.ids,
+    backgrounds: backgroundResult.labels,
+    backgroundCost: backgroundResult.cost,
+  });
 
   return {
     saveId: opts.saveId,
@@ -774,21 +802,13 @@ function buildInitialPayload(opts: {
       currentMessageIndex: 0,
       runtimeFlags: {
         saveKind: opts.kind,
-        playerProfile: normalizePlayerProfile({
-          name: characterName,
-          familyName: opts.familyName,
-          givenName: opts.givenName,
-          personality: opts.personality,
-          appearance: opts.appearance,
-          className: opts.className,
-          stats: opts.stats,
-          difficulty: opts.difficulty,
-        }),
+        playerProfile,
         phoneMessages: normalizePhoneMessageStore(null),
       },
     },
     chatLog: [],
     summaryStore: createDefaultSummaryStore(),
+    memoryDB,
     version: SAVE_VERSION,
   };
 }
@@ -831,6 +851,7 @@ export function createSave(opts: {
   className?: string;
   stats?: PlayerStats;
   difficulty?: Difficulty;
+  backgroundIds?: string[];
 }): SaveMeta {
   const runId = crypto.randomUUID();
   const saveId = `autosave_${runId}`;

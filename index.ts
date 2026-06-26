@@ -37,7 +37,13 @@ import {
 } from './phone/music';
 import { renderApp } from './render';
 import { mountRadarChart, unmountRadarChart } from './phone/radar';
-import { getCalendarMonthOffset, setCalendarMonthOffset, setCalendarSelectedDate } from './phone/render';
+import {
+  getCalendarMonthOffset,
+  getCalendarOpenEventId,
+  setCalendarMonthOffset,
+  setCalendarOpenEventId,
+  setCalendarSelectedDate,
+} from './phone/render';
 import { updateSummaryTextInMemoryDB } from './memorydatabase/commit-points';
 import {
   clearActiveSaveId,
@@ -145,6 +151,7 @@ let phoneBgmAudio: HTMLAudioElement | null = null;
 let phoneBgmResolvedUrl = '';
 let restoringSave = false;
 let quickReplyDelegationBound = false;
+let calendarEventDelegationBound = false;
 
 type ReaderBodyScrollSnapshot = {
   readerIndex: number;
@@ -212,6 +219,62 @@ function restoreReaderBodyScroll(snapshot: ReaderBodyScrollSnapshot | null) {
   };
   restore();
   window.requestAnimationFrame(restore);
+}
+
+function compactCalendarLookupText(value: string | null | undefined) {
+  return (value ?? '').replace(/\s+/g, '').trim();
+}
+
+function resolveCalendarEventIdFromRow(row: HTMLElement) {
+  if (row.dataset.eventId) return row.dataset.eventId;
+
+  const titleText = row.querySelector<HTMLElement>('.phone-calendar-event__top strong')?.textContent?.trim();
+  const titleKey = compactCalendarLookupText(titleText);
+  if (!titleKey) return null;
+
+  const events = Object.values(state.plotLibrary.events);
+  const exact = events.find(event => compactCalendarLookupText(event.title) === titleKey);
+  if (exact) return exact.id;
+
+  const rowText = compactCalendarLookupText(row.textContent);
+  return (
+    events.find(event => {
+      const eventTitle = compactCalendarLookupText(event.title);
+      return eventTitle && (rowText.includes(eventTitle) || eventTitle.includes(titleKey));
+    })?.id ?? null
+  );
+}
+function openCalendarEventRow(row: HTMLElement, event: Event) {
+  const eventId = resolveCalendarEventIdFromRow(row);
+  if (!eventId) return;
+  event.preventDefault();
+  setCalendarOpenEventId(eventId);
+  render();
+}
+
+function bindCalendarEventDelegation() {
+  if (!root || calendarEventDelegationBound) return;
+  calendarEventDelegationBound = true;
+  root.addEventListener('click', event => {
+    if (!(event.target instanceof HTMLElement)) return;
+
+    const closeButton = event.target.closest<HTMLElement>('[data-action="calendar-close-event"]');
+    if (closeButton) {
+      event.preventDefault();
+      setCalendarOpenEventId(null);
+      render();
+      return;
+    }
+
+    const row = event.target.closest<HTMLElement>('.phone-calendar-event, [data-action="calendar-open-event"]');
+    if (row) openCalendarEventRow(row, event);
+  });
+  root.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (!(event.target instanceof HTMLElement)) return;
+    const row = event.target.closest<HTMLElement>('.phone-calendar-event, [data-action="calendar-open-event"]');
+    if (row) openCalendarEventRow(row, event);
+  });
 }
 
 function resolveReaderIndex(readerIndex: number, readerId?: string | null) {
@@ -1064,6 +1127,7 @@ async function deleteReaderFloor(readerIndex: number) {
 function navigatePhone(route: PhoneRoute) {
   syncDrawingSettingsFromMountedControls();
   syncDeepSeekFanForm(false);
+  if (route !== 'app:calendar') setCalendarOpenEventId(null);
   if (route === 'app:deepseek-web' && !state.deepSeekModeEnabled) {
     navigatePhoneRoute(state, 'home', ctx);
     return;
@@ -1074,6 +1138,7 @@ function navigatePhone(route: PhoneRoute) {
 function navigatePhoneBack() {
   syncDrawingSettingsFromMountedControls();
   syncDeepSeekFanForm(false);
+  setCalendarOpenEventId(null);
   if (state.phoneRouteHistory[state.phoneRouteHistory.length - 1] === 'app:deepseek-web' && !state.deepSeekModeEnabled) {
     state.phoneRouteHistory = state.phoneRouteHistory.filter(route => route !== 'app:deepseek-web');
   }
@@ -1095,6 +1160,7 @@ function openPhone(targetRoute?: PhoneRoute) {
 function closePhone() {
   syncDrawingSettingsFromMountedControls();
   syncDeepSeekFanForm(false);
+  setCalendarOpenEventId(null);
   closePhoneRoute(state, ctx);
 }
 
@@ -2357,20 +2423,22 @@ function bindEvents() {
   });
   // 日历月份切换
   root?.querySelector<HTMLButtonElement>('[data-action="calendar-prev"]')?.addEventListener('click', () => {
+    setCalendarOpenEventId(null);
     setCalendarMonthOffset(getCalendarMonthOffset() - 1);
     render();
   });
   root?.querySelector<HTMLButtonElement>('[data-action="calendar-next"]')?.addEventListener('click', () => {
+    setCalendarOpenEventId(null);
     setCalendarMonthOffset(getCalendarMonthOffset() + 1);
     render();
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="calendar-select-date"]').forEach(button => {
     button.addEventListener('click', () => {
+      setCalendarOpenEventId(null);
       setCalendarSelectedDate(button.dataset.date || null);
       render();
     });
   });
-
   // ── Music events ──
   // 搜索表单：阻止默认提交，读输入框值后异步搜索。
   root?.querySelector<HTMLFormElement>('[data-action="music-search-submit"]')?.addEventListener('submit', event => {
@@ -3181,6 +3249,7 @@ function render() {
     syncFocusedMessage(state);
     syncPaperFullscreenHost(isPaperWorkspaceFullscreen(state));
     root.innerHTML = renderApp(state, flipDirection);
+    bindCalendarEventDelegation();
     bindEvents();
     restoreReaderBodyScroll(readerBodyScroll);
     hydrateImageAssetElements(root, `floor:${state.focusedMessageIndex}`);
@@ -3241,6 +3310,12 @@ window.addEventListener(
 );
 
 window.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && getCalendarOpenEventId()) {
+    event.preventDefault();
+    setCalendarOpenEventId(null);
+    render();
+    return;
+  }
   if (event.key === 'Escape' && state.imageRerollEditing) {
     event.preventDefault();
     cancelImageRerollEditor();
@@ -3380,3 +3455,5 @@ installDebugGlobals();
     }
   }
 };
+
+

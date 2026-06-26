@@ -1,4 +1,4 @@
-body.floating-phone-dragging {
+﻿body.floating-phone-dragging {
   user-select: none;
   cursor: grabbing;
 }
@@ -806,7 +806,7 @@ body.floating-phone-dragging {
 }
 
 .phone-deepseek-card {
-  padding: 12px;
+  padding: clamp(12px, 2vw, 18px);
   border-radius: 8px;
   background: rgba(255, 252, 245, 0.72);
   border: 1px solid rgba(180, 160, 130, 0.16);
@@ -1105,7 +1105,7 @@ body.floating-phone-dragging {
   justify-content: space-between;
   width: 100%;
   margin-top: 10px;
-  padding: 12px;
+  padding: clamp(12px, 2vw, 18px);
   border-radius: 8px;
   text-align: left;
   color: var(--ink-soft);
@@ -1405,6 +1405,7 @@ body.floating-phone-dragging {
 /* ── 日历 ── */
 
 .phone-app-page--calendar {
+  position: relative;
   background: rgba(255, 255, 255, 0.72);
 }
 
@@ -1617,6 +1618,8 @@ body.floating-phone-dragging {
 }
 
 .phone-calendar-event {
+  appearance: none;
+  width: 100%;
   display: grid;
   grid-template-columns: 4px minmax(0, 1fr);
   gap: 9px;
@@ -1624,6 +1627,17 @@ body.floating-phone-dragging {
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.86);
   border: 1px solid rgba(210, 205, 198, 0.46);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.phone-calendar-event:hover {
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.phone-calendar-event:active {
+  transform: scale(0.992);
 }
 
 .phone-calendar-event__rail {
@@ -1712,6 +1726,146 @@ body.floating-phone-dragging {
   text-align: center;
   font-size: 0.76rem;
   font-weight: 700;
+}
+
+.phone-calendar-popup {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: clamp(12px, 3vw, 28px);
+}
+
+.phone-calendar-popup__backdrop {
+  appearance: none;
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(28, 28, 30, 0.28);
+  backdrop-filter: blur(3px);
+  cursor: pointer;
+}
+
+.phone-calendar-popup__panel {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  width: min(760px, calc(100vw - 24px));
+  max-height: min(82vh, 720px);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: clamp(12px, 2vw, 18px);
+  overflow: hidden;
+  border-radius: 8px;
+  color: #1c1c1e;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(210, 205, 198, 0.64);
+  box-shadow: 0 18px 42px rgba(28, 28, 30, 0.24);
+}
+
+.phone-calendar-popup__header {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: start;
+  gap: 10px;
+}
+
+.phone-calendar-popup__header div {
+  min-width: 0;
+}
+
+.phone-calendar-popup__header small,
+.phone-calendar-popup__summary span,
+.phone-calendar-popup__content span,
+.phone-calendar-popup__detail span {
+  display: block;
+  color: #8e8e93;
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.phone-calendar-popup__header h3 {
+  margin: 2px 0 0;
+  color: #1c1c1e;
+  font-size: 1.08rem;
+  line-height: 1.25;
+  font-weight: 850;
+  letter-spacing: 0;
+  word-break: break-word;
+}
+
+.phone-calendar-popup__close {
+  appearance: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(242, 242, 247, 0.95);
+  color: #636366;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 850;
+}
+
+.phone-calendar-popup__details {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.phone-calendar-popup__detail {
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: rgba(242, 242, 247, 0.72);
+}
+
+.phone-calendar-popup__detail strong {
+  display: block;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  color: #1c1c1e;
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+.phone-calendar-popup__summary {
+  flex: 0 1 auto;
+  max-height: min(18vh, 160px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(255, 245, 248, 0.74);
+}
+
+.phone-calendar-popup__summary p,
+.phone-calendar-popup__content p {
+  margin: 3px 0 0;
+  color: #3a3a3c;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.phone-calendar-popup__content {
+  flex: 1 1 320px;
+  min-height: min(42vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(242, 242, 247, 0.58);
 }
 
 .paper-workspace--phone {
@@ -1827,7 +1981,7 @@ body.floating-phone-dragging {
 
 .settings-action {
   width: 100%;
-  padding: 12px;
+  padding: clamp(12px, 2vw, 18px);
   border-radius: 8px;
   text-align: left;
   color: var(--ink-dark);
@@ -2227,7 +2381,7 @@ body.floating-phone-dragging {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 10px;
-  padding: 12px;
+  padding: clamp(12px, 2vw, 18px);
 }
 
 .archive-eyebrow,
@@ -2430,7 +2584,7 @@ body.floating-phone-dragging {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 12px;
+  padding: clamp(12px, 2vw, 18px);
 }
 
 .archive-impression-chip {
@@ -2620,7 +2774,7 @@ body.floating-phone-dragging {
 
 .archive-profile blockquote {
   margin: 0;
-  padding: 12px;
+  padding: clamp(12px, 2vw, 18px);
   color: #835367;
   background: linear-gradient(90deg, rgba(243, 201, 216, 0.42), rgba(255, 248, 250, 0.22));
   border-left: 3px solid #d787a0;
@@ -2993,7 +3147,7 @@ body.floating-phone-dragging {
 
 .archive-profile__body {
   gap: 10px;
-  padding: 12px;
+  padding: clamp(12px, 2vw, 18px);
 }
 
 .archive-profile h3 {
@@ -3437,7 +3591,7 @@ body.floating-phone-dragging {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 12px;
+  padding: clamp(12px, 2vw, 18px);
   background: var(--journal-cream, #f6efe2);
 }
 
@@ -3627,7 +3781,7 @@ body.floating-phone-dragging {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 12px;
+  padding: clamp(12px, 2vw, 18px);
   background: #f3f5fa;
 }
 
@@ -3635,7 +3789,7 @@ body.floating-phone-dragging {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px;
+  padding: clamp(12px, 2vw, 18px);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: 0 1px 8px rgba(36, 50, 72, 0.08);
@@ -3858,3 +4012,5 @@ body.floating-phone-dragging {
     padding: 6px;
   }
 }
+
+

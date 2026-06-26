@@ -1,4 +1,4 @@
-import { extractTaggedReply, getPromptMessageText } from '../message-format';
+﻿import { extractTaggedReply, getPromptMessageText } from '../message-format';
 import type { UiMessage } from '../types';
 import type { FactAnchor, KeyFact, KeyFactCategory, SummaryEntry, SummaryStore } from './types';
 import { KEY_FACT_CATEGORY_LABEL, KEY_FACT_CATEGORY_MAP } from './types';
@@ -105,7 +105,7 @@ const SUMMARY_TEMPORAL_LOCATION_RULES = [
   '- 只有出现明确抵达/进入/已经在某地的叙述，或状态更新字段明确写出地点变化，才允许把地点改成新地点。',
   '- 若正文里的地点提示、标题、UI 状态条、角色台词与状态快照冲突，先按状态快照记录，并在摘要中写“地点冲突/未确认”，不要擅自选一个。',
   '- 没有明确日期推进时，不得把本段事件写成“第二天/翌日/次日/早上/上午”；只能沿用状态快照时间，或写“时间未推进/时间未确认”。',
-  '- 摘要里的“时间：”和 key_facts 的时间字段必须来自明确时间证据或状态快照；证据不足时宁可省略 key_facts 时间，不要补猜。',
+  '- 摘要里的“时间：”必须来自明确时间证据或状态快照；key_facts 只有明确发生时间时才写时间字段，没有明确发生时间就省略，由系统写入“记录时间”锚点。',
   '- 玩家明确纠正时间或地点时，纠正优先级高于上一轮 assistant 的错误地点/时间标签。',
   '',
   '时间地点反例：',
@@ -191,7 +191,8 @@ function renderPinnedFacts(facts: KeyFact[]): string {
   for (const [category, items] of grouped) {
     const label = KEY_FACT_CATEGORY_LABEL[category] ?? category;
     for (const f of items) {
-      lines.push(`- [${label}] ${f.subject}：${f.content}`);
+      const time = f.gameTime ? `（${f.gameTime}）` : '';
+      lines.push(`- [${label}]${time} ${f.subject}：${f.content}`);
     }
   }
   return lines.join('\n');
@@ -226,7 +227,7 @@ export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnch
         '- 若时间或地点不可靠，写“时间：未确认”或“地点：未确认/存在冲突”，并在依据中说明冲突来源。',
         '- 不要写未发生的后续计划；可以写“某人提出/打算/准备...，尚未确认完成”。',
         '',
-        '<key_facts> 行格式：只有时间可靠时才使用 `[类别] 时间 | 主体 | 内容`；时间无法可靠确定时必须使用旧格式 `[类别] 主体 | 内容`，禁止为了填满格式而猜时间。类别限定：承诺、秘密、关系、物品、事件、地点、设定。',
+        '<key_facts> 行格式：明确发生时间可靠时使用 `[类别] 发生时间 | 主体 | 内容`；发生时间不可靠但事实需要保留时必须使用旧格式 `[类别] 主体 | 内容`，系统会自动附加“记录时间”锚点。禁止为了填满格式而猜时间。类别限定：承诺、秘密、关系、物品、事件、地点、设定。',
         '  时间可靠的来源只包括：正文明确日期/时段、状态快照当前时间、或状态更新字段；不能从地点 UI、角色打算、剧情常识推断。',
         '  格式：`[关系] A → B | 标签 | 极性`，表示 A 对 B 形成的印象。极性取 + / - / 0（正面好感 / 负面反感 / 中性观察），省略时按中性处理。一条只写一个标签，多个印象分多行。',
         '  数量限制：每段最多 6 条 [关系] 印象，其中最多 3 条正面、2 条中性、1 条负面；同义标签只保留最准确的一条。恋人/交往/伴侣/后宫/结婚/婚约/结缘这类关系闩锁若正文明确成立，必须保留为单条标签，不要再派生一串相似情绪标签。',
@@ -501,3 +502,5 @@ export function parseImpressionsFromSummary(raw: string): ParsedImpression[] {
   }
   return selectPhoneArchiveImpressions(impressions);
 }
+
+

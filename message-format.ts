@@ -1224,6 +1224,7 @@ export function buildPrompt(
     ? [
         `玩家姓名：${playerProfile.name}`,
         playerProfile.className ? `玩家班级：${playerProfile.className}` : '',
+        playerProfile.backgrounds?.length ? `玩家背景：${playerProfile.backgrounds.join('、')}` : '',
         playerProfile.personality ? `玩家性格：${playerProfile.personality}` : '',
         playerProfile.appearance ? `玩家外貌：${playerProfile.appearance}` : '',
         buildPlayerStatsText(playerProfile),
@@ -1430,6 +1431,9 @@ export function buildPhoneChatPrompt(input: {
     ? [
         `玩家姓名：${cleanPlayerName}`,
         playerProfile.className ? `玩家班级：${sanitizePlaceholders(playerProfile.className, cleanPlayerName)}` : '',
+        playerProfile.backgrounds?.length
+          ? `玩家背景：${playerProfile.backgrounds.map(item => sanitizePlaceholders(item, cleanPlayerName)).join('、')}`
+          : '',
         playerProfile.personality
           ? `玩家性格：${sanitizePlaceholders(playerProfile.personality, cleanPlayerName)}`
           : '',

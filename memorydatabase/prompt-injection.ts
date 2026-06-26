@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   IslandMemoryDB,
   MemoryFactRow,
 } from './types';
@@ -107,6 +107,7 @@ export function buildMemoryPromptInjection(
 
   // ── 1. 摘要层：global > major > minor（可配置窗口大小）──
   buildSummaryBlocks(db, blocks, config);
+  buildRelevantRecallBlock(db, blocks, context, config);
 
   // ── 2. 整合记忆块：facts + tasks + secrets 合并，避免分散 ──
   if (config.includeFacts || config.includeTasks || config.includeSecrets) {
@@ -204,6 +205,172 @@ function buildSummaryBlocks(
 /**
  * 构建整合记忆块：facts + tasks + secrets 合并成一个精简块，避免屎山。
  */
+type RecallCandidate = {
+  key: string;
+  text: string;
+  score: number;
+  sortKey: string;
+};
+
+function buildRelevantRecallBlock(
+  db: IslandMemoryDB,
+  blocks: MemoryBlock[],
+  context: MemoryInjectionContext,
+  config: Required<MemoryInjectionConfig>,
+): void {
+  const needles = buildRecallNeedles(context);
+  if (!needles.length) return;
+
+  const currentTargetIds = new Set(context.currentTargetIds);
+  const candidates = new Map<string, RecallCandidate>();
+  const pushCandidate = (
+    key: string,
+    text: string,
+    score: number,
+    row?: { gameTime?: string; createdAt?: string; updatedAt?: string },
+  ) => {
+    if (score <= 0 || !text.trim()) return;
+    const sortKey = getMemorySortKey(row ?? {});
+    const existing = candidates.get(key);
+    if (!existing || score > existing.score || (score === existing.score && sortKey > existing.sortKey)) {
+      candidates.set(key, { key, text, score, sortKey });
+    }
+  };
+
+  for (const fact of getActiveFacts(db)) {
+    const text = [fact.category, fact.subject, fact.content, fact.gameTime, fact.relatedEntityIds?.join(' ')].join(' ');
+    let score = scoreRecallText(text, needles);
+    if (fact.relatedEntityIds?.some(id => currentTargetIds.has(id))) score += 3;
+    pushCandidate(
+      'fact:' + fact.id,
+      '事实/' + fact.category + ': ' + formatMemoryTime(fact.gameTime) + ' ' + fact.subject + ': ' + fact.content,
+      score,
+      fact,
+    );
+  }
+
+  for (const event of db.events.filter(e => !e.expired)) {
+    const text = [
+      event.title,
+      event.description,
+      event.outcome,
+      event.location,
+      event.relatedMainEventId,
+      event.involvedTargetIds?.join(' '),
+    ].join(' ');
+    let score = scoreRecallText(text, needles);
+    if (context.currentMainEventId && event.relatedMainEventId === context.currentMainEventId) score += 5;
+    if (event.involvedTargetIds?.some(id => currentTargetIds.has(id))) score += 3;
+    if (context.currentLocation && event.location?.includes(context.currentLocation)) score += 2;
+    const place = event.location ? ' @' + event.location : '';
+    const outcome = event.outcome ? ' => ' + event.outcome : '';
+    pushCandidate(
+      'event:' + event.id,
+      '事件: ' + formatMemoryTime(event.gameTime) + place + ' ' + event.title + ': ' + event.description + outcome,
+      score,
+      event,
+    );
+  }
+
+  for (const summary of db.summaries.filter(s => !s.expired)) {
+    const text = [summary.level, summary.text].join(' ');
+    const score = scoreRecallText(text, needles);
+    pushCandidate(
+      'summary:' + summary.id,
+      '摘要/' + summary.level + ' [' + summary.range.join('-') + ']: ' + summary.text.trim(),
+      score,
+      summary,
+    );
+  }
+
+  if (config.includeItems) {
+    for (const item of db.items.filter(i => !i.expired)) {
+      if (config.onlyPromptRelevantItems && item.promptRelevant !== true) continue;
+      const text = [item.name, item.state, item.location, item.ownerId, item.holderId, item.action].join(' ');
+      let score = scoreRecallText(text, needles);
+      if (item.ownerId && currentTargetIds.has(item.ownerId)) score += 2;
+      if (item.holderId && currentTargetIds.has(item.holderId)) score += 2;
+      if (context.currentLocation && item.location?.includes(context.currentLocation)) score += 2;
+      const action = item.action ? item.action + ' ' : '';
+      const count = item.count !== undefined ? ' x' + item.count : '';
+      const state = item.state ? ' - ' + item.state : '';
+      pushCandidate(
+        'item:' + item.id,
+        '物品: ' + formatMemoryTime(item.gameTime) + ' ' + action + item.name + count + state,
+        score,
+        item,
+      );
+    }
+  }
+
+  if (config.includeImpressions) {
+    for (const impression of db.impressions.filter(i => !i.expired)) {
+      const text = [impression.targetId, impression.subject, impression.label, impression.reason].join(' ');
+      let score = scoreRecallText(text, needles);
+      if (currentTargetIds.has(impression.targetId)) score += 3;
+      pushCandidate(
+        'impression:' + impression.id,
+        '印象: ' + formatMemoryTime(impression.gameTime) + ' ' + impression.targetId + ' -> ' + impression.subject + ': ' + impression.label,
+        score,
+        impression,
+      );
+    }
+  }
+
+  const selected = [...candidates.values()]
+    .sort((a, b) => b.score - a.score || b.sortKey.localeCompare(a.sortKey))
+    .slice(0, 10);
+  if (!selected.length) return;
+
+  const lines = ['相关旧记忆:'];
+  selected.forEach(item => lines.push('  - ' + item.text));
+  const content = lines.join('\n');
+  blocks.push({
+    title: '【相关召回】',
+    content,
+    priority: 96,
+    estimatedChars: content.length + 20,
+  });
+}
+
+function buildRecallNeedles(context: MemoryInjectionContext): string[] {
+  const seeds = [
+    context.recentUserInput,
+    context.currentLocation,
+    context.currentMainEventId,
+    ...context.currentTargetIds,
+    ...extractKeywords(context.recentUserInput ?? ''),
+  ];
+  const needles = new Set<string>();
+  for (const seed of seeds) {
+    const value = String(seed ?? '').trim().toLowerCase();
+    if (!value) continue;
+    if (value.length >= 2 && value.length <= 80) needles.add(value);
+    for (const token of splitRecallTokens(value)) {
+      if (token.length >= 2) needles.add(token);
+    }
+  }
+  return [...needles].slice(0, 24);
+}
+
+function splitRecallTokens(value: string): string[] {
+  return [
+    ...(value.match(/[a-z0-9_:-]{2,}/gi) ?? []),
+    ...(value.match(/[\u4E00-\u9FFF]{2,6}/g) ?? []),
+  ].map(token => token.toLowerCase());
+}
+
+function scoreRecallText(text: string, needles: string[]): number {
+  const haystack = text.toLowerCase();
+  if (!haystack) return 0;
+  let score = 0;
+  for (const needle of needles) {
+    if (!needle || !haystack.includes(needle)) continue;
+    score += Math.min(8, Math.max(1, Math.ceil(needle.length / 2)));
+  }
+  return score;
+}
+
 function buildIntegratedMemoryBlock(
   db: IslandMemoryDB,
   blocks: MemoryBlock[],
@@ -398,6 +565,7 @@ function buildImpressionBlocks(
 
 function formatMemoryTime(gameTime: string | undefined): string {
   const value = String(gameTime ?? '').trim();
+  if (value.startsWith('记录时间')) return `[${value}]`;
   return value ? `[发生时间: ${value}]` : '[时间未记录]';
 }
 
@@ -456,3 +624,5 @@ export function extractKeywords(input: string): string[] {
   const words = input.match(/[一-龥]{2,4}/g) || [];
   return [...new Set(words)].slice(0, 10); // 去重，最多 10 个关键词
 }
+
+
