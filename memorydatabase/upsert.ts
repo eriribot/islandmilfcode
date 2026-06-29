@@ -15,6 +15,8 @@ import {
   PHONE_ARCHIVE_IMPRESSION_LOCKED_TAG,
   selectPhoneArchiveImpressions,
 } from '../phone/types';
+import { updateIndexesIncremental } from './indexes';
+import { gcScheduler } from './gc';
 
 /**
  * 应用一个写入批次到 MemoryDB。同步操作，直接修改传入的 db 对象。
@@ -23,10 +25,18 @@ import {
  * 特殊处理：
  * - facts 走 deduplicateFact，duplicate 跳过、supersede 把旧行 expired+supersededBy 后再插入
  * - 其他表保持原始 push（个别表的 upsert 由调用方自行使用 upsertAttribute/upsertEvent/upsertItem）
+ * - 写入后增量更新索引
  */
 export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string[] {
   const now = new Date().toISOString();
   const newIds: string[] = [];
+  const indexChanges: {
+    inserted: { tableName: string; rows: MemoryBaseRow[] }[];
+    expired: { tableName: string; ids: string[] }[];
+  } = {
+    inserted: [],
+    expired: [],
+  };
 
   // 1. 处理插入
   if (batch.inserts) {
@@ -120,6 +130,14 @@ export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string
         };
         table.push(row);
         newIds.push(row.id);
+
+        // 记录新插入的行（用于更新索引）
+        let insertEntry = indexChanges.inserted.find(e => e.tableName === tableName);
+        if (!insertEntry) {
+          insertEntry = { tableName, rows: [] };
+          indexChanges.inserted.push(insertEntry);
+        }
+        insertEntry.rows.push(row);
       }
     }
   }
@@ -134,6 +152,11 @@ export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string
           row.expired = true;
           row.updatedAt = now;
         }
+      }
+
+      // 记录 expired 的行（用于更新索引）
+      if (ids.length > 0) {
+        indexChanges.expired.push({ tableName, ids });
       }
     }
   }
@@ -155,6 +178,12 @@ export function commitBatch(db: IslandMemoryDB, batch: MemoryWriteBatch): string
   if (batch.advanceCursor !== undefined) {
     db.lastProcessedIndex = Math.max(db.lastProcessedIndex, batch.advanceCursor);
   }
+
+  // 5. 增量更新索引
+  updateIndexesIncremental(db, indexChanges);
+
+  // 6. 检查是否需要 GC
+  gcScheduler.onCommit(db);
 
   return newIds;
 }
@@ -313,13 +342,6 @@ export function findSupersededRelations(
 export function findExistingSecret(db: IslandMemoryDB, subject: string): string | null {
   const existing = db.secrets.find(s => !s.expired && s.subject === subject);
   return existing?.id ?? null;
-}
-
-/**
- * 手机消息去重：按 messageId 判断是否已索引。
- */
-export function isPhoneMessageIndexed(db: IslandMemoryDB, messageId: string): boolean {
-  return db.phoneMessages.some(m => m.messageId === messageId);
 }
 
 /**

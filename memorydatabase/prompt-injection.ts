@@ -48,6 +48,18 @@ export type MemoryInjectionContext = {
   currentMainEventId?: string;
   /** 用户最近输入（用于关键词匹配） */
   recentUserInput?: string;
+  recallPlan?: {
+    mustRecall?: Array<{ type?: string; queryHint: string; reason?: string; priority?: number }>;
+    niceToRecall?: Array<{ type?: string; queryHint: string; reason?: string }>;
+    summaryRecall?: Array<{
+      sourceLevel?: 'global' | 'major' | 'minor';
+      queryHint: string;
+      content?: string;
+      reason?: string;
+      useInNextPage?: string;
+    }>;
+  };
+  mustSuppress?: Array<{ queryHint: string; reason?: string }>;
   /** 配置参数 */
   config?: MemoryInjectionConfig;
 };
@@ -105,16 +117,19 @@ export function buildMemoryPromptInjection(
   const blocks: MemoryBlock[] = [];
   buildTemporalAnchorBlock(db, blocks, context);
 
+  if (context.recallPlan) {
+    buildRelevantRecallBlock(blocks, context);
+    return assembleBlocks(blocks, config.tokenBudget);
+  }
+
   // ── 1. 摘要层：global > major > minor（可配置窗口大小）──
   buildSummaryBlocks(db, blocks, config);
-  buildRelevantRecallBlock(db, blocks, context, config);
+  buildRelevantRecallBlock(blocks, context);
 
   // ── 2. 整合记忆块：facts + tasks + secrets 合并，避免分散 ──
   if (config.includeFacts || config.includeTasks || config.includeSecrets) {
     buildIntegratedMemoryBlock(db, blocks, context, config);
   }
-
-  buildTimelineBlock(db, blocks, context, config);
 
   // ── 3. 角色印象（仅当前在场角色，精简）──
   if (config.includeImpressions) {
@@ -202,173 +217,32 @@ function buildSummaryBlocks(
   }
 }
 
-/**
- * 构建整合记忆块：facts + tasks + secrets 合并成一个精简块，避免屎山。
- */
-type RecallCandidate = {
-  key: string;
-  text: string;
-  score: number;
-  sortKey: string;
-};
-
 function buildRelevantRecallBlock(
-  db: IslandMemoryDB,
   blocks: MemoryBlock[],
   context: MemoryInjectionContext,
-  config: Required<MemoryInjectionConfig>,
 ): void {
-  const needles = buildRecallNeedles(context);
-  if (!needles.length) return;
+  const summaryRecall = (context.recallPlan?.summaryRecall ?? []).slice(0, 5);
+  const mustRecall = (context.recallPlan?.mustRecall ?? []).slice(0, 5);
+  if (!summaryRecall.length && !mustRecall.length) return;
 
-  const currentTargetIds = new Set(context.currentTargetIds);
-  const candidates = new Map<string, RecallCandidate>();
-  const pushCandidate = (
-    key: string,
-    text: string,
-    score: number,
-    row?: { gameTime?: string; createdAt?: string; updatedAt?: string },
-  ) => {
-    if (score <= 0 || !text.trim()) return;
-    const sortKey = getMemorySortKey(row ?? {});
-    const existing = candidates.get(key);
-    if (!existing || score > existing.score || (score === existing.score && sortKey > existing.sortKey)) {
-      candidates.set(key, { key, text, score, sortKey });
-    }
-  };
-
-  for (const fact of getActiveFacts(db)) {
-    const text = [fact.category, fact.subject, fact.content, fact.gameTime, fact.relatedEntityIds?.join(' ')].join(' ');
-    let score = scoreRecallText(text, needles);
-    if (fact.relatedEntityIds?.some(id => currentTargetIds.has(id))) score += 3;
-    pushCandidate(
-      'fact:' + fact.id,
-      '事实/' + fact.category + ': ' + formatMemoryTime(fact.gameTime) + ' ' + fact.subject + ': ' + fact.content,
-      score,
-      fact,
+  const lines = ['摘要召回（夏野雾姬已从全局/大总结/小总结裁决；正文只按这些写，不要自行补旧内容）:'];
+  for (const item of summaryRecall) {
+    lines.push(
+      `  - 摘要注入[${item.sourceLevel || 'summary'}]: ${item.content || item.queryHint}${item.reason ? `（${item.reason}）` : ''}${
+        item.useInNextPage ? `；正文用法：${item.useInNextPage}` : ''
+      }`,
     );
   }
-
-  for (const event of db.events.filter(e => !e.expired)) {
-    const text = [
-      event.title,
-      event.description,
-      event.outcome,
-      event.location,
-      event.relatedMainEventId,
-      event.involvedTargetIds?.join(' '),
-    ].join(' ');
-    let score = scoreRecallText(text, needles);
-    if (context.currentMainEventId && event.relatedMainEventId === context.currentMainEventId) score += 5;
-    if (event.involvedTargetIds?.some(id => currentTargetIds.has(id))) score += 3;
-    if (context.currentLocation && event.location?.includes(context.currentLocation)) score += 2;
-    const place = event.location ? ' @' + event.location : '';
-    const outcome = event.outcome ? ' => ' + event.outcome : '';
-    pushCandidate(
-      'event:' + event.id,
-      '事件: ' + formatMemoryTime(event.gameTime) + place + ' ' + event.title + ': ' + event.description + outcome,
-      score,
-      event,
-    );
+  for (const item of mustRecall) {
+    lines.push(`  - 必须保护: ${item.queryHint}${item.reason ? `（${item.reason}）` : ''}`);
   }
-
-  for (const summary of db.summaries.filter(s => !s.expired)) {
-    const text = [summary.level, summary.text].join(' ');
-    const score = scoreRecallText(text, needles);
-    pushCandidate(
-      'summary:' + summary.id,
-      '摘要/' + summary.level + ' [' + summary.range.join('-') + ']: ' + summary.text.trim(),
-      score,
-      summary,
-    );
-  }
-
-  if (config.includeItems) {
-    for (const item of db.items.filter(i => !i.expired)) {
-      if (config.onlyPromptRelevantItems && item.promptRelevant !== true) continue;
-      const text = [item.name, item.state, item.location, item.ownerId, item.holderId, item.action].join(' ');
-      let score = scoreRecallText(text, needles);
-      if (item.ownerId && currentTargetIds.has(item.ownerId)) score += 2;
-      if (item.holderId && currentTargetIds.has(item.holderId)) score += 2;
-      if (context.currentLocation && item.location?.includes(context.currentLocation)) score += 2;
-      const action = item.action ? item.action + ' ' : '';
-      const count = item.count !== undefined ? ' x' + item.count : '';
-      const state = item.state ? ' - ' + item.state : '';
-      pushCandidate(
-        'item:' + item.id,
-        '物品: ' + formatMemoryTime(item.gameTime) + ' ' + action + item.name + count + state,
-        score,
-        item,
-      );
-    }
-  }
-
-  if (config.includeImpressions) {
-    for (const impression of db.impressions.filter(i => !i.expired)) {
-      const text = [impression.targetId, impression.subject, impression.label, impression.reason].join(' ');
-      let score = scoreRecallText(text, needles);
-      if (currentTargetIds.has(impression.targetId)) score += 3;
-      pushCandidate(
-        'impression:' + impression.id,
-        '印象: ' + formatMemoryTime(impression.gameTime) + ' ' + impression.targetId + ' -> ' + impression.subject + ': ' + impression.label,
-        score,
-        impression,
-      );
-    }
-  }
-
-  const selected = [...candidates.values()]
-    .sort((a, b) => b.score - a.score || b.sortKey.localeCompare(a.sortKey))
-    .slice(0, 10);
-  if (!selected.length) return;
-
-  const lines = ['相关旧记忆:'];
-  selected.forEach(item => lines.push('  - ' + item.text));
   const content = lines.join('\n');
   blocks.push({
-    title: '【相关召回】',
+    title: '【摘要召回】',
     content,
     priority: 96,
     estimatedChars: content.length + 20,
   });
-}
-
-function buildRecallNeedles(context: MemoryInjectionContext): string[] {
-  const seeds = [
-    context.recentUserInput,
-    context.currentLocation,
-    context.currentMainEventId,
-    ...context.currentTargetIds,
-    ...extractKeywords(context.recentUserInput ?? ''),
-  ];
-  const needles = new Set<string>();
-  for (const seed of seeds) {
-    const value = String(seed ?? '').trim().toLowerCase();
-    if (!value) continue;
-    if (value.length >= 2 && value.length <= 80) needles.add(value);
-    for (const token of splitRecallTokens(value)) {
-      if (token.length >= 2) needles.add(token);
-    }
-  }
-  return [...needles].slice(0, 24);
-}
-
-function splitRecallTokens(value: string): string[] {
-  return [
-    ...(value.match(/[a-z0-9_:-]{2,}/gi) ?? []),
-    ...(value.match(/[\u4E00-\u9FFF]{2,6}/g) ?? []),
-  ].map(token => token.toLowerCase());
-}
-
-function scoreRecallText(text: string, needles: string[]): number {
-  const haystack = text.toLowerCase();
-  if (!haystack) return 0;
-  let score = 0;
-  for (const needle of needles) {
-    if (!needle || !haystack.includes(needle)) continue;
-    score += Math.min(8, Math.max(1, Math.ceil(needle.length / 2)));
-  }
-  return score;
 }
 
 function buildIntegratedMemoryBlock(
@@ -457,76 +331,6 @@ function buildIntegratedMemoryBlock(
       estimatedChars: content.length + 20,
     });
   }
-}
-
-function buildTimelineBlock(
-  db: IslandMemoryDB,
-  blocks: MemoryBlock[],
-  context: MemoryInjectionContext,
-  config: Required<MemoryInjectionConfig>,
-): void {
-  const currentTargetIds = new Set(context.currentTargetIds);
-  const currentEventId = context.currentMainEventId;
-
-  const events = db.events
-    .filter(e => !e.expired)
-    .filter(e => {
-      if (currentEventId && e.relatedMainEventId === currentEventId) return true;
-      if (e.involvedTargetIds?.some(id => currentTargetIds.has(id))) return true;
-      return Boolean(e.gameTime || e.relatedMainEventId);
-    })
-    .sort(compareRowsByMemoryTimeDesc)
-    .slice(0, 8);
-
-  const eventFacts = getActiveFacts(db, { category: 'event' })
-    .sort(compareRowsByMemoryTimeDesc)
-    .slice(0, 6);
-
-  const items = config.includeItems
-    ? db.items
-        .filter(i => !i.expired)
-        .filter(i => !config.onlyPromptRelevantItems || i.promptRelevant === true)
-        .sort(compareRowsByMemoryTimeDesc)
-        .slice(0, 6)
-    : [];
-
-  const lines: string[] = [];
-  if (events.length) {
-    lines.push('事件时间线:');
-    for (const event of events) {
-      const place = event.location ? ` @${event.location}` : '';
-      const outcome = event.outcome ? ` => ${event.outcome}` : '';
-      lines.push(`  - ${formatMemoryTime(event.gameTime)}${place} ${event.title}: ${event.description}${outcome}`);
-    }
-  }
-
-  if (eventFacts.length) {
-    if (lines.length) lines.push('');
-    lines.push('事件事实:');
-    for (const fact of eventFacts) {
-      lines.push(`  - ${formatMemoryTime(fact.gameTime)} ${fact.subject}: ${fact.content}`);
-    }
-  }
-
-  if (items.length) {
-    if (lines.length) lines.push('');
-    lines.push('物品变动:');
-    for (const item of items) {
-      const action = item.action ? `${item.action} ` : '';
-      const count = item.count !== undefined ? ` x${item.count}` : '';
-      const state = item.state ? ` - ${item.state}` : '';
-      lines.push(`  - ${formatMemoryTime(item.gameTime)} ${action}${item.name}${count}${state}`);
-    }
-  }
-
-  if (!lines.length) return;
-  const content = lines.join('\n');
-  blocks.push({
-    title: '【近期时间线】',
-    content,
-    priority: 88,
-    estimatedChars: content.length + 20,
-  });
 }
 
 /**

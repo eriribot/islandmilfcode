@@ -1851,6 +1851,25 @@ function buildEstablishedRelationshipFactLines(ctx: ActionContext): string[] {
   return lines;
 }
 
+function buildSceneSummaryContextLines(ctx: ActionContext): string[] {
+  const store = ctx.summaryStore;
+  const lines: string[] = [];
+  if (store.global?.trim()) {
+    lines.push('【全局摘要】', store.global.trim());
+  }
+  const majors = store.major.slice(-5);
+  if (majors.length) {
+    lines.push('【大总结】');
+    majors.forEach(entry => lines.push(`- #${entry.range[0]}-${entry.range[1]}：${entry.text.trim()}`));
+  }
+  const minors = store.minor.slice(-8);
+  if (minors.length) {
+    lines.push('【小总结】');
+    minors.forEach(entry => lines.push(`- #${entry.range[0]}-${entry.range[1]}：${entry.text.trim()}`));
+  }
+  return lines;
+}
+
 function buildScenePresencePrompts(
   ctx: ActionContext,
   promptHistory: UiMessage[],
@@ -1885,6 +1904,7 @@ function buildScenePresencePrompts(
   const currentWorldTime = ctx.state.statusData.world.currentTime;
   const worldStateFacts = buildSaenaiWorldStateFactLines(currentWorldTime);
   const establishedRelationshipFacts = buildEstablishedRelationshipFactLines(ctx);
+  const sceneSummaryContext = buildSceneSummaryContextLines(ctx);
 
   const systemPrompt = [
     '你是夏野雾姬，出自《狗与剪刀的正确用法》：冷峻、毒舌、才华锋利的天才小说家，也是会把粗劣桥段一眼剖开的文学少女。',
@@ -1903,6 +1923,14 @@ function buildScenePresencePrompts(
     '世界状态事实（用于 absent/focus/uncertain 判定，可被蝴蝶效应或已发生正文事实覆盖）：',
     ...worldStateFacts,
     '- 如果最近正文或玩家输入已经明确造成蝴蝶效应/新因果覆盖上述缺省状态，请在 plotImpact.causalTrace 与 evidence 中写明覆盖原因，再按新因果判定。',
+    ...(sceneSummaryContext.length
+      ? [
+          '',
+          '摘要上下文（正文前规划必须阅读；全局=长期背景，大总结=阶段走向，小总结=最近窗口；用于抽取本轮正文应该注入的记忆点）：',
+          ...sceneSummaryContext,
+          '- 摘要不是本轮新事实的替代品；最近可见正文和玩家当前输入优先决定当前镜头，但摘要里的承诺、秘密、关系变化、未解决问题必须参与 recallPlan 判断。',
+        ]
+      : []),
     ...(establishedRelationshipFacts.length
       ? [
           '',
@@ -1911,7 +1939,6 @@ function buildScenePresencePrompts(
           '- 上述内容是当前新大纲已经发生的结果，不是待审核猜测；不得按原作印象回滚。',
         ]
       : []),
-    '',
     '页边判断（在场）：',
     '- present：她确实站在这一页的镜头里，能立刻说话、行动、沉默、吃醋或产生即时反应。',
     '- focus：玩家这一笔正追上、寻找、靠近、转向或当面处理她；下一页可以自然转向她。',
@@ -1942,11 +1969,14 @@ function buildScenePresencePrompts(
     '- appearanceGuards 只给 present/focus 中本轮可能被描写外貌的角色；mustFollow 写已知锚点，mustNotInvent 写严禁脑补项。',
     '',
     '页边判断（召回计划 recallPlan）：',
-    '- 召回不是找“最像的关键词”，而是找“漏掉会让下一页写错”的记忆。',
+    '- 召回不是扫描事件库，而是从全局摘要、大总结、小总结中抽取“漏掉会让下一页写错”的记忆点。',
+    '- 先通读摘要上下文、最近可见正文、玩家当前输入，再决定 summaryRecall / mustRecall / niceToRecall / mustSuppress。',
+    '- 不要引用 memoryDB.events、主线状态变更、变量计数、事件名碎片；没有出现在摘要上下文里的内容，不要写进 recallPlan。',
+    '- summaryRecall 只写从摘要中确认本轮正文必须注入的内容；每条都要说明来自哪一层摘要、正文下一页怎样使用。',
     '- 先判断当前写作需要：镜头连续性、人物骨头、关系变化、剧情压力、主题母本、User 新变量影响、外貌硬设定。',
     '- User 的行动、记忆、关系和选择都视为新大纲变量：可能新增细节、解决压力、制造压力、替代职责、改写触发点、触碰创伤、改变关系、承载主题、埋下路线或打断路线。',
     '- mustRecall 只写必须召回的事实/事件/关系/任务/秘密/外貌/路线/世界书/创伤/主题；每条必须说明漏掉后主 API 会怎样写错。',
-    '- niceToRecall 只写有帮助但不强制的线索；mustSuppress 写本轮会污染新大纲的旧稿惯性、过期关系、强行回轨桥段或不在场角色即时心理。',
+    '- niceToRecall 只写有帮助但不强制的摘要线索；mustSuppress 写本轮会污染新大纲的旧稿惯性、过期关系、强行回轨桥段或不在场角色即时心理。',
     '- 召回计划要保护角色骨头、User 变量和主题母本；不要为了原作桥段牺牲已经发生的新因果。',
     '',
     '页边判断（联网搜索计划 webLookupPlan）：',
@@ -1988,7 +2018,7 @@ function buildScenePresencePrompts(
         `玩家当前输入：${cleanUserInput || '（无）'}`,
         '',
         '请输出 JSON，格式如下（无时间推进时省略 timeProposal 或置 null）：',
-        '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"},"timeProposal":{"time":"YYYY-MM-DD HH:mm","confidence":"high|low","source":"explicit_player_transition|narrative_transition|none","reason":"一句话依据"},"plotImpact":{"shiftLevel":"none|minor_shift|branch_pressure|major_divergence|route_override","currentEventShould":"continue|continue_with_adjustment|pause|delay|skip|branch|override","causalTrace":["玩家输入造成的直接变化","该变化会影响的角色即时反应","下一页必须承认的剧情偏转"],"butterflyEffects":{"rippleLevel":"none|faint|clear|major","shortTermEffects":["本轮或下一轮必须体现的具体涟漪"],"midTermEffects":["当前事件结束前可能出现的后续影响"],"routeDamage":"none|light|medium|heavy"},"mainApiGuidance":"一句话页边批注"},"appearanceGuards":[{"id":"角色id","mustFollow":["已知外貌锚点或 unknown"],"mustNotInvent":["不得脑补项"],"sourcePolicy":"only_worldbook_card_or_recent_text"}],"recallPlan":{"currentWritingNeed":["镜头连续性|人物骨头|关系变化|剧情压力|主题母本|新变量影响|外貌硬设定|其他"],"userVariableImpact":[{"type":"additive|pressure_solver|pressure_creator|role_replacer|trigger_rewriter|trauma_contact|relationship_mutator|theme_carrier|route_seed|route_breaker","target":"被影响的角色、事件、压力、主题或关系","evidence":"一句话证据","importance":"low|medium|high"}],"mustRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"本地召回关键词","reason":"为什么漏掉它会让主 API 写错","priority":1}],"niceToRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"可选本地召回线索","reason":"为什么它有帮助但不是必须"}],"mustSuppress":[{"queryHint":"本轮不该召回或不该强化的旧稿惯性、过期记忆、原作桥段","reason":"它会怎样污染当前新大纲"}],"mainApiGuidance":"一句话说明下一页应该顺着哪条新因果写","kirihimeVerdict":"夏野雾姬式短评：这轮召回真正要保护什么"},"webLookupPlan":[{"intent":"fact_check|appearance|canon_timeline|detail","query":"核心实体在前 + 待核验属性的短搜索词；无需联网时输出空数组","reason":"要校准的具体外部事实与本地资料不足原因"}]}',
+        '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"},"timeProposal":{"time":"YYYY-MM-DD HH:mm","confidence":"high|low","source":"explicit_player_transition|narrative_transition|none","reason":"一句话依据"},"plotImpact":{"shiftLevel":"none|minor_shift|branch_pressure|major_divergence|route_override","currentEventShould":"continue|continue_with_adjustment|pause|delay|skip|branch|override","causalTrace":["玩家输入造成的直接变化","该变化会影响的角色即时反应","下一页必须承认的剧情偏转"],"butterflyEffects":{"rippleLevel":"none|faint|clear|major","shortTermEffects":["本轮或下一轮必须体现的具体涟漪"],"midTermEffects":["当前事件结束前可能出现的后续影响"],"routeDamage":"none|light|medium|heavy"},"mainApiGuidance":"一句话页边批注"},"appearanceGuards":[{"id":"角色id","mustFollow":["已知外貌锚点或 unknown"],"mustNotInvent":["不得脑补项"],"sourcePolicy":"only_worldbook_card_or_recent_text"}],"recallPlan":{"currentWritingNeed":["镜头连续性|人物骨头|关系变化|剧情压力|主题母本|新变量影响|外貌硬设定|其他"],"userVariableImpact":[{"type":"additive|pressure_solver|pressure_creator|role_replacer|trigger_rewriter|trauma_contact|relationship_mutator|theme_carrier|route_seed|route_breaker","target":"被影响的角色、事件、压力、主题或关系","evidence":"一句话证据","importance":"low|medium|high"}],"summaryRecall":[{"sourceLevel":"global|major|minor","queryHint":"摘要召回关键词","content":"从摘要中抽取的应注入正文的记忆点","reason":"为什么本轮必须注入","useInNextPage":"正文下一页怎样使用它"}],"mustRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"摘要召回关键词","reason":"为什么漏掉它会让主 API 写错","priority":1}],"niceToRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"可选摘要线索","reason":"为什么它有帮助但不是必须"}],"mustSuppress":[{"queryHint":"本轮不该召回或不该强化的旧稿惯性、过期记忆、原作桥段","reason":"它会怎样污染当前新大纲"}],"mainApiGuidance":"一句话说明下一页应该顺着哪条新因果写","kirihimeVerdict":"夏野雾姬式短评：这轮召回真正要保护什么"},"webLookupPlan":[{"intent":"fact_check|appearance|canon_timeline|detail","query":"核心实体在前 + 待核验属性的短搜索词；无需联网时输出空数组","reason":"要校准的具体外部事实与本地资料不足原因"}]}',
       ].join('\n'),
     },
   ];
@@ -2132,7 +2162,47 @@ function parseRecallPlan(raw: unknown): ScenePresence['recallPlan'] {
       .slice(0, limit);
   const mustRecall = parseItems(obj.mustRecall, 5);
   const niceToRecall = parseItems(obj.niceToRecall, 3).map(({ type, queryHint, reason }) => ({ type, queryHint, reason }));
-  return mustRecall.length || niceToRecall.length ? { mustRecall, niceToRecall } : undefined;
+  const summaryRecall = (Array.isArray(obj.summaryRecall) ? obj.summaryRecall : [])
+    .map(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const row = item as Record<string, unknown>;
+      const queryHint = String(row.queryHint ?? '').trim();
+      if (!queryHint) return null;
+      const sourceLevel = pickEnum(row.sourceLevel, ['global', 'major', 'minor'] as const, 'minor');
+      return {
+        sourceLevel,
+        queryHint,
+        content: String(row.content ?? '').trim(),
+        reason: String(row.reason ?? '').trim(),
+        useInNextPage: String(row.useInNextPage ?? '').trim(),
+      };
+    })
+    .filter(
+      (item): item is {
+        sourceLevel: 'global' | 'major' | 'minor';
+        queryHint: string;
+        content: string;
+        reason: string;
+        useInNextPage: string;
+      } => Boolean(item),
+    )
+    .slice(0, 3);
+  const mustSuppress = (Array.isArray(obj.mustSuppress) ? obj.mustSuppress : [])
+    .map(item => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const row = item as Record<string, unknown>;
+      const queryHint = String(row.queryHint ?? '').trim();
+      if (!queryHint) return null;
+      return {
+        queryHint,
+        reason: String(row.reason ?? '').trim(),
+      };
+    })
+    .filter((item): item is { queryHint: string; reason: string } => Boolean(item))
+    .slice(0, 4);
+  return raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? { mustRecall, niceToRecall, mustSuppress, summaryRecall }
+    : undefined;
 }
 
 function parseWebLookupPlan(raw: unknown): ScenePresence['webLookupPlan'] {

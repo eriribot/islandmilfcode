@@ -1,6 +1,7 @@
 import type { SummaryStore, KeyFact, SummaryEntry } from '../summary/types';
 import type { IslandMemoryDB, MemoryFactCategory } from './types';
 import { createDefaultMemoryDB } from './defaults';
+import { rebuildIndexes } from './indexes';
 
 /**
  * 从 IslandMemoryDB 水合摘要数据回 SummaryStore。
@@ -175,6 +176,9 @@ export function migrateSummaryStoreToMemoryDB(
   // ── 去重：迁移过程中可能从 minor.keyFacts 和顶层 keyFacts 重复导入 ──
 
   deduplicateMigratedFacts(db);
+
+  // ── 迁移完成后重建索引 ──
+  rebuildIndexes(db);
 
   return db;
 }

@@ -322,6 +322,14 @@ export type ScenePresence = {
   recallPlan?: {
     mustRecall: Array<{ type: string; queryHint: string; reason: string; priority?: number }>;
     niceToRecall?: Array<{ type: string; queryHint: string; reason: string }>;
+    mustSuppress?: Array<{ queryHint: string; reason: string }>;
+    summaryRecall?: Array<{
+      sourceLevel: 'global' | 'major' | 'minor';
+      queryHint: string;
+      content: string;
+      reason: string;
+      useInNextPage: string;
+    }>;
   };
   webLookupPlan?: Array<{
     intent: 'fact_check' | 'appearance' | 'canon_timeline' | 'detail';

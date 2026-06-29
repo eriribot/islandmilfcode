@@ -1,6 +1,7 @@
 import type { PhoneChatMessage } from '../types';
-import { commitBatch, isPhoneMessageIndexed } from './upsert';
+import { commitBatch } from './upsert';
 import type { CommitSource, IslandMemoryDB } from './types';
+import { isPhoneMessageIndexed as isPhoneMessageIndexedFromIndex } from './indexes';
 
 class MutationQueue {
   private chain: Promise<void> = Promise.resolve();
@@ -26,7 +27,8 @@ export function indexPhoneMessage(
 ): void {
   if (!db) return;
   queue.enqueue(() => {
-    if (isPhoneMessageIndexed(db, message.id)) return;
+    // 使用索引优化去重检查（O(1) vs O(n)）
+    if (isPhoneMessageIndexedFromIndex(db, message.id)) return;
     commitBatch(db, {
       source,
       inserts: {

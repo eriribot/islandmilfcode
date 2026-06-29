@@ -1248,6 +1248,8 @@ export function buildPrompt(
         currentTargetIds: options.scenePresence?.presentIds || statusData.targets.map(t => t.id),
         currentMainEventId: statusData.world.currentMainEventId,
         recentUserInput: cleanUserInput,
+        recallPlan: options.scenePresence?.recallPlan,
+        mustSuppress: options.scenePresence?.recallPlan?.mustSuppress,
         config: (() => {
           try {
             // 从 localStorage 读取用户配置

@@ -9,6 +9,7 @@ import type {
   MemoryTaskRow,
   MemoryWorldStateRow,
 } from './types';
+import { getAttributeFromIndex, getItemFromIndex } from './indexes';
 
 /**
  * 统一查询 API。
@@ -18,6 +19,7 @@ import type {
  * 设计原则：
  * - 默认只返回 !expired 的活跃行
  * - 返回的是引用，调用方不要原地改写（要写就走 upsert）
+ * - 优先使用索引查询（O(1)），降级到线性扫描（O(n)）
  */
 
 // ── attributes ──
@@ -53,29 +55,25 @@ export function getAttributeTargetIds(db: IslandMemoryDB): string[] {
   return [...ids];
 }
 
-/** 读取单个数值属性，缺省为 0。 */
+/** 读取单个数值属性，缺省为 0。使用索引加速。 */
 export function getNumericAttribute(
   db: IslandMemoryDB,
   targetId: string,
   key: string,
 ): number {
-  const row = db.attributes.find(
-    a => !a.expired && a.targetId === targetId && a.key === key,
-  );
+  const row = getAttributeFromIndex(db, targetId, key);
   if (!row) return 0;
   const n = Number(row.value);
   return Number.isFinite(n) ? n : 0;
 }
 
-/** 读取单个字符串属性，缺省为 undefined。 */
+/** 读取单个字符串属性，缺省为 undefined。使用索引加速。 */
 export function getStringAttribute(
   db: IslandMemoryDB,
   targetId: string,
   key: string,
 ): string | undefined {
-  const row = db.attributes.find(
-    a => !a.expired && a.targetId === targetId && a.key === key,
-  );
+  const row = getAttributeFromIndex(db, targetId, key);
   return row?.value;
 }
 
@@ -109,16 +107,25 @@ export function getImpressionsForTarget(db: IslandMemoryDB, targetId: string): M
 
 /** 取 player 当前持有的物品（count > 0）。 */
 export function getPlayerInventory(db: IslandMemoryDB): MemoryItemRow[] {
+  // 物品查询暂时保持线性扫描（需要过滤 count > 0）
   return db.items.filter(
     i => !i.expired && (i.ownerId ?? 'player') === 'player' && (i.count ?? 0) > 0,
   );
 }
 
-/** 按持有者取物品。 */
+/** 按持有者取物品。使用索引优化单个物品查询。 */
 export function getInventoryFor(db: IslandMemoryDB, ownerId: string): MemoryItemRow[] {
+  // 返回该持有者的所有物品
   return db.items.filter(
     i => !i.expired && (i.ownerId ?? 'player') === ownerId && (i.count ?? 0) > 0,
   );
+}
+
+/**
+ * 查询单个物品（新增）。使用索引加速。
+ */
+export function getItemByName(db: IslandMemoryDB, name: string, ownerId: string = 'player'): MemoryItemRow | undefined {
+  return getItemFromIndex(db, name, ownerId);
 }
 
 // ── facts ──

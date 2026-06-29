@@ -328,6 +328,43 @@ export type IslandMemoryDB = {
 
   /** 扩展表注册位：未来新增表放这里，旧代码忽略，新代码 type-narrow 读取 */
   extensions?: Record<string, MemoryBaseRow[]>;
+
+  /**
+   * 内存索引：加速查询，不参与序列化。
+   * 每次从存档加载或批量写入后需重建。
+   */
+  _indexes?: MemoryIndexes;
+};
+
+/**
+ * 内存索引结构（不序列化，加载后重建）
+ * 将 O(n) 查询降低到 O(1)
+ */
+export type MemoryIndexes = {
+  /** attributes 表：`${targetId}|${key}` -> 最新活跃行 */
+  attributesByTargetKey: Map<string, MemoryAttributeRow>;
+
+  /** facts 表：`${category}|${subject}` -> 活跃行列表 */
+  factsByCategorySubject: Map<string, MemoryFactRow[]>;
+
+  /** impressions 表：`${targetId}|${normalizedSubject}|${semanticKey}` -> 活跃行列表 */
+  impressionsByIdentity: Map<string, MemoryImpressionRow[]>;
+
+  /** items 表：`${name}|${ownerId}` -> 活跃行 */
+  itemsByNameOwner: Map<string, MemoryItemRow>;
+
+  /** phoneMessages 表：messageId 去重 */
+  phoneMessageIds: Set<string>;
+
+  /** 所有表：按 targetId 分组的行 ID（用于快速过滤） */
+  rowIdsByTarget: Map<string, Set<string>>;
+
+  /** 统计：活跃行数 / expired 行数 */
+  stats: {
+    activeRows: number;
+    expiredRows: number;
+    lastGCTime: string;
+  };
 };
 
 // ── 写入批次（commit 点使用） ──
