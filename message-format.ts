@@ -147,13 +147,24 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// JS 的 \b 只认识 ASCII 单词边界，遇到 <正文> 这类中文标签时会匹配失败。
+// XML/HTML 风格标签名结束处应当是空白、> 或 /，用显式 lookahead 兼容中英文标签。
+function tagNameEndBoundary() {
+  return '(?=[\\s>/])';
+}
+
+function tagPatternSource(tagName: string, { closing = 'optional' }: { closing?: 'optional' | 'open' | 'close' } = {}) {
+  const slash = closing === 'optional' ? '\\/?' : closing === 'close' ? '\\/' : '';
+  return `<${slash}${escapeRegExp(tagName)}${tagNameEndBoundary()}[^>]*>`;
+}
+
 function hasClosingTagAfter(text: string, tagName: string, index: number) {
-  return new RegExp(`<\\/${escapeRegExp(tagName)}\\b[^>]*>`, 'i').test(text.slice(index));
+  return new RegExp(tagPatternSource(tagName, { closing: 'close' }), 'i').test(text.slice(index));
 }
 
 function findNextSectionBoundary(text: string) {
   const sectionNames = [PRIMARY_VISIBLE_TAG, ...FALLBACK_VISIBLE_TAGS].map(escapeRegExp).join('|');
-  const sectionTag = new RegExp(`<\\/?(${sectionNames})\\b[^>]*>`, 'gi');
+  const sectionTag = new RegExp(`<\\/?(${sectionNames})${tagNameEndBoundary()}[^>]*>`, 'gi');
   let match: RegExpExecArray | null;
 
   while ((match = sectionTag.exec(text))) {
@@ -174,7 +185,7 @@ function findNextSectionBoundary(text: string) {
 }
 
 function findClosedTaggedBody(raw: string, tagName: string) {
-  const tag = new RegExp(`<\\/?${escapeRegExp(tagName)}\\b[^>]*>`, 'gi');
+  const tag = new RegExp(tagPatternSource(tagName), 'gi');
   let match: RegExpExecArray | null;
 
   while ((match = tag.exec(raw))) {
@@ -196,7 +207,7 @@ function findClosedTaggedBody(raw: string, tagName: string) {
 
 function findAllClosedTaggedBodies(raw: string, tagName: string) {
   const bodies: Array<{ body: string; start: number; end: number }> = [];
-  const tag = new RegExp(`<\\/?${escapeRegExp(tagName)}\\b[^>]*>`, 'gi');
+  const tag = new RegExp(tagPatternSource(tagName), 'gi');
   let match: RegExpExecArray | null;
 
   while ((match = tag.exec(raw))) {
@@ -228,14 +239,14 @@ export function extractTaggedReply(raw: string, tagName: string, streaming: bool
   }
 
   if (streaming) {
-    const openedTag = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*)$`, 'i');
+    const openedTag = new RegExp(`${tagPatternSource(tagName, { closing: 'open' })}([\\s\\S]*)$`, 'i');
     const openedMatch = raw.match(openedTag);
     if (openedMatch) {
       return dedupeAdjacentReply(stripMetaSubtags((openedMatch[1] ?? '').replace(/<[^>]*$/, '')));
     }
   }
 
-  const openTag = new RegExp(`<${tagName}\\b[^>]*>`, 'i');
+  const openTag = new RegExp(tagPatternSource(tagName, { closing: 'open' }), 'i');
   const openMatch = raw.match(openTag);
   if (openMatch?.index != null) {
     const afterOpen = raw.slice(openMatch.index + openMatch[0].length);
@@ -395,11 +406,11 @@ export function extractContextReplyWithImageGenerationTags(
     let result = '';
     let cursor = 0;
     for (const item of closedBodies) {
-      result += raw.slice(cursor, item.start).replace(new RegExp(`<\\/?${PRIMARY_VISIBLE_TAG}\\b[^>]*>`, 'gi'), '');
+      result += raw.slice(cursor, item.start).replace(new RegExp(tagPatternSource(PRIMARY_VISIBLE_TAG), 'gi'), '');
       result += item.body;
       cursor = item.end;
     }
-    result += raw.slice(cursor).replace(new RegExp(`<\\/?${PRIMARY_VISIBLE_TAG}\\b[^>]*>`, 'gi'), '');
+    result += raw.slice(cursor).replace(new RegExp(tagPatternSource(PRIMARY_VISIBLE_TAG), 'gi'), '');
     return dedupeAdjacentReply(stripMetaSubtags(result));
   }
   return extractContextReplyFromPreparedRaw(raw, { streaming });
