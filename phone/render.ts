@@ -90,6 +90,14 @@ function getPhoneCharacterTheme(characterId: PhoneCharacterId) {
       bgmUrl: '',
     };
   }
+  if (characterId === 'shoko') {
+    return {
+      label: '西宫硝子',
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/shoko_phone.jpg',
+      wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_sayuri.png',
+      bgmUrl: '',
+    };
+  }
   return PHONE_CHARACTER_THEMES[characterId] ?? PHONE_CHARACTER_THEMES.megumi;
 }
 

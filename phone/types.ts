@@ -17,7 +17,7 @@ export const PHONE_THEME_CHARACTER_IDS = ['megumi', 'eriri', 'utaha', 'izumi', '
 
 export type PhoneThemeCharacterId = (typeof PHONE_THEME_CHARACTER_IDS)[number];
 
-export type PhoneCharacterId = PhoneThemeCharacterId | 'sayuri' | 'sonoko' | 'akane';
+export type PhoneCharacterId = PhoneThemeCharacterId | 'sayuri' | 'sonoko' | 'akane' | 'shoko';
 
 export function isPhoneThemeCharacterId(value: string | null | undefined): value is PhoneThemeCharacterId {
   return Boolean(value && (PHONE_THEME_CHARACTER_IDS as readonly string[]).includes(value));

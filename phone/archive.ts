@@ -228,6 +228,30 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     usesObsessionAxis: false,
     note: '茜不属于五小只角色歌与旧情度轴；作为成人未婚角色，亲密档案按五小只的完璧/结缘闩锁与计数器显示。',
   },
+  shoko: {
+    id: 'shoko',
+    archiveLabel: 'DLC档案',
+    // 中文注释：西宫硝子按高坂茜/町田苑子的特别档案链路先做占位，不加入五小只角色歌与旧情度轴。
+    name: '西宫硝子',
+    romanName: 'Nishimiya Shoko',
+    panelMark: '硝子',
+    imageUrl: 'https://eriribot.github.io/islandmilfcode/picresource/shoko_phone.jpg',
+    imageAlt: '西宫硝子头像',
+    portraitCode: 'gentle dlc visitor',
+    foot: [
+      { label: '定位', value: 'DLC人物 / 外部联动' },
+      { label: '类型', value: '温柔 / 内向 / 笔谈' },
+      { label: '档案', value: 'DLC人物档案' },
+    ],
+    tags: ['DLC人物', '温柔', '笔谈'],
+    details: [
+      { label: '来源', value: 'DLC人物' },
+      { label: '状态', value: '资料占位' },
+    ],
+    meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
+    usesObsessionAxis: false,
+    note: '硝子当前是 DLC 人物占位；不属于五小只角色歌与旧情度轴，绑定酒馆世界书目标后会显示实时变量。',
+  },
 };
 
 // 中文注释：档案页顶部角色标签的显示顺序；新增角色必须同步到这里，档案页才会出现。
@@ -240,6 +264,7 @@ const CHARACTER_ARCHIVE_ORDER: PhoneCharacterId[] = [
   'sayuri',
   'sonoko',
   'akane',
+  'shoko',
 ];
 
 const OBSESSION_ARCHIVE_IDS = new Set<PhoneCharacterId>(['megumi', 'eriri', 'utaha', 'izumi', 'michiru']);
@@ -268,6 +293,7 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
   const isAkaneIdentity = /高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(
     identityHaystack,
   );
+  const isShokoIdentity = /西宫硝子|西宮硝子|西宫|西宮|硝子|shoko|shouko|nishimiya/.test(identityHaystack);
   const haystack = [identityHaystack, target.alias].map(value => String(value ?? '').toLowerCase()).join('\n');
 
   if (archive.id === 'eriri') return !isSayuriIdentity && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
@@ -283,6 +309,7 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
   if (archive.id === 'sayuri') return isSayuriIdentity;
   if (archive.id === 'sonoko') return isSonokoIdentity;
   if (archive.id === 'akane') return isAkaneIdentity;
+  if (archive.id === 'shoko') return isShokoIdentity;
   return false;
 }
 

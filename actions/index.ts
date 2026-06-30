@@ -1540,6 +1540,23 @@ function getPhoneTargetSearchTerms(target: TargetStatus) {
       'kousaka akane',
     );
   }
+  if (/西宫硝子|西宮硝子|西宫|西宮|硝子|shoko|shouko|nishimiya/.test(haystack)) {
+    builtInTerms.push(
+      '西宫硝子',
+      '西宮硝子',
+      '西宫',
+      '西宮',
+      '硝子',
+      '硝子小姐',
+      'shoko',
+      'shouko',
+      'nishimiya',
+      'shoko nishimiya',
+      'shouko nishimiya',
+      'nishimiya shoko',
+      'nishimiya shouko',
+    );
+  }
 
   return Array.from(new Set([...baseTerms, ...builtInTerms]));
 }
