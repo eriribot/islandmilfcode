@@ -113,6 +113,23 @@ export const builtInTargetSeeds: TargetStatus[] = [
     },
   },
   {
+    id: '西宫硝子',
+    name: '西宫硝子',
+    alias: '西宫 / 西宮 / 硝子 / 硝子小姐 / Shoko Nishimiya / Shouko Nishimiya / Nishimiya Shoko / Nishimiya Shouko',
+    affinity: 0,
+    obsession: 0,
+    stage: '疏离戒备',
+    obsessionStage: '无旧情轴',
+    titles: {},
+    outfits: { ...DEFAULT_TARGET_OUTFITS },
+    meta: {
+      source: 'built-in-startup',
+      worldbookEntryName: '西宫硝子',
+      avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/shoko_phone.jpg',
+      noObsessionAxis: true,
+    },
+  },
+  {
     id: '霞之丘诗羽',
     name: '霞之丘诗羽',
     alias: '霞之丘 / 诗羽 / 霞诗子 / Utaha Kasumigaoka',

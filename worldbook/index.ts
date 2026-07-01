@@ -37,6 +37,10 @@ const TARGET_AVATAR_RULES: Array<{ patterns: string[]; avatarUrl: string }> = [
     patterns: ['高坂茜', '红坂朱音', '紅坂朱音', '高坂', '红坂', '紅坂', '朱音', '茜', 'akane', 'kosaka', 'kousaka', 'kurenai'],
     avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/Akane_phone.png',
   },
+  {
+    patterns: ['西宫硝子', '西宮硝子', '西宫', '西宮', '硝子', 'shoko', 'shouko', 'nishimiya'],
+    avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/shoko_phone.jpg',
+  },
 ];
 
 // 从世界书条目中提取目标信息的逻辑：
@@ -326,6 +330,9 @@ function normalizeBuiltInTargetName(name: string, alias = '', entryName = '') {
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) {
     return '冰堂美智留';
   }
+  if (/西宫硝子|西宮硝子|西宫|西宮|硝子|shoko|shouko|nishimiya/.test(haystack)) {
+    return '西宫硝子';
+  }
   return name;
 }
 
@@ -567,6 +574,7 @@ function getCharacterCardKey(entry: WorldbookEntry, target: TargetStatus | null)
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
   if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
+  if (/西宫硝子|西宮硝子|西宫|西宮|硝子|shoko|shouko|nishimiya/.test(haystack)) return 'shoko';
   return '';
 }
 
@@ -598,6 +606,7 @@ function getBuiltInTargetKeyFromIdentity(target: TargetStatus) {
   if (/霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
   if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
+  if (/西宫硝子|西宮硝子|西宫|西宮|硝子|shoko|shouko|nishimiya/.test(haystack)) return 'shoko';
   return '';
 }
 

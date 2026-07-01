@@ -1,4 +1,6 @@
 import { escapeHtml } from '../html';
+import { renderMemoryEditor } from '../memorydatabase/editor';
+import type { IslandMemoryDB } from '../memorydatabase/types';
 import { getReaderMessages } from '../message-format';
 import type {
   AppState,
@@ -11,11 +13,9 @@ import type {
 } from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
 import { renderCharacterArchivePanel } from './archive';
+import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
 import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './types';
 import { isPlayerPhonePseudoTarget } from './types';
-import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
-import { renderMemoryEditor } from '../memorydatabase/editor';
-import type { IslandMemoryDB } from '../memorydatabase/types';
 
 type PhoneCharacterThemeId = PhoneThemeCharacterId;
 
@@ -94,7 +94,7 @@ function getPhoneCharacterTheme(characterId: PhoneCharacterId) {
     return {
       label: '西宫硝子',
       avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/shoko_phone.jpg',
-      wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_sayuri.png',
+      wallpaperUrl: 'https://eriribot.github.io/islandmilfcode/picresource/bizhi_shoko.jpg',
       bgmUrl: '',
     };
   }
@@ -163,7 +163,8 @@ function renderResponsivePhoneFrameStyle() {
 
   const viewportWidth = Math.max(0, window.innerWidth || 0);
   const viewportHeight = Math.max(0, window.innerHeight || 0);
-  const modalPad = viewportWidth <= 720 ? 8 : Math.max(6, Math.min(24, Math.min(viewportWidth, viewportHeight) * 0.024));
+  const modalPad =
+    viewportWidth <= 720 ? 8 : Math.max(6, Math.min(24, Math.min(viewportWidth, viewportHeight) * 0.024));
   const safeWidth = Math.max(0, viewportWidth - modalPad * 2);
   const safeHeight = Math.max(0, viewportHeight - modalPad * 2);
   const maxWidth = 380;
@@ -236,9 +237,7 @@ function renderMusicHero(state: AppState) {
   const seekDisabled = !hasTrack || safeDuration <= 0;
 
   const titleText = currentTrack?.name ?? ' ';
-  const subText = currentTrack
-    ? `${currentTrack.artist}${currentTrack.album ? ' · ' + currentTrack.album : ''}`
-    : ' ';
+  const subText = currentTrack ? `${currentTrack.artist}${currentTrack.album ? ' · ' + currentTrack.album : ''}` : ' ';
 
   return `
     <div class="phone-home-music ${hasTrack ? '' : 'phone-home-music--idle'}">
@@ -520,11 +519,7 @@ function safeCalendarText(value: unknown, fallback = '') {
 }
 
 function safeCalendarTextArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value
-        .map(item => safeCalendarText(item).trim())
-        .filter(Boolean)
-    : [];
+  return Array.isArray(value) ? value.map(item => safeCalendarText(item).trim()).filter(Boolean) : [];
 }
 
 function formatCalendarDateLabel(dateKey: string) {
@@ -560,7 +555,8 @@ function buildCalendarEventItem(
   statusData: StatusData,
 ): CalendarEventItem {
   const date = isCalendarDateKey(event.schedule.date) ? event.schedule.date : '2012-03-31';
-  const endDate = isCalendarDateKey(event.schedule.endDate) && event.schedule.endDate >= date ? event.schedule.endDate : date;
+  const endDate =
+    isCalendarDateKey(event.schedule.endDate) && event.schedule.endDate >= date ? event.schedule.endDate : date;
   const id = safeCalendarText(event.id, 'unknown-event');
   return {
     id,
@@ -620,7 +616,10 @@ function renderCalendarDots(events: CalendarEventItem[]) {
   if (!events.length) return '';
   const dots = events
     .slice(0, 3)
-    .map((event, index) => `<span class="phone-calendar__dot phone-calendar__dot--${index + 1}" title="${escapeHtml(event.title)}"></span>`)
+    .map(
+      (event, index) =>
+        `<span class="phone-calendar__dot phone-calendar__dot--${index + 1}" title="${escapeHtml(event.title)}"></span>`,
+    )
     .join('');
   const extra = events.length > 3 ? `<span class="phone-calendar__more">+${events.length - 3}</span>` : '';
   return `<span class="phone-calendar__dots">${dots}${extra}</span>`;
@@ -672,7 +671,9 @@ function renderCalendarEventPopup(state: AppState) {
   const statusLabel = getCalendarStatusLabel(event.status);
   const timeLine = [formatCalendarDateRange(event), event.timeSegments.join(' / ')].filter(Boolean).join(' · ');
   const locationLine = event.locations.join('、');
-  const sourceLine = [event.sourceEntryName, event.sourceEntryUid ? `#${event.sourceEntryUid}` : ''].filter(Boolean).join(' ');
+  const sourceLine = [event.sourceEntryName, event.sourceEntryUid ? `#${event.sourceEntryUid}` : '']
+    .filter(Boolean)
+    .join(' ');
   const bodyText = event.content || event.summary || '（无详细正文）';
 
   return `
@@ -756,7 +757,7 @@ function renderCalendarGrid(state: AppState, monthOffset: number): string {
       ? calendarSelectedDateKey
       : isCurrentMonth
         ? todayKey
-        : eventMap.keys().next().value ?? monthStart;
+        : (eventMap.keys().next().value ?? monthStart);
 
   let cells = '';
   // 前置空白
@@ -852,7 +853,14 @@ function getTargetAvatarUrl(target: TargetStatus) {
   if (normalized === 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg') {
     return 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg';
   }
-  return normalized;
+  if (normalized) return normalized;
+  const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
+    .map(value => String(value ?? '').toLowerCase())
+    .join('\n');
+  if (/西宫硝子|西宮硝子|西宫|西宮|硝子|shoko|shouko|nishimiya/.test(haystack)) {
+    return 'https://eriribot.github.io/islandmilfcode/picresource/shoko_phone.jpg';
+  }
+  return '';
 }
 
 function renderTargetAvatar(target: TargetStatus) {
@@ -1116,7 +1124,9 @@ function renderMusicQuickEntries(currentCharacter: PhoneCharacterId) {
     { id: 'izumi', label: '波岛出海' },
     { id: 'michiru', label: '美智留' },
   ];
-  return labels.map(item => `
+  return labels
+    .map(
+      item => `
     <button
       class="phone-music-quick ${item.id === currentCharacter ? 'is-current' : ''}"
       data-action="music-quick-search"
@@ -1124,14 +1134,14 @@ function renderMusicQuickEntries(currentCharacter: PhoneCharacterId) {
       data-quick-keyword="${escapeHtml(CHARACTER_QUICK_SEARCH[item.id])}"
       type="button"
     >${escapeHtml(item.label)}</button>
-  `).join('');
+  `,
+    )
+    .join('');
 }
 
 function renderMusicPhonePage(state: AppState) {
   const { search, currentTrack, loadingTrackId } = state.musicPlayer;
-  const subtitle = currentTrack
-    ? `${currentTrack.name} · ${currentTrack.artist}`
-    : '搜索想听的曲子';
+  const subtitle = currentTrack ? `${currentTrack.name} · ${currentTrack.artist}` : '搜索想听的曲子';
 
   let resultsBlock = '';
   if (search.status === 'loading') {
@@ -1142,7 +1152,13 @@ function renderMusicPhonePage(state: AppState) {
     resultsBlock = '<div class="phone-music-empty">这个关键词没找到结果，换个词试试。</div>';
   } else if (search.status === 'ready') {
     resultsBlock = `<div class="phone-music-list">${search.results
-      .map(track => renderMusicTrackRow(track, currentTrack?.id === track.id && currentTrack?.source === track.source, loadingTrackId === track.id))
+      .map(track =>
+        renderMusicTrackRow(
+          track,
+          currentTrack?.id === track.id && currentTrack?.source === track.source,
+          loadingTrackId === track.id,
+        ),
+      )
       .join('')}</div>`;
   } else {
     resultsBlock = '<div class="phone-music-empty">还没搜索过。试试搜"加藤惠"、"恋爱循环"或任意你想听的歌名。</div>';
@@ -1322,11 +1338,8 @@ function renderDrawingPhonePage(state: AppState) {
 }
 
 function renderMemoryPhonePage(state: AppState) {
-  const subtitle = state.memoryEditor.selectedTable === null
-    ? ''
-    : state.memoryEditor.selectedTable === '__trash'
-      ? '回收站'
-      : '';
+  const subtitle =
+    state.memoryEditor.selectedTable === null ? '' : state.memoryEditor.selectedTable === '__trash' ? '回收站' : '';
   return `
     <section class="phone-route-page phone-app-page phone-app-page--memory" data-phone-route-view="app:memory">
       ${renderPhoneAppHeader(state, '记忆库', subtitle)}
@@ -1491,5 +1504,3 @@ export function renderFloatingPhone(state: AppState) {
     </button>
   `;
 }
-
-
