@@ -1787,9 +1787,29 @@ function pickPostTurnBackgroundMode(
   return 'progress';
 }
 
-function normalizeScenePresenceIds(ids: unknown, allowedIds: Set<string>) {
+function normalizePresenceKey(value: unknown) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[·・\s　._-]/g, '');
+}
+
+function buildScenePresenceIdResolver(targets: TargetStatus[]) {
+  const map = new Map<string, string>();
+  for (const target of targets) {
+    for (const term of getPhoneTargetSearchTerms(target)) {
+      const key = normalizePresenceKey(term);
+      if (key && !map.has(key)) map.set(key, target.id);
+    }
+    const idKey = normalizePresenceKey(target.id);
+    if (idKey) map.set(idKey, target.id);
+  }
+  return (value: unknown) => map.get(normalizePresenceKey(value)) ?? '';
+}
+
+function normalizeScenePresenceIds(ids: unknown, resolveId: (value: unknown) => string) {
   if (!Array.isArray(ids)) return [];
-  return Array.from(new Set(ids.map(id => String(id ?? '').trim()).filter(id => allowedIds.has(id))));
+  return Array.from(new Set(ids.map(resolveId).filter(Boolean)));
 }
 
 function getDatePart(value: string) {
@@ -2011,7 +2031,7 @@ function buildScenePresencePrompts(
     '- 坏例：把“风和日丽的清晨我目睹了眼镜男和波波头女生的邂逅……”整句放进 query；坏例：用“加藤惠 基础设定 平凡 存在感低”搜索普通角色骨头。',
     '',
     '夏野雾姬的审稿规矩：',
-    '1. 只能使用角色名单里的 id。',
+    '1. 优先使用角色名单里的 id；若最近正文/玩家输入只写了别名、简称、罗马音或繁简/日文写法（如“硝子”“西宮硝子”“shoko”），也要先按角色名单的可匹配线索归一到对应角色 id 再输出。',
     '2. 第一次输入若没有最近正文，只看玩家当前输入；没有明确点名/寻找/靠近任何角色时，present 和 focus 都为空。',
     '3. 不要因为角色好感度、剧情常识、世界书设定或你觉得她“应该出现”，就把她塞进 present。那是偷懒，不是阅读。',
     '4. 玩家当前输入若明确“追上去安慰她/去找某人/转向某人/和某人说话”，该角色进入 focus。',
@@ -2043,6 +2063,7 @@ function buildScenePresencePrompts(
 
 function parseScenePresenceResult(ctx: ActionContext, rawResult: string): ScenePresence {
   const allowedIds = new Set(ctx.state.statusData.targets.map(target => target.id));
+  const resolvePresenceId = buildScenePresenceIdResolver(ctx.state.statusData.targets);
   const fallback: ScenePresence = { presentIds: [], focusIds: [], absentIds: [], uncertainIds: [], evidence: {} };
   const text = String(rawResult ?? '').trim();
   if (!text) return fallback;
@@ -2055,13 +2076,14 @@ function parseScenePresenceResult(ctx: ActionContext, rawResult: string): SceneP
     const evidenceRaw = parsed.evidence && typeof parsed.evidence === 'object' ? parsed.evidence : {};
     const evidence: Record<string, string> = {};
     for (const [id, reason] of Object.entries(evidenceRaw as Record<string, unknown>)) {
-      if (allowedIds.has(id)) evidence[id] = String(reason ?? '').trim();
+      const resolvedId = resolvePresenceId(id);
+      if (allowedIds.has(resolvedId)) evidence[resolvedId] = String(reason ?? '').trim();
     }
     return {
-      presentIds: normalizeScenePresenceIds(parsed.present, allowedIds),
-      focusIds: normalizeScenePresenceIds(parsed.focus, allowedIds),
-      absentIds: normalizeScenePresenceIds(parsed.absent, allowedIds),
-      uncertainIds: normalizeScenePresenceIds(parsed.uncertain, allowedIds),
+      presentIds: normalizeScenePresenceIds(parsed.present, resolvePresenceId),
+      focusIds: normalizeScenePresenceIds(parsed.focus, resolvePresenceId),
+      absentIds: normalizeScenePresenceIds(parsed.absent, resolvePresenceId),
+      uncertainIds: normalizeScenePresenceIds(parsed.uncertain, resolvePresenceId),
       evidence,
       timeProposal: parseTimeProposal(parsed.timeProposal),
       plotImpact: parsePlotImpact(parsed.plotImpact),

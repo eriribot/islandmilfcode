@@ -500,6 +500,27 @@ function parseKnownArchiveTarget(entry: WorldbookEntry): TargetStatus | null {
     };
   }
 
+  if (/西宫硝子|西宮硝子|西宫|西宮|硝子|shoko|shouko|nishimiya/.test(identityHaystack)) {
+    return {
+      id: '西宫硝子',
+      name: '西宫硝子',
+      alias: '西宫 / 西宮 / 硝子 / 硝子小姐 / Shoko Nishimiya / Shouko Nishimiya / Nishimiya Shoko / Nishimiya Shouko',
+      affinity: defaultTarget.affinity,
+      obsession: 0,
+      stage: affinityStage(defaultTarget.affinity),
+      obsessionStage: defaultTarget.obsessionStage,
+      titles: {},
+      outfits: { ...defaultTarget.outfits },
+      meta: {
+        source: 'character-worldbook',
+        worldbookEntryUid: entry.uid,
+        worldbookEntryName: entryName,
+        avatarUrl: 'https://eriribot.github.io/islandmilfcode/picresource/shoko_phone.jpg',
+        noObsessionAxis: true,
+      },
+    };
+  }
+
   if (!/泽村小百合|澤村小百合|小百合|sayuri/.test(identityHaystack)) return null;
 
   return {

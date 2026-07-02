@@ -101,6 +101,7 @@ import {
 } from './phone/types';
 import type { MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './phone/types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
+import { protectTargetAffinityReset } from './variables/runtime-guard';
 import { clamp, formatTime, syncMainEvents } from './variables/normalize';
 import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
 import {
@@ -390,13 +391,13 @@ const guardedAdapter: VariableAdapter = {
     return adapter.source;
   },
   load() {
-    return adapter.load();
+    return protectTargetAffinityReset(adapter.load(), state.statusData, 'guarded-adapter-load');
   },
   save(data: StatusData) {
     guardedAdapterSave(data);
   },
   onUpdate(cb: (data: StatusData) => void) {
-    return adapter.onUpdate(cb);
+    return adapter.onUpdate(data => cb(protectTargetAffinityReset(data, state.statusData, 'guarded-adapter-update')));
   },
 };
 
@@ -3447,7 +3448,7 @@ installDebugGlobals();
 
 (window as any).advanceTime = () => {
   if (adapter) {
-    const data = adapter.load();
+    const data = guardedAdapter.load();
     if (JSON.stringify(data) !== JSON.stringify(state.statusData)) {
       state.statusData = data;
       cacheStatusData(data);

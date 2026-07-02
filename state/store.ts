@@ -14,6 +14,7 @@ import type {
   UiMessage,
 } from '../types';
 import { clamp, defaultStatusData, normalizeStatusData } from '../variables/normalize';
+import { protectTargetAffinityReset } from '../variables/runtime-guard';
 import { createDefaultMusicPlayerState } from '../phone/music';
 import { createDefaultMemoryDB } from '../memorydatabase/defaults';
 import { createDefaultMemoryEditorState } from '../memorydatabase/editor';
@@ -390,7 +391,7 @@ export function normalizeDrawingSettings(input: unknown): DrawingSettings {
   }
 
 function restoreRollbackSnapshot(state: AppState, snapshot: RollbackSnapshot) {
-  state.statusData = cloneJson(snapshot.statusData);
+  state.statusData = protectTargetAffinityReset(cloneJson(snapshot.statusData), state.statusData, 'rollback-snapshot');
   if (snapshot.playerProfile) {
     state.playerProfile = applyProfileDefaults(cloneJson(snapshot.playerProfile));
   }

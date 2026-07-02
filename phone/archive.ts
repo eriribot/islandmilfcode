@@ -231,7 +231,7 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
   shoko: {
     id: 'shoko',
     archiveLabel: 'DLC档案',
-    // 中文注释：西宫硝子按高坂茜/町田苑子的特别档案链路先做占位，不加入五小只角色歌与旧情度轴。
+    // 中文注释：西宫硝子按高坂茜/町田苑子的特别档案链路载入；她是 DLC 人物，不加入五小只角色歌与旧情度轴。
     name: '西宫硝子',
     romanName: 'Nishimiya Shoko',
     panelMark: '硝子',
@@ -240,17 +240,17 @@ const CHARACTER_ARCHIVES: Record<PhoneCharacterId, CharacterArchive> = {
     portraitCode: 'gentle dlc visitor',
     foot: [
       { label: '定位', value: 'DLC人物 / 外部联动' },
-      { label: '类型', value: '温柔 / 内向 / 笔谈' },
+      { label: '类型', value: '温柔 / 内向 / 弱气' },
       { label: '档案', value: 'DLC人物档案' },
     ],
-    tags: ['DLC人物', '温柔', '笔谈'],
+    tags: ['DLC人物', '温柔', '弱气'],
     details: [
-      { label: '来源', value: 'DLC人物' },
-      { label: '状态', value: '资料占位' },
+      { label: '生日', value: '6月7日' },
+      { label: '身高', value: '158cm' },
     ],
-    meters: [{ label: '好感度', caption: '资料占位', value: 0, tone: 'affection' }],
+    meters: [{ label: '好感度', caption: '开局变量', value: 0, tone: 'affection' }],
     usesObsessionAxis: false,
-    note: '硝子当前是 DLC 人物占位；不属于五小只角色歌与旧情度轴，绑定酒馆世界书目标后会显示实时变量。',
+    note: '硝子是 DLC 人物档案；不属于五小只角色歌与旧情度轴，关系推进只使用对 User 的好感与亲密档案。',
   },
 };
 
@@ -299,10 +299,7 @@ function isTargetForArchive(target: TargetStatus, archive: CharacterArchive) {
   if (archive.id === 'eriri') return !isSayuriIdentity && /英梨梨|泽村|澤村|eriri|sawamura/.test(haystack);
   if (archive.id === 'megumi') return /加藤|惠|恵|megumi|katou|kato/.test(haystack);
   if (archive.id === 'utaha') {
-    return (
-      !isSonokoIdentity &&
-      /霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack)
-    );
+    return !isSonokoIdentity && /霞之丘|霞之诗羽|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(haystack);
   }
   if (archive.id === 'izumi') return /波岛|波島|出海|izumi|hashima/.test(haystack);
   if (archive.id === 'michiru') return /冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack);
