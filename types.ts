@@ -29,7 +29,7 @@ export type SaveMeta = {
   gameTime?: string;
   preview?: string;
   messageCount: number;
-  version: number;
+  version: string | number;
   characterName?: string;
   personality?: string;
   appearance?: string;
@@ -77,7 +77,7 @@ export type SavePayload = {
   /** 结构化长期记忆（旧存档可能没有，load 时从 summaryStore 迁移） */
   memoryDB?: IslandMemoryDB;
   messageSnapshots?: MessageSnapshot[];
-  version: number;
+  version: string | number;
 };
 
 export type MessageSnapshot = {
@@ -124,6 +124,8 @@ export type PhoneChatMessage = {
   speaker: string;
   text: string;
   timestamp: string;
+  /** 发信时的完整游戏时间，用于解析"半小时后/明天"这类相对时间。 */
+  worldTime?: string;
   /** 这条手机消息生成/发送时绑定的阅读器楼层，从 0 开始。 */
   floorIndex?: number;
   statusSnapshot?: RollbackSnapshot;

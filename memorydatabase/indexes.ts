@@ -26,7 +26,7 @@ import {
  * 重建所有索引（从存档加载后调用）
  * 时间复杂度：O(n)，但只在加载时执行一次
  */
-export function rebuildIndexes(db: IslandMemoryDB): void {
+export function rebuildIndexes(db: IslandMemoryDB, options: { log?: boolean } = {}): void {
   const startTime = performance.now();
 
   db._indexes = {
@@ -147,6 +147,7 @@ export function rebuildIndexes(db: IslandMemoryDB): void {
     'tasks',
     'secrets',
     'summaries',
+    'worldState',
   ];
 
   for (const tableName of otherTables) {
@@ -171,9 +172,13 @@ export function rebuildIndexes(db: IslandMemoryDB): void {
   db._indexes.stats.expiredRows = expiredCount;
 
   const elapsed = performance.now() - startTime;
-  console.log(
-    `[memorydb:indexes] rebuilt in ${elapsed.toFixed(1)}ms | active=${activeCount} expired=${expiredCount} ratio=${((expiredCount / (activeCount + expiredCount)) * 100).toFixed(1)}%`,
-  );
+  const totalCount = activeCount + expiredCount;
+  const expiredRatioText = totalCount > 0 ? `${((expiredCount / totalCount) * 100).toFixed(1)}%` : '0.0%';
+  if (options.log !== false) {
+    console.log(
+      `[memorydb:indexes] rebuilt in ${elapsed.toFixed(1)}ms | active=${activeCount} expired=${expiredCount} ratio=${expiredRatioText}`,
+    );
+  }
 }
 
 /**

@@ -648,7 +648,7 @@ function getTargetMergeKey(target: TargetStatus) {
   return '';
 }
 
-function repairKnownBuiltInTargetBleed(targets: TargetStatus[]) {
+function repairKnownBuiltInTargetBleed(targets: TargetStatus[], opts: { allowLegacyMegumiUtahaBleedRepair?: boolean } = {}) {
   const byKey = new Map<string, TargetStatus>();
   for (const target of targets) {
     const key = getBuiltInTargetKeyFromIdentity(target);
@@ -666,18 +666,13 @@ function repairKnownBuiltInTargetBleed(targets: TargetStatus[]) {
   const utaha = byKey.get('utaha');
   if (!megumi || !utaha) return targets;
   if (megumi.meta?.variableRepairVersion === 'megumi-utaha-bleed-v1') return targets;
+  if (!opts.allowLegacyMegumiUtahaBleedRepair) return targets;
 
   const sameAffinity = Number(megumi.affinity ?? 0) === Number(utaha.affinity ?? 0);
   const sameStage = String(megumi.stage ?? '') === String(utaha.stage ?? '');
   if (!sameAffinity || !sameStage || Number(megumi.affinity ?? 0) === 0) return targets;
 
-  // 中文注释：旧版本曾把加藤惠条目归一成诗羽，导致诗羽好感被写进加藤惠；这里做一次性窄迁移。
-  megumi.affinity = defaultTarget.affinity;
-  megumi.stage = affinityStage(defaultTarget.affinity);
-  megumi.meta = {
-    ...(megumi.meta ?? {}),
-    variableRepairVersion: 'megumi-utaha-bleed-v1',
-  };
+  console.warn('[worldbook] legacy Megumi/Utaha bleed suspected; skipped automatic affinity reset');
   return targets;
 }
 
@@ -805,7 +800,11 @@ export async function loadCharacterWorldbookTargets(win: TavernWindow): Promise<
   return (await loadCharacterWorldbookData(win)).targets;
 }
 
-export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: TargetStatus[]): StatusData {
+export function mergeWorldbookTargets(
+  statusData: StatusData,
+  worldbookTargets: TargetStatus[],
+  opts: { allowLegacyMegumiUtahaBleedRepair?: boolean } = {},
+): StatusData {
   if (!worldbookTargets.length) return statusData;
 
   const existingById = new Map(statusData.targets.map(target => [target.id, target]));
@@ -869,7 +868,7 @@ export function mergeWorldbookTargets(statusData: StatusData, worldbookTargets: 
     if (mergeKey && (worldbookMergeKeys.has(mergeKey) || usedExistingMergeKeys.has(mergeKey))) return false;
     return true;
   });
-  const targets = repairKnownBuiltInTargetBleed([...mergedTargets, ...customTargets]);
+  const targets = repairKnownBuiltInTargetBleed([...mergedTargets, ...customTargets], opts);
 
   return {
     ...statusData,

@@ -116,6 +116,7 @@ function renderFilmStrip() {
 type TitleHomeOptions = {
   showSaves?: boolean;
   deepSeekMode?: boolean;
+  recoveryNotice?: string;
 };
 
 export function renderTitleHome(options: TitleHomeOptions = {}) {
@@ -201,6 +202,12 @@ export function renderTitleHome(options: TitleHomeOptions = {}) {
             读取存档
           </button>
         </div>
+
+        ${
+          options.recoveryNotice
+            ? `<p class="gal-title__footer">${escapeHtml(options.recoveryNotice)}</p>`
+            : ''
+        }
 
         <p class="gal-title__footer">Saenai Hiroin no Sodatekata</p>
       </div>

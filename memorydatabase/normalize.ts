@@ -1,5 +1,6 @@
 import type { IslandMemoryDB, MemoryBaseRow } from './types';
 import { createDefaultMemoryDB } from './defaults';
+import { rebuildIndexes } from './indexes';
 
 /** 已知的核心表名列表 */
 const KNOWN_TABLES = [
@@ -60,6 +61,7 @@ export function normalizeMemoryDB(raw: unknown, runId: string): IslandMemoryDB |
     }
   }
 
+  rebuildIndexes(db);
   return db;
 }
 

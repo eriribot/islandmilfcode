@@ -242,6 +242,7 @@ export function normalizePhoneMessageStore(input: unknown): PhoneMessageStore {
               speaker: String(message.speaker || (message.role === 'assistant' ? '角色' : '我')),
               text: String(message.text ?? ''),
               timestamp: String(message.timestamp || ''),
+              ...(rawMessage.worldTime ? { worldTime: String(rawMessage.worldTime) } : {}),
               ...(Number.isFinite(floorIndex) && floorIndex >= 0 ? { floorIndex: Math.floor(floorIndex) } : {}),
               ...(message.statusSnapshot
                 ? { statusSnapshot: normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false }) }

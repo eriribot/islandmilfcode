@@ -1,7 +1,7 @@
 import type { PhoneChatMessage } from '../types';
 import { commitBatch } from './upsert';
 import type { CommitSource, IslandMemoryDB } from './types';
-import { isPhoneMessageIndexed as isPhoneMessageIndexedFromIndex } from './indexes';
+import { isPhoneMessageIndexed as isPhoneMessageIndexedFromIndex, updateIndexesIncremental } from './indexes';
 
 class MutationQueue {
   private chain: Promise<void> = Promise.resolve();
@@ -45,6 +45,19 @@ export function indexPhoneMessage(
           },
         ],
       },
+    });
+  });
+}
+
+export function expirePhoneMessageIndex(db: IslandMemoryDB | null | undefined, messageId: string): void {
+  if (!db || !messageId) return;
+  queue.enqueue(() => {
+    const row = db.phoneMessages.find(item => !item.expired && item.messageId === messageId);
+    if (!row) return;
+    row.expired = true;
+    row.updatedAt = new Date().toISOString();
+    updateIndexesIncremental(db, {
+      expired: [{ tableName: 'phoneMessages', ids: [row.id] }],
     });
   });
 }

@@ -14,7 +14,11 @@ import {
   sanitizePromptInputText,
 } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
-import { SecondaryTaskCancelledError, runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
+import {
+  SecondaryTaskCancelledError,
+  runSecondaryTask,
+  type SecondaryTaskKind,
+} from '../secondary-api';
 import { createRollbackSnapshot, pushMessage } from '../state/store';
 import {
   buildFactAnchorFromStatus,
@@ -59,10 +63,14 @@ import {
 } from './streaming';
 import { getCharacterCanonicalClass, getCharacterRelationToTomoya } from '../relationship';
 import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
-import { indexPhoneMessage } from '../memorydatabase/phone-repository';
-import type { IslandMemoryDB } from '../memorydatabase/types';
+import { expirePhoneMessageIndex, indexPhoneMessage } from '../memorydatabase/phone-repository';
+import type { IslandMemoryDB, MemoryImpressionRow, MemoryRelationRow } from '../memorydatabase/types';
 import { isPlotEventAllowedByRoute } from '../plot-routing';
-import { isPhoneArchiveGoldImpression, isPlayerPhonePseudoTarget } from '../phone/types';
+import {
+  isPhoneArchiveGoldImpression,
+  isPlayerPhonePseudoTarget,
+  normalizePhoneArchiveImpressionSubject,
+} from '../phone/types';
 import { emitCharacterDataImportFromResponse } from '../plugins/character-data-import';
 import {
   extractImageGenerationPrompts,
@@ -89,6 +97,8 @@ export type ActionContext = StreamingContext & {
 const PHONE_PROACTIVE_COOLDOWN_MS = 3 * 60 * 1000;
 const PHONE_ACTION_DETECTOR_CONFIDENCE = new Set(['high', 'medium', '中', '高', '确定', '较高']);
 const IMAGE_GENERATION_REQUEST_INTERVAL_MS = 45_000;
+const PHONE_MEMORY_CONTEXT_RELATION_LIMIT = 4;
+const PHONE_MEMORY_CONTEXT_IMPRESSION_LIMIT = 6;
 
 type PhoneDirective = {
   target: TargetStatus;
@@ -118,9 +128,18 @@ function getPhoneContactTargets(ctx: Pick<ActionContext, 'state'>) {
 let lastProgressPhoneMessages: ScenePhoneMessage[] | null = null;
 
 const GENERATION_CANCEL_TOKEN_KEY = 'generationCancelToken';
+const PHONE_CANCEL_TOKEN_KEY = 'phoneCancelToken';
+const PENDING_PHONE_TARGET_KEY = 'pendingPhoneTargetId';
+const PENDING_PHONE_MESSAGE_KEY = 'pendingPhoneMessageId';
+const PENDING_PHONE_DRAFT_KEY = 'pendingPhoneDraft';
+const PENDING_PHONE_RESTORE_DRAFT_KEY = 'pendingPhoneRestoreDraft';
 
 function getGenerationCancelToken(ctx: Pick<ActionContext, 'state'>): number {
   return Number(ctx.state.runtimeFlags?.[GENERATION_CANCEL_TOKEN_KEY] ?? 0) || 0;
+}
+
+function getPhoneCancelToken(ctx: Pick<ActionContext, 'state'>): number {
+  return Number(ctx.state.runtimeFlags?.[PHONE_CANCEL_TOKEN_KEY] ?? 0) || 0;
 }
 
 function beginGenerationRun(ctx: Pick<ActionContext, 'state'>): number {
@@ -130,11 +149,39 @@ function beginGenerationRun(ctx: Pick<ActionContext, 'state'>): number {
   return token;
 }
 
+function beginPhoneRun(ctx: Pick<ActionContext, 'state'>): number {
+  const token = getPhoneCancelToken(ctx) + 1;
+  ctx.state.runtimeFlags[PHONE_CANCEL_TOKEN_KEY] = token;
+  ctx.state.runtimeFlags.phoneCancelRequested = false;
+  return token;
+}
+
 function isGenerationRunCancelled(ctx: Pick<ActionContext, 'state'>, token: number): boolean {
   return (
     Boolean(ctx.state.runtimeFlags?.generationCancelRequested) ||
     getGenerationCancelToken(ctx) !== token
   );
+}
+
+function isPhoneRunCancelled(ctx: Pick<ActionContext, 'state'>, token: number): boolean {
+  return Boolean(ctx.state.runtimeFlags?.phoneCancelRequested) || getPhoneCancelToken(ctx) !== token;
+}
+
+function setPendingPhoneSend(
+  ctx: Pick<ActionContext, 'state'>,
+  input: { targetId: string; messageId: string; draft: string; restoreDraft: boolean },
+) {
+  ctx.state.runtimeFlags[PENDING_PHONE_TARGET_KEY] = input.targetId;
+  ctx.state.runtimeFlags[PENDING_PHONE_MESSAGE_KEY] = input.messageId;
+  ctx.state.runtimeFlags[PENDING_PHONE_DRAFT_KEY] = input.draft;
+  ctx.state.runtimeFlags[PENDING_PHONE_RESTORE_DRAFT_KEY] = input.restoreDraft;
+}
+
+function clearPendingPhoneSend(ctx: Pick<ActionContext, 'state'>) {
+  delete ctx.state.runtimeFlags[PENDING_PHONE_TARGET_KEY];
+  delete ctx.state.runtimeFlags[PENDING_PHONE_MESSAGE_KEY];
+  delete ctx.state.runtimeFlags[PENDING_PHONE_DRAFT_KEY];
+  delete ctx.state.runtimeFlags[PENDING_PHONE_RESTORE_DRAFT_KEY];
 }
 
 export function cancelCurrentGeneration(ctx: ActionContext) {
@@ -153,6 +200,35 @@ export function cancelCurrentGeneration(ctx: ActionContext) {
   ctx.persistConversation();
   ctx.render();
   recordGenerationDebug(ctx, 'submit:cancel-requested');
+}
+
+export function cancelPhoneMessageGeneration(ctx: ActionContext) {
+  const { state } = ctx;
+  if (!state.phoneMessages.generating) return;
+
+  const pendingTargetId = String(state.runtimeFlags[PENDING_PHONE_TARGET_KEY] ?? '');
+  const pendingMessageId = String(state.runtimeFlags[PENDING_PHONE_MESSAGE_KEY] ?? '');
+  const pendingDraft = String(state.runtimeFlags[PENDING_PHONE_DRAFT_KEY] ?? '');
+  const shouldRestoreDraft = Boolean(state.runtimeFlags[PENDING_PHONE_RESTORE_DRAFT_KEY]);
+  const pendingThread = pendingTargetId ? state.phoneMessages.threads[pendingTargetId] : null;
+  if (pendingThread && pendingMessageId) {
+    pendingThread.messages = pendingThread.messages.filter(message => message.id !== pendingMessageId);
+    pendingThread.updatedAt = Date.now();
+    expirePhoneMessageIndex(ctx.memoryDB, pendingMessageId);
+  }
+  if (shouldRestoreDraft && pendingDraft) {
+    state.phoneMessages.draft = pendingDraft;
+  }
+
+  state.runtimeFlags[PHONE_CANCEL_TOKEN_KEY] = getPhoneCancelToken(ctx) + 1;
+  state.runtimeFlags.phoneCancelRequested = true;
+  clearPendingPhoneSend(ctx);
+  state.phoneMessages.generating = false;
+  clearBackgroundTask(state, 'progress');
+  lastProgressPhoneMessages = null;
+  ctx.persistConversation();
+  ctx.render();
+  recordGenerationDebug(ctx, 'phone:cancel-requested');
 }
 
 type RawPrompt = {
@@ -1846,6 +1922,231 @@ function mentionsPlayer(value: string | undefined) {
   return /\buser\b|\bplayer\b|玩家|主角/.test(String(value ?? ''));
 }
 
+function compactPhoneMemoryText(value: unknown, maxLength = 96) {
+  const text = sanitizePromptInputText(String(value ?? ''))
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, Math.max(1, maxLength - 3))}...` : text;
+}
+
+function normalizeMemoryIdentity(value: unknown) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[{}・·.\s　"'“”‘’《》【】「」『』（）()]+/g, '');
+}
+
+function addMemoryIdentity(set: Set<string>, value: unknown) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  const normalized = normalizeMemoryIdentity(value);
+  if (raw) set.add(raw);
+  if (normalized) set.add(normalized);
+}
+
+function buildTargetMemoryIdentitySet(target: TargetStatus) {
+  const set = new Set<string>();
+  addMemoryIdentity(set, target.id);
+  addMemoryIdentity(set, target.name);
+  addMemoryIdentity(set, target.alias);
+  addMemoryIdentity(set, target.meta?.worldbookEntryName);
+  return set;
+}
+
+function memoryIdentityMatches(value: unknown, identities: Set<string>) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  const normalized = normalizeMemoryIdentity(value);
+  return Boolean((raw && identities.has(raw)) || (normalized && identities.has(normalized)));
+}
+
+function isPhonePlayerMemoryId(value: string | undefined, playerProfile?: PlayerProfile | null) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return false;
+  const normalizedSubject = normalizePhoneArchiveImpressionSubject(raw);
+  if (normalizedSubject === 'user') return true;
+  const normalized = normalizeMemoryIdentity(raw);
+  if (/^(user|player|玩家|主角|你|我)$/.test(normalized)) return true;
+  const playerName = normalizeMemoryIdentity(playerProfile?.name);
+  return Boolean(playerName && playerName.length >= 2 && normalized === playerName);
+}
+
+function isPhonePlayerImpressionSubject(value: string | undefined, playerProfile?: PlayerProfile | null) {
+  if (isPhonePlayerMemoryId(value, playerProfile) || mentionsPlayer(value)) return true;
+  const normalized = normalizeMemoryIdentity(value);
+  const playerName = normalizeMemoryIdentity(playerProfile?.name);
+  return Boolean(playerName && playerName.length >= 2 && normalized.includes(playerName));
+}
+
+function buildMemoryDisplayNameLookup(ctx: ActionContext) {
+  const names = new Map<string, string>();
+  const playerName = ctx.state.playerProfile.name.trim() || '玩家';
+  const add = (id: unknown, name: unknown) => {
+    const display = compactPhoneMemoryText(name, 40);
+    if (!display) return;
+    const raw = String(id ?? '').trim();
+    if (!raw) return;
+    names.set(raw, display);
+    names.set(raw.toLowerCase(), display);
+    const normalized = normalizeMemoryIdentity(raw);
+    if (normalized) names.set(normalized, display);
+  };
+
+  add('player', playerName);
+  add('user', playerName);
+  add('玩家', playerName);
+  add('主角', playerName);
+  for (const target of ctx.state.statusData.targets) {
+    add(target.id, target.name);
+    add(target.name, target.name);
+    add(target.alias, target.name);
+    add(target.meta?.worldbookEntryName, target.name);
+  }
+  for (const entity of ctx.memoryDB.entities.filter(row => !row.expired)) {
+    add(entity.entityId, entity.name);
+    entity.aliases?.forEach(alias => add(alias, entity.name));
+  }
+  return names;
+}
+
+function getMemoryDisplayName(
+  value: string | undefined,
+  names: Map<string, string>,
+  playerProfile?: PlayerProfile | null,
+) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (isPhonePlayerMemoryId(raw, playerProfile)) return playerProfile?.name.trim() || '玩家';
+  return names.get(raw) ?? names.get(raw.toLowerCase()) ?? names.get(normalizeMemoryIdentity(raw)) ?? raw;
+}
+
+function memoryRowTime(row: { lastSeenAt?: string; updatedAt?: string; createdAt?: string }) {
+  const timestamp = Date.parse(row.lastSeenAt ?? row.updatedAt ?? row.createdAt ?? '');
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function scorePhoneRelationMemory(
+  relation: MemoryRelationRow,
+  targetIdentities: Set<string>,
+  names: Map<string, string>,
+  playerProfile: PlayerProfile | null,
+  cueText: string,
+) {
+  const fromIsTarget = memoryIdentityMatches(relation.fromId, targetIdentities);
+  const toIsTarget = memoryIdentityMatches(relation.toId, targetIdentities);
+  if (!fromIsTarget && !toIsTarget) return -Infinity;
+
+  const fromIsPlayer = isPhonePlayerMemoryId(relation.fromId, playerProfile);
+  const toIsPlayer = isPhonePlayerMemoryId(relation.toId, playerProfile);
+  const otherId = fromIsTarget ? relation.toId : relation.fromId;
+  const otherName = getMemoryDisplayName(otherId, names, playerProfile);
+  const otherMention = normalizeForDirectiveMatch([otherId, otherName].filter(Boolean).join(' '));
+  let score = fromIsPlayer || toIsPlayer ? 100 : 25;
+  if (cueText && otherMention && cueText.includes(otherMention)) score += 35;
+  if (typeof relation.affinity === 'number') score += Math.min(20, Math.abs(relation.affinity) / 5);
+  score += relation.importance ?? 0;
+  return score;
+}
+
+function formatPhoneRelationMemory(
+  relation: MemoryRelationRow,
+  names: Map<string, string>,
+  playerProfile: PlayerProfile | null,
+) {
+  const from = compactPhoneMemoryText(getMemoryDisplayName(relation.fromId, names, playerProfile), 32);
+  const to = compactPhoneMemoryText(getMemoryDisplayName(relation.toId, names, playerProfile), 32);
+  const label = compactPhoneMemoryText(relation.label, 48);
+  if (!from || !to || !label) return '';
+  const stage = compactPhoneMemoryText(relation.stage, 36);
+  const affinity = typeof relation.affinity === 'number' ? ` / 亲密${relation.affinity}` : '';
+  const reason = compactPhoneMemoryText(relation.reason, 80);
+  return compactPhoneMemoryText(
+    `- 关系: ${from} -> ${to}: ${label}${stage ? ` / ${stage}` : ''}${affinity}${reason ? `；原因:${reason}` : ''}`,
+    180,
+  );
+}
+
+function scorePhoneImpressionMemory(
+  impression: MemoryImpressionRow,
+  playerProfile: PlayerProfile | null,
+  cueText: string,
+) {
+  const playerSubject = isPhonePlayerImpressionSubject(impression.subject, playerProfile);
+  const strong = Math.abs(impression.weight) >= 3 || isPhoneArchiveGoldImpression(impression);
+  const subjectMention = normalizeForDirectiveMatch(impression.subject);
+  const mentioned = Boolean(cueText && subjectMention && cueText.includes(subjectMention));
+  if (!playerSubject && !strong && !mentioned) return -Infinity;
+
+  let score = playerSubject ? 100 : 25;
+  if (mentioned) score += 35;
+  if (isPhoneArchiveGoldImpression(impression)) score += 25;
+  score += Math.min(20, Math.abs(impression.weight) * 3);
+  score += impression.importance ?? 0;
+  return score;
+}
+
+function formatPhoneImpressionMemory(
+  impression: MemoryImpressionRow,
+  names: Map<string, string>,
+  playerProfile: PlayerProfile | null,
+) {
+  const subject = isPhonePlayerImpressionSubject(impression.subject, playerProfile)
+    ? playerProfile?.name.trim() || '玩家'
+    : getMemoryDisplayName(impression.subject, names, playerProfile);
+  const cleanSubject = compactPhoneMemoryText(subject, 40);
+  const label = compactPhoneMemoryText(impression.label, 56);
+  if (!cleanSubject || !label) return '';
+  const polarity = impression.polarity > 0 ? '正向' : impression.polarity < 0 ? '负向' : '中性';
+  const weight = impression.weight > 0 ? `+${impression.weight}` : String(impression.weight);
+  const reason = compactPhoneMemoryText(impression.reason, 80);
+  return compactPhoneMemoryText(
+    `- 印象: 对${cleanSubject}: ${label}（${polarity}，权重${weight}）${reason ? `；原因:${reason}` : ''}`,
+    180,
+  );
+}
+
+function uniquePhoneMemoryLines(lines: string[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const line of lines) {
+    const clean = line.trim();
+    if (!clean || seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+  }
+  return out;
+}
+
+function buildPhoneMemoryContext(ctx: ActionContext, target: TargetStatus, cueText = '') {
+  const playerProfile = ctx.state.playerProfile;
+  const targetIdentities = buildTargetMemoryIdentitySet(target);
+  const names = buildMemoryDisplayNameLookup(ctx);
+  const normalizedCue = normalizeForDirectiveMatch(cueText);
+
+  const relationLines = ctx.memoryDB.relations
+    .filter(row => !row.expired)
+    .map(row => ({
+      row,
+      score: scorePhoneRelationMemory(row, targetIdentities, names, playerProfile, normalizedCue),
+    }))
+    .filter(item => Number.isFinite(item.score))
+    .sort((a, b) => b.score - a.score || memoryRowTime(b.row) - memoryRowTime(a.row))
+    .slice(0, PHONE_MEMORY_CONTEXT_RELATION_LIMIT)
+    .map(item => formatPhoneRelationMemory(item.row, names, playerProfile));
+
+  const impressionLines = ctx.memoryDB.impressions
+    .filter(row => !row.expired && memoryIdentityMatches(row.targetId, targetIdentities))
+    .map(row => ({
+      row,
+      score: scorePhoneImpressionMemory(row, playerProfile, normalizedCue),
+    }))
+    .filter(item => Number.isFinite(item.score))
+    .sort((a, b) => b.score - a.score || memoryRowTime(b.row) - memoryRowTime(a.row))
+    .slice(0, PHONE_MEMORY_CONTEXT_IMPRESSION_LIMIT)
+    .map(item => formatPhoneImpressionMemory(item.row, names, playerProfile));
+
+  return uniquePhoneMemoryLines([...relationLines, ...impressionLines]).join('\n');
+}
+
 function buildEstablishedRelationshipFactLines(ctx: ActionContext): string[] {
   const targetNames = new Map(ctx.state.statusData.targets.map(target => [target.id, target.name]));
   const lines: string[] = [];
@@ -2449,6 +2750,7 @@ async function runSecondaryProgressUpdate(
     scenePresence?: ScenePresence | null;
     isCancelled?: () => boolean;
     sourceRange?: [number, number];
+    phoneMessages?: PhoneChatMessage[];
   } = {},
 ): Promise<boolean> {
   const showTask = options.showTask ?? true;
@@ -2470,7 +2772,14 @@ async function runSecondaryProgressUpdate(
       if (showTask) clearBackgroundTask(ctx.state, 'progress');
       return false;
     }
-    const committed = commitProgressAnalysis(ctx, raw, targetId, options.scenePresence, options.sourceRange);
+    const committed = commitProgressAnalysis(
+      ctx,
+      raw,
+      targetId,
+      options.scenePresence,
+      options.sourceRange,
+      options.phoneMessages,
+    );
     if (showTask) clearBackgroundTask(ctx.state, 'progress');
     if (committed.applied) {
       // 成功路径也要重渲染：否则徽章在 state 里清了、变量也更新了，但 UI 不刷新，
@@ -2496,6 +2805,7 @@ function commitProgressAnalysis(
   targetId?: string | null,
   scenePresence?: ScenePresence | null,
   sourceRange?: [number, number],
+  phoneMessages?: PhoneChatMessage[],
 ): { applied: boolean; update: ProgressUpdate | null } {
   // 主回合 progress 现在合并了 phone_messages 提取；如果 raw 里带 <phone_messages> 块，
   // 解析并暂存，由 maybeQueueProactivePhoneMessage 接力消费、跳过原本 phone-scene-extract 副 API。
@@ -2507,10 +2817,81 @@ function commitProgressAnalysis(
     }
   }
 
-  const update = parseProgressUpdate(raw);
+  const parsed = parseProgressUpdate(raw);
+  const update = targetId && parsed ? filterPhoneProgressUpdate(ctx, parsed, phoneMessages) : parsed;
   if (!update) return { applied: false, update: null };
   applyFullProgressUpdate(ctx, update, targetId, scenePresence, sourceRange);
   return { applied: true, update };
+}
+
+function getPhoneProgressSourceText(messages: PhoneChatMessage[] | undefined) {
+  return (messages ?? [])
+    .map(message => message.text.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function extractChineseTopicTerms(text: string) {
+  const terms = new Set<string>();
+  const chunks = String(text ?? '').match(/[\u3400-\u9fffぁ-んァ-ヶー々A-Za-z0-9]{2,}/g) ?? [];
+  const stopTerms = new Set([
+    '手机',
+    '消息',
+    '玩家',
+    '聊天',
+    '事件',
+    '时间',
+    '地点',
+    '关系',
+    '好感',
+    '今天',
+    '明天',
+    '对方',
+  ]);
+
+  for (const chunk of chunks) {
+    if (stopTerms.has(chunk)) continue;
+    if (chunk.length <= 4) {
+      terms.add(chunk);
+      continue;
+    }
+    for (let index = 0; index <= chunk.length - 2; index += 1) {
+      const term = chunk.slice(index, index + 2);
+      if (!stopTerms.has(term)) terms.add(term);
+    }
+  }
+
+  return [...terms];
+}
+
+function filterPhoneProgressEvents(update: ProgressUpdate, phoneMessages: PhoneChatMessage[] | undefined) {
+  const sourceText = getPhoneProgressSourceText(phoneMessages);
+  if (!sourceText || !Object.keys(update.events).length) return update;
+
+  const events = Object.fromEntries(
+    Object.entries(update.events).filter(([name, description]) => {
+      const terms = extractChineseTopicTerms(`${name}\n${description}`);
+      return terms.some(term => sourceText.includes(term));
+    }),
+  );
+
+  return Object.keys(events).length === Object.keys(update.events).length ? update : { ...update, events };
+}
+
+function filterPhoneProgressUpdate(
+  ctx: ActionContext,
+  update: ProgressUpdate,
+  phoneMessages: PhoneChatMessage[] | undefined,
+): ProgressUpdate {
+  let filtered = filterPhoneProgressEvents(update, phoneMessages);
+  if (!filtered.location) return filtered;
+
+  debugPhoneFlow(ctx, 'progress:drop-phone-location', {
+    location: filtered.location,
+    messageCount: phoneMessages?.length ?? 0,
+  });
+  filtered = { ...filtered, location: undefined };
+  return filtered;
 }
 
 export async function retryBackgroundProgressUpdate(ctx: ActionContext) {
@@ -2703,6 +3084,7 @@ function appendAssistantPhoneMessage(
     speaker: target.alias ?? target.name,
     text,
     timestamp: formatTime(state.statusData.world.currentTime),
+    worldTime: state.statusData.world.currentTime,
     floorIndex: getCurrentReaderFloorIndex(ctx),
     statusSnapshot: createRollbackSnapshot(state),
   };
@@ -2739,6 +3121,7 @@ function appendUserPhoneMessage(
     speaker: state.playerProfile.name.trim() || '我',
     text,
     timestamp: formatTime(state.statusData.world.currentTime),
+    worldTime: state.statusData.world.currentTime,
     floorIndex: getCurrentReaderFloorIndex(ctx),
     statusSnapshot: createRollbackSnapshot(state),
   };
@@ -2878,6 +3261,7 @@ async function maybeQueueProactivePhoneMessage(
     playerProfile: state.playerProfile,
     plotLibrary: state.plotLibrary,
     characterCardLibrary: state.characterCardLibrary,
+    memoryContext: buildPhoneMemoryContext(ctx, target, triggerText),
     skipProgress: true,
     triggerEvent: triggerText,
     forceMessage: false,
@@ -2892,10 +3276,15 @@ async function maybeQueueProactivePhoneMessage(
             should_silence: true,
             should_stream: false,
             generation_id: generationId,
+            user_input: prompt,
             ordered_prompts: [
               {
                 role: 'system',
                 content: prompt,
+              },
+              {
+                role: 'user',
+                content: '请根据以上手机消息生成要求输出回复。',
               },
             ],
           })
@@ -2932,6 +3321,7 @@ async function sendPhoneMessageFromDirective(
   const target = directive.target;
   const userInput = directive.text.trim();
   if (!userInput || state.phoneMessages.generating) return;
+  const phoneToken = beginPhoneRun(ctx);
 
   const thread = ensurePhoneThread(ctx, target);
   const now = formatTime(state.statusData.world.currentTime);
@@ -2941,6 +3331,7 @@ async function sendPhoneMessageFromDirective(
     speaker: state.playerProfile.name.trim() || '我',
     text: userInput,
     timestamp: now,
+    worldTime: state.statusData.world.currentTime,
     floorIndex: getCurrentReaderFloorIndex(ctx),
     statusSnapshot: createRollbackSnapshot(state),
   };
@@ -2950,6 +3341,12 @@ async function sendPhoneMessageFromDirective(
   thread.unread = 0;
   state.phoneMessages.activeThreadId = target.id;
   state.phoneMessages.generating = true;
+  setPendingPhoneSend(ctx, {
+    targetId: target.id,
+    messageId: userMessage.id,
+    draft: userInput,
+    restoreDraft: false,
+  });
   indexPhoneMessage(ctx.memoryDB, userMessage, target.id, 'phone-directive');
   ctx.persistConversation();
   ctx.render();
@@ -2968,6 +3365,7 @@ async function sendPhoneMessageFromDirective(
         playerProfile: state.playerProfile,
         plotLibrary: state.plotLibrary,
         characterCardLibrary: state.characterCardLibrary,
+        memoryContext: buildPhoneMemoryContext(ctx, target, userInput),
         skipProgress: true,
       });
       const generationId = `phone-directive-${crypto.randomUUID()}`;
@@ -2979,10 +3377,15 @@ async function sendPhoneMessageFromDirective(
                 should_silence: true,
                 should_stream: false,
                 generation_id: generationId,
+                user_input: prompt,
                 ordered_prompts: [
                   {
                     role: 'system',
                     content: prompt,
+                  },
+                  {
+                    role: 'user',
+                    content: '请根据以上手机消息生成要求输出回复。',
                   },
                 ],
               })) ?? '',
@@ -2998,7 +3401,7 @@ async function sendPhoneMessageFromDirective(
     } else {
       rawResult = await simulatePhoneGeneration(target, userInput);
     }
-    if (isCancelled?.()) {
+    if (isCancelled?.() || isPhoneRunCancelled(ctx, phoneToken)) {
       throw new SecondaryTaskCancelledError('phone-directive-detect', String(state.currentGenerationId || target.id));
     }
 
@@ -3009,11 +3412,14 @@ async function sendPhoneMessageFromDirective(
       speaker: target.alias ?? target.name,
       text: replyText,
       timestamp: formatTime(state.statusData.world.currentTime),
+      worldTime: state.statusData.world.currentTime,
       floorIndex: getCurrentReaderFloorIndex(ctx),
     };
 
     thread.messages = [...thread.messages, assistantMessage];
     thread.updatedAt = Date.now();
+    const progressMessages = [userMessage, assistantMessage];
+    const progressHistory = thread.messages.slice(0, -progressMessages.length);
 
     await runSecondaryProgressUpdate(
       ctx,
@@ -3021,15 +3427,18 @@ async function sendPhoneMessageFromDirective(
       buildPhoneProgressPrompt({
         statusData: state.statusData,
         target,
-        messages: thread.messages,
+        messages: progressMessages,
+        history: progressHistory,
       }),
       target.id,
       {
         ...(isCancelled ? { isCancelled } : {}),
         sourceRange: getPhoneProgressSourceRange(ctx, assistantMessage.floorIndex),
+        phoneMessages: progressMessages,
+        isCancelled: () => Boolean(isCancelled?.()) || isPhoneRunCancelled(ctx, phoneToken),
       },
     );
-    if (isCancelled?.()) {
+    if (isCancelled?.() || isPhoneRunCancelled(ctx, phoneToken)) {
       throw new SecondaryTaskCancelledError('phone-progress', String(state.currentGenerationId || target.id));
     }
 
@@ -3038,6 +3447,7 @@ async function sendPhoneMessageFromDirective(
       thread.unread += 1;
     }
     indexPhoneMessage(ctx.memoryDB, assistantMessage, target.id, 'phone-directive');
+    clearPendingPhoneSend(ctx);
     ctx.persistConversation();
     ctx.showNotification({
       kind: 'message',
@@ -3052,7 +3462,7 @@ async function sendPhoneMessageFromDirective(
     // 正文指令失败时回滚这条手机用户消息，避免界面显示已发但实际未生成回复。
     thread.messages = thread.messages.filter(message => message.id !== userMessage.id);
     thread.updatedAt = Date.now();
-    if (error instanceof SecondaryTaskCancelledError || isCancelled?.()) return;
+    if (error instanceof SecondaryTaskCancelledError || isCancelled?.() || isPhoneRunCancelled(ctx, phoneToken)) return;
     ctx.showNotification({
       kind: 'status',
       title: '正文手机指令失败',
@@ -3061,7 +3471,10 @@ async function sendPhoneMessageFromDirective(
       timestamp: formatTime(state.statusData.world.currentTime),
     });
   } finally {
-    state.phoneMessages.generating = false;
+    if (!isPhoneRunCancelled(ctx, phoneToken)) {
+      state.phoneMessages.generating = false;
+      clearPendingPhoneSend(ctx);
+    }
     ctx.render();
   }
 }
@@ -3072,6 +3485,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
   const userInput = state.phoneMessages.draft.trim();
   // 正文生成时不并发发手机消息，避免两个 generateRaw 的流式事件在酒馆侧串到同一个正文楼层。
   if (!target || !userInput || state.phoneMessages.generating || state.generating) return;
+  const phoneToken = beginPhoneRun(ctx);
 
   const thread = ensurePhoneThread(ctx, target);
   const now = formatTime(state.statusData.world.currentTime);
@@ -3081,6 +3495,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
     speaker: state.playerProfile.name.trim() || '我',
     text: userInput,
     timestamp: now,
+    worldTime: state.statusData.world.currentTime,
     floorIndex: getCurrentReaderFloorIndex(ctx),
     statusSnapshot: createRollbackSnapshot(state),
   };
@@ -3091,6 +3506,12 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
   state.phoneMessages.draft = '';
   state.phoneMessages.generating = true;
   state.phoneMessages.activeThreadId = target.id;
+  setPendingPhoneSend(ctx, {
+    targetId: target.id,
+    messageId: userMessage.id,
+    draft: userInput,
+    restoreDraft: true,
+  });
   indexPhoneMessage(ctx.memoryDB, userMessage, target.id, 'phone-directive');
   ctx.persistConversation();
   ctx.render();
@@ -3110,6 +3531,7 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
         playerProfile: state.playerProfile,
         plotLibrary: state.plotLibrary,
         characterCardLibrary: state.characterCardLibrary,
+        memoryContext: buildPhoneMemoryContext(ctx, target, userInput),
         skipProgress: true,
       });
 
@@ -3119,10 +3541,15 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
             should_silence: true,
             should_stream: false,
             generation_id: generationId,
+            user_input: prompt,
             ordered_prompts: [
               {
                 role: 'system',
                 content: prompt,
+              },
+              {
+                role: 'user',
+                content: '请根据以上手机消息生成要求输出回复。',
               },
             ],
           })) ?? '',
@@ -3140,6 +3567,9 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
     } else {
       rawResult = await simulatePhoneGeneration(target, userInput);
     }
+    if (isPhoneRunCancelled(ctx, phoneToken)) {
+      throw new SecondaryTaskCancelledError('phone-message', target.id);
+    }
 
     const replyText = extractPhoneChatReply(rawResult) || '……';
     const assistantMessage: PhoneChatMessage = {
@@ -3148,11 +3578,14 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
       speaker: target.alias ?? target.name,
       text: replyText,
       timestamp: formatTime(state.statusData.world.currentTime),
+      worldTime: state.statusData.world.currentTime,
       floorIndex: getCurrentReaderFloorIndex(ctx),
     };
 
     thread.messages = [...thread.messages, assistantMessage];
     thread.updatedAt = Date.now();
+    const progressMessages = [userMessage, assistantMessage];
+    const progressHistory = thread.messages.slice(0, -progressMessages.length);
 
     await runSecondaryProgressUpdate(
       ctx,
@@ -3160,28 +3593,42 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
       buildPhoneProgressPrompt({
         statusData: state.statusData,
         target,
-        messages: thread.messages,
+        messages: progressMessages,
+        history: progressHistory,
       }),
       target.id,
-      { sourceRange: getPhoneProgressSourceRange(ctx, assistantMessage.floorIndex) },
+      {
+        sourceRange: getPhoneProgressSourceRange(ctx, assistantMessage.floorIndex),
+        phoneMessages: progressMessages,
+        isCancelled: () => isPhoneRunCancelled(ctx, phoneToken),
+      },
     );
+    if (isPhoneRunCancelled(ctx, phoneToken)) {
+      throw new SecondaryTaskCancelledError('phone-progress', target.id);
+    }
 
     assistantMessage.statusSnapshot = createRollbackSnapshot(state);
     indexPhoneMessage(ctx.memoryDB, assistantMessage, target.id, 'phone-directive');
+    clearPendingPhoneSend(ctx);
     ctx.persistConversation();
   } catch (error) {
     thread.messages = thread.messages.filter(message => message.id !== userMessage.id);
     thread.updatedAt = Date.now();
     state.phoneMessages.draft = userInput;
-    ctx.showNotification({
-      kind: 'status',
-      title: '消息发送失败',
-      preview: error instanceof Error ? error.message : String(error),
-      targetTab: 'summary',
-      timestamp: formatTime(state.statusData.world.currentTime),
-    });
+    if (!(error instanceof SecondaryTaskCancelledError) && !isPhoneRunCancelled(ctx, phoneToken)) {
+      ctx.showNotification({
+        kind: 'status',
+        title: '消息发送失败',
+        preview: error instanceof Error ? error.message : String(error),
+        targetTab: 'summary',
+        timestamp: formatTime(state.statusData.world.currentTime),
+      });
+    }
   } finally {
-    state.phoneMessages.generating = false;
+    if (!isPhoneRunCancelled(ctx, phoneToken)) {
+      state.phoneMessages.generating = false;
+      clearPendingPhoneSend(ctx);
+    }
     ctx.render();
   }
 }

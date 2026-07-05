@@ -22,8 +22,8 @@ export function createDefaultMemoryDB(runId: string): IslandMemoryDB {
     worldState: [],
   };
 
-  // 初始化索引
-  rebuildIndexes(db);
+  // 初始化空索引；空库日志会误导存档排查，加载真实数据后再打印重建结果。
+  rebuildIndexes(db, { log: false });
 
   return db;
 }

@@ -560,11 +560,22 @@ function buildConversationHistory(uiMessages: UiMessage[], startIndex = 0) {
   );
 }
 
-function buildPhoneChatHistory(messages: PhoneChatMessage[]) {
+function formatPhonePromptMessage(message: PhoneChatMessage, playerName: string, targetName: string) {
+  const speaker = sanitizePlaceholders(message.speaker, playerName, targetName).trim();
+  const worldTime = String(message.worldTime || '').trim();
+  const displayTime = worldTime ? '' : String(message.timestamp || '').trim();
+  const timeLabel = worldTime ? ` | 发信时间:${worldTime}` : displayTime ? ` | 显示时间:${displayTime}` : '';
+  const text = sanitizePromptInputText(message.text).trim();
+  if (!text) return '';
+  return `[${speaker}${timeLabel}]\n${text}`;
+}
+
+function buildPhoneChatHistory(messages: PhoneChatMessage[], targetName = '聊天对象') {
+  const playerName = '玩家';
   const lines = messages
     .slice(-12)
-    .filter(message => message.text.trim())
-    .map(message => `[${message.speaker}]\n${message.text.trim()}`);
+    .map(message => formatPhonePromptMessage(message, playerName, targetName))
+    .filter(Boolean);
 
   return lines.length ? ['手机聊天记录：', ...lines].join('\n\n') : '';
 }
@@ -1400,6 +1411,7 @@ export function buildPhoneChatPrompt(input: {
   playerProfile?: PlayerProfile | null;
   plotLibrary?: PlotLibrary | null;
   characterCardLibrary?: CharacterCardLibrary | null;
+  memoryContext?: string;
   skipProgress?: boolean;
   triggerEvent?: string;
   forceMessage?: boolean;
@@ -1421,6 +1433,11 @@ export function buildPhoneChatPrompt(input: {
   const playerName = playerProfile?.name || '玩家';
   const cleanPlayerName = sanitizePlaceholders(playerName, playerName, target.name);
   const cleanTargetName = sanitizePlaceholders(target.name, cleanPlayerName, target.name);
+  const memoryContext = sanitizePlaceholders(
+    sanitizePromptInputText(input.memoryContext ?? ''),
+    cleanPlayerName,
+    cleanTargetName,
+  ).trim();
 
   const miniPersona = getRelationshipMiniPersona(target);
   const relationshipGuidance = getRelationshipGuidance(target);
@@ -1472,11 +1489,14 @@ export function buildPhoneChatPrompt(input: {
     `当前关系：${target.stage} · 好感度 ${target.affinity} · 执念 ${target.obsession}（${target.obsessionStage}）`,
     relationshipGuidance ? `当前关系反应：${relationshipGuidance}` : '',
     addressGuidance ? `称呼规则：${addressGuidance}` : '',
+    memoryContext
+      ? `手机消息关系/印象参考（只作为${cleanTargetName}回复前的内心判断依据；不要逐字复述，不要输出数据库字段名，不要写成旁白）：\n${memoryContext}`
+      : '',
     playerProfileText,
     plotContext ? `当前正文主线参考：\n${plotContext}` : '',
     summaryContext ? `此前正文记忆与长期摘要：\n${summaryContext}` : '',
     recentEventsContext,
-    buildPhoneChatHistory(history),
+    buildPhoneChatHistory(history, cleanTargetName),
     triggerEvent ? `这条消息的触发事件：${triggerEvent}` : '',
     forceMessage
       ? '正文已经明确写到玩家收到了你发来的手机消息。必须补全这条消息，输出非空的 <message>...</message>；不要输出空 message。'
@@ -1750,16 +1770,23 @@ export function buildPhoneProgressPrompt(input: {
   statusData: StatusData;
   target: TargetStatus;
   messages: PhoneChatMessage[];
+  history?: PhoneChatMessage[];
 }): Array<{ role: 'system' | 'user'; content: string }> {
   const { statusData, target, messages } = input;
 
   // 清理角色名中的占位符，防止泄露到 prompt
   const playerName = '玩家'; // 手机进度分析不需要具体玩家名
   const cleanTargetName = sanitizePlaceholders(target.name, playerName, target.name);
+  const focusMessages = input.history ? messages : messages.slice(-2);
+  const historyMessages = input.history ?? messages.slice(0, Math.max(0, messages.length - focusMessages.length));
 
-  const formatted = messages
-    .slice(-8)
-    .map(message => `[${sanitizePlaceholders(message.speaker, playerName, cleanTargetName)}]\n${message.text.trim()}`)
+  const formattedFocus = focusMessages
+    .map(message => formatPhonePromptMessage(message, playerName, cleanTargetName))
+    .filter(Boolean)
+    .join('\n\n');
+  const formattedHistory = historyMessages
+    .slice(-6)
+    .map(message => formatPhonePromptMessage(message, playerName, cleanTargetName))
     .filter(Boolean)
     .join('\n\n');
 
@@ -1769,10 +1796,14 @@ export function buildPhoneProgressPrompt(input: {
       content: [
         '你是一个精确的手机聊天状态追踪器。根据手机聊天内容，判断变量是否需要更新。',
         '全程使用中文：所有标签内容、思考标题、reasoning_content / 推理过程 / chain-of-thought 等任何可见或可记录的思考输出都必须用中文。禁止用英文进行内部推理或思考过渡，禁止出现 "Let me think / I will / The user wants / Step 1" 这类英文段落。中文以外的推理内容会被视为格式错误。',
+        '核心边界：只允许根据“本轮新增手机消息”输出变量变化；历史手机聊天只用于理解称呼、关系和上下文，禁止因为历史里的约定、地点、时间词或未兑现安排输出 时间/地点/事件。',
         '手机聊天默认只影响好感度、近期事务和必要的时间推进。',
         '只要玩家的消息让聊天对象产生了明确情绪反应，就应评估好感度变化：普通友好互动通常 +0到+1，明显关心/理解/帮忙通常 +2，冒犯、越界、揭短或骚扰通常 -1 到 -6。',
         '不要因为数值很小就省略好感度；只有完全寒暄、无效输入或关系没有任何变化时，才输出空的 <progress></progress>。',
-        '只有聊天明确导致现实行动时，才允许更新地点、着装或物品。',
+        '手机变量分析不更新地点；当前地点永远读取“当前状态”里的全局地点。即使手机里出现见面地点、取材地点、约定地点、邀请、计划，或玩家说自己到哪里了，也不要输出 地点 字段。',
+        '只有本轮新增消息明确导致现实行动时，才允许更新着装或物品。',
+        '时间规则：消息行里的“发信时间/显示时间”只用于理解消息先后；不要把它原样抄进 时间 字段。只有本轮新增消息明确表示世界时间已经实际推进，才输出 时间。单纯说“半小时后”“明天”“等会儿”是在安排未来，不是已经推进。',
+        '地点规则：禁止输出 地点 字段；需要地点时读取当前状态的全局地点。',
         '',
         '当前状态：',
         `  时间: ${statusData.world.currentTime}`,
@@ -1789,8 +1820,8 @@ export function buildPhoneProgressPrompt(input: {
         '',
         '请用 <progress> 标签输出变化字段，每行一个 key:value。没有变化就输出空的 <progress></progress>。',
         '可用字段：',
-        '  时间:YYYY-MM-DD HH:mm',
-        '  地点:新地点',
+        '  时间:YYYY-MM-DD HH:mm（仅限本轮新增消息确认已经实际推进世界时间；未来约定不写）',
+        '  地点:禁用（手机变量分析不要输出；地点读取当前状态）',
         `  好感度:±N（只更新当前聊天对象：${cleanTargetName}）`,
         `  好感度.${cleanTargetName}:±N（也可显式写当前聊天对象；例如 好感度.${cleanTargetName}:+1）`,
         hasObsessionAxis(target)
@@ -1814,7 +1845,13 @@ export function buildPhoneProgressPrompt(input: {
     },
     {
       role: 'user' as const,
-      content: `请分析以下手机聊天并输出变量更新：\n\n${formatted}`,
+      content: [
+        '请只分析【本轮新增手机消息】并输出变量更新。',
+        formattedHistory ? `历史手机聊天（仅供上下文，不能据此产生变量更新）：\n\n${formattedHistory}` : '',
+        `本轮新增手机消息：\n\n${formattedFocus || '（无）'}`,
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
     },
   ];
 }

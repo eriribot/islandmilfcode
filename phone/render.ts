@@ -965,7 +965,8 @@ function renderPhoneChatPage(state: AppState) {
   const thread = state.phoneMessages.threads[target.id];
   const messages = thread?.messages ?? [];
   // 正文生成期间锁住手机输入，防止后台手机生成抢占正文流式事件。
-  const chatLocked = state.phoneMessages.generating || state.generating;
+  const inputLocked = state.phoneMessages.generating || state.generating;
+  const sendDisabled = state.generating && !state.phoneMessages.generating;
 
   return `
     <section class="phone-route-page phone-app-page phone-app-page--chat" data-phone-route-view="app:chat">
@@ -984,7 +985,7 @@ function renderPhoneChatPage(state: AppState) {
                         data-message-id="${escapeHtml(message.id)}"
                         title="删除短信"
                         aria-label="删除短信"
-                        ${chatLocked ? 'disabled' : ''}
+                        ${inputLocked ? 'disabled' : ''}
                       >×</button>
                       <span>${escapeHtml(message.text)}</span>
                       <small>${escapeHtml(message.timestamp)}</small>
@@ -1000,14 +1001,15 @@ function renderPhoneChatPage(state: AppState) {
           class="phone-chat-input"
           data-field="phone-chat-draft"
           placeholder="输入消息"
-          ${chatLocked ? 'disabled' : ''}
+          ${inputLocked ? 'disabled' : ''}
         >${escapeHtml(state.phoneMessages.draft)}</textarea>
         <button
           class="phone-chat-send"
+          ${state.phoneMessages.generating ? 'data-phone-cancel="1"' : ''}
           data-action="send-phone-message"
           data-target-id="${escapeHtml(target.id)}"
-          ${chatLocked ? 'disabled' : ''}
-        >${state.phoneMessages.generating ? '…' : '发送'}</button>
+          ${sendDisabled ? 'disabled' : ''}
+        >${state.phoneMessages.generating ? '取消' : '发送'}</button>
       </div>
     </section>
   `;

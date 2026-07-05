@@ -39,6 +39,11 @@ let indexMap: StoreSaveIndex = {};
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;
+let lastInitDiagnostics = {
+  indexCount: 0,
+  payloadCount: 0,
+  migratedFromLocalStorage: false,
+};
 
 // ── 写队列：per (store,id) 串行 ──
 const writeQueues = new Map<string, Promise<void>>();
@@ -125,6 +130,14 @@ async function reloadFromIdb(): Promise<void> {
   indexMap = indexRow ?? {};
 }
 
+function updateInitDiagnostics(migratedFromLocalStorage: boolean): void {
+  lastInitDiagnostics = {
+    indexCount: Object.keys(indexMap).length,
+    payloadCount: payloadMap.size,
+    migratedFromLocalStorage,
+  };
+}
+
 // ── 一次性迁移：localStorage → IndexedDB ──
 async function migrateFromLocalStorage(): Promise<boolean> {
   if (typeof localStorage === 'undefined') return false;
@@ -188,11 +201,14 @@ export function initSaveStore(): Promise<void> {
   initPromise = (async () => {
     try {
       await reloadFromIdb();
+      let didMigrate = false;
       // 如果 IndexedDB 是全空但 localStorage 有旧数据 → 迁移。
       if (Object.keys(indexMap).length === 0 && payloadMap.size === 0) {
-        const didMigrate = await migrateFromLocalStorage();
+        didMigrate = await migrateFromLocalStorage();
         if (didMigrate) await reloadFromIdb();
       }
+      updateInitDiagnostics(didMigrate);
+      console.info('[save-store:init]', lastInitDiagnostics);
       openBroadcast();
       installVisibilityReload();
       initialized = true;
@@ -213,6 +229,15 @@ export function readPayloadSync(saveId: string): StoreSavePayload | null {
     return null;
   }
   return payloadMap.get(saveId) ?? null;
+}
+
+/** 同步列出所有 payload。用于 index 丢失后的本地恢复。 */
+export function listPayloadsSync(): Array<{ saveId: string; payload: StoreSavePayload }> {
+  if (!initialized) {
+    console.warn('[save-store] listPayloadsSync called before init');
+    return [];
+  }
+  return [...payloadMap.entries()].map(([saveId, payload]) => ({ saveId, payload }));
 }
 
 /** 同步读 index。未初始化时返回空对象并告警。 */
@@ -254,4 +279,14 @@ export function writeSaveIndexSync(index: StoreSaveIndex): void {
 /** 检查初始化状态；上层入口诊断用。 */
 export function isSaveStoreReady(): boolean {
   return initialized;
+}
+
+/** 启动诊断：给入口日志/用户截图确认 index 与 payload 是否真的读到了。 */
+export function getSaveStoreDiagnostics() {
+  return {
+    ...lastInitDiagnostics,
+    indexCount: Object.keys(indexMap).length,
+    payloadCount: payloadMap.size,
+    ready: initialized,
+  };
 }

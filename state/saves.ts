@@ -1,4 +1,5 @@
 import type { SummaryStore } from '../summary/types';
+import { compareVersions } from 'compare-versions';
 import { createDefaultSummaryStore } from '../summary/types';
 import { extractContextReply, getSummaryMessages, isFrontendHtmlShell } from '../message-format';
 import type {
@@ -18,6 +19,7 @@ import type {
 import { normalizeDrawingSettings, normalizePhoneMessageStore } from './store';
 import { affinityStage, defaultStatusData, normalizeStatusData, obsessionStage } from '../variables/normalize';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
+import { rebuildIndexes } from '../memorydatabase/indexes';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import { migrateSummaryStoreToMemoryDB, hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
 import { sweepLegacyMemoryDB } from '../memorydatabase/sweep';
@@ -30,6 +32,7 @@ import {
 } from '../player-backgrounds';
 import {
   deletePayloadSync,
+  listPayloadsSync,
   readPayloadSync,
   readSaveIndexSync,
   writePayloadSync,
@@ -43,13 +46,26 @@ import {
   restoreImageAssetFromBackup,
   type ImageAssetBackupRecord,
 } from './image-assets';
+import { ISLANDMILFCODE_VERSION, SAVE_SCHEMA_VERSION } from '../version';
 
 const SAVE_INDEX_STORAGE_KEY = 'islandmilfcode:save-index:v2';
 const SAVE_PAYLOAD_STORAGE_PREFIX = 'islandmilfcode:save-payload:v2:';
 const ACTIVE_RUN_ID_STORAGE_KEY = 'islandmilfcode:active-run-id:v2';
 const ACTIVE_SAVE_ID_STORAGE_KEY = 'islandmilfcode:active-save-id:v2';
 const LEGACY_SAVES_STORAGE_KEY = 'islandmilfcode-saves-v1';
-const SAVE_VERSION = 2;
+const SAVE_VERSION = SAVE_SCHEMA_VERSION;
+const MEGUMI_UTAHA_BLEED_REPAIR_VERSION = 'megumi-utaha-bleed-v1';
+const MEGUMI_UTAHA_RESTORE_VERSION = 'megumi-utaha-restore-v1';
+
+function normalizeSaveVersionForCompare(version: unknown): string {
+  if (typeof version === 'string' && version.trim()) return version.trim();
+  if (typeof version === 'number' && Number.isFinite(version)) return `0.0.${Math.max(0, Math.floor(version))}`;
+  return '0.0.0';
+}
+
+function isOlderSaveVersion(version: unknown): boolean {
+  return compareVersions(normalizeSaveVersionForCompare(version), SAVE_VERSION) < 0;
+}
 
 function normalizeImageRerollContext(context?: ImageRerollContext): ImageRerollContext | undefined {
   if (!context || typeof context !== 'object') return undefined;
@@ -364,6 +380,8 @@ function normalizeGameState(gameState: Partial<GameState> | undefined, fallbackR
   if (runtimeFlags && typeof runtimeFlags === 'object') {
     runtimeFlags.playerProfile = normalizePlayerProfile((runtimeFlags as Record<string, unknown>).playerProfile);
     runtimeFlags.phoneMessages = normalizePhoneMessageStore((runtimeFlags as Record<string, unknown>).phoneMessages);
+    runtimeFlags.cardVersion = ISLANDMILFCODE_VERSION;
+    runtimeFlags.saveSchemaVersion = SAVE_VERSION;
     delete (runtimeFlags as Record<string, unknown>).deepSeekMode;
     delete (runtimeFlags as Record<string, unknown>).deepSeekWebLookup;
   }
@@ -372,7 +390,11 @@ function normalizeGameState(gameState: Partial<GameState> | undefined, fallbackR
     statusData: normalizeStatusData(gameState?.statusData ?? defaultStatusData),
     currentMessageIndex: Math.max(0, Number(gameState?.currentMessageIndex ?? 0) || 0),
     worldState: gameState?.worldState ? cloneJson(gameState.worldState) : undefined,
-    runtimeFlags,
+    runtimeFlags: {
+      ...(runtimeFlags ?? {}),
+      cardVersion: ISLANDMILFCODE_VERSION,
+      saveSchemaVersion: SAVE_VERSION,
+    },
   };
 }
 
@@ -627,6 +649,8 @@ function migrateLegacySavesIfNeeded(): void {
         statusData,
         currentMessageIndex: Math.max(0, (legacySave.messages?.length ?? 0) - 1),
         runtimeFlags: {
+          cardVersion: ISLANDMILFCODE_VERSION,
+          saveSchemaVersion: SAVE_VERSION,
           playerProfile,
           phoneMessages: normalizePhoneMessageStore(null),
         },
@@ -677,12 +701,37 @@ function readSaveIndex(): SaveIndexRecord {
   return normalizedIndex;
 }
 
+export function recoverMissingSaveIndexFromPayloads(): { recovered: number; totalPayloads: number } {
+  const index = readSaveIndex();
+  let recovered = 0;
+  const payloadRows = listPayloadsSync();
+  for (const row of payloadRows) {
+    if (index[row.saveId]) continue;
+    if (!getRawPayloadRunId(row.payload)) continue;
+    const payload = readPayload(row.saveId);
+    if (!payload) continue;
+    index[row.saveId] = createMetaFromPayload(payload, {
+      kind: row.saveId.startsWith('autosave_') ? 'autosave' : 'manual',
+      label: row.saveId.startsWith('autosave_') ? '自动存档' : '恢复存档',
+    });
+    recovered += 1;
+  }
+  if (recovered > 0) writeSaveIndex(index);
+  return { recovered, totalPayloads: payloadRows.length };
+}
+
 function writeSaveIndex(index: SaveIndexRecord): void {
   writeSaveIndexSync(index as unknown as Record<string, unknown>);
 }
 
 function writePayload(payload: SavePayload): void {
   writePayloadSync(payload.saveId, payload as unknown as Record<string, unknown>);
+}
+
+function getRawPayloadRunId(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return '';
+  const raw = payload as Partial<SavePayload>;
+  return String(raw.runId || raw.gameState?.runId || '').trim();
 }
 
 function readPayload(saveId: string): SavePayload | null {
@@ -703,12 +752,30 @@ function readPayload(saveId: string): SavePayload | null {
     sweepStats.worldRowsMigrated > 0
     || sweepStats.duplicatesCollapsed > 0
     || sweepStats.deltaRowsFolded > 0;
+  if (sweepHadEffect) {
+    rebuildIndexes(memoryDB);
+  }
 
   // 从 memoryDB 把摘要/事实水合回 summaryStore，让旧消费方（buildPrompt / UI）继续工作。
   // 这一步是为了修复存档加载后摘要丢失、全部历史被塞进 prompt 的问题。
   const hydrated = hydrateSummaryStoreFromMemoryDB(memoryDB);
   const hadInlineImages = hasInlinePersistedImageData(payload.chatLog);
   const chatLog = normalizePersistedMessages(payload.chatLog);
+  const previousVersion = payload.version ?? '';
+  const isLegacyVersion = isOlderSaveVersion(previousVersion);
+  const normalizedGameState = normalizeGameState(payload.gameState, runId);
+  normalizedGameState.runtimeFlags = {
+    ...(normalizedGameState.runtimeFlags ?? {}),
+    saveSchemaVersion: SAVE_VERSION,
+    ...(isLegacyVersion && previousVersion ? { migratedFromSaveSchemaVersion: previousVersion } : {}),
+  };
+  const megumiRecovery =
+    isLegacyVersion
+      ? recoverLegacyMegumiAffinityFromSnapshots(normalizedGameState.statusData, chatLog)
+      : { statusData: normalizedGameState.statusData, recovered: false };
+  if (megumiRecovery.recovered) {
+    normalizedGameState.statusData = megumiRecovery.statusData;
+  }
   const summaryFloorCount = getSummaryMessages(
     chatLog.map(message => ({
       id: crypto.randomUUID(),
@@ -738,26 +805,73 @@ function readPayload(saveId: string): SavePayload | null {
     !payload.memoryDB ||
     sweepHadEffect ||
     shouldCompactPersistedMessages(payload.chatLog) ||
-    hadInlineImages
+    hadInlineImages ||
+    megumiRecovery.recovered ||
+    payload.version !== SAVE_VERSION
   ) {
     writePayloadSync(saveId, {
       ...payload,
+      gameState: {
+        ...normalizedGameState,
+        statusData: megumiRecovery.statusData,
+      },
       chatLog,
       summaryStore,
       memoryDB,
+      version: SAVE_VERSION,
     } as unknown as Record<string, unknown>);
   }
 
   return {
     saveId: String(payload.saveId || saveId),
     runId,
-    gameState: normalizeGameState(payload.gameState, runId),
+    gameState: normalizedGameState,
     chatLog,
     summaryStore,
     memoryDB,
     messageSnapshots: Array.isArray(payload.messageSnapshots) ? cloneJson(payload.messageSnapshots) : undefined,
-    version: Number(payload.version ?? SAVE_VERSION) || SAVE_VERSION,
+    version: SAVE_VERSION,
   };
+}
+
+function findBuiltInTarget(statusData: StatusData, targetKey: string) {
+  return statusData.targets.find(target => getBuiltInTargetKeyFromStatusTarget(target) === targetKey) ?? null;
+}
+
+function recoverLegacyMegumiAffinityFromSnapshots(
+  statusData: StatusData,
+  chatLog: PersistedMessage[],
+): { statusData: StatusData; recovered: boolean } {
+  const megumi = findBuiltInTarget(statusData, 'megumi');
+  if (!megumi || Number(megumi.affinity ?? 0) !== 0) return { statusData, recovered: false };
+  if (megumi.meta?.variableRepairVersion !== MEGUMI_UTAHA_BLEED_REPAIR_VERSION) {
+    return { statusData, recovered: false };
+  }
+
+  for (let index = chatLog.length - 1; index >= 0; index -= 1) {
+    const snapshot = chatLog[index]?.statusSnapshot?.statusData;
+    if (!snapshot) continue;
+    const previousMegumi = findBuiltInTarget(normalizeStatusData(snapshot), 'megumi');
+    const previousAffinity = Number(previousMegumi?.affinity ?? 0) || 0;
+    if (previousAffinity <= 0) continue;
+
+    const targets = statusData.targets.map(target => {
+      if (getBuiltInTargetKeyFromStatusTarget(target) !== 'megumi') return target;
+      return {
+        ...target,
+        affinity: previousAffinity,
+        stage: previousMegumi?.stage || affinityStage(previousAffinity),
+        meta: {
+          ...(target.meta ?? {}),
+          variableRepairVersion: MEGUMI_UTAHA_RESTORE_VERSION,
+          restoredFromVariableRepairVersion: MEGUMI_UTAHA_BLEED_REPAIR_VERSION,
+        },
+      };
+    });
+    return { statusData: { ...statusData, targets }, recovered: true };
+  }
+
+  return { statusData, recovered: false };
 }
 
 function buildInitialPayload(opts: {
@@ -801,6 +915,8 @@ function buildInitialPayload(opts: {
       statusData,
       currentMessageIndex: 0,
       runtimeFlags: {
+        cardVersion: ISLANDMILFCODE_VERSION,
+        saveSchemaVersion: SAVE_VERSION,
         saveKind: opts.kind,
         playerProfile,
         phoneMessages: normalizePhoneMessageStore(null),
@@ -1029,13 +1145,13 @@ export function clearActiveSaveId(): void {
 // 只动 islandmilfcode: 前缀的键，不碰其它应用的 storage。
 
 export type SaveBackupPayload = {
-  version: number;
+  version: string | number;
   exportedAt: string;
   entries: Record<string, unknown>;
 };
 
 export type SingleSaveBackupPayload = {
-  version: number;
+  version: string | number;
   exportedAt: string;
   kind: 'single-save';
   saveId: string;
@@ -1192,7 +1308,7 @@ function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): { imp
     summaryStore: cloneJson(rawPayload.summaryStore ?? createDefaultSummaryStore()),
     memoryDB: rawPayload.memoryDB ? cloneJson(rawPayload.memoryDB) : undefined,
     messageSnapshots: Array.isArray(rawPayload.messageSnapshots) ? cloneJson(rawPayload.messageSnapshots) : undefined,
-    version: Number(rawPayload.version ?? SAVE_VERSION) || SAVE_VERSION,
+    version: rawPayload.version ?? '',
   };
   const baseMeta = createMetaFromPayload(payload, {
     kind: rawMeta?.kind === 'manual' || rawMeta?.kind === 'autosave' ? rawMeta.kind : 'manual',
@@ -1205,7 +1321,7 @@ function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): { imp
     saveId,
     runId,
     updatedAt: Number(rawMeta?.updatedAt ?? baseMeta.updatedAt) || baseMeta.updatedAt,
-    version: Number(rawMeta?.version ?? SAVE_VERSION) || SAVE_VERSION,
+    version: rawMeta?.version ?? baseMeta.version,
   });
 
   const index = readSaveIndex();

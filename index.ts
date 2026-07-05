@@ -14,7 +14,14 @@ import './styles.css';
 import './phone/styles.css';
 import './title/styles.css';
 
-import { cancelCurrentGeneration, retryBackgroundProgressUpdate, submitMessage, submitPhoneMessage, type ActionContext } from './actions';
+import {
+  cancelCurrentGeneration,
+  cancelPhoneMessageGeneration,
+  retryBackgroundProgressUpdate,
+  submitMessage,
+  submitPhoneMessage,
+  type ActionContext,
+} from './actions';
 import { clearBackgroundTask } from './background-tasks';
 import { setupStreamingHooks } from './actions/streaming';
 import { extractContextReply, getReaderMessages, getSummaryMessages, invalidateReaderMessagesCache } from './message-format';
@@ -53,13 +60,15 @@ import {
   exportSaveAsJsonPartsWithAssets,
   getAutosaveBranchSaveId,
   importAllSavesFromJson,
+  listSaves,
   loadSave,
   normalizePlayerProfile,
+  recoverMissingSaveIndexFromPayloads,
   setActiveRunId,
   setActiveSaveId,
   writeAutosave,
 } from './state/saves';
-import { flushSaveStore, initSaveStore } from './state/save-store';
+import { flushSaveStore, getSaveStoreDiagnostics, initSaveStore } from './state/save-store';
 import {
   flushImageAssetStore,
   hydrateImageAssetElements,
@@ -104,6 +113,7 @@ import { createVariableAdapter, type VariableAdapter } from './variables/adapter
 import { protectTargetAffinityReset } from './variables/runtime-guard';
 import { clamp, formatTime, syncMainEvents } from './variables/normalize';
 import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
+import { ISLANDMILFCODE_VERSION, SAVE_SCHEMA_VERSION } from './version';
 import {
   createMemoryDraft,
   createMemoryPatchFromDraft,
@@ -117,6 +127,8 @@ import {
   insertMemoryRow,
   type MemoryTableName,
 } from './memorydatabase/editor';
+import { getIndexStats } from './memorydatabase/indexes';
+import type { IslandMemoryDB, MemoryBaseRow } from './memorydatabase/types';
 import { loadMemoryConfig, saveMemoryConfig, resetMemoryConfig } from './memory-config';
 import { getImageGenerationPromptAtAnchor, isImageGenerationPluginAvailable, requestImageGeneration } from './plugins/image-generation';
 import { isChatu8PluginAvailable, openChatu8Plugin } from './plugins/chatu8-integration';
@@ -848,6 +860,35 @@ function scheduleWorldbookRefreshRetry(runId: string | null, attempt = 1) {
   }, retryDelays[attempt - 1]);
 }
 
+function getMemoryDBTableCounts(memoryDB: IslandMemoryDB) {
+  const tableNames = [
+    'entities',
+    'events',
+    'facts',
+    'relations',
+    'impressions',
+    'tasks',
+    'secrets',
+    'items',
+    'phoneMessages',
+    'summaries',
+    'attributes',
+    'worldState',
+  ] as const;
+  const counts: Record<string, { active: number; expired: number; total: number }> = {};
+  for (const tableName of tableNames) {
+    const rows = memoryDB[tableName] as MemoryBaseRow[];
+    let active = 0;
+    let expired = 0;
+    for (const row of rows) {
+      if (row.expired) expired += 1;
+      else active += 1;
+    }
+    counts[tableName] = { active, expired, total: rows.length };
+  }
+  return counts;
+}
+
 function enterSave(saveId: string) {
   const save = loadSave(saveId);
   if (!save) return;
@@ -880,6 +921,13 @@ function enterSave(saveId: string) {
   if (save.payload.memoryDB) {
     state.memoryDB = save.payload.memoryDB;
   }
+  console.info('[saves:enter]', {
+    saveId,
+    runId: save.payload.runId,
+    chatLogCount: save.payload.chatLog.length,
+    indexStats: getIndexStats(state.memoryDB),
+    tableCounts: getMemoryDBTableCounts(state.memoryDB),
+  });
   state.phoneMessages = normalizePhoneMessageStore(state.runtimeFlags.phoneMessages);
   cacheStatusData(state.statusData);
   guardedAdapterSave(state.statusData);
@@ -2292,6 +2340,10 @@ function bindEvents() {
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="send-phone-message"]').forEach(button => {
     button.addEventListener('click', () => {
+      if (state.phoneMessages.generating) {
+        cancelPhoneMessageGeneration(ctx);
+        return;
+      }
       const targetId = button.dataset.targetId ?? state.phoneMessages.activeThreadId;
       if (targetId) void submitPhoneMessage(ctx, targetId);
     });
@@ -3174,6 +3226,10 @@ const titleCallbacks: TitleCallbacks = {
   },
   showSaves: () => {
     state.showingSaveList = true;
+    console.info('[saves:list]', {
+      saveCount: listSaves().length,
+      ...getSaveStoreDiagnostics(),
+    });
     render();
   },
   hideSaves: () => {
@@ -3277,6 +3333,8 @@ function render() {
     root.innerHTML = renderTitleHome({
       showSaves: state.showingSaveList,
       deepSeekMode: state.deepSeekModeEnabled,
+      recoveryNotice:
+        typeof state.runtimeFlags.saveRecoveryNotice === 'string' ? state.runtimeFlags.saveRecoveryNotice : undefined,
     });
     bindTitleHomeEvents(root, titleCallbacks);
   }
@@ -3367,6 +3425,19 @@ window.addEventListener('keydown', event => {
 async function init() {
   // 必须在任何同步存档读写（render 之前）完成；内部会一次性把 localStorage 旧数据迁到 IndexedDB。
   await initSaveStore();
+  const saveRecovery = recoverMissingSaveIndexFromPayloads();
+  const saveCount = listSaves().length;
+  console.info('[islandmilfcode:init]', {
+    cardVersion: ISLANDMILFCODE_VERSION,
+    saveSchemaVersion: SAVE_SCHEMA_VERSION,
+    saveCount,
+    payloadCount: saveRecovery.totalPayloads,
+    recoveredMissingIndex: saveRecovery.recovered,
+    store: getSaveStoreDiagnostics(),
+  });
+  if (saveRecovery.recovered > 0) {
+    state.runtimeFlags.saveRecoveryNotice = `已从本地缓存恢复 ${saveRecovery.recovered} 个存档`;
+  }
   await initImageAssetStore();
   adapter = await createVariableAdapter(win);
   state.summaryApiConfig = loadSummaryApiConfig();
