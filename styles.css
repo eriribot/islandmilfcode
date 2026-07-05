@@ -936,7 +936,7 @@ button {
   color: var(--ink-dark);
 }
 
-/* Saenai 对话雪碧图头像：只显示五小只，跳过第 0 格安艺伦也。 */
+/* Saenai 对话头像：五小只使用雪碧图，成年组使用 profile 立绘。 */
 .saenai-dialogue {
   position: relative;
   display: grid;
@@ -995,6 +995,24 @@ button {
 
 .saenai-dialogue__avatar--michiru {
   background-position: calc(var(--saenai-avatar-size, 64px) * -5) 0;
+}
+
+.saenai-dialogue__avatar--profile,
+.paper-workspace.is-paper-fullscreen .saenai-dialogue__avatar--profile {
+  background-size: cover;
+  background-position: center;
+}
+
+.saenai-dialogue__avatar--sayuri {
+  background-image: url('https://eriribot.github.io/islandmilfcode/picresource/Sayuri_profile.png');
+}
+
+.saenai-dialogue__avatar--sonoko {
+  background-image: url('https://eriribot.github.io/islandmilfcode/picresource/Sonoko_profile.png');
+}
+
+.saenai-dialogue__avatar--akane {
+  background-image: url('https://eriribot.github.io/islandmilfcode/picresource/Akane_profile.png');
 }
 
 .saenai-dialogue__avatar--placeholder {
@@ -2823,6 +2841,11 @@ button {
 
   .saenai-dialogue__avatar--michiru {
     background-position: calc(var(--saenai-avatar-size, 50px) * -5) 0;
+  }
+
+  .saenai-dialogue__avatar--profile {
+    background-size: cover;
+    background-position: center;
   }
 
   .saenai-dialogue__name {

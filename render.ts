@@ -297,21 +297,28 @@ function hasRenderableIllustrations(message: UiMessage | undefined) {
 }
 
 type SaenaiSpriteId = 'megumi' | 'eriri' | 'utaha' | 'izumi' | 'michiru';
+type SaenaiProfileId = 'sayuri' | 'sonoko' | 'akane';
+type SaenaiAvatarId = SaenaiSpriteId | SaenaiProfileId;
 
 interface SaenaiDialogueLine {
   characterName: string;
   mood: string;
   text: string;
-  sprite: SaenaiSpriteId | null;
+  avatar: SaenaiAvatarId | null;
 }
 
-const SAENAI_SPRITE_ALIASES: Record<SaenaiSpriteId, string[]> = {
+const SAENAI_AVATAR_ALIASES: Record<SaenaiAvatarId, string[]> = {
   megumi: ['加藤惠', '加藤恵', '惠', '恵', 'Megumi'],
   eriri: ['泽村·斯宾塞·英梨梨', '澤村·斯賓塞·英梨梨', '泽村英梨梨', '澤村英梨梨', '英梨梨', '英梨々', 'Eriri'],
   utaha: ['霞之丘诗羽', '霞之丘詩羽', '霞ヶ丘詩羽', '霞丘诗羽', '诗羽', '詩羽', 'Utaha'],
   izumi: ['波岛出海', '波島出海', '出海', 'Izumi'],
   michiru: ['冰堂美智留', '氷堂美智留', '美智留', 'Michiru'],
+  sayuri: ['泽村小百合', '澤村小百合', '小百合', '小百合太太', 'Sayuri'],
+  sonoko: ['町田苑子', '町田', '苑子', '町田编辑', '町田編輯', 'Sonoko', 'Machida'],
+  akane: ['高坂茜', '红坂朱音', '紅坂朱音', '红坂', '紅坂', '朱音', '茜', 'Akane', 'Kosaka', 'Kousaka'],
 };
+
+const SAENAI_PROFILE_AVATARS = new Set<SaenaiAvatarId>(['sayuri', 'sonoko', 'akane']);
 
 function normalizeSaenaiName(name: string) {
   return name
@@ -331,12 +338,16 @@ function escapeSaenaiRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function getSaenaiSprite(characterName: string): SaenaiSpriteId | null {
+function getSaenaiAvatar(characterName: string): SaenaiAvatarId | null {
   const normalized = normalizeSaenaiName(characterName);
-  for (const [sprite, aliases] of Object.entries(SAENAI_SPRITE_ALIASES) as Array<[SaenaiSpriteId, string[]]>) {
-    if (aliases.some(alias => normalizeSaenaiName(alias) === normalized)) return sprite;
+  for (const [avatar, aliases] of Object.entries(SAENAI_AVATAR_ALIASES) as Array<[SaenaiAvatarId, string[]]>) {
+    if (aliases.some(alias => normalizeSaenaiName(alias) === normalized)) return avatar;
   }
   return null;
+}
+
+function getSaenaiAvatarClass(avatar: SaenaiAvatarId) {
+  return `saenai-dialogue__avatar--${SAENAI_PROFILE_AVATARS.has(avatar) ? 'profile ' : ''}saenai-dialogue__avatar--${avatar}`;
 }
 
 function extractSaenaiBody(line: string) {
@@ -355,7 +366,7 @@ function extractWrappedSaenaiNarration(line: string) {
   return body || null;
 }
 
-// Saenai 对话解析：识别正文里的 @saenai 行并渲染五小只头像，雪碧图第 0 格安艺伦也不参与映射。
+// Saenai 对话解析：五小只走雪碧图，成年组走 profile 头像；雪碧图第 0 格安艺伦也不参与映射。
 function parseSaenaiDialogueLine(line: string): SaenaiDialogueLine | null {
   const body = extractSaenaiBody(line);
   if (!body) return null;
@@ -371,7 +382,7 @@ function parseSaenaiDialogueLine(line: string): SaenaiDialogueLine | null {
       characterName,
       mood,
       text,
-      sprite: getSaenaiSprite(characterName),
+      avatar: getSaenaiAvatar(characterName),
     };
   }
 
@@ -390,7 +401,7 @@ function parseSaenaiDialogueLine(line: string): SaenaiDialogueLine | null {
     characterName,
     mood,
     text,
-    sprite: getSaenaiSprite(characterName),
+    avatar: getSaenaiAvatar(characterName),
   };
 }
 
@@ -407,7 +418,7 @@ function parseSaenaiDialogueTriggerLine(line: string): Omit<SaenaiDialogueLine, 
   return {
     characterName,
     mood: parts[1] ?? '',
-    sprite: getSaenaiSprite(characterName),
+    avatar: getSaenaiAvatar(characterName),
   };
 }
 
@@ -450,8 +461,8 @@ function renderReaderTextBlock(text: string) {
 }
 
 function renderSaenaiDialogueLine(dialogue: SaenaiDialogueLine) {
-  const avatar = dialogue.sprite
-    ? `<span class="saenai-dialogue__avatar saenai-dialogue__avatar--${dialogue.sprite}" aria-hidden="true"></span>`
+  const avatar = dialogue.avatar
+    ? `<span class="saenai-dialogue__avatar ${getSaenaiAvatarClass(dialogue.avatar)}" aria-hidden="true"></span>`
     : `<span class="saenai-dialogue__avatar saenai-dialogue__avatar--placeholder" aria-hidden="true">${escapeHtml(dialogue.characterName.slice(0, 1) || '?')}</span>`;
   const mood = dialogue.mood ? `<span class="saenai-dialogue__mood">${escapeHtml(dialogue.mood)}</span>` : '';
 
