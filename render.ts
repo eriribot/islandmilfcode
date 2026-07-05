@@ -347,7 +347,12 @@ function getSaenaiAvatar(characterName: string): SaenaiAvatarId | null {
 }
 
 function getSaenaiAvatarClass(avatar: SaenaiAvatarId) {
-  return `saenai-dialogue__avatar--${SAENAI_PROFILE_AVATARS.has(avatar) ? 'profile ' : ''}saenai-dialogue__avatar--${avatar}`;
+  return [
+    SAENAI_PROFILE_AVATARS.has(avatar) ? 'saenai-dialogue__avatar--profile' : '',
+    `saenai-dialogue__avatar--${avatar}`,
+  ]
+    .filter(Boolean)
+    .join(' ');
 }
 
 function extractSaenaiBody(line: string) {
@@ -460,6 +465,53 @@ function renderReaderTextBlock(text: string) {
   return text.trim() ? `<p class="reader-card__text">${escapeHtml(text.trim())}</p>` : '';
 }
 
+type ReaderHtmlContentSegment =
+  | { kind: 'text'; value: string }
+  | { kind: 'html'; value: string };
+
+function splitReaderHtmlContent(text: string): ReaderHtmlContentSegment[] {
+  const segments: ReaderHtmlContentSegment[] = [];
+  const blockPattern = /<htmlcontent\b[^>]*>([\s\S]*?)(?:<\/htmlcontent\s*>|$)/gi;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = blockPattern.exec(text))) {
+    if (match.index > cursor) {
+      segments.push({ kind: 'text', value: text.slice(cursor, match.index) });
+    }
+    segments.push({ kind: 'html', value: match[1] ?? '' });
+    cursor = match.index + match[0].length;
+  }
+
+  if (cursor < text.length) {
+    segments.push({ kind: 'text', value: text.slice(cursor) });
+  }
+
+  return segments.length ? segments : [{ kind: 'text', value: text }];
+}
+
+function sanitizeReaderHtmlContent(html: string) {
+  return String(html ?? '')
+    .replace(/<!doctype\b[^>]*>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, '')
+    .replace(/<(?:iframe|object|embed|link|meta|base)\b[^>]*>[\s\S]*?<\/(?:iframe|object|embed|link|meta|base)\s*>/gi, '')
+    .replace(/<\/?(?:iframe|object|embed|link|meta|base|html|head|body)\b[^>]*>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+srcdoc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+(?:href|src|xlink:href|formaction)\s*=\s*(["'])\s*javascript:[\s\S]*?\1/gi, '')
+    .replace(/\s+(?:href|src|xlink:href|formaction)\s*=\s*javascript:[^\s>]*/gi, '')
+    .replace(/\s+style\s*=\s*(["'])([\s\S]*?)\1/gi, (_raw, quote: string, style: string) =>
+      /(?:expression\s*\(|javascript:|-moz-binding)/i.test(style) ? '' : ` style=${quote}${style}${quote}`,
+    );
+}
+
+function renderReaderHtmlContentBlock(html: string) {
+  const safeHtml = sanitizeReaderHtmlContent(html).trim();
+  return safeHtml ? `<div class="reader-htmlcontent">${safeHtml}</div>` : '';
+}
+
 function renderSaenaiDialogueLine(dialogue: SaenaiDialogueLine) {
   const avatar = dialogue.avatar
     ? `<span class="saenai-dialogue__avatar ${getSaenaiAvatarClass(dialogue.avatar)}" aria-hidden="true"></span>`
@@ -480,9 +532,9 @@ function renderSaenaiDialogueLine(dialogue: SaenaiDialogueLine) {
   `;
 }
 
-function renderSaenaiDialogueBody(text: string) {
+function renderSaenaiDialoguePlainBody(text: string, fallback = false) {
   const normalized = String(text ?? '').replace(/\r\n/g, '\n');
-  if (!normalized.trim()) return `<p class="reader-card__text">……</p>`;
+  if (!normalized.trim()) return fallback ? `<p class="reader-card__text">……</p>` : '';
 
   const blocks: string[] = [];
   const textBuffer: string[] = [];
@@ -565,6 +617,26 @@ function renderSaenaiDialogueBody(text: string) {
   }
 
   flushText();
+  return blocks.join('') || (fallback ? `<p class="reader-card__text">……</p>` : '');
+}
+
+function renderSaenaiDialogueBody(text: string) {
+  const normalized = String(text ?? '').replace(/\r\n/g, '\n');
+  if (!normalized.trim()) return `<p class="reader-card__text">……</p>`;
+
+  const segments = splitReaderHtmlContent(normalized);
+  if (segments.length === 1 && segments[0]?.kind === 'text') {
+    return renderSaenaiDialoguePlainBody(normalized, true);
+  }
+
+  const blocks = segments
+    .map(segment =>
+      segment.kind === 'html'
+        ? renderReaderHtmlContentBlock(segment.value)
+        : renderSaenaiDialoguePlainBody(segment.value, false),
+    )
+    .filter(Boolean);
+
   return blocks.join('') || `<p class="reader-card__text">……</p>`;
 }
 

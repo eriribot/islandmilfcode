@@ -936,6 +936,31 @@ button {
   color: var(--ink-dark);
 }
 
+.reader-htmlcontent {
+  max-width: 100%;
+  margin: 12px 0;
+  overflow-x: auto;
+  white-space: normal;
+  word-break: break-word;
+  color: var(--ink-dark);
+}
+
+.reader-htmlcontent > :first-child {
+  margin-top: 0;
+}
+
+.reader-htmlcontent > :last-child {
+  margin-bottom: 0;
+}
+
+.reader-htmlcontent img,
+.reader-htmlcontent video,
+.reader-htmlcontent canvas,
+.reader-htmlcontent svg,
+.reader-htmlcontent table {
+  max-width: 100%;
+}
+
 /* Saenai 对话头像：五小只使用雪碧图，成年组使用 profile 立绘。 */
 .saenai-dialogue {
   position: relative;
@@ -999,20 +1024,43 @@ button {
 
 .saenai-dialogue__avatar--profile,
 .paper-workspace.is-paper-fullscreen .saenai-dialogue__avatar--profile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background-image: none;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.94), rgba(255, 249, 238, 0.82)),
+    rgba(255, 255, 255, 0.9);
+}
+
+.saenai-dialogue__avatar--profile::before {
+  content: '';
+  display: block;
+  width: calc(var(--saenai-avatar-size, 64px) - 12px);
+  height: calc(var(--saenai-avatar-size, 64px) - 12px);
+  border-radius: 50%;
+  background-image: var(--saenai-profile-image);
+  background-repeat: no-repeat;
   background-size: cover;
-  background-position: center;
+  background-position: var(--saenai-profile-position, center);
+  box-shadow:
+    0 0 0 2px rgba(255, 255, 255, 0.92),
+    0 4px 10px rgba(98, 72, 62, 0.14);
 }
 
 .saenai-dialogue__avatar--sayuri {
-  background-image: url('https://eriribot.github.io/islandmilfcode/picresource/Sayuri_profile.png');
+  --saenai-profile-image: url('https://eriribot.github.io/islandmilfcode/picresource/Sayuri_profile.png');
+  --saenai-profile-position: center;
 }
 
 .saenai-dialogue__avatar--sonoko {
-  background-image: url('https://eriribot.github.io/islandmilfcode/picresource/Sonoko_profile.png');
+  --saenai-profile-image: url('https://eriribot.github.io/islandmilfcode/picresource/Sonoko_profile.png');
+  --saenai-profile-position: center;
 }
 
 .saenai-dialogue__avatar--akane {
-  background-image: url('https://eriribot.github.io/islandmilfcode/picresource/Akane_profile.png');
+  --saenai-profile-image: url('https://eriribot.github.io/islandmilfcode/picresource/Akane_profile.png');
+  --saenai-profile-position: center;
 }
 
 .saenai-dialogue__avatar--placeholder {
@@ -2844,8 +2892,12 @@ button {
   }
 
   .saenai-dialogue__avatar--profile {
-    background-size: cover;
-    background-position: center;
+    background-image: none;
+  }
+
+  .saenai-dialogue__avatar--profile::before {
+    width: calc(var(--saenai-avatar-size, 50px) - 10px);
+    height: calc(var(--saenai-avatar-size, 50px) - 10px);
   }
 
   .saenai-dialogue__name {
