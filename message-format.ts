@@ -32,6 +32,21 @@ export const PRIMARY_VISIBLE_TAG = 'content';
 // 兼容用户自定义预设里要求的中文正文标签，避免模型输出 <正文> 时被当成未知标签吞掉。
 export const FALLBACK_VISIBLE_TAGS = ['正文', 'context', 'story_scene'];
 export const OPTION_LINE_PREFIXES = ['>选项一：', '>选项二：', '>选项三：', '>选项四：'] as const;
+const SELECTION_OPTION_TAGS = [
+  'selection',
+  'selections',
+  'select',
+  'choices',
+  'choice',
+  'option',
+  '选项',
+  '选项列表',
+  '选择',
+] as const;
+const SELECTION_CHILD_OPTION_TAGS = ['selection', 'option', 'choice', '选项', '选择'] as const;
+const REPEATED_SELECTION_OPTION_TAGS = Array.from(
+  new Set([...SELECTION_CHILD_OPTION_TAGS, ...SELECTION_OPTION_TAGS]),
+);
 const MAIN_EVENT_NOT_STARTED = '未进行';
 const MAIN_EVENT_RUNNING = '进行中';
 const MAIN_EVENT_FINISHED = '已结束';
@@ -92,6 +107,15 @@ const META_SUBTAG_NAMES = [
   'think',
   'imgthink',
   'options',
+  'selection',
+  'selections',
+  'select',
+  'choices',
+  'choice',
+  'option',
+  '选项',
+  '选项列表',
+  '选择',
   'story_progress',
 ];
 
@@ -115,9 +139,11 @@ function stripMetaSubtags(text: string) {
   let result = text;
   for (const tag of META_SUBTAG_NAMES) {
     // 先剥闭合的 <tag>...</tag>，再清理孤立的开/闭标签（AI 截断时常见）。
-    const closed = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}\\b[^>]*>`, 'gi');
+    const tagName = escapeRegExp(tag);
+    const tagEnd = tagNameEndBoundary();
+    const closed = new RegExp(`<${tagName}${tagEnd}[^>]*>[\\s\\S]*?<\\/${tagName}${tagEnd}[^>]*>`, 'gi');
     result = result.replace(closed, '');
-    const orphan = new RegExp(`<\\/?${tag}\\b[^>]*>`, 'gi');
+    const orphan = new RegExp(`<\\/?${tagName}${tagEnd}[^>]*>`, 'gi');
     result = result.replace(orphan, '');
   }
   return result;
@@ -300,7 +326,10 @@ export function extractOptionsBlock(text: string, { streaming = false }: { strea
   const strictOptions = extractStrictOptionsBlock(raw, { streaming });
   if (strictOptions.length) return strictOptions;
 
-  return extractLooseOptionsBlock(raw, { streaming });
+  const looseOptions = extractLooseOptionsBlock(raw, { streaming });
+  if (looseOptions.length) return looseOptions;
+
+  return extractSelectionOptionsBlock(raw, { streaming });
 }
 
 function parseStrictOptionLines(content: string, { allowPartial = false }: { allowPartial?: boolean } = {}) {
@@ -347,21 +376,125 @@ function extractStrictOptionsBlock(raw: string, { streaming = false }: { streami
 }
 
 function parseLooseOptionLines(content: string) {
-  const options: string[] = [];
   const lines = String(content ?? '')
     .replace(/\r\n/g, '\n')
     .split('\n')
     .map(line => line.trim())
     .filter(Boolean);
 
-  for (const line of lines) {
-    const optionMatch = line.match(/^>(?:选项[一二三四][：:]?)?\s*\[?(.+?)\]?$/);
-    if (optionMatch) {
-      options.push(optionMatch[1].trim());
+  return uniqueOptions(
+    lines.filter(line =>
+      /^(?:>|[\-*•]\s+|(?:选项\s*)?[一二三四五六七八九十\d]+[.)、．：:]\s*|[A-Za-zＡ-Ｚａ-ｚ][.)、．：:]\s*)/.test(
+        line,
+      ),
+    ),
+  );
+}
+
+function normalizeSelectionOption(value: string) {
+  return sanitizeVisibleReply(
+    String(value ?? '')
+      .replace(/<\/?[^>\s/]+[^>]*>/g, '')
+      .replace(/^[\s>]*[A-Za-zＡ-Ｚａ-ｚ][.)、．：:]\s*/, '')
+      .replace(/^[\s>]*(?:选项\s*)?[一二三四五六七八九十\d]+[.)、．：:]\s*/, '')
+      .replace(/^[\s>*\-•]+/, '')
+      .replace(/^\[(.+)\]$/, '$1')
+      .trim(),
+  );
+}
+
+function uniqueOptions(options: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const option of options) {
+    const normalized = normalizeSelectionOption(option);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+function parseSelectionOptionLines(content: string) {
+  const normalized = String(content ?? '').replace(/\r\n/g, '\n').trim();
+  if (!normalized) return [];
+
+  const childOptions = SELECTION_CHILD_OPTION_TAGS.flatMap(tagName =>
+    findAllClosedTaggedBodies(normalized, tagName).map(item => item.body),
+  );
+  if (childOptions.length > 1) return uniqueOptions(childOptions);
+
+  const lines = normalized
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+  const lineOptions = lines
+    .map(line => {
+      if (
+        !/^(?:[\-*•]\s+|>\s*|(?:选项\s*)?[一二三四五六七八九十\d]+[.)、．：:]\s*|[A-Za-zＡ-Ｚａ-ｚ][.)、．：:]\s*|\[.+\]\s*$)/.test(
+          line,
+        )
+      ) {
+        return '';
+      }
+      return line;
+    })
+    .filter(Boolean);
+  if (lineOptions.length) return uniqueOptions(lineOptions);
+
+  if (lines.length === 1 && /[|｜]/.test(lines[0] ?? '')) {
+    return uniqueOptions((lines[0] ?? '').split(/[|｜]/g));
+  }
+
+  if (lines.length === 1) return uniqueOptions(lines);
+
+  return [];
+}
+
+function extractStreamingSelectionOptions(raw: string) {
+  for (const tagName of SELECTION_OPTION_TAGS) {
+    const openTag = new RegExp(tagPatternSource(tagName, { closing: 'open' }), 'gi');
+    const closeTag = new RegExp(tagPatternSource(tagName, { closing: 'close' }), 'gi');
+    const opens = Array.from(raw.matchAll(openTag));
+    const closes = Array.from(raw.matchAll(closeTag));
+    const lastOpen = opens[opens.length - 1];
+    const lastClose = closes[closes.length - 1];
+
+    if (lastOpen?.index == null || (lastClose?.index != null && lastOpen.index <= lastClose.index)) continue;
+
+    const content = raw
+      .slice(lastOpen.index + lastOpen[0].length)
+      .replace(/<[^>]*$/, '')
+      .trim();
+    const parsed = parseSelectionOptionLines(content);
+    if (parsed.length) return parsed;
+  }
+
+  return [];
+}
+
+function extractSelectionOptionsBlock(raw: string, { streaming = false }: { streaming?: boolean } = {}) {
+  for (const tagName of REPEATED_SELECTION_OPTION_TAGS) {
+    const repeatedSelections = findAllClosedTaggedBodies(raw, tagName).map(item => item.body);
+    if (repeatedSelections.length > 1) {
+      const repeatedOptions = uniqueOptions(repeatedSelections);
+      if (repeatedOptions.length) return repeatedOptions;
     }
   }
 
-  return options;
+  for (const tagName of SELECTION_OPTION_TAGS) {
+    const bodies = findAllClosedTaggedBodies(raw, tagName);
+    for (const item of bodies) {
+      const parsed = parseSelectionOptionLines(item.body);
+      if (parsed.length) return parsed;
+    }
+  }
+
+  if (!streaming) return [];
+
+  return extractStreamingSelectionOptions(raw);
 }
 
 function extractLooseOptionsBlock(raw: string, { streaming = false }: { streaming?: boolean } = {}) {

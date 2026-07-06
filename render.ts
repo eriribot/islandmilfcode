@@ -1,6 +1,5 @@
 import { escapeHtml } from './html';
 import {
-  OPTION_LINE_PREFIXES,
   extractContextReplyWithImageGenerationTags,
   extractOptionsBlock,
   extractTucaoBlocks,
@@ -197,7 +196,7 @@ function renderOptionsPanel(message: UiMessage) {
   if (message.streaming) return '';
 
   const options = extractOptionsBlock(message.rawText || message.text, { streaming: false });
-  if (options.length !== OPTION_LINE_PREFIXES.length) return '';
+  if (!options.length) return '';
 
   return `
     <aside class="reader-options" aria-label="快捷回复选项">
