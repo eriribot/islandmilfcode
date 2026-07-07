@@ -1,4 +1,5 @@
 import type { ProgressUpdate } from '../message-format';
+import { commitPlotFlagDeltas } from '../plot-state-machine';
 import type { KeyFact } from '../summary/types';
 import {
   commitBatch,
@@ -48,6 +49,13 @@ export function commitProgressToMemoryDB(
   if (worldHasPatch) {
     upsertWorldState(db, worldPatch);
   }
+
+  // ── 1.5 剧情状态机：第七卷路线开关，按当前剧情日期守门后写入 attributes ──
+  commitPlotFlagDeltas(update.plotFlags, {
+    db,
+    currentTime: commitGameTime,
+    sourceRange,
+  });
 
   // ── 2. 角色属性：好感度 / 旧情度（累计值，不再用 -delta 键名） ──
   for (const item of update.affinityDeltas) {

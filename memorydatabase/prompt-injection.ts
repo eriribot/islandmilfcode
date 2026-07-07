@@ -2,6 +2,7 @@
   IslandMemoryDB,
   MemoryFactRow,
 } from './types';
+import { buildPlotMachinePromptBlock } from '../plot-state-machine';
 import {
   getActiveFacts,
   getActiveTasks,
@@ -116,6 +117,7 @@ export function buildMemoryPromptInjection(
 
   const blocks: MemoryBlock[] = [];
   buildTemporalAnchorBlock(db, blocks, context);
+  buildPlotMachineBlock(db, blocks, context);
 
   if (context.recallPlan) {
     buildRelevantRecallBlock(blocks, context);
@@ -138,6 +140,22 @@ export function buildMemoryPromptInjection(
 
   // ── 4. 按优先级排序，应用 token 预算 ──
   return assembleBlocks(blocks, config.tokenBudget);
+}
+
+function buildPlotMachineBlock(
+  db: IslandMemoryDB,
+  blocks: MemoryBlock[],
+  context: MemoryInjectionContext,
+): void {
+  const content = buildPlotMachinePromptBlock(db, context.currentMainEventId, context.currentTime);
+  if (!content) return;
+
+  blocks.push({
+    title: '【剧情路线开关】',
+    content,
+    priority: 84,
+    estimatedChars: content.length + 20,
+  });
 }
 
 function buildTemporalAnchorBlock(

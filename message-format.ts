@@ -1,4 +1,5 @@
 import { isPlotEventAllowedByRoute, isPlotEventVisibleByRoute } from './plot-routing';
+import { getPlotFlagInstructionList, parsePlotFlagDeltaLine, type PlotFlagDelta } from './plot-state-machine';
 import { buildCharacterDataImportPrompt, stripCharacterDataImportText } from './plugins/character-data-import';
 import { buildImageGenerationPrompt, stripImageGenerationTags } from './plugins/image-generation';
 import {
@@ -1741,6 +1742,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
   const targetList = buildTargetStateList(statusData);
   const affinityExamples = buildAffinityUpdateExamples(statusData);
   const obsessionExamples = buildObsessionUpdateExamples(statusData);
+  const plotFlagExamples = getPlotFlagInstructionList('v07');
   return [
     '',
     '在你按预设规则输出完所有内容后,在消息最末尾追加一个 <state_delta> 块(独立于预设要求的任何标签):',
@@ -1754,6 +1756,7 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
     '五维.能力名:±N',
     '贞操.角色名:已失去（仅适用于角色列表显示“贞操=完璧”的角色；泽村小百合禁用此字段）',
     '接吻次数/口交次数/乳交次数/性交次数/被内射次数/肛交次数/足交次数.角色名:+N（亲密接触硬统计。字段名必须直接写具体行为次数，例：性交次数.泽村小百合:+1、指交次数.霞之丘诗羽:+1。不要写 X次数，不要写 背德/关系/经验人数。正文明确发生一次就 +1，发生多次按实际次数 +N）',
+    `剧情开关.v07.开关名:yes/no（只允许这些开关名：${plotFlagExamples}；只在正文明确达成第七卷关键剧情检查点时输出；系统会按当前日期守门，日期未到会自动丢弃）`,
     '主线事件.事件ID:状态',
     '当前事件:事件ID',
     '</state_delta>',
@@ -2011,6 +2014,8 @@ export type ProgressUpdate = {
   virginityFlags: Array<{ target: string }>;
   /** 身体开发计数器增量：开放字段名（性交次数/足交次数等），单调累加。 */
   intimacyCounters: Array<{ field: string; target: string; delta: number }>;
+  /** 第七卷路线状态机开关；写入 memoryDB 前还会按日期闸门过滤。 */
+  plotFlags: PlotFlagDelta[];
 };
 
 function createEmptyProgressUpdate(): ProgressUpdate {
@@ -2025,6 +2030,7 @@ function createEmptyProgressUpdate(): ProgressUpdate {
     itemsLost: [],
     virginityFlags: [],
     intimacyCounters: [],
+    plotFlags: [],
   };
 }
 
@@ -2102,6 +2108,15 @@ function parseStateBody(body: string): ProgressUpdate | null {
   for (const line of body.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+
+    if (/^剧情开关\s*[.．]/.test(trimmed)) {
+      const plotFlag = parsePlotFlagDeltaLine(trimmed);
+      if (plotFlag) {
+        result.plotFlags.push(plotFlag);
+      }
+      hasAnyField = true;
+      continue;
+    }
 
     // 时间:value
     const timeMatch = trimmed.match(/^时间\s*[:：]\s*(.+)/);
