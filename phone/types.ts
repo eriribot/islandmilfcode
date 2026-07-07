@@ -8,6 +8,7 @@ export type PhoneRoute =
   | 'app:status'
   | 'app:inventory'
   | 'app:memory'
+  | 'app:studio'
   | 'app:music'
   | 'app:drawing'
   | 'app:deepseek-web'

@@ -892,8 +892,13 @@ function buildSearxngUrl(base: string, query: string, format: string) {
   params.set('language', 'auto');
   params.set('safesearch', '0');
   params.set('pageno', '1');
-  if (format) params.set('format', format);
+  setOptionalQueryParam(params, 'format', format);
   return `${base}/search?${params.toString()}`;
+}
+
+function setOptionalQueryParam(params: URLSearchParams, key: string, value: string) {
+  const targetParams = value ? params : null;
+  targetParams?.set(key, value);
 }
 
 function parseSearxngJsonText(text: string): DeepSeekFanSearchResult[] {
@@ -962,6 +967,18 @@ function cleanSearchText(text: string) {
   return decodeHtml(String(text ?? '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim());
 }
 
+const HTML_ENTITY_AMP = String.fromCharCode(38);
+const HTML_ENTITY_HASH = String.fromCharCode(35);
+const HTML_ENTITY_SEMI = String.fromCharCode(59);
+
+function namedHtmlEntity(name: string) {
+  return HTML_ENTITY_AMP + name + HTML_ENTITY_SEMI;
+}
+
+function numericHtmlEntity(code: number) {
+  return HTML_ENTITY_AMP + HTML_ENTITY_HASH + String(code) + HTML_ENTITY_SEMI;
+}
+
 function decodeHtml(text: string) {
   if (typeof document !== 'undefined') {
     const el = document.createElement('textarea');
@@ -969,11 +986,11 @@ function decodeHtml(text: string) {
     return el.value;
   }
   return text
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'");
+    .replace(new RegExp(namedHtmlEntity('amp'), 'g'), '&')
+    .replace(new RegExp(namedHtmlEntity('lt'), 'g'), '<')
+    .replace(new RegExp(namedHtmlEntity('gt'), 'g'), '>')
+    .replace(new RegExp(namedHtmlEntity('quot'), 'g'), '"')
+    .replace(new RegExp(`${numericHtmlEntity(39)}|${namedHtmlEntity('apos')}`, 'g'), String.fromCharCode(39));
 }
 
 function normalizeDdgResultUrl(raw: string) {

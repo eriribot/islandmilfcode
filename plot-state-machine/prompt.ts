@@ -26,5 +26,10 @@ export function buildPlotMachinePromptBlock(
 function isV07RouteDecisionWindow(currentMainEventId: string | undefined, currentTime: string | undefined): boolean {
   if (/^SAE_07-8$/i.test(String(currentMainEventId ?? ''))) return true;
   const currentDate = String(currentTime ?? '').match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
-  return currentDate >= '2013-03-04' && currentDate <= '2013-03-31';
+  return isDateInsideWindow(currentDate, '2013-03-04', '2013-03-31');
+}
+
+function isDateInsideWindow(date: string, startDate: string, endDate: string): boolean {
+  if (date < startDate) return false;
+  return date <= endDate;
 }

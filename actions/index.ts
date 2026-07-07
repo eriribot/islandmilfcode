@@ -371,10 +371,15 @@ function hasActivatableRouteSuccessor(
     if (!isMainEventActivatableByDate(event.id, plotLibrary, currentDate)) return false;
 
     const successorEndDate = getMainEventWindowEndDate(event.id, plotLibrary);
-    if (successorEndDate && currentDate > successorEndDate) return false;
+    if (isDateAfterOptionalEnd(currentDate, successorEndDate)) return false;
 
     return isPlotEventAllowedByRoute(event.id, statusData);
   });
+}
+
+function isDateAfterOptionalEnd(date: string, endDate: string | undefined): boolean {
+  if (!endDate) return false;
+  return date > endDate;
 }
 
 function canCloseCurrentMainEventByScheduleOrRoute(
@@ -594,7 +599,7 @@ function findProgressTarget(ctx: ActionContext, targetHint: string): TargetStatu
 }
 
 function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, match => `\\${match}`);
 }
 
 function getLatestAssistantSceneText(ctx: ActionContext) {
@@ -1349,7 +1354,7 @@ export async function submitMessage(
       error: error instanceof Error ? error.message : String(error),
     });
     const currentStreamingMessage = state.uiMessages[state.uiMessages.length - 1];
-    const hasStreamingText = Boolean(currentStreamingMessage?.streaming && currentStreamingMessage.text.trim());
+    const hasStreamingText = hasVisibleStreamingText(currentStreamingMessage);
     const removedStreamingMessage = discardStreamingMessage(ctx);
     state.currentGenerationId = '';
     if (hasStreamingText && !removedStreamingMessage) {
@@ -1485,6 +1490,11 @@ export async function submitMessage(
       ctx.render();
     }
   }
+}
+
+function hasVisibleStreamingText(message: UiMessage | undefined): boolean {
+  if (!message?.streaming) return false;
+  return Boolean(message.text.trim());
 }
 
 function getPhoneThreadTarget(ctx: ActionContext, targetId: string): TargetStatus | null {

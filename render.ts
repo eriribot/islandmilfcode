@@ -334,7 +334,7 @@ function stripSaenaiDialogueBrackets(text: string) {
 }
 
 function escapeSaenaiRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, match => `\\${match}`);
 }
 
 function getSaenaiAvatar(characterName: string): SaenaiAvatarId | null {

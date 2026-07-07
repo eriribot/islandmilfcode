@@ -1,6 +1,6 @@
 # Human Pending
 
-## HP-001：是否批准运行 SRW Harness Codex Task Loop
+## HP-001：是否批准运行艾尔登特任务执行器
 
 状态：pending
 
@@ -15,6 +15,8 @@ python .codex-loop/scripts/codex-loop.py next
 ## 为什么是真正人类门
 
 `codex-task-loop` 明确要求：生成计划后，用户审阅并批准前，不启动 runner。当前 runner 会调用 `codex exec` 并实际修改项目文件，因此需要人类批准。
+
+按艾尔登特审查门规则：没有人工审查表和下一轮允许修复清单，不开启下一轮。
 
 ## 当前可继续推进的非依赖工作
 

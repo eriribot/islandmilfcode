@@ -677,6 +677,18 @@
   object-fit: contain;
 }
 
+.phone-app-icon[data-phone-route='app:studio'] .phone-app-icon__glyph {
+  background: transparent;
+  box-shadow: 0 8px 18px rgba(67, 76, 90, 0.2);
+}
+
+.phone-app-icon[data-phone-route='app:studio'] .phone-app-icon__image {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
 .phone-app-icon__label {
   max-width: 74px;
   overflow: hidden;
@@ -1174,6 +1186,359 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Studio / V07 plot machine ── */
+
+.phone-app-page--studio {
+  --studio-font:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Hiragino Sans GB', 'Microsoft YaHei',
+    sans-serif;
+  --studio-ink: #142026;
+  --studio-soft: rgba(31, 44, 50, 0.68);
+  --studio-line: rgba(255, 255, 255, 0.46);
+  --studio-glass: rgba(255, 255, 255, 0.22);
+  --studio-shadow:
+    0 14px 36px rgba(25, 36, 41, 0.13),
+    0 1px 0 rgba(255, 255, 255, 0.62) inset;
+  background:
+    linear-gradient(180deg, rgba(250, 252, 252, 0.14), rgba(236, 242, 241, 0.02));
+  color: var(--studio-ink);
+  font-family: var(--studio-font);
+  font-variant-numeric: tabular-nums;
+}
+
+.phone-app-page--studio .phone-page-header {
+  min-height: 48px;
+  padding: 2px 0 4px;
+}
+
+.phone-app-page--studio .phone-page-title strong,
+.phone-app-page--studio .phone-page-title span {
+  font-family: var(--studio-font);
+  letter-spacing: 0;
+}
+
+.phone-app-page--studio .phone-page-title strong {
+  color: var(--studio-ink);
+  font-size: 16px;
+  font-weight: 750;
+}
+
+.phone-app-page--studio .phone-page-title span {
+  color: rgba(95, 78, 58, 0.58);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.phone-app-page--studio .phone-nav-btn {
+  color: rgba(35, 44, 47, 0.76);
+  background: rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  box-shadow:
+    0 7px 20px rgba(24, 35, 39, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.72) inset;
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  backdrop-filter: blur(18px) saturate(1.25);
+}
+
+.phone-studio-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 8px 14px;
+}
+
+.phone-studio-lock,
+.phone-studio-hero,
+.phone-studio-card,
+.phone-studio-group,
+.phone-studio-preview-tile {
+  border: 1px solid var(--studio-line);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.12)),
+    var(--studio-glass);
+  box-shadow: var(--studio-shadow);
+  -webkit-backdrop-filter: blur(20px) saturate(1.28);
+  backdrop-filter: blur(20px) saturate(1.28);
+}
+
+.phone-studio-lock {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+}
+
+.phone-studio-lock__mark {
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(31, 49, 58, 0.86), rgba(23, 34, 41, 0.72));
+  color: #fff;
+  box-shadow:
+    0 10px 20px rgba(18, 30, 36, 0.18),
+    0 1px 0 rgba(255, 255, 255, 0.24) inset;
+}
+
+.phone-studio-lock__shackle {
+  position: absolute;
+  top: 12px;
+  width: 18px;
+  height: 15px;
+  border: 3px solid currentColor;
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  opacity: 0.88;
+}
+
+.phone-studio-lock__body {
+  position: absolute;
+  bottom: 13px;
+  width: 24px;
+  height: 19px;
+  border-radius: 5px;
+  background: currentColor;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.32) inset;
+}
+
+.phone-studio-lock__copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.phone-studio-lock__copy strong,
+.phone-studio-hero strong,
+.phone-studio-card strong,
+.phone-studio-group__head strong,
+.phone-studio-flag__main strong,
+.phone-studio-score strong {
+  color: var(--studio-ink);
+  font-family: var(--studio-font);
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
+.phone-studio-lock__copy span,
+.phone-studio-card span,
+.phone-studio-hero small,
+.phone-studio-flag__main span,
+.phone-studio-flag__state small,
+.phone-studio-score span {
+  color: var(--studio-soft);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+.phone-studio-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.phone-studio-preview-tile {
+  display: grid;
+  gap: 7px;
+  min-height: 94px;
+  align-content: center;
+  min-width: 0;
+  padding: 14px 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.1)),
+    rgba(255, 255, 255, 0.16);
+}
+
+.phone-studio-preview-tile span,
+.phone-studio-group__head span,
+.phone-studio-kicker {
+  color: rgba(132, 86, 55, 0.82);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.phone-studio-preview-tile strong {
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.phone-studio-card {
+  display: grid;
+  gap: 6px;
+  padding: 13px 14px;
+}
+
+.phone-studio-card--dim {
+  opacity: 0.86;
+}
+
+.phone-studio-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 64px;
+  gap: 12px;
+  align-items: center;
+  padding: 15px 14px;
+  background:
+    linear-gradient(135deg, rgba(86, 145, 158, 0.22), rgba(232, 179, 124, 0.15)),
+    rgba(255, 255, 255, 0.2);
+}
+
+.phone-studio-hero > div:first-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.phone-studio-hero strong {
+  overflow-wrap: anywhere;
+  font-size: 19px;
+  line-height: 1.14;
+}
+
+.phone-studio-score {
+  width: 60px;
+  height: 60px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.16)),
+    rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  box-shadow:
+    0 8px 18px rgba(27, 41, 46, 0.1),
+    0 1px 0 rgba(255, 255, 255, 0.78) inset;
+  -webkit-backdrop-filter: blur(18px) saturate(1.25);
+  backdrop-filter: blur(18px) saturate(1.25);
+}
+
+.phone-studio-score strong {
+  font-size: 23px;
+  line-height: 1;
+}
+
+.phone-studio-group {
+  overflow: hidden;
+}
+
+.phone-studio-group.is-date-locked {
+  opacity: 0.78;
+}
+
+.phone-studio-group__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.18);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.38);
+}
+
+.phone-studio-group__head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.phone-studio-flag-list {
+  display: grid;
+  gap: 1px;
+}
+
+.phone-studio-flag {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 7px 10px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 0;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.phone-studio-flag:last-child {
+  border-bottom: 0;
+}
+
+.phone-studio-flag.is-yes {
+  background: rgba(221, 246, 237, 0.32);
+}
+
+.phone-studio-flag.is-no {
+  background: rgba(250, 226, 220, 0.32);
+}
+
+.phone-studio-flag.is-date-locked {
+  background: rgba(235, 239, 237, 0.2);
+}
+
+.phone-studio-flag__main,
+.phone-studio-flag__state {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.phone-studio-flag__main strong {
+  overflow-wrap: anywhere;
+  font-size: 12.5px;
+  line-height: 1.28;
+}
+
+.phone-studio-flag__main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-studio-flag__state {
+  justify-items: end;
+  text-align: right;
+}
+
+.phone-studio-flag__state span {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(91, 103, 106, 0.86);
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0;
+  box-shadow: 0 4px 10px rgba(23, 33, 37, 0.1);
+}
+
+.phone-studio-flag.is-yes .phone-studio-flag__state span {
+  background: rgba(47, 128, 97, 0.9);
+}
+
+.phone-studio-flag.is-no .phone-studio-flag__state span {
+  background: rgba(173, 85, 70, 0.9);
+}
+
+.phone-studio-flag p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--studio-soft);
+  font-size: 11px;
+  line-height: 1.42;
 }
 
 .memory-tabs {

@@ -117,7 +117,7 @@ export function isSae0402Resolved(statusData: StatusData | null | undefined) {
 
 export function isSae0402ExpiredByDate(statusData: StatusData | null | undefined) {
   const currentDate = getDatePart(statusData?.world.currentTime ?? '');
-  return Boolean(currentDate && currentDate > SAE_04_2_DATE);
+  return currentDate > SAE_04_2_DATE;
 }
 
 function validateSae0402DateTime(statusData: StatusData | null | undefined): boolean {
@@ -193,7 +193,7 @@ export function isPlotEventAllowedByRoute(eventId: string, statusData: StatusDat
 
     // 日期已到 08-13 → SAE_03-8 解锁
     const currentDate = getDatePart(statusData.world.currentTime);
-    return Boolean(currentDate && currentDate >= '2012-08-13');
+    return currentDate >= '2012-08-13';
   }
 
   if (isSae0402BranchId(eventId)) {

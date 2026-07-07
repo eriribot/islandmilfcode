@@ -216,21 +216,13 @@ export function normalizeIncomingTime(raw: string, currentTime: string): string 
     return nextDate ? `${nextDate} ${clock}` : currentTime;
   }
   const daysLater = value.match(/(\d+)\s*天(?:后|之后|以后)/);
-  if (daysLater && currentDate) {
-    const nextDate = addDays(currentDate, Number(daysLater[1]));
-    const clock = extractClockFromChinese(value) || currentHHmm;
-    return `${nextDate} ${clock}`;
-  }
+  const shiftedDate = resolveRelativeDayDate(daysLater, currentDate);
+  if (shiftedDate) return `${shiftedDate} ${extractClockFromChinese(value) || currentHHmm}`;
 
   // 中文日期：YYYY年M月D日 或 M月D日
   const cnFull = value.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
   const cnShort = value.match(/(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
-  let datePart = '';
-  if (cnFull) {
-    datePart = `${cnFull[1]}-${pad2(Number(cnFull[2]))}-${pad2(Number(cnFull[3]))}`;
-  } else if (cnShort && currentYear) {
-    datePart = `${currentYear}-${pad2(Number(cnShort[1]))}-${pad2(Number(cnShort[2]))}`;
-  }
+  const datePart = resolveChineseDatePart(cnFull, cnShort, currentYear);
   if (datePart) {
     const clock = extractClockFromChinese(value) || currentHHmm;
     return `${datePart} ${clock}`;
@@ -238,11 +230,33 @@ export function normalizeIncomingTime(raw: string, currentTime: string): string 
 
   // 纯时分描述，更新当天时间
   const clockOnly = extractClockFromChinese(value);
-  if (clockOnly && currentDate) {
-    return `${currentDate} ${clockOnly}`;
-  }
+  const clockOnlyTime = resolveClockOnlyTime(clockOnly, currentDate);
+  if (clockOnlyTime) return clockOnlyTime;
 
   return currentTime;
+}
+
+function resolveRelativeDayDate(match: RegExpMatchArray | null, baseDate: string): string {
+  if (!match) return '';
+  if (!baseDate) return '';
+  return addDays(baseDate, Number(match[1]));
+}
+
+function resolveChineseDatePart(
+  fullMatch: RegExpMatchArray | null,
+  shortMatch: RegExpMatchArray | null,
+  yearText: string,
+): string {
+  if (fullMatch) return `${fullMatch[1]}-${pad2(Number(fullMatch[2]))}-${pad2(Number(fullMatch[3]))}`;
+  if (!shortMatch) return '';
+  if (!yearText) return '';
+  return `${yearText}-${pad2(Number(shortMatch[1]))}-${pad2(Number(shortMatch[2]))}`;
+}
+
+function resolveClockOnlyTime(clockText: string, baseDate: string): string {
+  if (!clockText) return '';
+  if (!baseDate) return '';
+  return `${baseDate} ${clockText}`;
 }
 
 function getTimeSegment(value: string) {
@@ -272,8 +286,8 @@ function compareDate(a: string, b: string) {
   return a.localeCompare(b);
 }
 
-function eventMatchesCurrentDate(event: ScheduledEvent, currentDate: string) {
-  return currentDate >= event.date && currentDate <= event.endDate;
+function eventMatchesCurrentDate(event: ScheduledEvent, date: string) {
+  return date >= event.date && date <= event.endDate;
 }
 
 function eventHasExpired(event: ScheduledEvent, currentDate: string) {
@@ -317,7 +331,7 @@ function syncCurrentMainEvent(statusData: StatusData, schedule: ScheduledEvent[]
   const currentId = statusData.world.currentMainEventId ?? '';
 
   // 当前事件是手机和提示词使用的权威游标；历史状态允许保留多个"进行中"，但游标只能指向一个。
-  if (currentId && normalizeMainEventStatus(mainEvents[currentId]) !== MAIN_EVENT_RUNNING) {
+  if (shouldClearCurrentMainEvent(currentId, mainEvents)) {
     statusData.world.currentMainEventId = '';
     changed = true;
   }
@@ -414,7 +428,7 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
     }
 
     // 中文注释：过了事件窗口才自动结算；没有持续至的旧事件仍按单日窗口处理。
-    if (currentDate && eventHasExpired(event, currentDate)) {
+    if (eventExpiredForDate(event, currentDate)) {
       if (normalizedStatus !== MAIN_EVENT_FINISHED) {
         mainEvents[event.id] = MAIN_EVENT_FINISHED;
         if (statusData.world.currentMainEventId === event.id) {
@@ -427,7 +441,7 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
 
     // 时间闸自愈：被提前写成"进行中"的未来事件（当前日期尚未到达触发日且未过期）回退为"未进行"。
     // 这能让已经"莫名跳到未来卷"的旧存档在重新载入时自动修正，与 sanitizeProgressAgainstPlotLibrary 的写入闸互为防线。
-    if (currentDate && normalizedStatus === MAIN_EVENT_RUNNING && compareDate(currentDate, event.date) < 0) {
+    if (isRunningEventBeforeStart(normalizedStatus, currentDate, event.date)) {
       mainEvents[event.id] = MAIN_EVENT_NOT_STARTED;
       if (statusData.world.currentMainEventId === event.id) {
         statusData.world.currentMainEventId = '';
@@ -472,6 +486,22 @@ export function syncMainEvents(statusData: StatusData, plotLibrary?: PlotLibrary
   }
 
   return changed;
+}
+
+function shouldClearCurrentMainEvent(id: string, mainEvents: Record<string, string>): boolean {
+  if (!id) return false;
+  return normalizeMainEventStatus(mainEvents[id]) !== MAIN_EVENT_RUNNING;
+}
+
+function eventExpiredForDate(event: ScheduledEvent, currentDate: string): boolean {
+  if (!currentDate) return false;
+  return eventHasExpired(event, currentDate);
+}
+
+function isRunningEventBeforeStart(status: string, currentDate: string, eventDate: string): boolean {
+  if (!currentDate) return false;
+  if (status !== MAIN_EVENT_RUNNING) return false;
+  return compareDate(currentDate, eventDate) < 0;
 }
 
 export function applyProgressUpdate(

@@ -1147,7 +1147,7 @@ async function rollbackToReaderInput(readerIndex: number) {
   focusComposer();
 }
 
-async function regenerateReaderMessage(readerIndex: number) {
+async function rerunReaderMessage(readerIndex: number) {
   if (state.generating) return;
   const target = await rollbackConversation(state, readerIndex, win);
   if (!target?.sourceUserText) return;
@@ -2464,8 +2464,8 @@ function bindEvents() {
     void rollbackToReaderInput(state.readerContextMenu.readerIndex);
   });
   root?.querySelector<HTMLButtonElement>('[data-action="reader-regenerate"]')?.addEventListener('click', () => {
-    if (!state.readerContextMenu) return;
-    void regenerateReaderMessage(state.readerContextMenu.readerIndex);
+    const readerIndex = getReaderContextMenuIndex();
+    runReaderRetry(readerIndex);
   });
   root?.querySelector<HTMLButtonElement>('[data-action="reader-delete"]')?.addEventListener('click', () => {
     if (!state.readerContextMenu) return;
@@ -3206,6 +3206,16 @@ function bindEvents() {
   bindReaderDragEvents();
   bindTucaoFloatEvents();
   bindReaderContextMenuEvents();
+}
+
+function getReaderContextMenuIndex(): number | null {
+  const menu = state.readerContextMenu;
+  return menu ? menu.readerIndex : null;
+}
+
+function runReaderRetry(readerIndex: number | null) {
+  if (readerIndex === null) return;
+  void rerunReaderMessage(readerIndex);
 }
 
 // ── Render ──

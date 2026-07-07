@@ -51,6 +51,7 @@ const REPEATED_SELECTION_OPTION_TAGS = Array.from(
 const MAIN_EVENT_NOT_STARTED = '未进行';
 const MAIN_EVENT_RUNNING = '进行中';
 const MAIN_EVENT_FINISHED = '已结束';
+const REGEX_END_ANCHOR = String.fromCharCode(36);
 
 /**
  * 清理文本中的占位符，防止 {{user}} / {{char}} 等占位符泄露到 prompt 中。
@@ -171,7 +172,7 @@ function dedupeAdjacentReply(text: string) {
 }
 
 function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, match => `\\${match}`);
 }
 
 // JS 的 \b 只认识 ASCII 单词边界，遇到 <正文> 这类中文标签时会匹配失败。
@@ -266,7 +267,7 @@ export function extractTaggedReply(raw: string, tagName: string, streaming: bool
   }
 
   if (streaming) {
-    const openedTag = new RegExp(`${tagPatternSource(tagName, { closing: 'open' })}([\\s\\S]*)$`, 'i');
+    const openedTag = new RegExp(`${tagPatternSource(tagName, { closing: 'open' })}([\\s\\S]*)${REGEX_END_ANCHOR}`, 'i');
     const openedMatch = raw.match(openedTag);
     if (openedMatch) {
       return dedupeAdjacentReply(stripMetaSubtags((openedMatch[1] ?? '').replace(/<[^>]*$/, '')));
@@ -369,7 +370,10 @@ function extractStrictOptionsBlock(raw: string, { streaming = false }: { streami
 
   if (!streaming) return [];
 
-  const openedPattern = new RegExp(`<\\/${escapeRegExp(PRIMARY_VISIBLE_TAG)}\\b[^>]*>\\s*<options\\b[^>]*>([\\s\\S]*)$`, 'i');
+  const openedPattern = new RegExp(
+    `<\\/${escapeRegExp(PRIMARY_VISIBLE_TAG)}\\b[^>]*>\\s*<options\\b[^>]*>([\\s\\S]*)${REGEX_END_ANCHOR}`,
+    'i',
+  );
   const openedMatch = raw.match(openedPattern);
   if (!openedMatch) return [];
 
@@ -399,7 +403,7 @@ function normalizeSelectionOption(value: string) {
       .replace(/^[\s>]*[A-Za-zＡ-Ｚａ-ｚ][.)、．：:]\s*/, '')
       .replace(/^[\s>]*(?:选项\s*)?[一二三四五六七八九十\d]+[.)、．：:]\s*/, '')
       .replace(/^[\s>*\-•]+/, '')
-      .replace(/^\[(.+)\]$/, '$1')
+      .replace(/^\[(.+)\]$/, (_match, inner: string) => inner)
       .trim(),
   );
 }
@@ -793,9 +797,7 @@ function buildPlotWhitelist(plotLibrary: PlotLibrary, statusData?: StatusData) {
     if (status === MAIN_EVENT_FINISHED) return false;
 
     const eventEndDate = event.schedule?.endDate ?? event.schedule?.date ?? '';
-    if (currentDate && eventEndDate && eventEndDate < currentDate && status !== MAIN_EVENT_RUNNING) {
-      return false;
-    }
+    if (isFinishedEventBeforeCurrentDate(currentDate, eventEndDate, status)) return false;
 
     return true;
   });
@@ -813,6 +815,13 @@ function buildPlotWhitelist(plotLibrary: PlotLibrary, statusData?: StatusData) {
     ...lines,
     '硬约束：已结束事件不要再写入 <progress> 的 当前事件 / 主线事件 字段；禁止使用白名单之外的任何事件 ID；禁止自造新的卷号/新的事件编号；不确定时把 当前事件 留空，不要发明 ID。',
   ].join('\n');
+}
+
+function isFinishedEventBeforeCurrentDate(currentDate: string, eventEndDate: string, status: string): boolean {
+  if (!currentDate) return false;
+  if (!eventEndDate) return false;
+  if (status === MAIN_EVENT_RUNNING) return false;
+  return eventEndDate < currentDate;
 }
 
 function pickNextUpcomingEvent(statusData: StatusData, plotLibrary: PlotLibrary): PlotEventCard | null {

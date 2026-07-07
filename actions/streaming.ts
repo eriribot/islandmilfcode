@@ -67,15 +67,25 @@ export function updateStreamingText(ctx: StreamingContext, text: string) {
   recordGenerationDebug(ctx, 'stream:update', {
     rawLength: String(text ?? '').length,
     visibleLength: visibleText.length,
-    keptExisting: !visibleText && Boolean(current.text),
+    keptExisting: shouldKeepExistingStreamingText(visibleText, current.text),
   });
   // 酒馆后台生成偶尔会冒出没有正文标签的流式事件；不要用空解析结果吞掉已经写出的正文。
-  if (visibleText || !current.text) {
+  if (shouldApplyStreamingText(visibleText, current.text)) {
     current.text = visibleText;
   }
   current.rawText = String(text ?? '');
   syncFocusedMessage(ctx.state, { keepLatest: true });
   ctx.render();
+}
+
+function shouldKeepExistingStreamingText(visibleText: string, currentText: string): boolean {
+  if (visibleText) return false;
+  return Boolean(currentText);
+}
+
+function shouldApplyStreamingText(visibleText: string, currentText: string): boolean {
+  if (visibleText) return true;
+  return !currentText;
 }
 
 export function discardStreamingMessage(ctx: StreamingContext) {
@@ -127,7 +137,7 @@ export function finalizeStreamingText(
 
   // 流式结束事件有时只包含思考标签或前置文本，真正的 <content> 会在 generate() 返回值里。
   // 这种空正文不能标记 finalized，否则后续真实正文会被同一个 generationId 跳过。
-  if (!visibleText && !current.text && !options.allowEmpty) {
+  if (shouldDeferEmptyFinalize(visibleText, current.text, Boolean(options.allowEmpty))) {
     recordGenerationDebug(ctx, 'finalize:defer-empty-visible', { generationId });
     ctx.render();
     return;
@@ -175,6 +185,12 @@ export function finalizeStreamingText(
   ctx.render();
 }
 
+function shouldDeferEmptyFinalize(visibleText: string, currentText: string, allowEmpty: boolean): boolean {
+  if (visibleText) return false;
+  if (currentText) return false;
+  return !allowEmpty;
+}
+
 export function setupStreamingHooks(ctx: StreamingContext, eventStops: Array<() => void>) {
   const { win, state } = ctx;
   if (typeof win.eventOn !== 'function' || !win.iframe_events) {
@@ -201,9 +217,11 @@ export function setupStreamingHooks(ctx: StreamingContext, eventStops: Array<() 
   function isActiveMainGeneration(generationId: unknown): boolean {
     if (typeof generationId === 'string' && generationId) {
       if (state.finalizedGenerationId === generationId) return false;
-      return Boolean(state.currentGenerationId && generationId === state.currentGenerationId);
+      if (!state.currentGenerationId) return false;
+      return generationId === state.currentGenerationId;
     }
-    return Boolean(state.generating && state.currentGenerationId);
+    if (!state.generating) return false;
+    return Boolean(state.currentGenerationId);
   }
 
   if (fully) {

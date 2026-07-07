@@ -2,6 +2,12 @@ import { escapeHtml } from '../html';
 import { renderMemoryEditor } from '../memorydatabase/editor';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import { getReaderMessages } from '../message-format';
+import {
+  getPlotMachine,
+  readActivePlotFlagSnapshots,
+  type PlotFlagDefinition,
+  type PlotFlagSnapshot,
+} from '../plot-state-machine';
 import type {
   AppState,
   NotificationState,
@@ -295,6 +301,7 @@ function renderPhoneHome(state: AppState) {
   const summaryCount =
     state.summaryStore.minor.length + state.summaryStore.major.length + (state.summaryStore.global ? 1 : 0);
   const inventoryCount = getPhoneInventoryCount(state);
+  const studioMeta = getV07StudioHomeMeta(state);
   const apps: Array<{
     route: PhoneRoute;
     icon: string;
@@ -363,6 +370,13 @@ function renderPhoneHome(state: AppState) {
         state.memoryDB.phoneMessages.filter(p => !p.expired).length +
         state.memoryDB.summaries.filter(s => !s.expired).length
       } 条活跃`,
+    },
+    {
+      route: 'app:studio',
+      icon: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDQ4IDQ4Ij48cmVjdCB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHJ4PSIxMCIgZmlsbD0iIzQ4NmI2ZSIvPjxwYXRoIGZpbGw9IiNjMjhhNTgiIGQ9Ik0wIDMxIDQ4IDl2MzlIMHoiLz48cGF0aCBmaWxsPSIjZmZmN2ViIiBkPSJNMTMgMTJoMTZjNSAwIDkgMy42IDkgOC4zcy00IDguMi05IDguMmgtOVYzNmgtN3ptNyA2djQuNWg4LjdjMS40IDAgMi40LS45IDIuNC0yLjJTMzAuMSAxOCAyOC43IDE4eiIvPjxwYXRoIGZpbGw9IiNmZmY3ZWIiIG9wYWNpdHk9Ii43NSIgZD0iTTEyIDQwaDI0djNIMTJ6Ii8+PC9zdmc+',
+      iconType: 'image',
+      label: '企划',
+      meta: studioMeta,
     },
     {
       route: 'app:music',
@@ -1062,6 +1076,180 @@ function getPhoneInventoryCount(state: AppState): number {
   return playerMemoryItems.filter(item => !item.expired && (item.count ?? 0) > 0).length;
 }
 
+const V07_STUDIO_MACHINE_ID = 'v07';
+const V07_STUDIO_UNLOCK_DATE = '2013-02-25';
+
+const V07_STUDIO_GATE_LABELS: Record<string, string> = {
+  '2013-02-25': '朱音压力',
+  '2013-02-26': '第二作准备',
+  '2013-03-01': '惠共同企划',
+  '2013-03-04': '黑金反击',
+};
+
+function getDatePart(value: string | undefined): string {
+  return String(value ?? '').match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
+}
+
+function isV07StudioUnlocked(state: AppState): boolean {
+  const currentEventId = state.statusData.world.currentMainEventId ?? '';
+  const currentDate = getDatePart(state.statusData.world.currentTime);
+  return currentEventId.startsWith('SAE_07-') || currentDate >= V07_STUDIO_UNLOCK_DATE;
+}
+
+function getV07StudioSnapshots(state: AppState): Map<string, PlotFlagSnapshot> {
+  return new Map(readActivePlotFlagSnapshots(state.memoryDB, V07_STUDIO_MACHINE_ID).map(snapshot => [snapshot.definition.id, snapshot]));
+}
+
+function getV07StudioHomeMeta(state: AppState): string {
+  const machine = getPlotMachine(V07_STUDIO_MACHINE_ID);
+  if (!machine) return '未登记';
+  if (!isV07StudioUnlocked(state)) return '第七章锁定';
+  const activeCount = readActivePlotFlagSnapshots(state.memoryDB, V07_STUDIO_MACHINE_ID).length;
+  return `${activeCount}/${machine.flags.length} 已记录`;
+}
+
+function renderStudioGatePreview(flags: readonly PlotFlagDefinition[]) {
+  const dates = Array.from(new Set(flags.map(flag => flag.earliestDate)));
+  return `
+    <div class="phone-studio-preview-grid">
+      ${dates
+        .map(
+          date => `
+            <div class="phone-studio-preview-tile">
+              <span>${escapeHtml(date)}</span>
+              <strong>${escapeHtml(V07_STUDIO_GATE_LABELS[date] ?? '路线节点')}</strong>
+            </div>
+          `,
+        )
+        .join('')}
+    </div>
+  `;
+}
+
+function renderStudioFlagRow(
+  flag: PlotFlagDefinition,
+  snapshot: PlotFlagSnapshot | undefined,
+  currentDate: string,
+  lockedByDate: boolean,
+) {
+  const className = [
+    'phone-studio-flag',
+    lockedByDate ? 'is-date-locked' : '',
+    snapshot?.value === 'yes' ? 'is-yes' : '',
+    snapshot?.value === 'no' ? 'is-no' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const statusText = lockedByDate
+    ? '未到日期'
+    : snapshot?.value === 'yes'
+      ? '已点亮'
+      : snapshot?.value === 'no'
+        ? '已否定'
+        : '待正文确认';
+  const detailText = snapshot?.value === 'yes' ? flag.yesMeaning : snapshot?.value === 'no' ? flag.noMeaning : '等待正文里的明确行动。';
+
+  return `
+    <article class="${className}">
+      <div class="phone-studio-flag__main">
+        <strong>${escapeHtml(flag.label)}</strong>
+        <span>${escapeHtml(flag.id)}</span>
+      </div>
+      <div class="phone-studio-flag__state">
+        <span>${escapeHtml(statusText)}</span>
+        <small>${escapeHtml(flag.earliestDate)}${currentDate ? ` / ${currentDate}` : ''}</small>
+      </div>
+      <p>${escapeHtml(detailText)}</p>
+    </article>
+  `;
+}
+
+function renderStudioGateGroup(
+  date: string,
+  flags: readonly PlotFlagDefinition[],
+  snapshots: Map<string, PlotFlagSnapshot>,
+  currentDate: string,
+) {
+  const lockedByDate = !currentDate || currentDate < date;
+  const groupClass = `phone-studio-group ${lockedByDate ? 'is-date-locked' : ''}`;
+  return `
+    <section class="${groupClass}">
+      <header class="phone-studio-group__head">
+        <span>${escapeHtml(date)}</span>
+        <strong>${escapeHtml(V07_STUDIO_GATE_LABELS[date] ?? '路线节点')}</strong>
+      </header>
+      <div class="phone-studio-flag-list">
+        ${flags.map(flag => renderStudioFlagRow(flag, snapshots.get(flag.id), currentDate, lockedByDate)).join('')}
+      </div>
+    </section>
+  `;
+}
+
+function renderStudioPhonePage(state: AppState) {
+  const machine = getPlotMachine(V07_STUDIO_MACHINE_ID);
+  if (!machine) return renderPhoneHome(state);
+
+  const currentDate = getDatePart(state.statusData.world.currentTime);
+  const currentEventId = state.statusData.world.currentMainEventId || '未锁定';
+  const unlocked = isV07StudioUnlocked(state);
+  const snapshots = getV07StudioSnapshots(state);
+  const activeYesCount = [...snapshots.values()].filter(snapshot => snapshot.value === 'yes').length;
+  const grouped = machine.flags.reduce<Record<string, PlotFlagDefinition[]>>((acc, flag) => {
+    (acc[flag.earliestDate] ??= []).push(flag);
+    return acc;
+  }, {});
+  const gateDates = Object.keys(grouped).sort();
+
+  if (!unlocked) {
+    return `
+      <section class="phone-route-page phone-app-page phone-app-page--studio is-locked" data-phone-route-view="app:studio">
+        ${renderPhoneAppHeader(state, '企划', '第七章前预览')}
+        <div class="phone-page-scroll phone-studio-scroll">
+          <section class="phone-studio-lock">
+            <div class="phone-studio-lock__mark" aria-hidden="true">
+              <span class="phone-studio-lock__shackle"></span>
+              <span class="phone-studio-lock__body"></span>
+            </div>
+            <div class="phone-studio-lock__copy">
+              <strong>第七章后开放</strong>
+              <span>当前只显示日期闸门预览。</span>
+            </div>
+          </section>
+          ${renderStudioGatePreview(machine.flags)}
+          <section class="phone-studio-card phone-studio-card--dim">
+            <span>当前时间</span>
+            <strong>${escapeHtml(state.statusData.world.currentTime || '未记录')}</strong>
+          </section>
+        </div>
+      </section>
+    `;
+  }
+
+  return `
+    <section class="phone-route-page phone-app-page phone-app-page--studio" data-phone-route-view="app:studio">
+      ${renderPhoneAppHeader(state, '企划', machine.title)}
+      <div class="phone-page-scroll phone-studio-scroll">
+        <section class="phone-studio-hero">
+          <div>
+            <span class="phone-studio-kicker">User 独立企划</span>
+            <strong>第七卷状态机</strong>
+            <small>${escapeHtml(currentDate || '日期未记录')} · ${escapeHtml(currentEventId)}</small>
+          </div>
+          <div class="phone-studio-score">
+            <strong>${activeYesCount}</strong>
+            <span>点亮</span>
+          </div>
+        </section>
+        <section class="phone-studio-card">
+          <span>记忆库快照</span>
+          <strong>${snapshots.size}/${machine.flags.length} 个开关有当前值</strong>
+        </section>
+        ${gateDates.map(date => renderStudioGateGroup(date, grouped[date], snapshots, currentDate)).join('')}
+      </div>
+    </section>
+  `;
+}
+
 function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
   return `
     <section class="phone-route-page phone-app-page" data-phone-route-view="app:settings">
@@ -1117,6 +1305,12 @@ function renderMusicTrackRow(track: MusicTrack, isCurrent: boolean, isLoading: b
   `;
 }
 
+function isMusicTrackCurrent(track: MusicTrack, activeTrack: MusicTrack | null | undefined): boolean {
+  if (!activeTrack) return false;
+  if (activeTrack.id !== track.id) return false;
+  return activeTrack.source === track.source;
+}
+
 function renderMusicQuickEntries(currentCharacter: PhoneCharacterId) {
   // 五小只角色歌快捷搜索：点一下就把对应作品/角色名填进搜索框并触发搜索。
   const labels: Array<{ id: PhoneThemeCharacterId; label: string }> = [
@@ -1142,8 +1336,9 @@ function renderMusicQuickEntries(currentCharacter: PhoneCharacterId) {
 }
 
 function renderMusicPhonePage(state: AppState) {
-  const { search, currentTrack, loadingTrackId } = state.musicPlayer;
-  const subtitle = currentTrack ? `${currentTrack.name} · ${currentTrack.artist}` : '搜索想听的曲子';
+  const { search, loadingTrackId } = state.musicPlayer;
+  const activeTrack = state.musicPlayer.currentTrack;
+  const subtitle = activeTrack ? `${activeTrack.name} · ${activeTrack.artist}` : '搜索想听的曲子';
 
   let resultsBlock = '';
   if (search.status === 'loading') {
@@ -1157,7 +1352,7 @@ function renderMusicPhonePage(state: AppState) {
       .map(track =>
         renderMusicTrackRow(
           track,
-          currentTrack?.id === track.id && currentTrack?.source === track.source,
+          isMusicTrackCurrent(track, activeTrack),
           loadingTrackId === track.id,
         ),
       )
@@ -1437,6 +1632,7 @@ function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:status') return renderStatusPhonePage(state, renderers);
   if (state.phoneRoute === 'app:inventory') return renderInventoryPhonePage(state.statusData, state, renderers);
   if (state.phoneRoute === 'app:memory') return renderMemoryPhonePage(state);
+  if (state.phoneRoute === 'app:studio') return renderStudioPhonePage(state);
   if (state.phoneRoute === 'app:music') return renderMusicPhonePage(state);
   if (state.phoneRoute === 'app:drawing') return renderDrawingPhonePage(state);
   if (state.phoneRoute === 'app:deepseek-web') return renderDeepSeekWebPhonePage(state);
