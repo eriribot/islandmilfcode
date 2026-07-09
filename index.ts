@@ -22,6 +22,7 @@ import {
   submitPhoneMessage,
   type ActionContext,
 } from './actions';
+import { generateOpeningScene } from './actions/opening';
 import { clearBackgroundTask } from './background-tasks';
 import { setupStreamingHooks } from './actions/streaming';
 import { extractContextReply, getReaderMessages, getSummaryMessages, invalidateReaderMessagesCache } from './message-format';
@@ -101,7 +102,15 @@ import {
 import type { SummaryApiConfig, SummaryModelOption } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
-import type { DeepSeekFanLookupState, GameState, NotificationState, StatusData, TabKey, TavernWindow } from './types';
+import type {
+  DeepSeekFanLookupState,
+  GameState,
+  NotificationState,
+  OpeningMode,
+  StatusData,
+  TabKey,
+  TavernWindow,
+} from './types';
 import {
   isPhoneArchiveGoldImpression,
   isPhoneThemeCharacterId,
@@ -898,9 +907,11 @@ function getMemoryDBTableCounts(memoryDB: IslandMemoryDB) {
   return counts;
 }
 
-function enterSave(saveId: string) {
+function enterSave(saveId: string, options: { openingMode?: OpeningMode } = {}) {
   const save = loadSave(saveId);
   if (!save) return;
+  const shouldGenerateOpening = options.openingMode === 'ai' && save.payload.chatLog.length === 0;
+  const enteringRunId = save.payload.runId;
   restoringSave = true;
   clearWorldbookRefreshRetry();
   state.activeRunId = save.payload.runId;
@@ -948,6 +959,14 @@ function enterSave(saveId: string) {
     })
     .finally(() => {
       restoringSave = false;
+      if (
+        shouldGenerateOpening &&
+        state.activeRunId === enteringRunId &&
+        getReaderMessages(state.uiMessages).length === 0 &&
+        !state.generating
+      ) {
+        void generateOpeningScene(ctx);
+      }
       if (Object.keys(state.plotLibrary.events).length === 0) {
         scheduleWorldbookRefreshRetry(state.activeRunId);
       }
@@ -3339,8 +3358,9 @@ const titleCallbacks: TitleCallbacks = {
   createAndEnter: opts => {
     state.deepSeekModeEnabled = opts.deepSeekMode ?? state.deepSeekModeEnabled;
     writeDeepSeekModeEnabledPreference(state.deepSeekModeEnabled);
+    const openingMode = opts.openingMode ?? 'manual';
     const save = createSave(opts);
-    enterSave(save.saveId);
+    enterSave(save.saveId, { openingMode });
   },
   deleteSave: id => {
     deleteSave(id);

@@ -45,6 +45,27 @@ function renderBackgroundOptions(): string {
   `).join('');
 }
 
+function renderOpeningModeOptions(): string {
+  return `
+    <div class="gal-opening-mode" role="group" aria-label="开场方式">
+      <label class="gal-opening-mode__option">
+        <input type="radio" name="openingMode" value="manual" checked />
+        <span class="gal-opening-mode__card">
+          <strong>自己写开场</strong>
+          <small>创建后由玩家输入第一句</small>
+        </span>
+      </label>
+      <label class="gal-opening-mode__option">
+        <input type="radio" name="openingMode" value="ai" />
+        <span class="gal-opening-mode__card">
+          <strong>AI 自动生成开场白</strong>
+          <small>创建后自动写入第一幕</small>
+        </span>
+      </label>
+    </div>
+  `;
+}
+
 // 播放音乐
 function renderTitleMusicControl() {
   const musicUrl = TITLE_MUSIC_URL.trim();
@@ -377,6 +398,13 @@ export function renderCharacterCreation(options: { deepSeekMode?: boolean } = {}
                 </div>
               </label>
             </div>
+          </div>
+
+          <div class="gal-field">
+            <span class="gal-field__label">
+              开场方式 <span class="gal-field__hint">选择 AI 时会在创建后生成第一幕</span>
+            </span>
+            ${renderOpeningModeOptions()}
           </div>
 
           <input type="hidden" name="deepSeekMode" value="${options.deepSeekMode ? 'on' : ''}" />

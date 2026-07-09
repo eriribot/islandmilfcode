@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Game Develop Simulator Preview</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="preview-shell">
+      <section id="cover-screen" class="cover-screen" aria-label="游戏封面">
+        <img src="../picresource/club_war.png" alt="club war cover" />
+        <div class="press-any-key" aria-hidden="true">PRESS ANY KEY</div>
+      </section>
+
+      <section id="game-screen" class="game-screen is-hidden" aria-label="游戏开发模拟器">
+        <header class="sim-topbar">
+          <div>
+            <p>2013-03-04 / after school</p>
+            <h1 id="project-title">第二作临时企划</h1>
+          </div>
+          <div class="sim-topbar__controls">
+            <button id="cover-btn" type="button">封面</button>
+            <button id="reset-btn" type="button">重置</button>
+            <button id="review-btn" type="button">通过 Review</button>
+          </div>
+        </header>
+
+        <section class="project-board">
+          <aside class="project-card">
+            <div class="project-cover-mark">
+              <span>企</span>
+            </div>
+            <dl class="project-specs">
+              <div>
+                <dt>游戏名</dt>
+                <dd id="game-title">第二作临时企划</dd>
+              </div>
+              <div>
+                <dt>类型</dt>
+                <dd id="game-genre">青春创作 ADV</dd>
+              </div>
+              <div>
+                <dt>题材</dt>
+                <dd id="game-theme">社团 / 创作者 / 关系修复</dd>
+              </div>
+              <div>
+                <dt>平台</dt>
+                <dd id="game-platform">PC 同人展</dd>
+              </div>
+            </dl>
+          </aside>
+
+          <section class="dev-center">
+            <div class="phase-panel">
+              <div>
+                <span>当前阶段</span>
+                <strong id="dev-phase">企划草案</strong>
+              </div>
+              <div class="deadline-box">
+                <span>剩余工期</span>
+                <strong id="deadline-left">18 周</strong>
+              </div>
+            </div>
+
+            <canvas id="route-canvas" width="720" height="360" aria-label="开发状态图"></canvas>
+
+            <div class="metric-grid" id="metric-grid"></div>
+            <div class="action-grid" id="action-grid"></div>
+          </section>
+
+          <aside class="side-stack">
+            <section class="panel compact-panel">
+              <h2>开发队伍</h2>
+              <div id="staff-list" class="staff-list"></div>
+            </section>
+
+            <section class="panel compact-panel">
+              <h2>Review 队列</h2>
+              <div id="candidate-box" class="candidate-box"></div>
+            </section>
+
+            <section class="panel compact-panel">
+              <h2>剧情信号摘要</h2>
+              <div id="story-signal-list" class="story-signal-list"></div>
+            </section>
+          </aside>
+        </section>
+      </section>
+    </main>
+    <script src="./app.js"></script>
+  </body>
+</html>

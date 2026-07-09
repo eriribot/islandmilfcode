@@ -1,4 +1,4 @@
-import type { Difficulty, PlayerStats } from '../types';
+import type { Difficulty, OpeningMode, PlayerStats } from '../types';
 import {
   getPlayerBackgroundCost,
   normalizePlayerBackgroundIds,
@@ -22,6 +22,7 @@ export type TitleCallbacks = {
     difficulty?: Difficulty;
     backgroundIds?: string[];
     deepSeekMode?: boolean;
+    openingMode?: OpeningMode;
   }) => void;
   deleteSave: (saveId: string) => void;
   exportSave: (saveId: string) => void;
@@ -175,6 +176,7 @@ export function bindCharacterCreationEvents(root: HTMLElement | null, cb: TitleC
       difficulty,
       backgroundIds,
       deepSeekMode: fd.get('deepSeekMode') === 'on',
+      openingMode: normalizeOpeningMode(fd.get('openingMode')),
     });
   });
 }
@@ -192,6 +194,10 @@ type DifficultyConfig = { total: number; default: number; min: number; max: numb
 
 function normalizeDifficulty(value: FormDataEntryValue | null): Difficulty {
   return value === 'easy' || value === 'hard' || value === 'normal' ? value : 'normal';
+}
+
+function normalizeOpeningMode(value: FormDataEntryValue | null): OpeningMode {
+  return value === 'ai' ? 'ai' : 'manual';
 }
 
 function clampStatValue(value: number, config: DifficultyConfig) {

@@ -45,6 +45,8 @@ export type PlayerStats = {
 
 export type Difficulty = 'easy' | 'normal' | 'hard';
 
+export type OpeningMode = 'manual' | 'ai';
+
 export type PlayerProfile = {
   name: string;
   familyName: string;

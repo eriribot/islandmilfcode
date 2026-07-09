@@ -897,6 +897,7 @@ function buildInitialPayload(opts: {
     name: characterName,
     familyName: opts.familyName,
     givenName: opts.givenName,
+    gender: opts.gender,
     personality: opts.personality,
     appearance: opts.appearance,
     className: opts.className,
