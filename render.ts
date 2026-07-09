@@ -1090,6 +1090,37 @@ function renderTucaoFloatingPanel(state: AppState) {
   `;
 }
 
+function getBackgroundTaskStackPlacement(state: AppState) {
+  if (typeof window === 'undefined') {
+    return {
+      style: '',
+    };
+  }
+
+  const rawPosition =
+    state.runtimeFlags.backgroundTaskStack && typeof state.runtimeFlags.backgroundTaskStack === 'object'
+      ? (state.runtimeFlags.backgroundTaskStack as Record<string, unknown>)
+      : null;
+  const viewportWidth = Math.max(0, window.innerWidth || 0);
+  const viewportHeight = Math.max(0, window.innerHeight || 0);
+  const gap = viewportWidth <= 720 ? 12 : 24;
+
+  if (typeof rawPosition?.x === 'number' && typeof rawPosition?.y === 'number') {
+    const x = Math.min(Math.max(rawPosition.x, gap), Math.max(gap, viewportWidth - 320 - gap));
+    const y = Math.min(Math.max(rawPosition.y, gap), Math.max(gap, viewportHeight - 96 - gap));
+    return {
+      style: `left:${x}px;top:${y}px`,
+    };
+  }
+
+  const defaultX = viewportWidth < 520 ? (viewportWidth - Math.min(320, viewportWidth - 32)) / 2 : gap;
+  const defaultY = viewportWidth < 520 ? Math.max(gap, viewportHeight - 150) : gap;
+  // 中文注释：首次出现放在左侧避开默认手机按钮；用户拖动后完全以用户位置为准。
+  return {
+    style: `left:${Math.max(gap, defaultX)}px;top:${defaultY}px`,
+  };
+}
+
 function renderBackgroundTaskToast(task: BackgroundTaskState) {
   const isFailed = task.status === 'failed';
   return `
@@ -1110,14 +1141,15 @@ function renderBackgroundTaskToast(task: BackgroundTaskState) {
   `;
 }
 
-function renderBackgroundTasks(tasks: BackgroundTaskState[]) {
-  if (!tasks.length) return '';
-  const orderedTasks = [...tasks].sort((a, b) => {
+function renderBackgroundTasks(state: AppState) {
+  if (!state.backgroundTasks.length) return '';
+  const { style } = getBackgroundTaskStackPlacement(state);
+  const orderedTasks = [...state.backgroundTasks].sort((a, b) => {
     if (a.kind === b.kind) return b.updatedAt - a.updatedAt;
     return a.kind === 'progress' ? -1 : 1;
   });
   return `
-    <aside class="background-task-stack" aria-live="polite">
+    <aside class="background-task-stack" style="${style}" data-background-task-stack="true" aria-live="polite">
       ${orderedTasks.map(renderBackgroundTaskToast).join('')}
     </aside>
   `;
@@ -1677,7 +1709,7 @@ export function renderApp(state: AppState, flipDir: string = '') {
     <main class="islandmilfcode-scene${fullscreenClass}${paperThemeClass}">
       ${renderPaperWorkspace(state, flipDir)}
       ${renderTucaoFloatingPanel(state)}
-      ${renderBackgroundTasks(state.backgroundTasks)}
+      ${renderBackgroundTasks(state)}
       ${renderReaderContextMenu(state.readerContextMenu, state.generating)}
       ${renderReaderEditor(state)}
       ${renderFloatingPhone(state)}

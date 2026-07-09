@@ -2560,13 +2560,18 @@ button {
 
 .background-task-stack {
   position: fixed;
-  right: 24px;
   top: 24px;
+  left: 24px;
   z-index: 72;
   display: grid;
   gap: 10px;
   width: min(320px, calc(100vw - 32px));
-  pointer-events: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.background-task-stack.is-dragging {
+  cursor: grabbing;
 }
 
 .background-task {
@@ -2577,7 +2582,7 @@ button {
   border: 1.5px solid rgba(180, 160, 130, 0.28);
   box-shadow: 0 14px 34px rgba(58, 42, 24, 0.16);
   backdrop-filter: blur(10px);
-  pointer-events: auto;
+  user-select: none;
 }
 
 .background-task--failed {

@@ -192,6 +192,15 @@ let tucaoDragState: {
 } | null = null;
 let tucaoSuppressNextToggleClick = false;
 
+let backgroundTaskDragState: {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startLeft: number;
+  startTop: number;
+  moved: boolean;
+} | null = null;
+
 function canFlipReader(direction: 'prev' | 'next') {
   const readerMessages = getReaderMessages(state.uiMessages);
   if (direction === 'prev') return state.focusedMessageIndex > 0;
@@ -2169,6 +2178,86 @@ function setTucaoFloatFlag(next: { x?: number; y?: number; collapsed?: boolean }
   state.runtimeFlags.tucaoFloat = { ...current, ...next };
 }
 
+function getBackgroundTaskStackFlag() {
+  const raw =
+    typeof state.runtimeFlags.backgroundTaskStack === 'object' && state.runtimeFlags.backgroundTaskStack
+      ? (state.runtimeFlags.backgroundTaskStack as Record<string, unknown>)
+      : {};
+  return {
+    x: Number(raw.x),
+    y: Number(raw.y),
+  };
+}
+
+function setBackgroundTaskStackFlag(next: { x: number; y: number }) {
+  state.runtimeFlags.backgroundTaskStack = next;
+}
+
+function bindBackgroundTaskDragEvents() {
+  const panel = root?.querySelector<HTMLElement>('[data-background-task-stack="true"]');
+  if (!panel) return;
+
+  panel.addEventListener('pointerdown', event => {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('.background-task__retry')) return;
+    const current = getBackgroundTaskStackFlag();
+    const rect = panel.getBoundingClientRect();
+    backgroundTaskDragState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: Number.isFinite(current.x) ? current.x : rect.left,
+      startTop: Number.isFinite(current.y) ? current.y : rect.top,
+      moved: false,
+    };
+    panel.setPointerCapture(event.pointerId);
+    panel.classList.add('is-dragging');
+  });
+
+  panel.addEventListener('pointermove', event => {
+    if (!backgroundTaskDragState || event.pointerId !== backgroundTaskDragState.pointerId) return;
+    const dx = event.clientX - backgroundTaskDragState.startX;
+    const dy = event.clientY - backgroundTaskDragState.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 4) backgroundTaskDragState.moved = true;
+    if (!backgroundTaskDragState.moved) return;
+    const gap = window.innerWidth <= 720 ? 12 : 24;
+    const width = panel.offsetWidth || 320;
+    const height = panel.offsetHeight || 96;
+    const nextX = clamp(backgroundTaskDragState.startLeft + dx, gap, Math.max(gap, window.innerWidth - width - gap));
+    const nextY = clamp(backgroundTaskDragState.startTop + dy, gap, Math.max(gap, window.innerHeight - height - gap));
+    panel.style.left = `${nextX}px`;
+    panel.style.top = `${nextY}px`;
+  });
+
+  const finishDrag = (event: PointerEvent) => {
+    if (!backgroundTaskDragState || event.pointerId !== backgroundTaskDragState.pointerId) return;
+    if (panel.hasPointerCapture(event.pointerId)) panel.releasePointerCapture(event.pointerId);
+    panel.classList.remove('is-dragging');
+    const gap = window.innerWidth <= 720 ? 12 : 24;
+    const width = panel.offsetWidth || 320;
+    const height = panel.offsetHeight || 96;
+    const nextX = clamp(
+      backgroundTaskDragState.startLeft + event.clientX - backgroundTaskDragState.startX,
+      gap,
+      Math.max(gap, window.innerWidth - width - gap),
+    );
+    const nextY = clamp(
+      backgroundTaskDragState.startTop + event.clientY - backgroundTaskDragState.startY,
+      gap,
+      Math.max(gap, window.innerHeight - height - gap),
+    );
+    if (backgroundTaskDragState.moved) {
+      // 中文注释：失败/运行提示栈可被用户拖开，重渲后继续停在用户放下的位置。
+      setBackgroundTaskStackFlag({ x: nextX, y: nextY });
+      persistToSave();
+    }
+    backgroundTaskDragState = null;
+  };
+
+  panel.addEventListener('pointerup', finishDrag);
+  panel.addEventListener('pointercancel', finishDrag);
+}
+
 function bindTucaoFloatEvents() {
   const panel = root?.querySelector<HTMLElement>('[data-tucao-float="true"]');
   if (!panel) return;
@@ -3205,6 +3294,7 @@ function bindEvents() {
   bindFloatingPhoneEvents(root, state, openPhone);
   bindReaderDragEvents();
   bindTucaoFloatEvents();
+  bindBackgroundTaskDragEvents();
   bindReaderContextMenuEvents();
 }
 
