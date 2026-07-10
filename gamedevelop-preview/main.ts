@@ -22,6 +22,8 @@ type NumericProjectKey =
   | 'fatigue';
 
 type ProjectState = {
+  projectId: string | null;
+  created: boolean;
   title: string;
   genre: string;
   theme: string;
@@ -49,6 +51,31 @@ type ActionDefinition = {
   staff?: StaffDelta;
   signals: string[];
   candidate: string;
+};
+
+type WeekdayId = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';
+type WeeklyRouteMode = 'solo' | 'akane';
+type WeeklyScoreKey = 'development' | 'quality' | 'story' | 'fatigue' | 'budget';
+type WeeklyScore = Record<WeeklyScoreKey, number>;
+
+type WeeklySlot = {
+  id: WeekdayId;
+  label: string;
+  dateLabel: string;
+  kind: 'work' | 'weekend';
+  actionId: string | null;
+  targetId: string | null;
+  intent: string;
+};
+
+type WeeklyPlan = {
+  routeMode: WeeklyRouteMode;
+  week: number;
+  selectedDay: WeekdayId;
+  slots: Record<WeekdayId, WeeklySlot>;
+  submitted: boolean;
+  promptPreview: string;
+  narrativePreview: string;
 };
 
 type ReviewCandidate = {
@@ -83,6 +110,7 @@ type LabState = {
 
 type GameState = {
   screen: 'cover' | 'play';
+  view: 'route' | 'development';
   currentDate: string;
   currentEventId: string;
   turn: number;
@@ -93,6 +121,7 @@ type GameState = {
   reviewQueue: ReviewCandidate[];
   lastTriggerChain: string[];
   localChoice: PlotRouteId | null;
+  weeklyPlan: WeeklyPlan;
   lab: LabState;
 };
 
@@ -117,8 +146,10 @@ type GameDevelopPreviewApi = {
   exportRouteSignals: () => PlotFlagDelta[];
   enterGame: () => void;
   showCover: () => void;
+  setView: (view: 'route' | 'development') => void;
   runLabScenario: (scenarioId: string) => void;
   confirmLocalRoute: (routeId: PlotRouteId, skipDialog?: boolean) => boolean;
+  submitWeeklyPlan: () => boolean;
 };
 
 declare global {
@@ -131,17 +162,85 @@ declare global {
 
 const signalDefinitions = V07_PLOT_MACHINE.flags;
 
+const weekDays: Array<{ id: WeekdayId; label: string; dateLabel: string; kind: 'work' | 'weekend' }> = [
+  { id: 'mon', label: '周一', dateLabel: '工作日 01', kind: 'work' },
+  { id: 'tue', label: '周二', dateLabel: '工作日 02', kind: 'work' },
+  { id: 'wed', label: '周三', dateLabel: '工作日 03', kind: 'work' },
+  { id: 'thu', label: '周四', dateLabel: '工作日 04', kind: 'work' },
+  { id: 'fri', label: '周五', dateLabel: '工作日 05', kind: 'work' },
+  { id: 'sat', label: '周末', dateLabel: '休整 / 约会', kind: 'weekend' },
+];
+
+const weeklyRouteProfiles: Record<WeeklyRouteMode, { label: string; note: string; promptName: string }> = {
+  solo: {
+    label: '单飞线',
+    note: '自主推进，资源更紧；合作对象按本周安排进入。',
+    promptName: 'solo',
+  },
+  akane: {
+    label: '朱音线',
+    note: '截止压力更高，创作强度和关系压力会进入正文。',
+    promptName: 'akane',
+  },
+};
+
+const weeklyScoreMeta: Array<[WeeklyScoreKey, string, string]> = [
+  ['development', '开发积分', '#1f7a8c'],
+  ['quality', '质量积分', '#76519f'],
+  ['story', '剧情/关系', '#c9365a'],
+  ['fatigue', '疲劳变化', '#7a8699'],
+  ['budget', '预算变化', '#b7791f'],
+];
+
+const weekendTargets: Record<WeeklyRouteMode, Array<{ id: string; label: string }>> = {
+  solo: [
+    { id: 'solo_self', label: '独处整理思路' },
+    { id: 'eriri', label: '和英梨梨放松' },
+    { id: 'utaha', label: '和诗羽谈创作' },
+  ],
+  akane: [
+    { id: 'akane', label: '和朱音见面' },
+    { id: 'eriri', label: '和英梨梨放松' },
+    { id: 'utaha', label: '和诗羽谈创作' },
+  ],
+};
+
+function makeWeeklyPlan(): WeeklyPlan {
+  return {
+    routeMode: 'solo',
+    week: 1,
+    selectedDay: 'mon',
+    slots: Object.fromEntries(
+      weekDays.map(day => [
+        day.id,
+        {
+          ...day,
+          actionId: null,
+          targetId: null,
+          intent: '',
+        },
+      ]),
+    ) as Record<WeekdayId, WeeklySlot>,
+    submitted: false,
+    promptPreview: '',
+    narrativePreview: '',
+  };
+}
+
 const initialState: GameState = {
   screen: 'cover',
+  view: 'route',
   currentDate: '2013-03-04',
   currentEventId: 'SAE_07-GAME-DEVELOP',
   turn: 1,
   project: {
-    title: '第二作临时企划',
+    projectId: 'v07-second-project',
+    created: true,
+    title: '第二作',
     genre: '青春创作 ADV',
     theme: '社团 / 创作者 / 关系修复',
     platform: 'PC 同人展',
-    phase: '企划草案',
+    phase: '企划已建立',
     weeksLeft: 18,
     budget: 120,
     progress: 8,
@@ -166,6 +265,7 @@ const initialState: GameState = {
   reviewQueue: [],
   lastTriggerChain: ['init -> cover: PRESS ANY KEY waits for input'],
   localChoice: null,
+  weeklyPlan: makeWeeklyPlan(),
   lab: {
     scenarioId: LAB_SCENARIOS[0].id,
     status: 'idle',
@@ -295,8 +395,32 @@ let state = clone(initialState);
 
 const coverScreen = byId<HTMLElement>('cover-screen');
 const gameScreen = byId<HTMLElement>('game-screen');
+const routeScreen = byId<HTMLElement>('route-screen');
+const developmentView = byId<HTMLElement>('development-view');
+const routePageStatus = byId<HTMLElement>('route-page-status');
+const routeWindowLabel = byId<HTMLElement>('route-window-label');
+const routeWindowNote = byId<HTMLElement>('route-window-note');
+const routeEvidencePage = byId<HTMLElement>('route-evidence-page');
 const actionGrid = byId<HTMLElement>('action-grid');
 const metricGrid = byId<HTMLElement>('metric-grid');
+const weeklyReadiness = byId<HTMLElement>('weekly-readiness');
+const weeklyStatusLabel = byId<HTMLElement>('weekly-status-label');
+const weeklyRouteTabs = byId<HTMLElement>('weekly-route-tabs');
+const weeklyRouteNote = byId<HTMLElement>('weekly-route-note');
+const weekTabs = byId<HTMLElement>('week-tabs');
+const selectedWeekDayKicker = byId<HTMLElement>('selected-week-day-kicker');
+const selectedWeekDayTitle = byId<HTMLElement>('selected-week-day-title');
+const selectedWeekDayState = byId<HTMLElement>('selected-week-day-state');
+const weekActionGrid = byId<HTMLElement>('week-action-grid');
+const weekTargetSelect = byId<HTMLSelectElement>('week-target-select');
+const weekIntent = byId<HTMLTextAreaElement>('week-intent');
+const weeklyScoreboard = byId<HTMLElement>('weekly-scoreboard');
+const weeklyScoreCaption = byId<HTMLElement>('weekly-score-caption');
+const weeklyPlanSummary = byId<HTMLElement>('weekly-plan-summary');
+const weeklySubmitHint = byId<HTMLElement>('weekly-submit-hint');
+const submitWeekButton = byId<HTMLButtonElement>('submit-week-btn');
+const weeklyPromptPreview = byId<HTMLElement>('weekly-prompt-preview');
+const weeklyNarrativePreview = byId<HTMLElement>('weekly-narrative-preview');
 const staffList = byId<HTMLElement>('staff-list');
 const candidateBox = byId<HTMLElement>('candidate-box');
 const storySignalList = byId<HTMLElement>('story-signal-list');
@@ -371,6 +495,7 @@ function settlePlayerAction(input: string | { actionId?: string }): ReviewCandid
   const actionId = typeof input === 'string' ? input : input.actionId;
   const action = actions.find(item => item.id === actionId);
   if (!action) return null;
+  if (action.id === 'concept' && state.project.created) return null;
 
   const preview = clone(state);
   applyProjectDeltas(preview, action.deltas);
@@ -410,6 +535,257 @@ function formatDeltas(deltas: Partial<Record<NumericProjectKey, number>>): strin
     .join(', ');
 }
 
+function getWeeklyAction(actionId: string | null): ActionDefinition | null {
+  return actionId ? actions.find(action => action.id === actionId) ?? null : null;
+}
+
+function getWeeklyActionsForSlot(slot: WeeklySlot): ActionDefinition[] {
+  if (slot.kind === 'weekend') return actions.filter(action => action.id === 'rest');
+  return actions.filter(action => {
+    if (action.id === 'rest') return false;
+    if (action.id === 'concept') return !state.project.created;
+    return true;
+  });
+}
+
+function getWeeklyTargets(slot: WeeklySlot): Array<{ id: string; label: string }> {
+  if (slot.kind === 'weekend') return [{ id: '', label: '不指定对象' }, ...weekendTargets[state.weeklyPlan.routeMode]];
+  return [
+    { id: '', label: '独自完成' },
+    { id: 'megumi', label: '和惠协作' },
+    { id: 'eriri', label: '和英梨梨协作' },
+    { id: 'utaha', label: '和诗羽协作' },
+    ...(state.weeklyPlan.routeMode === 'akane' ? [{ id: 'akane', label: '和朱音协作' }] : []),
+  ];
+}
+
+function weeklyActionScore(action: ActionDefinition): WeeklyScore {
+  const deltas = action.deltas;
+  return {
+    development: deltas.progress ?? 0,
+    quality: Math.round(
+      ((deltas.creativity ?? 0) + (deltas.writing ?? 0) + (deltas.art ?? 0) + (deltas.code ?? 0) + (deltas.polish ?? 0)) / 2,
+    ),
+    story: action.signals.length * 4 + (action.id === 'scenario' || action.id === 'rest' ? 2 : 0),
+    fatigue: deltas.fatigue ?? 0,
+    budget: deltas.budget ?? 0,
+  };
+}
+
+function weeklyScore(): WeeklyScore {
+  const score: WeeklyScore = { development: 0, quality: 0, story: 0, fatigue: 0, budget: 0 };
+  for (const day of weekDays) {
+    const action = getWeeklyAction(state.weeklyPlan.slots[day.id].actionId);
+    if (!action) continue;
+    const actionScore = weeklyActionScore(action);
+    for (const key of Object.keys(score) as WeeklyScoreKey[]) score[key] += actionScore[key];
+  }
+  return score;
+}
+
+function formatSigned(value: number): string {
+  return value > 0 ? `+${value}` : `${value}`;
+}
+
+function weeklyPlanCount(): number {
+  return weekDays.filter(day => Boolean(state.weeklyPlan.slots[day.id].actionId)).length;
+}
+
+function isWeeklyPlanReady(): boolean {
+  return weeklyPlanCount() === weekDays.length;
+}
+
+function weeklyTargetLabel(slot: WeeklySlot): string {
+  return getWeeklyTargets(slot).find(target => target.id === (slot.targetId ?? ''))?.label ?? '独自完成';
+}
+
+function buildWeeklyPrompt(): string {
+  const profile = weeklyRouteProfiles[state.weeklyPlan.routeMode];
+  const lines = weekDays.map(day => {
+    const slot = state.weeklyPlan.slots[day.id];
+    const action = getWeeklyAction(slot.actionId);
+    return `${slot.label}（${slot.dateLabel}）：action=${action?.id}; action_label=${action?.label}; target=${weeklyTargetLabel(slot)}; intent=${slot.intent || '未填写，由正文根据行动事实演出'}`;
+  });
+  return [
+    '[GAME_DEVELOPMENT_WEEK]',
+    `route=${profile.promptName}`,
+    `week=${state.weeklyPlan.week}`,
+    'cadence=5_workdays_plus_weekend',
+    'instruction=本周六个行动是玩家已确定的只读上下文，正文必须按日体现，不得替换行动类型或自行改写项目数值。',
+    ...lines,
+    '[/GAME_DEVELOPMENT_WEEK]',
+  ].join('\n');
+}
+
+function buildWeeklyNarrativePreview(): string {
+  const profile = weeklyRouteProfiles[state.weeklyPlan.routeMode];
+  const arranged = weekDays
+    .map(day => {
+      const slot = state.weeklyPlan.slots[day.id];
+      const action = getWeeklyAction(slot.actionId);
+      return `${slot.label}的${action?.label ?? '行动'}`;
+    })
+    .join('、');
+  return `第 ${state.weeklyPlan.week} 周，${profile.label}的开发节奏被排成了${arranged}。正文会从这些确定行动中展开人物冲突、工作细节和周末场景；这段文字只是本地预览，没有调用 AI。`;
+}
+
+function invalidateWeeklySubmission(): void {
+  state.weeklyPlan.submitted = false;
+  state.weeklyPlan.promptPreview = '';
+  state.weeklyPlan.narrativePreview = '';
+}
+
+function selectWeeklyDay(dayId: WeekdayId): void {
+  state.weeklyPlan.selectedDay = dayId;
+  render();
+}
+
+function setWeeklyRoute(routeMode: WeeklyRouteMode): void {
+  state.weeklyPlan.routeMode = routeMode;
+  for (const day of weekDays) {
+    const slot = state.weeklyPlan.slots[day.id];
+    const validTarget = getWeeklyTargets(slot).some(target => target.id === (slot.targetId ?? ''));
+    if (!validTarget) slot.targetId = slot.kind === 'weekend' ? weekendTargets[routeMode][0]?.id ?? null : null;
+  }
+  invalidateWeeklySubmission();
+  state.lastTriggerChain = [`weekly route mode: ${routeMode}`, 'local preview only: no route choice or memoryDB write'];
+  render();
+}
+
+function assignWeeklyAction(actionId: string): void {
+  const slot = state.weeklyPlan.slots[state.weeklyPlan.selectedDay];
+  const action = getWeeklyActionsForSlot(slot).find(item => item.id === actionId);
+  if (!action) return;
+  slot.actionId = action.id;
+  slot.targetId = slot.kind === 'weekend' ? weekendTargets[state.weeklyPlan.routeMode][0]?.id ?? null : null;
+  invalidateWeeklySubmission();
+  render();
+}
+
+function submitWeeklyPlan(): boolean {
+  if (!isWeeklyPlanReady()) return false;
+  state.weeklyPlan.promptPreview = buildWeeklyPrompt();
+  state.weeklyPlan.narrativePreview = buildWeeklyNarrativePreview();
+  state.weeklyPlan.submitted = true;
+  state.lastTriggerChain = [
+    `weekly plan submitted: week ${state.weeklyPlan.week}`,
+    `six actions frozen: ${weekDays.map(day => state.weeklyPlan.slots[day.id].actionId).join(' -> ')}`,
+    'main prompt preview: weekly action context injected as read-only input',
+    'local preview only: no real generation or project settlement',
+  ];
+  render();
+  return true;
+}
+
+function renderWeeklyPromptPreview(): void {
+  if (!isWeeklyPlanReady()) {
+    weeklyPromptPreview.textContent = '六个行动安排完成后，这里会显示只读的提示词片段。';
+    weeklyNarrativePreview.classList.add('is-hidden');
+    return;
+  }
+  weeklyPromptPreview.textContent = state.weeklyPlan.submitted
+    ? state.weeklyPlan.promptPreview
+    : `【待提交预览】\n${buildWeeklyPrompt()}`;
+  weeklyNarrativePreview.classList.toggle('is-hidden', !state.weeklyPlan.submitted);
+  weeklyNarrativePreview.innerHTML = state.weeklyPlan.submitted
+    ? `<span>本地正文预览</span><p>${escapeHtml(state.weeklyPlan.narrativePreview)}</p>`
+    : '';
+}
+
+function renderWeeklyPlanner(): void {
+  const plan = state.weeklyPlan;
+  const profile = weeklyRouteProfiles[plan.routeMode];
+  const count = weeklyPlanCount();
+  const ready = isWeeklyPlanReady();
+  const selectedSlot = plan.slots[plan.selectedDay];
+  const selectedDay = weekDays.find(day => day.id === plan.selectedDay) ?? weekDays[0];
+  const score = weeklyScore();
+
+  weeklyRouteTabs.innerHTML = (Object.keys(weeklyRouteProfiles) as WeeklyRouteMode[])
+    .map(routeMode => {
+      const route = weeklyRouteProfiles[routeMode];
+      return `<button type="button" class="weekly-route-tab ${plan.routeMode === routeMode ? 'is-selected' : ''}" data-week-route="${routeMode}">${route.label}</button>`;
+    })
+    .join('');
+  weeklyRouteNote.textContent = profile.note;
+
+  weekTabs.innerHTML = weekDays
+    .map(day => {
+      const slot = plan.slots[day.id];
+      const action = getWeeklyAction(slot.actionId);
+      return `
+        <button type="button" role="tab" aria-selected="${plan.selectedDay === day.id}" class="week-tab ${plan.selectedDay === day.id ? 'is-selected' : ''} ${slot.actionId ? 'is-planned' : ''} ${day.kind === 'weekend' ? 'is-weekend' : ''}" data-week-day="${day.id}">
+          <span>${day.label}</span>
+          <strong>${action ? escapeHtml(action.label) : '待安排'}</strong>
+          <small>${day.dateLabel}</small>
+        </button>
+      `;
+    })
+    .join('');
+
+  selectedWeekDayKicker.textContent = `${selectedDay.label} · ${selectedDay.kind === 'weekend' ? '周末行动' : '工作日开发'}`;
+  selectedWeekDayTitle.textContent = selectedDay.kind === 'weekend' ? '安排本周末的休整或约会' : `安排${selectedDay.label}的开发行动`;
+  selectedWeekDayState.textContent = selectedSlot.actionId ? `已安排：${getWeeklyAction(selectedSlot.actionId)?.label ?? ''}` : '未安排';
+  selectedWeekDayState.className = `slot-state ${selectedSlot.actionId ? 'is-planned' : ''}`;
+
+  const availableActions = getWeeklyActionsForSlot(selectedSlot);
+  weekActionGrid.innerHTML = availableActions
+    .map(action => {
+      const actionScore = weeklyActionScore(action);
+      return `
+        <button type="button" class="week-action-card ${selectedSlot.actionId === action.id ? 'is-selected' : ''}" data-week-action-id="${action.id}">
+          <span class="week-action-card__top"><strong>${escapeHtml(action.label)}</strong><em>${selectedSlot.actionId === action.id ? '已选择' : '选择'}</em></span>
+          <small>${escapeHtml(action.hint)}</small>
+          <span class="week-action-card__points">开发 ${formatSigned(actionScore.development)} · 质量 ${formatSigned(actionScore.quality)} · 疲劳 ${formatSigned(actionScore.fatigue)}</span>
+        </button>
+      `;
+    })
+    .join('');
+
+  const targets = getWeeklyTargets(selectedSlot);
+  weekTargetSelect.innerHTML = targets.map(target => `<option value="${escapeHtml(target.id)}">${escapeHtml(target.label)}</option>`).join('');
+  weekTargetSelect.value = selectedSlot.targetId ?? '';
+  weekTargetSelect.disabled = !selectedSlot.actionId;
+  weekIntent.value = selectedSlot.intent;
+  weekIntent.disabled = !selectedSlot.actionId;
+
+  weeklyReadiness.textContent = `${count} / ${weekDays.length}`;
+  weeklyStatusLabel.textContent = plan.submitted ? '已提交本周正文预览' : ready ? '已排满，可提交' : '尚未排满';
+  weeklyScoreCaption.textContent = `${count} / 6 个行动已计入`;
+  weeklyScoreboard.innerHTML = weeklyScoreMeta
+    .map(([key, label, color]) => {
+      const value = score[key];
+      const visualValue = key === 'fatigue' || key === 'budget' ? Math.min(100, Math.abs(value)) : Math.min(100, Math.max(0, value));
+      return `
+        <div class="weekly-score-card">
+          <div><span>${label}</span><strong>${formatSigned(value)}</strong></div>
+          <div class="meter"><span style="width:${visualValue}%;background:${color}"></span></div>
+        </div>
+      `;
+    })
+    .join('');
+
+  weeklyPlanSummary.innerHTML = `
+    <div class="weekly-plan-summary__head"><span>行动清单</span><strong>${count}/6</strong></div>
+    ${weekDays
+      .map(day => {
+        const slot = plan.slots[day.id];
+        const action = getWeeklyAction(slot.actionId);
+        return `<div class="weekly-plan-row ${slot.actionId ? 'is-planned' : ''}"><span>${day.label}</span><strong>${action ? escapeHtml(action.label) : '待安排'}</strong><em>${action ? escapeHtml(weeklyTargetLabel(slot)) : '—'}</em></div>`;
+      })
+      .join('')}
+  `;
+
+  weeklySubmitHint.textContent = plan.submitted
+    ? '本周正文提示词已生成，可在下方展开查看。'
+    : ready
+      ? '六个行动已排满，现在可以把本周安排提交给正文生成。'
+      : `请先安排${weekDays.length - count}个行动，未排满时不能提交正文。`;
+  submitWeekButton.disabled = !ready || plan.submitted;
+  submitWeekButton.textContent = plan.submitted ? '本周正文预览已提交' : '安排完成，提交本周正文';
+  renderWeeklyPromptPreview();
+}
+
 function queueNarrativeCandidate(result: ReviewCandidate | null) {
   if (!result) return { status: 'ignored', reason: 'invalid_action' };
   state.reviewQueue.unshift(result);
@@ -439,6 +815,12 @@ function applyHumanReview(decision?: ReviewDecision): Record<string, unknown> {
   }
 
   state.reviewQueue.shift();
+  if (candidate.actionId === 'concept' && !state.project.created) {
+    state.project.created = true;
+    state.project.projectId = 'v07-second-project';
+    state.project.title = '第二作';
+    state.project.phase = '企划已建立';
+  }
   applyProjectDeltas(state, candidate.projectDeltas);
   applyStaffDeltas(state, candidate.staffDeltas);
   state.project.phase = derivePhase({ ...state.project, phase: candidate.phase });
@@ -596,6 +978,12 @@ function showCover(): void {
   render();
 }
 
+function setView(view: 'route' | 'development'): void {
+  state.view = view;
+  state.lastTriggerChain = [`local view: ${view}`, 'route choice and development planner remain separate preview surfaces'];
+  render();
+}
+
 function resetState(): void {
   const screen = state.screen;
   state = clone(initialState);
@@ -619,6 +1007,36 @@ function exportRouteSignals(): PlotFlagDelta[] {
 
 function resolveCurrentRoutes() {
   return resolvePlotRoutes(V07_PLOT_MACHINE, state.storySignals, state.localChoice);
+}
+
+function renderRoutePage(): void {
+  const resolution = resolveCurrentRoutes();
+  const insideDecisionWindow = isPlotDateInWindow(state.currentDate, V07_PLOT_MACHINE.promptWindow);
+  const eligibleCount = resolution.eligibleRouteIds.length;
+  routeWindowLabel.textContent = `${V07_PLOT_MACHINE.promptWindow.start} → ${V07_PLOT_MACHINE.promptWindow.end}`;
+  routeWindowNote.textContent = insideDecisionWindow
+    ? `当前日期 ${state.currentDate} 在路线判断窗口内，${eligibleCount} 条路线满足当前事实。`
+    : `当前日期 ${state.currentDate} 不在路线判断窗口内，choice 不能提交。`;
+  routePageStatus.textContent = resolution.choice
+    ? `已锁定：${V07_PLOT_MACHINE.routes.find(route => route.id === resolution.choice)?.label ?? resolution.choice}`
+    : '尚未锁定路线';
+  routePageStatus.className = `route-page-status ${resolution.choice ? 'is-locked' : ''}`;
+  routeEvidencePage.innerHTML = signalDefinitions
+    .map(signal => {
+      const value = state.storySignals[signal.id];
+      const evidence = state.evidence[signal.id];
+      return `
+        <article class="route-evidence-row ${value === 'yes' ? 'is-confirmed' : ''}">
+          <div>
+            <strong>${escapeHtml(signal.label)}</strong>
+            <small>${escapeHtml(signal.id)} · 最早 ${escapeHtml(signal.earliestDate)}</small>
+            ${evidence ? `<p>证据：${escapeHtml(evidence)}</p>` : `<p>${escapeHtml(signal.noMeaning)}</p>`}
+          </div>
+          <span>${value === 'yes' ? '已确认' : '待确认'}</span>
+        </article>
+      `;
+    })
+    .join('');
 }
 
 function confirmLocalRoute(routeId: PlotRouteId, skipDialog = false): boolean {
@@ -654,6 +1072,9 @@ function renderProject(): void {
   byId<HTMLElement>('game-platform').textContent = state.project.platform;
   byId<HTMLElement>('dev-phase').textContent = state.project.phase;
   byId<HTMLElement>('deadline-left').textContent = `${state.project.weeksLeft} 周`;
+  byId<HTMLElement>('project-state-badge').textContent = state.project.created
+    ? '项目已建立 · “定企划”已关闭'
+    : '尚未建立项目 · 先完成“定企划”';
   byId<HTMLElement>('current-date-label').textContent = `${state.currentDate} / after school`;
 }
 
@@ -689,12 +1110,15 @@ function renderStaff(): void {
 function renderActions(): void {
   actionGrid.innerHTML = actions
     .map(
-      action => `
-        <button class="action-button" type="button" data-action-id="${action.id}" id="act-${action.id}">
+      action => {
+        const projectCreationClosed = action.id === 'concept' && state.project.created;
+        return `
+        <button class="action-button ${projectCreationClosed ? 'is-disabled' : ''}" type="button" data-action-id="${action.id}" id="act-${action.id}" ${projectCreationClosed ? 'disabled' : ''}>
           <strong>${escapeHtml(action.label)}</strong>
-          <span>${escapeHtml(action.hint)}</span>
+          <span>${escapeHtml(projectCreationClosed ? '项目已建立：无需再次定企划' : action.hint)}</span>
         </button>
-      `,
+      `;
+      },
     )
     .join('');
 }
@@ -876,9 +1300,16 @@ function roundRect(x: number, y: number, width: number, height: number, radiusIn
 function render(): void {
   coverScreen.classList.toggle('is-hidden', state.screen !== 'cover');
   gameScreen.classList.toggle('is-hidden', state.screen !== 'play');
+  routeScreen.classList.toggle('is-hidden', state.view !== 'route');
+  developmentView.classList.toggle('is-hidden', state.view !== 'development');
+  document.querySelectorAll<HTMLElement>('.view-tab').forEach(button => {
+    button.classList.toggle('is-selected', button.dataset.view === state.view);
+  });
   renderScenarioOptions();
   labDate.value = state.currentDate;
   renderProject();
+  renderRoutePage();
+  renderWeeklyPlanner();
   renderMetrics();
   renderStaff();
   renderActions();
@@ -915,6 +1346,26 @@ document.addEventListener('pointerdown', event => {
     enterGame();
     return;
   }
+  const viewButton = target.closest<HTMLElement>('[data-view]');
+  if (viewButton?.dataset.view) {
+    setView(viewButton.dataset.view as 'route' | 'development');
+    return;
+  }
+  const weekRouteButton = target.closest<HTMLElement>('[data-week-route]');
+  if (weekRouteButton?.dataset.weekRoute) {
+    setWeeklyRoute(weekRouteButton.dataset.weekRoute as WeeklyRouteMode);
+    return;
+  }
+  const weekDayTab = target.closest<HTMLElement>('[data-week-day]');
+  if (weekDayTab?.dataset.weekDay) {
+    selectWeeklyDay(weekDayTab.dataset.weekDay as WeekdayId);
+    return;
+  }
+  const weekActionButton = target.closest<HTMLElement>('[data-week-action-id]');
+  if (weekActionButton?.dataset.weekActionId) {
+    assignWeeklyAction(weekActionButton.dataset.weekActionId);
+    return;
+  }
   const actionButton = target.closest<HTMLElement>('[data-action-id]');
   if (actionButton?.dataset.actionId) {
     queueNarrativeCandidate(settlePlayerAction({ actionId: actionButton.dataset.actionId }));
@@ -929,9 +1380,31 @@ document.addEventListener('pointerdown', event => {
   if (target.closest('#review-btn')) applyHumanReview();
   if (target.closest('#reset-btn')) resetState();
   if (target.closest('#run-lab-btn')) runLabScenario(scenarioSelect.value);
+  if (target.closest('#submit-week-btn')) submitWeeklyPlan();
 });
 
 scenarioSelect.addEventListener('change', () => prepareScenario(scenarioSelect.value));
+weekTargetSelect.addEventListener('change', () => {
+  const slot = state.weeklyPlan.slots[state.weeklyPlan.selectedDay];
+  slot.targetId = weekTargetSelect.value || null;
+  invalidateWeeklySubmission();
+  render();
+});
+weekIntent.addEventListener('input', () => {
+  const slot = state.weeklyPlan.slots[state.weeklyPlan.selectedDay];
+  slot.intent = weekIntent.value;
+  if (state.weeklyPlan.submitted) {
+    invalidateWeeklySubmission();
+    weeklyStatusLabel.textContent = isWeeklyPlanReady() ? '已排满，可提交' : '尚未排满';
+    weeklySubmitHint.textContent = isWeeklyPlanReady()
+      ? '行动说明已修改，需要重新提交本周正文。'
+      : `请先安排${weekDays.length - weeklyPlanCount()}个行动，未排满时不能提交正文。`;
+    submitWeekButton.disabled = !isWeeklyPlanReady();
+    submitWeekButton.textContent = '安排完成，提交本周正文';
+    weeklyNarrativePreview.classList.add('is-hidden');
+  }
+  renderWeeklyPromptPreview();
+});
 labDate.addEventListener('change', () => {
   state.currentDate = labDate.value;
   render();
@@ -945,8 +1418,10 @@ window.gameDevelopPreview = {
   exportRouteSignals,
   enterGame,
   showCover,
+  setView,
   runLabScenario,
   confirmLocalRoute,
+  submitWeeklyPlan,
 };
 
 window.render_game_to_text = () => {
@@ -954,11 +1429,20 @@ window.render_game_to_text = () => {
   return JSON.stringify({
     screen: 'gamedevelop-preview',
     phase: state.screen,
+    view: state.view,
     connectionStatus: '只是本地状态演示',
     note: 'No SillyTavern generation, memoryDB write, host floor, or plugin hook is connected.',
     currentDate: state.currentDate,
     currentEventId: state.currentEventId,
     turn: state.turn,
+    weeklyPlan: {
+      routeMode: state.weeklyPlan.routeMode,
+      week: state.weeklyPlan.week,
+      selectedDay: state.weeklyPlan.selectedDay,
+      submitted: state.weeklyPlan.submitted,
+      slots: state.weeklyPlan.slots,
+      score: weeklyScore(),
+    },
     project: state.project,
     storySignals: Object.fromEntries(
       signalDefinitions.map(signal => [signal.id, state.storySignals[signal.id] ?? 'unset']),

@@ -44,6 +44,16 @@
 
 本轮没有运行真实 SillyTavern 请求，没有创建宿主消息，没有写 memoryDB，也没有运行浏览器验收。
 
+### 2.1 2026-07-11 用户修订与本地预览变更
+
+`[已执行-静态]` 用户追加允许本轮只修改 `gamedevelop-preview/*` 本地预览和本交接文档；生产正文、宿主楼层、memoryDB、v07 production writer 和插件接通仍未修改。
+
+`[设计结论]` 本地预览的产品节奏改为：一周六个行动位，周一至周五是开发行动，周末是一次休整/约会行动。六个位全部安排完成后，玩家才可以提交本周正文；六个日程会以只读 weekly action context 进入主 AI 提示词预览。
+
+`[设计结论]` “定企划”不属于每周开发行动。它是项目生命周期的创建动作：只有 `project.created === false` 且尚无项目名时开放；项目名确认后项目进入 `created` 状态，`concept` 从周计划行动池移除，并在旧版诊断动作区禁用。
+
+`[已执行-静态]` `gamedevelop-preview/index.html` 现在包含独立的“路线判断”视图和“开发周计划”视图。按封面进入预览后默认先显示路线判断页；顶部可在“路线判断 / 开发周计划”之间切换。两者仍只是本地 UI，不代表生产路线 choice 或 session 已接通。
+
 ## 3. 三张截图表达的产品边界
 
 ### 3.1 手机首页
@@ -359,12 +369,36 @@ AI 没有以下权限：
 - 回滚正文同时回滚项目状态。
 - 同一个 `actionInstanceId` 最多应用一次。
 
+### 7.8 项目创建与一周六行动计划
+
+`[设计结论]` 需要把“建立项目”和“推进已存在项目”分成两个生命周期阶段，不能把 `concept` 当成每周可重复行动：
+
+```text
+无项目 / 无项目名
+    -> concept：定企划、确认项目名
+    -> project.created = true
+    -> 已建立项目的周计划：周一、周二、周三、周四、周五开发 + 周末休整/约会
+```
+
+硬规则：
+
+- `concept` 只有在没有项目且没有项目名时开放。
+- 项目名一旦确认，`concept` 从周计划行动池移除；旧版诊断动作区也必须禁用它。
+- 已建立项目的每个计划周期固定有六个 slot：五个工作日开发 slot 和一个周末 slot。
+- 周末 slot 只允许 `rest_date`/休整约会语义；它不能被普通开发行动替换。
+- 六个 slot 未全部填充时，正文提交按钮必须禁用；选择行动、目标和玩家意图只修改周计划 draft，不提前结算项目。
+- 六个 slot 全部填充后，TypeScript 冻结 weekly plan，主 AI 只接收路线、周数、六日行动、目标和玩家意图的只读上下文。
+- 项目积分板是周计划的确定性预估汇总；AI 不负责计算或写入项目积分。
+
+这里的“一周”是用户可见的开发规划单位，不等于 AI 自由决定日期。真正的项目时间推进、正文成功条件和结算仍由 TypeScript session/turn 合同决定。
+
 ## 8. 企划与游戏开发的最终分层
 
 ```mermaid
 flowchart LR
     P["手机企划页"] -->|"只读"| R["v07 路线事实 / eligibility / evidence / choice"]
-    R --> S{"后续事件声明了有界开发 session?"}
+    R --> Q["路线判断页：玩家查看证据并确认 choice"]
+    Q --> S{"后续事件声明了有界开发 session?"}
     S -- "否" --> N["普通小说续写"]
     S -- "是" --> A["正文卡下方开发行动面板"]
     A --> D["draftAction：可替换、编辑或取消"]
@@ -375,6 +409,17 @@ flowchart LR
     F --> V["TS 校验后写入对应状态"]
     V --> P
 ```
+
+### 路线判断页（本地预览位置）
+
+`[已执行-静态]` 路线判断页位于 `gamedevelop-preview/index.html` 的游戏视图中：封面按任意键进入后默认显示“路线判断”页，顶部的“路线判断”按钮可以随时返回。页面包含：
+
+- 当前判断窗口和日期状态。
+- 路线事实、最早生效日期和正文证据。
+- 三路线 eligibility、缺项和本地确认按钮。
+- “查看开发周计划预览”入口。
+
+“开发周计划”是同一预览的另一个视图，不应和路线判断事实混成同一玩家页面；本地预览的视图切换只为展示边界，不能替代未来生产的 `PlotRoutingContext` 桥。
 
 ### 手机企划页
 
@@ -396,15 +441,16 @@ flowchart LR
 
 ### 正文阅读器
 
-在有界 game-development session 内，正文卡下方显示独立的开发行动面板，保证五个稳定 action domain 都可达。
+在有界 game-development session 内，正文卡下方显示独立的周计划行动面板：周一至周五五个开发 slot 加周末一个休整/约会 slot。稳定 action domain 仍由同一开发引擎提供，但玩家提交正文前必须先填满本周六个 slot。
 
 该面板不复用通用 `<options>`：
 
-- 每项带稳定 action ID。
-- 点击后建立 `draftAction`，并把可读描述填入“继续书写”输入框；玩家可在冻结前编辑。
+- 每个日 slot 带稳定 action ID；周末 slot 固定使用休整/约会语义。
+- 点击行动后建立 weekly plan draft，并把可读描述和玩家意图保留在对应日期；玩家可在冻结前编辑。
 - 选中的 action、target 和 draft 状态必须可见，不能因为玩家改文案而丢失或偷偷切换。
 - required/optional target policy 由 action definition 和 route/session profile 决定；角色选择控件、禁用态和“独自完成”必须与该 policy 一致。
-- 只有点击“记录”才冻结 Turn；行动卡点击本身不结算、不生成 `actionInstanceId`。
+- 只有六个日期都填满后点击“安排完成，提交本周正文”才冻结 weekly Turn；单个行动卡点击本身不结算、不生成 `actionInstanceId`。
+- `concept` 是项目创建动作，不出现在已建立项目的周计划行动池。
 - 开发 session 内必须隐藏/抑制普通剧情 `<options>` 的可操作按钮；即使模型仍输出 `<options>`，它也不得成为第二套选择面板或改变开发状态。
 - 开发 session 外不显示开发面板，普通 `<options>` 才按原流程出现。
 
@@ -433,10 +479,20 @@ v07 实验 root 不持有项目状态；game-development root 可以接收固定
 
 ```text
 projectId
+projectCreated
 routeId
 phase
 turn
 remainingTurns
+currentWeek
+weeklyPlan:
+  mon
+  tue
+  wed
+  thu
+  fri
+  weekend
+weeklyPlanStatus: empty | planning | ready | submitted
 tracks:
   art
   scenario
@@ -506,6 +562,19 @@ promptVersion
 contextFingerprint
 ```
 
+用户可见的提交单位改为 `WeeklyPreparedTurn`。它至少还要记录：
+
+```text
+weeklyPlanId
+weekNumber
+slots.mon / tue / wed / thu / fri / weekend
+weeklyPromptFingerprint
+weeklyScorePreview
+allSlotsFilled
+```
+
+六个日期 slot 内部仍可各自保留 `actionId`、`selectedTargetId`、`actionText` 和确定性日结算，但正文提交和幂等边界以整周计划为外层单位。
+
 ## 10. 正确的 AI 驱动回合
 
 ```mermaid
@@ -517,19 +586,19 @@ sequenceDiagram
     participant Sidecar as Secondary AI
     participant Save as 自有存档
 
-    Player->>UI: 选择行动、目标并编辑说明
-    UI->>UI: 建立或替换 draftAction，不结算
-    Player->>UI: 点击记录
-    UI->>TS: draftRevision + actionId + targetId + editableText
+    Player->>UI: 填写周一至周五开发行动和周末行动
+    UI->>UI: 建立或替换 weeklyPlan draft，不结算
+    Player->>UI: 六个 slot 填满后点击提交本周正文
+    UI->>TS: weeklyPlan + six slot actions + targets + intents
     TS->>TS: 建立/引用 NarrativeTurnAnchor，并创建 pre-turn snapshot
-    TS->>TS: 按时间锚校验 session、路线、日期、阶段
-    TS->>TS: 计算唯一 settlement 和 actionInstanceId
-    TS->>Save: 原子保存 snapshot 和 prepared Turn
-    TS->>MainAI: 只读 action context + settlement + 小说 prompt
+    TS->>TS: 校验 project.created、路线、session、六个 slot 和日期
+    TS->>TS: 计算唯一 weekly settlement 和 weeklyPlanId
+    TS->>Save: 原子保存 snapshot 和 WeeklyPreparedTurn
+    TS->>MainAI: 只读 weekly action context + settlement + 小说 prompt
     MainAI-->>TS: content 正文
     alt 最终响应含完整且通过协议校验的 content
-        TS->>TS: 对同一 actionInstanceId 提交 settlement 一次
-        TS->>Save: 原子保存正文、项目状态、completed Turn 和确定性审计 receipt
+        TS->>TS: 对同一 weeklyPlanId 提交周结算一次
+        TS->>Save: 原子保存正文、项目状态、weekly action ledger、completed Turn 和确定性审计 receipt
         TS->>TS: 用 anchorTime 与 postSettlementTime 检查每个 sidecar 窗口
         opt 该 sidecar 的双重窗口均开放
             TS->>Sidecar: 用独立 allowlist 协议分析最新完整正文
@@ -539,11 +608,11 @@ sequenceDiagram
     else 请求报错、流截断、标签不完整或正文校验失败
         TS->>Save: 保留 failed/prepared turn
         Player->>TS: retry
-        TS->>MainAI: 复用同一 settlement 和上下文版本
+        TS->>MainAI: 复用同一 weekly settlement 和上下文版本
     end
 ```
 
-基础 settlement 在请求 AI 前确定，但只有最终流结束、完整 `<content>` 可提取且正文协议验证通过后才提交。已有部分可见流式文本不能算成功，也不能触发 settlement、通用 progress 或 secondary；它最多作为失败诊断展示，不进入权威正文。
+weekly settlement 在请求 AI 前确定，但只有最终流结束、完整 `<content>` 可提取且正文协议验证通过后才提交。已有部分可见流式文本不能算成功，也不能触发 weekly settlement、通用 progress 或 secondary；它最多作为失败诊断展示，不进入权威正文。
 
 `NarrativeTurnAnchor` 是所有小说回合的通用编排记录，不只属于 GameDevelopment：
 
@@ -560,7 +629,7 @@ sequenceDiagram
 
 ## 11. 单飞线与红坂朱音线
 
-两条路线共用同一个 game-development 引擎和五个 action ID，只使用不同 route profile。不要复制两套状态机。
+两条路线共用同一个 game-development 引擎和 action domain，只使用不同 route profile。用户可见的计划层固定为六个 slot（五个工作日开发 + 一个周末休整/约会），不要复制两套状态机。
 
 ### 11.1 单飞线 `solo`
 
@@ -687,9 +756,11 @@ attributes 变更与 receipt 必须先在同一个 memoryDB clone 中全部完�
 ### 轮 0：当前文档轮
 
 - 确认本文三域边界。
-- 确认五个固定 action ID。
+- 确认“项目创建动作”和“已建立项目的周计划行动”分离。
+- 确认周计划固定六个 slot：周一至周五开发、周末休整/约会。
+- 确认路线判断页与开发周计划页是两个玩家视图。
 - 确认 GameDevelopmentState 是显式可回滚状态。
-- 不改代码。
+- 当前只允许本地 preview 和交接文档迭代，不接生产链。
 
 ### 轮 1：纯状态舰体升级
 
@@ -699,7 +770,7 @@ attributes 变更与 receipt 必须先在同一个 memoryDB clone 中全部完�
 
 ### 轮 2：休眠行动组件与确定性 fixture
 
-- 只实现五个 action domain、`draftAction`、冻结点和确定性 reducer 的 QA fixture。
+- 只实现项目创建门控、六 slot weekly plan、draft/freeze 点和确定性 reducer 的 QA fixture。
 - 组件不挂生产 session，不进入正文主流程，不发送 prompt。
 - 预览状态与 v07 lab 使用独立 state root。
 - 当前接通标签仍只能是“只是本地状态演示”。
@@ -721,13 +792,14 @@ attributes 变更与 receipt 必须先在同一个 memoryDB clone 中全部完�
 ### 轮 5：有界 session 与行动冻结
 
 - 在人确认的事件/日期窗内声明单飞和朱音 session/profile。
-- 生产正文页只在合法 session 显示开发面板，并硬抑制普通 `<options>` 按钮。
-- 点击行动只改 draft；点击“记录”才冻结 snapshot、时间锚和 prepared Turn。
+- 生产正文页只在合法 session 显示六 slot 周计划面板，并硬抑制普通 `<options>` 按钮。
+- 项目尚未建立时只显示 `concept` 创建动作；项目名确认后从周计划行动池移除 `concept`。
+- 六个 slot 全部填满后点击“提交本周正文”才冻结 snapshot、时间锚和 WeeklyPreparedTurn。
 - 本轮可以接真实状态读写，但仍不调用 AI。
 
 ### 轮 6：主 AI 小说协作
 
-- 主 AI 消费只读 action/settlement 写正文。
+- 主 AI 消费只读 weekly action context/settlement 写正文。
 - 只有完整、验证通过的最终 `<content>` 才提交 settlement。
 - 失败和重生成复用同一 prepared Turn、prompt version 和 context fingerprint。
 - scenePresence 只开放经过审查的角色筛选/recall 子集。
@@ -750,10 +822,12 @@ attributes 变更与 receipt 必须先在同一个 memoryDB clone 中全部完�
 
 ### 体验
 
-- 手机企划页与正文游戏开发明显分开。
-- 正文处只在合法 session 提供五个稳定行动域，具体布局与人工确认一致。
+- 路线判断页与开发周计划页明显分开；玩家能明确找到路线事实、证据和 choice 判断入口。
+- 正文处只在合法 session 提供五个工作日开发 slot 加一个周末休整/约会 slot。
+- 项目未建立时才显示 `concept`；项目名确认后 `concept` 不再出现在周计划行动池。
+- 六个 slot 未排满时不能提交正文；排满后能看到 weekly action context 提示词片段。
 - 开发 session 内不会同时出现可操作的普通 `<options>` 面板。
-- 玩家能选择、改选、取消、编辑并在“记录”时冻结行动；冻结后不会提交旧 draft。
+- 玩家能选择、改选、取消、编辑每个日期行动，并在“提交本周正文”时冻结 weekly plan；冻结后不会提交旧 draft。
 - 截断/不完整正文不会结算，生成失败和 retry 不会重复结算。
 - 单飞/朱音不会显示错误的固定员工。
 
@@ -783,20 +857,20 @@ attributes 变更与 receipt 必须先在同一个 memoryDB clone 中全部完�
 
 ## 17. 当前预览的本地打开方式
 
-当前预览已被人工拒绝，只用于查看历史实验和 QA 证据。
+当前预览仍未获得正式接通验收，只用于查看路线判断、周计划和 QA 证据；本次新增的本地 UI 不代表生产可用。
 
 在父工程目录运行：
 
 ```powershell
-cd E:\web\tavern_helper_template-main
-pnpm build:game-preview
-Start-Process 'E:\web\tavern_helper_template-main\src\islandmilfcode\gamedevelop-preview\index.html'
+cd D:\card\tavern_helper_template-main\tavern_helper_template-main
+cmd /d /c "node_modules\.bin\webpack.CMD --config src\islandmilfcode\gamedevelop-preview\webpack.config.ts --mode development"
+Start-Process 'D:\card\tavern_helper_template-main\tavern_helper_template-main\src\islandmilfcode\gamedevelop-preview\index.html'
 ```
 
 也可以直接打开：
 
 ```text
-E:\web\tavern_helper_template-main\src\islandmilfcode\gamedevelop-preview\index.html
+D:\card\tavern_helper_template-main\tavern_helper_template-main\src\islandmilfcode\gamedevelop-preview\index.html
 ```
 
 页面加载的是 `.gitignore` 排除的 `gamedevelop-preview/dist/app.js`。没有先运行构建时，页面脚本可能不存在。
@@ -818,7 +892,7 @@ E:\web\tavern_helper_template-main\src\islandmilfcode\gamedevelop-preview\index.
 - `version/index.ts`
 - 当前 `plot-state-machine/*` 与 `gamedevelop-preview/*` 实验改动
 
-本交接轮只允许新增本文档。后续开始代码轮前必须重新保存 `git status` 和相关 diff。
+本次用户追加范围允许修改 `gamedevelop-preview/*` 的本地可逆预览和本文档；不得借此修改生产正文、手机企划页、v07 production writer、宿主楼层或插件接通链。后续开始正式代码轮前仍必须重新保存 `git status` 和相关 diff。
 
 ## 19. 待人确认
 
@@ -829,7 +903,7 @@ E:\web\tavern_helper_template-main\src\islandmilfcode\gamedevelop-preview\index.
 3. 每次行动消耗多少时间、疲劳，以及失败条件。
 4. 哪些角色在每条路线可作为临时合作或约会目标。
 5. `rest_date` 第一版是否严格限制单一目标，还是未来允许多人休息场景；在确认前权威字段保持单一 `selectedTargetId`。
-6. 五个行动在正文页是同时平铺、分段控件还是菜单；无论布局如何，五个稳定 action domain 都必须可达。
+6. 六个周计划 slot 是一排标签、分段控件还是其他布局；当前本地预览采用周一至周末一排标签，五个工作日可选开发行动，周末固定休整/约会。
 7. 是否最终要接真实宿主楼层；当前架构默认仍是自有手帐存档。
 8. 留下路线是否在后续共享同一开发系统。
 9. 项目完成后的发布、评价或结局规则。
@@ -876,3 +950,21 @@ E:\web\tavern_helper_template-main\src\islandmilfcode\gamedevelop-preview\index.
 ```
 
 没有新的人工审查表，不开始代码实现。
+
+## 22. 5.6 sol 接手入口
+
+本轮新增的可执行产品规则和酒馆同层手工仿真，集中记录在：
+
+`docs/v07-game-development-difficulty-and-tavern-simulation-handoff-v0.1.md`
+
+接手时优先确认以下七项：
+
+1. `concept` 只在没有项目名时开放；项目建立后永久从周计划行动池移除。
+2. 路线判断先于开发 session，choice 由玩家手动确认并锁定。
+3. 每周固定五个工作日开发 slot 和一个周末 `rest_date` slot。
+4. 六个 slot 未填满时不能提交本周正文。
+5. 周计划以 Markdown 形式存在于酒馆同层，不创建隐藏楼层、不写代码。
+6. AI 只按冻结行动写正文，不自行结算 progress、quality、fatigue、budget 或 bond。
+7. 先完成单飞线和朱音线各一份同层仿真记录，再申请下一轮代码范围。
+
+本文件和新增交接文件都只是设计/仿真材料；当前仍不能宣称生产路线、项目状态或酒馆接通已经完成。

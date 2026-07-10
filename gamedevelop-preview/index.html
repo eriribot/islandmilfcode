@@ -20,12 +20,64 @@
             <h1 id="project-title">第二作临时企划</h1>
           </div>
           <div class="sim-topbar__controls">
+            <button class="view-tab is-selected" type="button" data-view="route">路线判断</button>
+            <button class="view-tab" type="button" data-view="development">开发周计划</button>
             <button id="cover-btn" type="button">封面</button>
             <button id="reset-btn" type="button">重置</button>
             <button id="review-btn" type="button">通过 Review</button>
           </div>
         </header>
 
+        <section id="route-screen" class="route-screen" aria-label="v07 路线判断页">
+          <header class="route-page-header">
+            <div>
+              <span class="eyebrow">企划 · 路线判断</span>
+              <h2>先确认进入哪条创作路线</h2>
+              <p>这里集中显示路线事实、正文证据、日期窗口和 eligibility。路线确认与下面的开发周计划是两个页面。</p>
+            </div>
+            <strong id="route-page-status" class="route-page-status">尚未锁定路线</strong>
+          </header>
+
+          <div class="route-page-gates">
+            <article>
+              <span>当前判断窗口</span>
+              <strong id="route-window-label">读取中</strong>
+              <p id="route-window-note">路线事实只能在有效窗口内参与判断。</p>
+            </article>
+            <article>
+              <span>确认规则</span>
+              <strong>玩家手动确认一次</strong>
+              <p>choice 只记录路线选择，不直接结算开发项目。</p>
+            </article>
+            <article>
+              <span>当前接通状态</span>
+              <strong>只是本地状态演示</strong>
+              <p>不会写 memoryDB、宿主楼层或真实正文。</p>
+            </article>
+          </div>
+
+          <div class="route-page-grid">
+            <section class="panel route-evidence-panel">
+              <h2>路线事实与正文证据</h2>
+              <div id="route-evidence-page" class="route-evidence-page"></div>
+            </section>
+
+            <section class="route-resolution-panel route-resolution-panel--page">
+              <header>
+                <span>路线 eligibility</span>
+                <strong>可选路线需要玩家确认</strong>
+              </header>
+              <div id="route-resolution-list" class="route-resolution-list"></div>
+            </section>
+          </div>
+
+          <div class="route-page-footer">
+            <p>确认路线后，再进入“开发周计划”安排本周五个工作日和一个周末行动。</p>
+            <button type="button" data-view="development">查看开发周计划预览</button>
+          </div>
+        </section>
+
+        <div id="development-view" class="development-view is-hidden">
         <section class="project-board">
           <aside class="project-card">
             <div class="project-cover-mark">
@@ -49,6 +101,7 @@
                 <dd id="game-platform">PC 同人展</dd>
               </div>
             </dl>
+            <div id="project-state-badge" class="project-state-badge">项目已建立 · “定企划”已关闭</div>
           </aside>
 
           <section class="dev-center">
@@ -63,10 +116,86 @@
               </div>
             </div>
 
+            <section class="weekly-planner" aria-label="每周六次行动安排">
+              <header class="weekly-planner__header">
+                <div>
+                  <span class="eyebrow">开发模式 · 本地预览</span>
+                  <h2>本周行动编排</h2>
+                  <p>周一至周五安排开发，周末安排休整/约会；六个行动全部填满后才能提交本周正文。</p>
+                </div>
+                <div class="weekly-planner__status">
+                  <strong id="weekly-readiness">0 / 6</strong>
+                  <span id="weekly-status-label">尚未排满</span>
+                </div>
+              </header>
+
+              <div class="weekly-route-row">
+                <span>路线模式</span>
+                <div id="weekly-route-tabs" class="weekly-route-tabs"></div>
+                <small id="weekly-route-note">单飞线：自主推进，资源更紧。</small>
+              </div>
+
+              <div id="week-tabs" class="week-tabs" role="tablist" aria-label="本周行动日程"></div>
+
+              <div class="weekly-planner__body">
+                <section class="week-action-panel" aria-label="当前日期行动选择">
+                  <div class="week-action-panel__heading">
+                    <div>
+                      <span id="selected-week-day-kicker" class="eyebrow">周一 · 工作日</span>
+                      <h3 id="selected-week-day-title">安排今天的开发行动</h3>
+                    </div>
+                    <span id="selected-week-day-state" class="slot-state">未安排</span>
+                  </div>
+                  <div id="week-action-grid" class="week-action-grid"></div>
+                  <div class="week-action-details">
+                    <label>
+                      <span>合作/约会对象</span>
+                      <select id="week-target-select"></select>
+                    </label>
+                    <label>
+                      <span>玩家意图（将注入本周正文提示词）</span>
+                      <textarea id="week-intent" rows="3" placeholder="例如：先把核心冲突定下来，保留角色之间的分歧。"></textarea>
+                    </label>
+                  </div>
+                </section>
+
+                <aside class="weekly-score-panel" aria-label="本周积分板">
+                  <div class="weekly-score-panel__heading">
+                    <div>
+                      <span class="eyebrow">预计结算</span>
+                      <h3>本周积分板</h3>
+                    </div>
+                    <span id="weekly-score-caption">按已安排行动实时汇总</span>
+                  </div>
+                  <div id="weekly-scoreboard" class="weekly-scoreboard"></div>
+                  <div id="weekly-plan-summary" class="weekly-plan-summary"></div>
+                </aside>
+              </div>
+
+              <div class="weekly-planner__footer">
+                <div>
+                  <strong id="weekly-submit-hint">请先安排周一到周末的 6 个行动。</strong>
+                  <span>确认后才会生成本周正文提示词；当前只做本地预览。</span>
+                </div>
+                <button id="submit-week-btn" class="submit-week-button" type="button" disabled>
+                  安排完成，提交本周正文
+                </button>
+              </div>
+
+              <details class="weekly-prompt-details">
+                <summary>查看本周将注入主 AI 的提示词片段</summary>
+                <pre id="weekly-prompt-preview">六个行动安排完成后，这里会显示只读的提示词片段。</pre>
+              </details>
+              <div id="weekly-narrative-preview" class="weekly-narrative-preview is-hidden"></div>
+            </section>
+
             <canvas id="route-canvas" width="720" height="360" aria-label="开发状态图"></canvas>
 
             <div class="metric-grid" id="metric-grid"></div>
-            <div class="action-grid" id="action-grid"></div>
+            <details class="legacy-action-panel">
+              <summary>旧版单行动作实验（保留用于诊断）</summary>
+              <div class="action-grid" id="action-grid"></div>
+            </details>
           </section>
 
           <aside class="side-stack">
@@ -128,14 +257,8 @@
             </article>
           </div>
 
-          <section class="route-resolution-panel">
-            <header>
-              <span>05 确定性 resolver</span>
-              <strong>三路线可以同时可行，choice 仍由人确认</strong>
-            </header>
-            <div id="route-resolution-list" class="route-resolution-list"></div>
-          </section>
         </section>
+        </div>
       </section>
     </main>
     <script src="./dist/app.js"></script>
