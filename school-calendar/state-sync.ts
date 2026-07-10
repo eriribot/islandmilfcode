@@ -23,8 +23,14 @@ function syncPlayerIdentityLabel(profile: PlayerProfile | null | undefined, curr
   if (!profile) return false;
   const date = getDatePart(currentTime);
   if (!date) return false;
-  const identity = resolvePlayerSchoolIdentity(profile, currentTime);
   let changed = false;
+
+  if (!text(profile.schoolCalendarBaseClassName) && text(profile.className)) {
+    profile.schoolCalendarBaseClassName = text(profile.className);
+    changed = true;
+  }
+
+  const identity = resolvePlayerSchoolIdentity(profile, currentTime);
 
   if (profile.schoolIdentityKind !== identity.kind) {
     profile.schoolIdentityKind = identity.kind;

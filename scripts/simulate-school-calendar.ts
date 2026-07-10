@@ -193,6 +193,21 @@ const cases: SimulationCase[] = [
     },
   },
   {
+    name: 'opening and UI should prefer resolved player identity label over selected base class',
+    run: () => {
+      const profile = player(CLASS_2_B);
+      syncSchoolCalendarState({
+        currentTime: '2013-04-01 09:00',
+        playerProfile: profile,
+        statusData: makeStatus('2013-04-01 09:00', []),
+      });
+      const identity = resolvePlayerSchoolIdentity(profile, '2013-04-01 09:00');
+      assert(profile.className === CLASS_2_B, `selected base class must stay ${CLASS_2_B}, got ${profile.className}`);
+      assert(profile.schoolIdentityLabel === '私立丰之崎学园 3年B班', `expected synced identity label, got ${profile.schoolIdentityLabel}`);
+      assert(identity.className === '3年B班', `expected resolved class 3年B班, got ${identity.className}`);
+    },
+  },
+  {
     name: 'world state facts expose resolved identities',
     run: () => {
       const facts = buildSaenaiWorldStateFactLines({

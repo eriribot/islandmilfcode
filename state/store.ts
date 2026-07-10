@@ -757,6 +757,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     focusedMessagePage: 0,
     draft: '',
     generating: false,
+    openingGenerationError: null,
     currentGenerationId: '',
     finalizedGenerationId: '',
     runtimeFlags: {},

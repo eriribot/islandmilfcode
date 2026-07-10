@@ -1,4 +1,5 @@
 import { buildPrompt } from '../message-format';
+import { resolvePlayerSchoolIdentity } from '../school-calendar';
 import { createRollbackSnapshot } from '../state/store';
 import type { SummaryStore } from '../summary/types';
 import type { IslandMemoryDB } from '../memorydatabase/types';
@@ -61,7 +62,8 @@ async function simulateOpeningGeneration(ctx: OpeningActionContext, generationId
   const { state } = ctx;
   const profile = state.playerProfile;
   const name = profile.name || [profile.familyName, profile.givenName].filter(Boolean).join('') || '你';
-  const className = profile.className || '新的班级';
+  const schoolIdentity = resolvePlayerSchoolIdentity(profile, state.statusData.world.currentTime);
+  const className = schoolIdentity.className || schoolIdentity.label || profile.schoolIdentityLabel || profile.className || '新的班级';
   const location = state.statusData.world.currentLocation || '校园';
   const lines = [
     `${location}的空气还带着清晨未散的凉意。`,
@@ -84,6 +86,7 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
   const { state, win } = ctx;
   if (state.generating) return false;
   state.generating = true;
+  state.openingGenerationError = null;
   state.currentGenerationId = `opening-${crypto.randomUUID()}`;
   state.finalizedGenerationId = '';
   state.focusedMessagePage = 0;
@@ -135,6 +138,7 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
       lastMsg.statusSnapshot = createRollbackSnapshot(state);
       ctx.persistConversation();
     }
+    state.openingGenerationError = null;
     recordGenerationDebug(ctx, 'opening:success', { generationId });
     return true;
   } catch (error) {
@@ -154,13 +158,16 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
         lastMsg.statusSnapshot = createRollbackSnapshot(state);
         ctx.persistConversation();
       }
+      state.openingGenerationError = null;
       recordGenerationDebug(ctx, 'opening:catch-preserved-as-success', { generationId });
       return true;
     }
+    state.openingGenerationError =
+      (error instanceof Error ? error.message : String(error ?? '')).trim() || '开场生成失败，请重新试一次。';
     ctx.showNotification({
       kind: 'status',
       title: 'AI 开场生成失败',
-      preview: error instanceof Error ? error.message : String(error),
+      preview: state.openingGenerationError,
       targetTab: 'summary',
       timestamp: formatTime(state.statusData.world.currentTime),
     });

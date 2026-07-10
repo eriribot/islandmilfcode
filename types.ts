@@ -472,6 +472,7 @@ export type AppState = {
   focusedMessagePage: number;
   draft: string;
   generating: boolean;
+  openingGenerationError: string | null;
   currentGenerationId: string;
   finalizedGenerationId: string;
   runtimeFlags: Record<string, unknown>;

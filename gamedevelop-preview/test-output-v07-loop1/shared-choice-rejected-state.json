@@ -1,0 +1,105 @@
+{
+  "state": {
+    "screen": "gamedevelop-preview",
+    "phase": "play",
+    "connectionStatus": "只是本地状态演示",
+    "note": "No SillyTavern generation, memoryDB write, host floor, or plugin hook is connected.",
+    "currentDate": "2013-03-04",
+    "currentEventId": "SAE_07-GAME-DEVELOP",
+    "turn": 1,
+    "project": {
+      "title": "第二作临时企划",
+      "genre": "青春创作 ADV",
+      "theme": "社团 / 创作者 / 关系修复",
+      "platform": "PC 同人展",
+      "phase": "企划草案",
+      "weeksLeft": 18,
+      "budget": 120,
+      "progress": 8,
+      "fun": 18,
+      "creativity": 22,
+      "writing": 20,
+      "art": 16,
+      "code": 10,
+      "polish": 6,
+      "hype": 4,
+      "bugs": 12,
+      "fatigue": 18
+    },
+    "storySignals": {
+      "akane_pressure_seen": "unset",
+      "akane_formal_offer_seen": "unset",
+      "blackgold_shaken": "unset",
+      "akane_route_open": "unset",
+      "akane_repulsed": "unset",
+      "second_project_seed_ready": "unset",
+      "eriri_high_battlefield_supported": "unset",
+      "utaha_author_pride_supported": "unset",
+      "megumi_coplanner": "unset",
+      "blackgold_counterwill": "unset",
+      "user_knows_counterwill": "unset",
+      "solo_route_open": "unset"
+    },
+    "pendingReview": null,
+    "pipeline": {
+      "scenarioId": "unknown-choice",
+      "status": "needs_review",
+      "rawAvailable": true,
+      "promptRoles": [
+        "system",
+        "user"
+      ],
+      "attempts": 2,
+      "writes": [],
+      "errors": [
+        "unknown_flag"
+      ]
+    },
+    "routeResolution": {
+      "machineId": "v07",
+      "routes": [
+        {
+          "id": "stay",
+          "label": "留下",
+          "eligible": false,
+          "missingFlagIds": [
+            "megumi_coplanner",
+            "second_project_seed_ready",
+            "blackgold_counterwill",
+            "eriri_high_battlefield_supported",
+            "utaha_author_pride_supported"
+          ]
+        },
+        {
+          "id": "akane",
+          "label": "红坂朱音",
+          "eligible": false,
+          "missingFlagIds": [
+            "akane_pressure_seen",
+            "akane_route_open"
+          ]
+        },
+        {
+          "id": "solo",
+          "label": "单飞",
+          "eligible": false,
+          "missingFlagIds": [
+            "solo_route_open"
+          ]
+        }
+      ],
+      "eligibleRouteIds": [],
+      "choice": null,
+      "rejectedChoice": null
+    },
+    "routeSignals": [],
+    "lastTriggerChain": [
+      "lab scenario: unknown-choice",
+      "proposal window: 2013-03-04",
+      "ordered prompt roles: system,user",
+      "review result: needs_review",
+      "local writes: none"
+    ]
+  },
+  "errors": []
+}

@@ -1,0 +1,131 @@
+{
+  "screen": "gamedevelop-preview",
+  "phase": "play",
+  "connectionStatus": "只是本地状态演示",
+  "note": "No SillyTavern generation, memoryDB write, host floor, or plugin hook is connected.",
+  "currentDate": "2013-03-04",
+  "currentEventId": "SAE_07-GAME-DEVELOP",
+  "turn": 1,
+  "project": {
+    "title": "第二作临时企划",
+    "genre": "青春创作 ADV",
+    "theme": "社团 / 创作者 / 关系修复",
+    "platform": "PC 同人展",
+    "phase": "企划草案",
+    "weeksLeft": 18,
+    "budget": 120,
+    "progress": 8,
+    "fun": 18,
+    "creativity": 22,
+    "writing": 20,
+    "art": 16,
+    "code": 10,
+    "polish": 6,
+    "hype": 4,
+    "bugs": 12,
+    "fatigue": 18
+  },
+  "storySignals": {
+    "akane_pressure_seen": "unset",
+    "akane_formal_offer_seen": "unset",
+    "blackgold_shaken": "unset",
+    "akane_route_open": "unset",
+    "akane_repulsed": "unset",
+    "second_project_seed_ready": "yes",
+    "eriri_high_battlefield_supported": "yes",
+    "utaha_author_pride_supported": "yes",
+    "megumi_coplanner": "yes",
+    "blackgold_counterwill": "yes",
+    "user_knows_counterwill": "unset",
+    "solo_route_open": "unset"
+  },
+  "pendingReview": null,
+  "pipeline": {
+    "scenarioId": "valid-stay",
+    "status": "accepted",
+    "rawAvailable": true,
+    "promptRoles": [
+      "system",
+      "user"
+    ],
+    "attempts": 1,
+    "writes": [
+      "second_project_seed_ready:yes",
+      "megumi_coplanner:yes",
+      "eriri_high_battlefield_supported:yes",
+      "utaha_author_pride_supported:yes",
+      "blackgold_counterwill:yes"
+    ],
+    "errors": []
+  },
+  "routeResolution": {
+    "machineId": "v07",
+    "routes": [
+      {
+        "id": "stay",
+        "label": "留下",
+        "eligible": true,
+        "missingFlagIds": []
+      },
+      {
+        "id": "akane",
+        "label": "红坂朱音",
+        "eligible": false,
+        "missingFlagIds": [
+          "akane_pressure_seen",
+          "akane_route_open"
+        ]
+      },
+      {
+        "id": "solo",
+        "label": "单飞",
+        "eligible": false,
+        "missingFlagIds": [
+          "solo_route_open"
+        ]
+      }
+    ],
+    "eligibleRouteIds": [
+      "stay"
+    ],
+    "choice": "stay",
+    "rejectedChoice": null
+  },
+  "routeSignals": [
+    {
+      "machineId": "v07",
+      "flagId": "second_project_seed_ready",
+      "storageKey": "plotFlag.v07.second_project_seed_ready",
+      "value": "yes"
+    },
+    {
+      "machineId": "v07",
+      "flagId": "eriri_high_battlefield_supported",
+      "storageKey": "plotFlag.v07.eriri_high_battlefield_supported",
+      "value": "yes"
+    },
+    {
+      "machineId": "v07",
+      "flagId": "utaha_author_pride_supported",
+      "storageKey": "plotFlag.v07.utaha_author_pride_supported",
+      "value": "yes"
+    },
+    {
+      "machineId": "v07",
+      "flagId": "megumi_coplanner",
+      "storageKey": "plotFlag.v07.megumi_coplanner",
+      "value": "yes"
+    },
+    {
+      "machineId": "v07",
+      "flagId": "blackgold_counterwill",
+      "storageKey": "plotFlag.v07.blackgold_counterwill",
+      "value": "yes"
+    }
+  ],
+  "lastTriggerChain": [
+    "local route click: stay",
+    "resolvePlotRoutes(): verify eligibility",
+    "local choice only: no memoryDB write"
+  ]
+}

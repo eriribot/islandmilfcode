@@ -4,6 +4,38 @@ export const V07_PLOT_MACHINE: PlotMachineDefinition = {
   id: 'v07',
   targetId: 'route:v07',
   title: '第七卷路线开关',
+  proposalWindow: {
+    start: '2013-02-25',
+    end: '2013-03-31',
+  },
+  promptWindow: {
+    start: '2013-03-04',
+    end: '2013-03-31',
+  },
+  choiceStorageKey: 'plotRoute.v07.choice',
+  routes: [
+    {
+      id: 'stay',
+      label: '留下',
+      requiredFlagIds: [
+        'megumi_coplanner',
+        'second_project_seed_ready',
+        'blackgold_counterwill',
+        'eriri_high_battlefield_supported',
+        'utaha_author_pride_supported',
+      ],
+    },
+    {
+      id: 'akane',
+      label: '红坂朱音',
+      requiredFlagIds: ['akane_pressure_seen', 'akane_route_open'],
+    },
+    {
+      id: 'solo',
+      label: '单飞',
+      requiredFlagIds: ['solo_route_open'],
+    },
+  ],
   flags: [
     {
       id: 'akane_pressure_seen',
@@ -92,6 +124,14 @@ export const V07_PLOT_MACHINE: PlotMachineDefinition = {
       label: 'User 已知道黑金誓约',
       yesMeaning: 'User 已通过转述、画稿或会议得知黑金誓约。',
       noMeaning: 'User 尚不知道黑金誓约。',
+    },
+    {
+      id: 'solo_route_open',
+      storageKey: 'plotFlag.v07.solo_route_open',
+      earliestDate: '2013-02-25',
+      label: '单飞路线入口',
+      yesMeaning: 'User 已明确准备脱离 blessing software 与朱音体系，独立推进自己的创作路线。',
+      noMeaning: 'User 本轮明确表示仍未准备独立推进创作路线。',
     },
   ],
 } as const;

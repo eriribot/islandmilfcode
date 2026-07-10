@@ -816,6 +816,22 @@ function renderReaderActionsButton(state: AppState, readerIndex: number, classNa
 function renderReaderDeck(state: AppState, flipDir: string = '') {
   const model = getReaderModel(state);
   if (!model.currentMessage) {
+    const openingFailureHtml = state.openingGenerationError
+      ? `
+        <div class="opening-generation-failure" role="alert">
+          <strong class="opening-generation-failure__title">这次没生成出来</strong>
+          <p class="opening-generation-failure__detail">${escapeHtml(state.openingGenerationError)}</p>
+          <button
+            type="button"
+            class="opening-generation-failure__retry"
+            data-action="retry-opening"
+            ${state.generating ? 'disabled' : ''}
+          >
+            ${state.generating ? '生成中…' : '重新生成'}
+          </button>
+        </div>
+      `
+      : '<p class="reader-card__text">等待着你的故事开始。</p>';
     return `
       <section class="paper-reader paper-reader--empty">
         <div class="paper-reader__lane paper-reader__lane--top"><div class="reader-preview reader-preview--ghost"></div></div>
@@ -830,7 +846,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
             </div>
           </div>
           <div class="reader-card__body" tabindex="0">
-            <p class="reader-card__text">等待着你的故事开始。</p>
+            ${openingFailureHtml}
           </div>
         </article>
         <div class="paper-reader__lane paper-reader__lane--bottom"><div class="reader-preview reader-preview--ghost"></div></div>
@@ -964,7 +980,7 @@ function renderJournalHeader(state: AppState, controlsHtml = '') {
         ${jumpComposerButton}
         ${controlsHtml}
         <div class="journal-sticker">
-          ${escapeHtml(state.playerProfile.className || '主角档案')}
+          ${escapeHtml(state.playerProfile.schoolIdentityLabel || state.playerProfile.className || '主角档案')}
         </div>
       </div>
     </header>
@@ -1159,7 +1175,9 @@ export function renderSummaryPanel(state: AppState) {
   const lastMessage = state.uiMessages[state.uiMessages.length - 1];
   const playerName = state.playerProfile.name.trim() || '主角';
   const playerMeta =
-    [state.playerProfile.className, state.playerProfile.gender].filter(Boolean).join(' · ') || '主角档案';
+    [state.playerProfile.schoolIdentityLabel || state.playerProfile.className, state.playerProfile.gender]
+      .filter(Boolean)
+      .join(' · ') || '主角档案';
   const store = state.summaryStore;
 
   return `
@@ -1513,7 +1531,7 @@ export function renderSummaryConfigSection(state: AppState): string {
 export function renderStatusPanel(state: AppState): string {
   const { statusData, playerProfile } = state;
   const playerName = playerProfile.name.trim() || '主角';
-  const playerClass = playerProfile.className || '未知';
+  const playerClass = playerProfile.schoolIdentityLabel || playerProfile.className || '未知';
   const playerGender = playerProfile.gender || '未知';
   const playerFamilyName = playerProfile.familyName;
   const playerGivenName = playerProfile.givenName;

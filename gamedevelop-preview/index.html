@@ -16,7 +16,7 @@
       <section id="game-screen" class="game-screen is-hidden" aria-label="游戏开发模拟器">
         <header class="sim-topbar">
           <div>
-            <p>2013-03-04 / after school</p>
+            <p id="current-date-label">2013-03-04 / after school</p>
             <h1 id="project-title">第二作临时企划</h1>
           </div>
           <div class="sim-topbar__controls">
@@ -86,8 +86,58 @@
             </section>
           </aside>
         </section>
+
+        <section class="pipeline-lab" aria-label="v07 AI 提案仿真实验室">
+          <header class="pipeline-lab__header">
+            <div>
+              <span class="connection-label">只是本地状态演示</span>
+              <h2>v07 AI 提案仿真实验室</h2>
+              <p>这里运行正式 TypeScript 校验器和 resolver，但不调用 SillyTavern、不写 memoryDB。</p>
+            </div>
+            <span id="lab-status" class="lab-status lab-status--idle">等待运行</span>
+          </header>
+
+          <div class="lab-controls">
+            <label>
+              <span>场景</span>
+              <select id="lab-scenario"></select>
+            </label>
+            <label>
+              <span>剧情日期</span>
+              <input id="lab-date" type="date" value="2013-03-04" />
+            </label>
+            <button id="run-lab-btn" type="button">运行提案链</button>
+          </div>
+
+          <div class="pipeline-steps">
+            <article>
+              <span>01 正文</span>
+              <pre id="lab-scene"></pre>
+            </article>
+            <article>
+              <span>02 AI 原始提案</span>
+              <pre id="lab-raw"></pre>
+            </article>
+            <article>
+              <span>03 TS 校验</span>
+              <pre id="lab-review"></pre>
+            </article>
+            <article>
+              <span>04 本地模拟写入</span>
+              <pre id="lab-write"></pre>
+            </article>
+          </div>
+
+          <section class="route-resolution-panel">
+            <header>
+              <span>05 确定性 resolver</span>
+              <strong>三路线可以同时可行，choice 仍由人确认</strong>
+            </header>
+            <div id="route-resolution-list" class="route-resolution-list"></div>
+          </section>
+        </section>
       </section>
     </main>
-    <script src="./app.js"></script>
+    <script src="./dist/app.js"></script>
   </body>
 </html>

@@ -236,7 +236,7 @@ export function getTargetEducationProfile(target: Pick<TargetStatus, 'id' | 'nam
 }
 
 export function getPlayerEducationProfile(profile: PlayerProfile | null | undefined): EducationProfile {
-  const className = normalizeClassName(text(profile?.className));
+  const className = normalizeClassName(text(profile?.schoolCalendarBaseClassName) || text(profile?.className));
   if (!className) return { ...EMPTY_PROFILE };
   return {
     ...EMPTY_PROFILE,

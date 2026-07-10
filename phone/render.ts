@@ -294,7 +294,7 @@ function renderMusicHero(state: AppState) {
 
 // 状态栏
 function renderPhoneHome(state: AppState) {
-  const playerMeta = state.playerProfile.className || state.playerProfile.gender || '主角档案';
+  const playerMeta = state.playerProfile.schoolIdentityLabel || state.playerProfile.className || state.playerProfile.gender || '主角档案';
   const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
   const characterRows = [PHONE_CHARACTER_ORDER.slice(0, 3), PHONE_CHARACTER_ORDER.slice(3)];
   const phoneThreadCount = Object.values(state.phoneMessages.threads).filter(thread => thread.messages.length).length;
@@ -1039,7 +1039,7 @@ function renderSummaryPhonePage(state: AppState, renderers: PhoneRenderers) {
 }
 
 function renderStatusPhonePage(state: AppState, renderers: PhoneRenderers) {
-  const profileSubtitle = state.playerProfile.className || state.playerProfile.gender || '';
+  const profileSubtitle = state.playerProfile.schoolIdentityLabel || state.playerProfile.className || state.playerProfile.gender || '';
   return `
     <section class="phone-route-page phone-app-page" data-phone-route-view="app:status">
       ${renderPhoneAppHeader(state, '状态', profileSubtitle)}

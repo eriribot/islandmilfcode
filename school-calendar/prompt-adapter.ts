@@ -22,7 +22,9 @@ export function buildSchoolCalendarFactLines(input: SchoolCalendarFactInput): st
   const lines: string[] = [];
 
   if (!date || date < CLASS_SPLIT_DATE) {
-    lines.push('- School calendar: second-year class split starts on 2012-04-05; before that date, do not use 2年B班 or 2年G班 as established facts.');
+    lines.push(
+      '- School calendar: Toyogasaki class assignments start on 2012-04-05; before that date, do not expose any concrete selected class. Concealed grade data may only decide whether User and a character are peers, senior, or junior.',
+    );
   }
 
   if (date >= UTAHA_GRADUATION_DATE) {

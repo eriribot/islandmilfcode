@@ -935,6 +935,59 @@ button {
   color: var(--ink-dark);
 }
 
+.opening-generation-failure {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10px;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.opening-generation-failure__title {
+  font-family: 'Zen Maru Gothic', sans-serif;
+  font-size: 1rem;
+  color: var(--ink-dark);
+}
+
+.opening-generation-failure__detail {
+  max-width: 100%;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.opening-generation-failure__retry {
+  min-height: 38px;
+  padding: 8px 18px;
+  border: 1px solid #7a5aa3;
+  border-radius: 6px;
+  background: #6b4c92;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+
+.opening-generation-failure__retry:hover:not(:disabled) {
+  background: #593c80;
+  transform: translateY(-1px);
+}
+
+.opening-generation-failure__retry:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .reader-htmlcontent {
   max-width: 100%;
   margin: 12px 0;

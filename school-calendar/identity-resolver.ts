@@ -22,6 +22,8 @@ export type ResolvedSchoolIdentity = {
   source: SchoolIdentitySource;
   facts: string[];
   grade: number | null;
+  relationGrade: number | null;
+  baseGrade: number | null;
 };
 
 type TargetIdentityInput = Pick<TargetStatus, 'id' | 'name' | 'alias' | 'meta'>;
@@ -76,7 +78,18 @@ const BUILT_IN_RULES: Record<string, BuiltInEducationRule> = {
       { date: '', className: '3年3班' },
     ],
   },
+  shoko: {
+    birthday: '',
+    schoolName: '外校',
+    graduationDate: '2014-03-01',
+    steps: [
+      { date: '', className: '2年' },
+      { date: TOYOGASAKI_2013_SCHOOL_YEAR_DATE, className: '3年' },
+    ],
+  },
 };
+
+const ADULT_ELDER_KEYS = new Set(['sayuri', 'sonoko', 'akane']);
 
 function text(value: unknown): string {
   return String(value ?? '').trim();
@@ -114,25 +127,45 @@ function identityHaystack(target: Pick<TargetStatus, 'id' | 'name' | 'alias'>): 
 }
 
 export function getTargetCharacterKey(target: Pick<TargetStatus, 'id' | 'name' | 'alias'>): string {
+  const primaryIdentity = [target.id, target.name].map(value => text(value).toLowerCase()).join('\n');
+  if (/sayuri|小百合/.test(primaryIdentity)) return 'sayuri';
+  if (/sonoko|machida|町田|苑子/.test(primaryIdentity)) return 'sonoko';
+  if (/akane|kosaka|kousaka|kurenai|红坂|紅坂|朱音|高坂|茜/.test(primaryIdentity)) return 'akane';
+  if (/shoko|shouko|nishimiya|西宫|西宮|硝子/.test(primaryIdentity)) return 'shoko';
+
   const haystack = identityHaystack(target);
   if (/megumi|katou|kato|加藤|惠|恵/.test(haystack)) return 'megumi';
-  if (/eriri|sawamura|英梨梨|英梨々|泽村|澤村/.test(haystack)) return 'eriri';
-  if (/utaha|kasumigaoka|霞之丘|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子/.test(haystack)) return 'utaha';
-  if (/izumi|hashima|波岛|波島|出海/.test(haystack)) return 'izumi';
-  if (/michiru|hyodo|hyoudou|冰堂|氷堂|美智留/.test(haystack)) return 'michiru';
+  // 成人角色的别名会提到英梨梨或霞诗子，必须优先于被提到的年轻角色。
   if (/sayuri|小百合/.test(haystack)) return 'sayuri';
   if (/sonoko|machida|町田|苑子/.test(haystack)) return 'sonoko';
   if (/akane|kosaka|kousaka|kurenai|红坂|紅坂|朱音|高坂|茜/.test(haystack)) return 'akane';
   if (/shoko|shouko|nishimiya|西宫|西宮|硝子/.test(haystack)) return 'shoko';
+  if (/eriri|sawamura|英梨梨|英梨々|泽村|澤村/.test(haystack)) return 'eriri';
+  if (/utaha|kasumigaoka|霞之丘|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子/.test(haystack)) return 'utaha';
+  if (/izumi|hashima|波岛|波島|出海/.test(haystack)) return 'izumi';
+  if (/michiru|hyodo|hyoudou|冰堂|氷堂|美智留/.test(haystack)) return 'michiru';
   return '';
 }
 
-function makeIdentity(input: Omit<ResolvedSchoolIdentity, 'label' | 'grade'> & { label?: string }): ResolvedSchoolIdentity {
+export function isAdultElderTarget(target: Pick<TargetStatus, 'id' | 'name' | 'alias'>): boolean {
+  return ADULT_ELDER_KEYS.has(getTargetCharacterKey(target));
+}
+
+function makeIdentity(
+  input: Omit<ResolvedSchoolIdentity, 'label' | 'grade' | 'relationGrade' | 'baseGrade'> & {
+    label?: string;
+    relationGrade?: number | null;
+    baseGrade?: number | null;
+  },
+): ResolvedSchoolIdentity {
   const label = input.label ?? [input.schoolName, input.className].filter(Boolean).join(' ');
+  const grade = getGradeNumber(input.className);
   return {
     ...input,
     label,
-    grade: getGradeNumber(input.className),
+    grade,
+    relationGrade: input.relationGrade ?? grade,
+    baseGrade: input.baseGrade ?? grade,
   };
 }
 
@@ -190,6 +223,17 @@ function selectClassForGrade(
   return null;
 }
 
+function getBaseGrade(profile: EducationProfile): number | null {
+  for (const step of profile.classSteps) {
+    const grade = getGradeNumber(step.className);
+    if (grade !== null) return grade;
+    const middleSchoolGrade = normalizeClassName(step.className).match(/^初([1-3])$/)?.[1];
+    if (middleSchoolGrade) return Number(middleSchoolGrade) - 3;
+  }
+
+  return getHighSchoolGradeFromBirthday(profile.birthday, CLASS_SPLIT_DATE);
+}
+
 function selectMiddleSchoolClass(profile: EducationProfile): { schoolName: string; className: string; rawText: string } | null {
   const step = profile.classSteps.find(item => normalizeClassName(item.className).startsWith('初'));
   if (!step) return null;
@@ -203,6 +247,23 @@ function selectMiddleSchoolClass(profile: EducationProfile): { schoolName: strin
 function mergeWithBuiltInProfile(profile: EducationProfile, key: string): EducationProfile {
   const rule = BUILT_IN_RULES[key];
   if (!rule) return profile;
+
+  // DLC 设定只确定硝子与伦也、惠同届且属于外校，不虚构具体校名或班级。
+  if (key === 'shoko') {
+    return {
+      ...profile,
+      birthday: '',
+      schoolName: rule.schoolName,
+      graduationDate: rule.graduationDate || '',
+      classSteps: rule.steps.map(step => ({
+        date: step.date,
+        className: normalizeClassName(step.className),
+        schoolName: rule.schoolName,
+        rawText: step.rawText || step.className,
+      })),
+      source: 'fallback',
+    };
+  }
 
   if (profile.classSteps.length) {
     return {
@@ -241,24 +302,28 @@ function resolveProfileIdentity(input: {
   beforeSplitApplies: boolean;
 }): ResolvedSchoolIdentity {
   const profile = input.profile;
+  const baseGrade = getBaseGrade(profile);
 
   if (!input.date) return resolveUnknown(input.id, input.name);
 
   if (profile.graduationDate && input.date >= profile.graduationDate) {
+    if (!profile.schoolName) return resolveUnknown(input.id, input.name);
     const label =
       profile.universityName || profile.universityDepartment
-        ? `${profile.schoolName || '私立丰之崎学园'} graduate / ${[profile.universityName, profile.universityDepartment]
+        ? `${profile.schoolName} graduate / ${[profile.universityName, profile.universityDepartment]
             .filter(Boolean)
             .join('')}`
-        : `${profile.schoolName || '私立丰之崎学园'} graduate`;
+        : `${profile.schoolName} graduate`;
     return makeIdentity({
       id: input.id,
       name: input.name,
       kind: 'graduate',
-      schoolName: profile.schoolName || '私立丰之崎学园',
+      schoolName: profile.schoolName,
       className: '',
       source: input.source,
       label,
+      baseGrade,
+      relationGrade: baseGrade,
       facts: [`${input.date}: ${input.name} is ${label}.`],
     });
   }
@@ -272,6 +337,8 @@ function resolveProfileIdentity(input: {
       className: '',
       source: 'date-rule',
       label: '私立丰之崎学园分班前',
+      relationGrade: baseGrade,
+      baseGrade,
       facts: [`Before 2012-04-05, ${input.name} must not be treated as already assigned to a Toyogasaki class.`],
     });
   }
@@ -279,20 +346,23 @@ function resolveProfileIdentity(input: {
   const birthdayGrade = getHighSchoolGradeFromBirthday(profile.birthday, input.date);
   if (birthdayGrade !== null) {
     if (birthdayGrade > 3) {
+      if (!profile.schoolName) return resolveUnknown(input.id, input.name);
       const label =
         profile.universityName || profile.universityDepartment
-          ? `${profile.schoolName || '私立丰之崎学园'} graduate / ${[profile.universityName, profile.universityDepartment]
+          ? `${profile.schoolName} graduate / ${[profile.universityName, profile.universityDepartment]
               .filter(Boolean)
               .join('')}`
-          : `${profile.schoolName || '私立丰之崎学园'} graduate`;
+          : `${profile.schoolName} graduate`;
       return makeIdentity({
         id: input.id,
         name: input.name,
         kind: 'graduate',
-        schoolName: profile.schoolName || '私立丰之崎学园',
+        schoolName: profile.schoolName,
         className: '',
         source: input.source,
         label,
+        baseGrade,
+        relationGrade: baseGrade,
         facts: [`${input.date}: ${input.name} is ${label}.`],
       });
     }
@@ -300,7 +370,8 @@ function resolveProfileIdentity(input: {
     if (birthdayGrade >= 1) {
       const classStep = selectClassForGrade(profile, birthdayGrade);
       const className = classStep?.className || `${birthdayGrade}年`;
-      const schoolName = classStep?.schoolName || profile.schoolName || '私立丰之崎学园';
+      const schoolName = classStep?.schoolName || profile.schoolName;
+      if (!schoolName) return resolveUnknown(input.id, input.name);
       return makeIdentity({
         id: input.id,
         name: input.name,
@@ -308,6 +379,7 @@ function resolveProfileIdentity(input: {
         schoolName,
         className,
         source: input.source,
+        baseGrade,
         facts: [`${input.date}: ${input.name} should be treated as ${[schoolName, className].filter(Boolean).join(' ')} by birthday-based school-year calculation.`],
       });
     }
@@ -321,6 +393,7 @@ function resolveProfileIdentity(input: {
         schoolName: middleSchool.schoolName,
         className: middleSchool.className,
         source: input.source,
+        baseGrade,
         facts: [`${input.date}: ${input.name} should be treated as ${[middleSchool.schoolName, middleSchool.className].filter(Boolean).join(' ')} by birthday-based school-year calculation.`],
       });
     }
@@ -336,6 +409,7 @@ function resolveProfileIdentity(input: {
     schoolName: step.schoolName || profile.schoolName,
     className: step.className,
     source: input.source,
+    baseGrade,
     facts: [`${input.date}: ${input.name} should be treated as ${[step.schoolName || profile.schoolName, step.className].filter(Boolean).join(' ')}.`],
   });
 }
@@ -346,10 +420,11 @@ export function resolvePlayerSchoolIdentity(
 ): ResolvedSchoolIdentity {
   const date = getDatePart(currentTime);
   const name = text(profile?.name) || 'User';
-  const rawClassName = normalizeClassName(text(profile?.className));
+  const baseClassName = normalizeClassName(text(profile?.schoolCalendarBaseClassName) || text(profile?.className));
   const educationProfile = getPlayerEducationProfile(profile);
+  const baseGrade = getGradeNumber(baseClassName);
 
-  if (!rawClassName) return resolveUnknown('user', name);
+  if (!baseClassName) return resolveUnknown('user', name);
 
   if (!date || date < CLASS_SPLIT_DATE) {
     return makeIdentity({
@@ -360,11 +435,13 @@ export function resolvePlayerSchoolIdentity(
       className: '',
       source: 'date-rule',
       label: '私立丰之崎学园分班前',
+      relationGrade: baseGrade,
+      baseGrade,
       facts: ['Before 2012-04-05, User must not be treated as already assigned to a Toyogasaki class.'],
     });
   }
 
-  const baseClass = educationProfile.classSteps[0]?.className || rawClassName;
+  const baseClass = educationProfile.classSteps[0]?.className || baseClassName;
   const rollover = date >= TOYOGASAKI_2013_SCHOOL_YEAR_DATE ? advanceClassFor2013(baseClass) : { className: baseClass, graduated: false };
 
   return makeIdentity({
@@ -375,6 +452,8 @@ export function resolvePlayerSchoolIdentity(
     className: rollover.className,
     source: 'profile',
     label: rollover.graduated ? '私立丰之崎学园 graduate' : undefined,
+    baseGrade,
+    relationGrade: rollover.graduated ? baseGrade : undefined,
     facts: rollover.graduated
       ? [`${date}: User should be treated as a Toyogasaki graduate.`]
       : [`${date}: User should be treated as 私立丰之崎学园 ${rollover.className}.`],
@@ -386,6 +465,7 @@ export function resolveTargetSchoolIdentity(target: TargetIdentityInput, current
   const id = text(target.id) || text(target.name) || 'unknown-target';
   const name = text(target.name) || id;
   const key = getTargetCharacterKey(target);
+  if (ADULT_ELDER_KEYS.has(key)) return resolveUnknown(id, name);
   const rawProfile = getTargetEducationProfile(target);
   const profile = mergeWithBuiltInProfile(rawProfile, key);
   const source: SchoolIdentitySource = rawProfile.source === 'worldbook' ? 'worldbook' : profile.source === 'fallback' ? 'fallback' : 'unknown';

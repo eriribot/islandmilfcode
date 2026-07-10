@@ -1,6 +1,6 @@
 :root {
   color-scheme: light;
-  font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  font-family: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', system-ui, sans-serif;
   background: #e9eef4;
   color: #17202a;
   --panel: #ffffff;
@@ -153,9 +153,7 @@ button {
   border-radius: 8px;
   display: grid;
   place-items: center;
-  background:
-    linear-gradient(135deg, rgba(31, 122, 140, 0.98) 0 50%, rgba(201, 144, 74, 0.98) 50%),
-    #fff;
+  background: linear-gradient(135deg, rgba(31, 122, 140, 0.98) 0 50%, rgba(201, 144, 74, 0.98) 50%), #fff;
 }
 
 .project-cover-mark span {
@@ -357,6 +355,11 @@ button {
   font-size: 0.84rem;
 }
 
+.story-signal-list {
+  max-height: 360px;
+  overflow: auto;
+}
+
 .candidate-box strong,
 .story-signal strong {
   color: var(--ink);
@@ -379,6 +382,29 @@ button {
   padding-bottom: 8px;
 }
 
+.story-signal > div {
+  min-width: 0;
+}
+
+.story-signal small,
+.story-signal p {
+  display: block;
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--soft);
+  font-size: 0.7rem;
+}
+
+.story-signal--yes span {
+  color: var(--green);
+  font-weight: 800;
+}
+
+.story-signal--no span {
+  color: var(--pink);
+  font-weight: 800;
+}
+
 .story-signal:last-child {
   border-bottom: 0;
   padding-bottom: 0;
@@ -386,6 +412,241 @@ button {
 
 .story-signal span {
   color: var(--soft);
+}
+
+.pipeline-lab {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.pipeline-lab__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.pipeline-lab__header h2 {
+  margin: 6px 0 0;
+  font-size: 1.15rem;
+}
+
+.pipeline-lab__header p {
+  margin: 5px 0 0;
+  color: var(--soft);
+  font-size: 0.82rem;
+}
+
+.connection-label,
+.lab-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 999px;
+  padding: 4px 9px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.connection-label {
+  border: 1px solid rgba(183, 121, 31, 0.3);
+  background: rgba(183, 121, 31, 0.1);
+  color: #8a5a17;
+}
+
+.lab-status {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  background: #f4f6f8;
+  color: var(--gray);
+}
+
+.lab-status--accepted,
+.lab-status--accepted_no_change {
+  border-color: rgba(47, 133, 90, 0.32);
+  background: rgba(47, 133, 90, 0.1);
+  color: var(--green);
+}
+
+.lab-status--needs_review,
+.lab-status--unavailable {
+  border-color: rgba(180, 35, 24, 0.28);
+  background: rgba(180, 35, 24, 0.08);
+  color: #9f241b;
+}
+
+.lab-status--outside_window {
+  border-color: rgba(74, 99, 181, 0.26);
+  background: rgba(74, 99, 181, 0.08);
+  color: #3e56a3;
+}
+
+.lab-controls {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(170px, 0.45fr) auto;
+  gap: 10px;
+  margin-top: 14px;
+  align-items: end;
+}
+
+.lab-controls label {
+  display: grid;
+  gap: 5px;
+  color: var(--soft);
+  font-size: 0.72rem;
+}
+
+.lab-controls select,
+.lab-controls input,
+.lab-controls button,
+.route-result button {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.lab-controls button,
+.route-result button {
+  width: auto;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.lab-controls button {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+
+.pipeline-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.pipeline-steps article {
+  min-width: 0;
+  border-top: 3px solid var(--blue);
+  padding: 10px;
+  background: #f7f9fb;
+}
+
+.pipeline-steps article:nth-child(2) {
+  border-color: var(--gold);
+}
+
+.pipeline-steps article:nth-child(3) {
+  border-color: var(--pink);
+}
+
+.pipeline-steps article:nth-child(4) {
+  border-color: var(--green);
+}
+
+.pipeline-steps article > span,
+.route-resolution-panel header span {
+  color: var(--soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.pipeline-steps pre {
+  max-height: 230px;
+  margin: 8px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-family: Consolas, 'SFMono-Regular', monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.route-resolution-panel {
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.route-resolution-panel > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.route-resolution-panel > header strong {
+  font-size: 0.82rem;
+}
+
+.route-resolution-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.route-result {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--gray);
+  border-radius: 8px;
+  padding: 11px;
+  background: #fff;
+}
+
+.route-result.is-eligible {
+  border-left-color: var(--green);
+  background: rgba(47, 133, 90, 0.035);
+}
+
+.route-result.is-selected {
+  border-color: var(--gold);
+  border-left-color: var(--gold);
+  background: rgba(183, 121, 31, 0.07);
+}
+
+.route-result > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.route-result span,
+.route-result p,
+.route-result em {
+  color: var(--soft);
+  font-size: 0.72rem;
+}
+
+.route-result p {
+  min-height: 34px;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+.route-result em {
+  display: block;
+  font-style: normal;
+  font-weight: 800;
+  color: #8a5a17;
+}
+
+.route-result button {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
 }
 
 @media (max-width: 1180px) {
@@ -401,6 +662,10 @@ button {
 
   .project-specs {
     margin-top: 0;
+  }
+
+  .pipeline-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -419,8 +684,21 @@ button {
   .sim-topbar__controls,
   .phase-panel,
   .metric-grid,
-  .action-grid {
+  .action-grid,
+  .lab-controls,
+  .pipeline-steps,
+  .route-resolution-list {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .pipeline-lab__header,
+  .route-resolution-panel > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .lab-status {
+    align-self: flex-start;
   }
 }

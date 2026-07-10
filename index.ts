@@ -932,6 +932,7 @@ function enterSave(saveId: string, options: { openingMode?: OpeningMode } = {}) 
   clearWorldbookRefreshRetry();
   state.activeRunId = save.payload.runId;
   state.activeSaveId = saveId;
+  state.openingGenerationError = null;
   setActiveRunId(save.payload.runId);
   setActiveSaveId(saveId);
   state.creatingCharacter = false;
@@ -996,6 +997,7 @@ function returnToTitle() {
   }
   state.activeRunId = null;
   state.activeSaveId = null;
+  state.openingGenerationError = null;
   setActiveRunId(null);
   clearActiveSaveId();
   state.creatingCharacter = false;
@@ -2116,6 +2118,7 @@ function bindReaderDragEvents() {
       if ((event.target as HTMLElement).closest('[data-field="image-reroll-prompt"]')) return;
       if ((event.target as HTMLElement).closest('[data-field="image-reroll-negative-prompt"]')) return;
       if ((event.target as HTMLElement).closest('[data-action="select-option"]')) return;
+      if ((event.target as HTMLElement).closest('[data-action="retry-opening"]')) return;
       readerDragState = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -2488,6 +2491,10 @@ function bindEvents() {
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-message"]').forEach(button => {
     button.addEventListener('click', () => jumpMessage(Number(button.dataset.index ?? 0)));
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="retry-opening"]')?.addEventListener('click', event => {
+    event.stopPropagation();
+    if (!state.generating) void generateOpeningScene(ctx);
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="toggle-paper-fullscreen"]').forEach(button => {
     button.addEventListener('click', event => {
