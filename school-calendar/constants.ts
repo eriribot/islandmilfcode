@@ -1,0 +1,4 @@
+export const CLASS_SPLIT_DATE = '2012-04-05';
+export const UTAHA_GRADUATION_DATE = '2013-03-04';
+export const TOYOGASAKI_2013_SCHOOL_YEAR_DATE = '2013-04-01';
+

@@ -55,6 +55,10 @@ export type PlayerProfile = {
   personality: string;
   appearance: string;
   className?: string;
+  schoolCalendarBaseClassName?: string;
+  schoolIdentityKind?: string;
+  schoolIdentityLabel?: string;
+  schoolCalendarSyncedAt?: string;
   stats?: PlayerStats;
   difficulty?: Difficulty;
   backgroundIds?: string[];

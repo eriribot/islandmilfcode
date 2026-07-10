@@ -1,5 +1,6 @@
 import type { CharacterCard, CharacterCardLibrary, PlotEventCard, PlotEventSchedule, PlotLibrary, StatusData, TargetStatus, TavernWindow, VolumeWritingProtocol, WorldbookEntry } from '../types';
 import { affinityStage, defaultTarget, obsessionStage } from '../variables/normalize';
+import { buildEducationProfileFromText } from '../school-calendar/education-profile';
 
 const TARGET_KIND = 'islandmilfcode.target';
 const PLOT_KIND = 'islandmilfcode.plot_event';
@@ -366,6 +367,25 @@ function normalizeChineseNumber(raw: string): string {
   return raw;
 }
 
+function buildTargetSchoolProfile(input: {
+  name: string;
+  content: string;
+  ageText?: string;
+  identityText?: string;
+  classText?: string;
+}) {
+  const profile = buildEducationProfileFromText(input);
+  if (profile.source === 'unknown') return {};
+  return {
+    schoolProfile: profile,
+    ...(profile.birthday ? { birthday: profile.birthday } : {}),
+    ...(profile.ageText ? { ageText: profile.ageText } : {}),
+    ...(profile.identityText ? { identityText: profile.identityText } : {}),
+    ...(profile.educationText ? { educationText: profile.educationText } : {}),
+    ...(input.classText ? { rawClassMention: input.classText } : {}),
+  };
+}
+
 function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): TargetStatus | null {
   const kind = getStringField(raw, ['kind', 'type']);
   const name = getStringField(raw, ['name', '姓名']);
@@ -378,9 +398,18 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
   const legacyTitles = toTitleRecord(getRecordField(raw, '称号'));
   const outfits = toStringRecord(getRecordField(raw, 'outfits'));
   const legacyOutfits = toStringRecord(getRecordField(raw, '着装'));
+  const ageText = getStringField(raw, ['年龄', 'age']);
+  const identityText = getStringField(raw, ['身份', 'identity']);
   const explicitClass =
     getStringField(raw, ['className', 'class', '班级']) ||
-    extractClassName(entry.content, getStringField(raw, ['年龄', 'age']), getStringField(raw, ['身份', 'identity']));
+    extractClassName(entry.content, ageText, identityText);
+  const schoolProfile = buildTargetSchoolProfile({
+    name: targetName,
+    content: entry.content,
+    ageText,
+    identityText,
+    classText: explicitClass,
+  });
 
   return {
     id: getStringField(raw, ['id']) || createIdFromName(targetName),
@@ -401,6 +430,7 @@ function parseJsonTarget(raw: Record<string, unknown>, entry: WorldbookEntry): T
       worldbookEntryUid: entry.uid,
       worldbookEntryName: entryName,
       ...(explicitClass ? { className: explicitClass } : {}),
+      ...schoolProfile,
       ...(getTargetAvatarUrl(targetName, entry)
         ? { avatarUrl: getTargetAvatarUrl(targetName, entry) }
         : {}),
@@ -420,6 +450,15 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
   const name = normalizeBuiltInTargetName(rawName, alias, entryName);
   if (!name) return null;
   const className = extractClassName(entry.content);
+  const ageText = getTextField(entry.content, '年龄');
+  const identityText = getTextField(entry.content, '身份');
+  const schoolProfile = buildTargetSchoolProfile({
+    name,
+    content: entry.content,
+    ageText,
+    identityText,
+    classText: className,
+  });
 
   return {
     id: createIdFromName(name),
@@ -436,6 +475,7 @@ function parseTextTarget(entry: WorldbookEntry): TargetStatus | null {
       worldbookEntryUid: entry.uid,
       worldbookEntryName: entryName,
       ...(className ? { className } : {}),
+      ...schoolProfile,
       ...(getTargetAvatarUrl(name, entry) ? { avatarUrl: getTargetAvatarUrl(name, entry) } : {}),
     },
   };

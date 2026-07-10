@@ -121,6 +121,7 @@ import type { MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } 
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { protectTargetAffinityReset } from './variables/runtime-guard';
 import { clamp, formatTime, syncMainEvents } from './variables/normalize';
+import { syncSchoolCalendarState } from './school-calendar';
 import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
 import { ISLANDMILFCODE_VERSION, SAVE_SCHEMA_VERSION } from './version';
 import {
@@ -365,6 +366,11 @@ function cacheStatusData(data: StatusData) {
   const key = getStatusCacheKey();
   if (!key) return;
   syncMainEvents(data, state.plotLibrary);
+  syncSchoolCalendarState({
+    currentTime: data.world.currentTime,
+    playerProfile: state.playerProfile,
+    statusData: data,
+  });
   try {
     localStorage.setItem(key, JSON.stringify(data));
   } catch {
@@ -374,6 +380,11 @@ function cacheStatusData(data: StatusData) {
 
 function guardedAdapterSave(data: StatusData) {
   syncMainEvents(data, state.plotLibrary);
+  syncSchoolCalendarState({
+    currentTime: data.world.currentTime,
+    playerProfile: state.playerProfile,
+    statusData: data,
+  });
   adapter.save(data);
   cacheStatusData(data);
 }
@@ -651,10 +662,15 @@ async function refreshCharacterWorldbookTargets() {
   if (targets.length) {
     state.statusData = mergeWorldbookTargets(state.statusData, targets);
   }
+  const schoolCalendarChanged = syncSchoolCalendarState({
+    currentTime: state.statusData.world.currentTime,
+    playerProfile: state.playerProfile,
+    statusData: state.statusData,
+  });
   const targetsChanged = JSON.stringify(state.statusData.targets) !== previous;
   const plotChanged = !keepPreviousPlotLibrary && nextPlotEventCount !== previousPlotEventCount;
   const cardsChanged = !keepPreviousCharacterCards && nextCardCount !== previousCardCount;
-  if (!targetsChanged && !plotChanged && !cardsChanged) return;
+  if (!targetsChanged && !plotChanged && !cardsChanged && !schoolCalendarChanged) return;
 
   guardedAdapterSave(state.statusData);
   render();

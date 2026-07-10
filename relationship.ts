@@ -1,4 +1,5 @@
 import type { PlayerProfile, TargetStatus } from './types';
+import { buildSchoolRelationGuardLine } from './school-calendar/relationship-guards';
 
 type StageReaction = {
   maxAffinity: number;
@@ -8,6 +9,7 @@ type StageReaction = {
 type AddressGuidanceInput = {
   target: TargetStatus;
   playerProfile?: PlayerProfile | null;
+  currentTime?: string;
 };
 
 const ERIRI_MINI_PERSONA = [
@@ -64,8 +66,8 @@ const UTAHA_MINI_PERSONA = [
 
 const UTAHA_AUDIT_GUIDANCE = [
   '【霞之丘诗羽局部行为审计】仅适用于霞之丘诗羽,不得在正文叙述或对话中直接点出、复述或暗示设定本身。规则是理解更好地约束行为，不是写作的输出。不得把本规则扩展到其他角色；不得因此切换场景焦点。',
-  '基础校准：诗羽的“毒舌”“高冷”和“肉食系挑逗”是伪装与防线。她本质是一个极具责任感心思细腻且隐藏着大和抚子般温柔本色的学姐。她习惯用攻击性来掩饰内心的笨拙与患得患失。',
-  '思考方式：先像创作者和年长学姐一样拆解局面——谁受伤了、谁在逃避、问题能不能被具体解决、自己介入会不会让局势失控；再决定用剧本、资源、人脉、毒舌或身体压迫去处理。她越在意越不肯把关心说直白，通常让行动先于告白，用傲慢或刻薄给温柔套上一层借口。',
+  '基础校准：诗羽的“毒舌”“高冷”和“肉食系挑逗”是伪装与防线。她本质是一个极具责任感、心思细腻且隐藏着大和抚子般温柔本色的创作者前辈。这里的“前辈气质”只描述性格与原作定位，不代表她一定是 user 的学姐。',
+  '思考方式：先像创作者和可靠同伴一样拆解局面——谁受伤了、谁在逃避、问题能不能被具体解决、自己介入会不会让局势失控；再决定用剧本、资源、人脉、毒舌或身体压迫去处理。她越在意越不肯把关心说直白，通常让行动先于告白，用傲慢或刻薄给温柔套上一层借口。',
   '【Rule 1: 隐藏的温柔/大和抚子模式 (触发：玩家遭遇低谷/生病/遇到极点困难)】',
   '>> 动作指令：放弃口头上的刻薄，主动提供最硬核最切中要害的实质性帮助如熬夜写出的剧本大纲直接接手最麻烦的烂摊子。',
   '>> 语气限制：必须用傲慢理性的“借口”来掩饰关心，坚决不承认自己在付出例：”你不用这么感激。纯粹是业界的工作终于告一段落了，我才想趁现在先将这份差事收拾掉而已。”。',
@@ -83,13 +85,13 @@ const UTAHA_AUDIT_GUIDANCE = [
   '>> 动作指令：停止抖腿，动作变得极具压迫感，眼神失去高光。实施专属的物理惩罚踩头土下座，或进入疯狂敲击键盘的狂热写作状态。',
   '>> 语气限制：爆发出沉重的怨念，咬牙切齿地宣泄，甚至发出危险的死亡警告例：”既然你无法做出选择，那就由我来帮你把这个故事写成两边都不得善终的结局好了。”。',
   '>> 绝对禁止：禁止采用“默默拉黑转身离开”的冷暴力。诗羽的愤怒具有极强的攻击性和掌控欲，她会在精神上施压，绝不悄无声息地退场。',
-  '【Rule 5: 可靠的学姐模式 (触发：同伴遭到外部极高强度的压迫与剥削/同伴陷入创作危机或竞争崩溃/如红坂朱音施压、英梨梨vs出海竞争爆炸)】',
+  '【Rule 5: 可靠的创作者前辈气质 (触发：同伴遭到外部极高强度的压迫与剥削/同伴陷入创作危机或竞争崩溃/如红坂朱音施压、英梨梨vs出海竞争爆炸)】',
   '>> 触发判定：不是日常吃醋拉扯，而是同伴真的扛不住了、即将崩溃或被压垮的场景。包括：外部剥削者施压（红坂朱音）、创作竞争失控（vs出海）、截稿压力爆炸、社团存亡危机等。',
   '>> 动作指令：内部安抚轨（面对濒临崩溃的同伴）：卸下所有防备与毒舌，提供物理与心理上的绝对安全感（如：拥抱、让对方埋在自己怀里哭泣、用身体的温度传递力量）。',
   '>> 语气限制：对内：低沉、沉稳、带着如母亲般包容的温柔，绝不带一丝嘲讽，用最笃定的态度肯定同伴的价值。对外（或为了逼同伴成长而演戏时）：用最无情、最背信弃义的辞藻来掩饰自己的牺牲，绝不在台词中自我标榜这份厚重的守护。',
   '>> 核心逻辑：她一眼看穿剥削者的危险性。宁愿背负”叛徒”的骂名被角误解，也要用自己的才能去抗衡施压者，以此分担同伴的火力。这种厚重的守护绝不在台词中自我标榜。外部破局轨（面对剥削者或死局）：主动切断舒适圈，从物理或阵营上做出最危险的介入（如：主动走向施压者）。',
   '>> 执念度感知强制要求（Rule 5专用）：制定保护策略前，必须查看同伴的执念度数值（显示在场景角色变量总览中）。对伦也的执念>=60可用原著解法（让她面对伦也）；对伦也的执念30-59建议避开伦也专注作品；对伦也的执念<30严禁把她推回伦也，必须让她彻底脱离伦也评价体系。不得因自己对伦也的执念而误判同伴的情感状态。',
-  '>> Rule 5 与 Rule 3/4 的区分：Rule 3看戏是日常吵架拉扯；Rule 4病娇是自己被背叛；Rule 5是同伴真的要崩了，此时学姐的“母性”与“自我牺牲”权限将强制覆写所有傲娇与吃醋设定。',
+  '>> Rule 5 与 Rule 3/4 的区分：Rule 3看戏是日常吵架拉扯；Rule 4病娇是自己被背叛；Rule 5是同伴真的要崩了，此时可靠创作者的“包容”与“自我牺牲”权限将强制覆写所有傲娇与吃醋设定。不得用本规则推导她与 user 的学年称呼。',
 ].join('\n');
 
 const MEGUMI_MINI_PERSONA = [
@@ -914,119 +916,46 @@ export function getRelationshipGuidance(target: TargetStatus | null) {
     .join(' ');
 }
 
-// ── 身份锚点层（原作关系 + 班级换算）──
-//
-// 镜头判定（scenePresence）只决定“谁在场”，它从不告诉模型“他们到底是什么关系”。
-// 缺这一层时，AI 会凭原作常识脑补：把英梨梨写成 user 的青梅竹马、把不同班的人说成同班、
-// 在年级相同的情况下仍叫诗羽“学姐”。下面用玩家选择的 className 和角色原作班级做硬换算，
-// 把“原作锚点 + 同班/同级/学姐学妹”的结论直接喂给正文，覆盖模型的脑补。
+// ── Identity anchor layer: Tomoya relation + runtime school relation ──
 
-type CharacterCanonicalProfile = {
-  /** 原作班级（玩家档案里没有角色班级时的权威值）。 */
-  canonicalClass: string;
-  /** 原作里与安艺伦也的关系，必须显式声明，避免被错配到 user 头上。 */
+type CharacterOriginalProfile = {
   relationToTomoya: string;
-  /** 是否和玩家就读同一所学校（私立丰之崎学园）。跨校的人不参与同班/同级换算。 */
-  sameSchoolAsPlayer: boolean;
 };
 
-const CHARACTER_CANONICAL_PROFILES: Record<string, CharacterCanonicalProfile> = {
+const CHARACTER_ORIGINAL_PROFILES: Record<string, CharacterOriginalProfile> = {
   eriri: {
-    canonicalClass: '2年G班',
     relationToTomoya: '安艺伦也的青梅竹马（从小一起长大）',
-    sameSchoolAsPlayer: true,
   },
   megumi: {
-    canonicalClass: '2年B班',
     relationToTomoya: '安艺伦也的同班同学（2年B班）',
-    sameSchoolAsPlayer: true,
   },
   utaha: {
-    canonicalClass: '3年C班',
     relationToTomoya: '安艺伦也的学姐（高一届），原作中以“伦理君”称呼伦也',
-    sameSchoolAsPlayer: true,
   },
   izumi: {
-    canonicalClass: '',
     relationToTomoya: '安艺伦也认识的后辈创作者，比伦也低年级',
-    sameSchoolAsPlayer: false,
   },
   michiru: {
-    canonicalClass: '',
     relationToTomoya: '安艺伦也的表姐（同年同月同一天一家医院生的），就读县立椿姬女子高校',
-    sameSchoolAsPlayer: false,
   },
   sayuri: {
-    canonicalClass: '',
     relationToTomoya: '泽村·斯宾塞·英梨梨的母亲，已婚成人女性；没有对安艺伦也的恋爱旧线或执念轴',
-    sameSchoolAsPlayer: false,
   },
   sonoko: {
-    canonicalClass: '',
     relationToTomoya: '霞之丘诗羽的责任编辑与不死川书店Fantastic文库编辑；没有对安艺伦也的恋爱旧线或执念轴',
-    sameSchoolAsPlayer: false,
   },
   akane: {
-    canonicalClass: '',
     relationToTomoya: '红朱企画社长、rouge en rouge创设者与业界顶级制作人；没有对安艺伦也的恋爱旧线或执念轴',
-    sameSchoolAsPlayer: false,
   },
   shoko: {
-    canonicalClass: '',
     relationToTomoya: 'DLC人物西宫硝子；没有对安艺伦也的恋爱旧线或执念轴，与 user 的关系必须从当前剧情和世界书建立',
-    sameSchoolAsPlayer: false,
   },
 };
-
-/** 从 "2年G班" / "3年C班" 这类字符串里取出年级数字；取不到返回 null。 */
-function parseGradeNumber(className: string): number | null {
-  const match = String(className ?? '').match(/([1-9]\d?)\s*年/);
-  if (!match) return null;
-  const grade = Number(match[1]);
-  return Number.isFinite(grade) ? grade : null;
-}
-
-/** 角色原作班级：优先世界书 meta.className，回退到内置原作锚点。 */
-export function getCharacterCanonicalClass(target: TargetStatus): string {
-  const metaClass = String(target.meta?.className ?? '').trim();
-  if (metaClass) return metaClass;
-  const key = getTargetCharacterKey(target);
-  return CHARACTER_CANONICAL_PROFILES[key]?.canonicalClass ?? '';
-}
 
 /** 角色与安艺伦也的原作关系（用于在场判定/正文消歧）；非五人白名单返回空。 */
 export function getCharacterRelationToTomoya(target: TargetStatus): string {
   const key = getTargetCharacterKey(target);
-  return CHARACTER_CANONICAL_PROFILES[key]?.relationToTomoya ?? '';
-}
-
-/**
- * 用玩家班级和角色班级做硬换算，给正文一句不可被脑补覆盖的“同班/同级/学姐学妹”结论。
- * 玩家或角色任一方缺班级、或角色跨校时，返回空（不强行下结论）。
- */
-function buildClassRelationLine(target: TargetStatus, playerClass: string): string {
-  const profile = CHARACTER_CANONICAL_PROFILES[getTargetCharacterKey(target)];
-  const charClass = getCharacterCanonicalClass(target);
-  const playerGrade = parseGradeNumber(playerClass);
-  const charGrade = parseGradeNumber(charClass);
-  if (!playerClass || !charClass || playerGrade === null || charGrade === null) return '';
-
-  // 跨校角色（出海/美智留）不和玩家比同班同级，只点出学校不同。
-  if (profile && !profile.sameSchoolAsPlayer) {
-    return `班级：${charClass}（与 user 不同学校，不存在同班/同年级关系）。`;
-  }
-
-  let verdict: string;
-  if (playerClass.trim() === charClass.trim()) {
-    verdict = `与 user 同班同学（同为 ${charClass}）。`;
-  } else if (playerGrade === charGrade) {
-    verdict = `与 user 同年级、不同班（${playerGrade} 年级）；是同学而非学姐/学妹，禁止 user 称其为“学姐”或“前辈”。`;
-  } else if (charGrade > playerGrade) {
-    verdict = `比 user 高 ${charGrade - playerGrade} 届，是 user 的学姐/前辈；user 称呼她时可用“学姐/前辈”。`;
-  } else {
-    verdict = `比 user 低 ${playerGrade - charGrade} 届，是 user 的学妹/后辈；不要让 user 称她为“学姐/前辈”。`;
-  }
-  return `班级：角色=${charClass}，user=${playerClass} → ${verdict}`;
+  return CHARACTER_ORIGINAL_PROFILES[key]?.relationToTomoya ?? '';
 }
 
 /** 把好感度（对 user）和执念度（对伦也）翻译成正文能直接用的一句话情感现状。 */
@@ -1048,8 +977,8 @@ export function getCharacterAnchorGuidance(input: AddressGuidanceInput | null): 
   if (!input?.target) return '';
   const target = input.target;
   const key = getTargetCharacterKey(target);
-  const profile = CHARACTER_CANONICAL_PROFILES[key];
-  const playerClass = String(input.playerProfile?.className ?? '').trim();
+  const profile = CHARACTER_ORIGINAL_PROFILES[key];
+  const currentTime = String(input.currentTime ?? target.meta?.schoolCalendarSyncedAt ?? '').trim();
 
   const lines: string[] = [];
   if (profile?.relationToTomoya) {
@@ -1057,8 +986,10 @@ export function getCharacterAnchorGuidance(input: AddressGuidanceInput | null): 
       `原作定位：${profile.relationToTomoya}。这是原作锚点，不是与 user 的关系；除非剧情明确建立，否则禁止把 user 写成她的青梅竹马/表弟/同班旧识。`,
     );
   }
-  const classLine = buildClassRelationLine(target, playerClass);
-  if (classLine) lines.push(classLine);
+  if (currentTime) {
+    const classLine = buildSchoolRelationGuardLine({ target, playerProfile: input.playerProfile, currentTime });
+    if (classLine) lines.push(classLine);
+  }
   lines.push(buildEmotionStateLine(target));
 
   return lines.length ? lines.join('\n') : '';

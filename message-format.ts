@@ -2,6 +2,8 @@ import { isPlotEventAllowedByRoute, isPlotEventVisibleByRoute } from './plot-rou
 import { getPlotFlagInstructionList, parsePlotFlagDeltaLine, type PlotFlagDelta } from './plot-state-machine';
 import { buildCharacterDataImportPrompt, stripCharacterDataImportText } from './plugins/character-data-import';
 import { buildImageGenerationPrompt, stripImageGenerationTags } from './plugins/image-generation';
+import { buildSaenaiWorldStateFactLines } from './saenai-world-facts';
+import { resolveTargetSchoolIdentity } from './school-calendar';
 import {
   getCharacterAnchorGuidance,
   getRelationshipAddressGuidance,
@@ -1047,7 +1049,8 @@ function buildTargetStateList(statusData: StatusData) {
         .map(value => String(value ?? '').trim())
         .filter(Boolean)
         .join('、');
-      const className = String(target.meta?.className ?? '').trim();
+      const schoolIdentity = resolveTargetSchoolIdentity(target, statusData.world.currentTime);
+      const className = schoolIdentity.label;
       const classSegment = className ? `；班级/身份=${className}` : '';
       const obsessionSegment = hasObsessionAxis(target)
         ? `；执念度（旧情/对伦也）=${target.obsession}（${target.obsessionStage}）`
@@ -1117,7 +1120,11 @@ function getSceneGuidanceTargetIds(scenePresence?: ScenePresence | null) {
   return new Set([...(scenePresence.presentIds ?? []), ...(scenePresence.focusIds ?? [])].filter(Boolean));
 }
 
-function buildScenePresenceContext(statusData: StatusData, scenePresence?: ScenePresence | null) {
+function buildScenePresenceContext(
+  statusData: StatusData,
+  scenePresence?: ScenePresence | null,
+  playerProfile?: PlayerProfile | null,
+) {
   if (!scenePresence) return '';
   const targetById = new Map(statusData.targets.map(target => [target.id, target]));
   const nameList = (ids: string[]) =>
@@ -1139,7 +1146,11 @@ function buildScenePresenceContext(statusData: StatusData, scenePresence?: Scene
       return text ? `- ${name}: ${text}` : '';
     })
     .filter(Boolean);
-  const worldStateLines = buildSaenaiWorldStateFactLines(statusData.world.currentTime);
+  const worldStateLines = buildSaenaiWorldStateFactLines({
+    currentTime: statusData.world.currentTime,
+    playerProfile,
+    targets: statusData.targets,
+  });
   const plotImpact = scenePresence.plotImpact;
   const butterfly = plotImpact?.butterflyEffects;
   const plotImpactLines = plotImpact
@@ -1194,30 +1205,6 @@ function buildScenePresenceContext(statusData: StatusData, scenePresence?: Scene
     .join('\n');
 }
 
-function buildSaenaiWorldStateFactLines(currentTime: string) {
-  const date = getDatePart(currentTime);
-  const lines = [
-    '- 《恋爱节拍器》在2011年已完结；当前线可引用销量、读者余波和创作伤口，不要把它默认写成仍在连载。',
-  ];
-
-  if (!date || date < '2012-04-05') {
-    lines.push(
-      '- 2012-04-05才开二年级分班；在此之前不要用2年B班/2年G班判断同班、隔壁班、座位靠窗后排或教室距离。',
-      '- 加藤惠在2012-04-05分班后才是安艺伦也的2年B班同班同学；若当前时间更早，不能把“同班”当作已发生事实。',
-      '- 2012-04-05分班后,英梨梨才是2年G班的学生,不与安艺伦也,加藤惠同班',
-      '- 2012-04-05分班后,霞之丘诗羽是3年级C班学生,是英梨梨,加藤惠,安艺伦也的学姐',
-    );
-  }
-
-  if (!date || date < '2013-02-01') {
-    lines.push(
-      '- 红坂朱音到2013年2月才开始挖走黑金二人组；在此之前只能作为业界人物/未来压力背景，不能写成已经发生。',
-    );
-  }
-
-  return lines;
-}
-
 function buildRelationshipGuidanceList(
   statusData: StatusData,
   playerProfile?: PlayerProfile | null,
@@ -1228,8 +1215,8 @@ function buildRelationshipGuidanceList(
     .filter(target => !allowedIds || allowedIds.has(target.id))
     .map(target => {
       const guidance = getRelationshipGuidance(target);
-      const address = getRelationshipAddressGuidance({ target, playerProfile });
-      const anchor = getCharacterAnchorGuidance({ target, playerProfile });
+      const address = getRelationshipAddressGuidance({ target, playerProfile, currentTime: statusData.world.currentTime });
+      const anchor = getCharacterAnchorGuidance({ target, playerProfile, currentTime: statusData.world.currentTime });
       if (!guidance && !address && !anchor) return '';
       return [
         `[${target.name}]`,
@@ -1388,7 +1375,7 @@ export function buildPrompt(
   const playerProfileText = playerProfile?.name
     ? [
         `玩家姓名：${playerProfile.name}`,
-        playerProfile.className ? `玩家班级：${playerProfile.className}` : '',
+        playerProfile.className ? `玩家选择班级/年级基底：${playerProfile.className}` : '',
         playerProfile.backgrounds?.length ? `玩家背景：${playerProfile.backgrounds.join('、')}` : '',
         playerProfile.personality ? `玩家性格：${playerProfile.personality}` : '',
         playerProfile.appearance ? `玩家外貌：${playerProfile.appearance}` : '',
@@ -1451,7 +1438,17 @@ export function buildPrompt(
     ? Math.min(summaryStore.lastSummarizedIndex, Math.max(0, summaryMessages.length - SUMMARY_KEEP_RECENT))
     : 0;
   const conversationHistory = buildConversationHistory(summaryMessages, historyStartIndex);
-  const scenePresenceContext = buildScenePresenceContext(statusData, options?.scenePresence);
+  const scenePresenceContext = buildScenePresenceContext(statusData, options?.scenePresence, playerProfile);
+  const fallbackWorldStateContext = options?.scenePresence
+    ? ''
+    : [
+        'World state facts:',
+        ...buildSaenaiWorldStateFactLines({
+          currentTime: statusData.world.currentTime,
+          playerProfile,
+          targets: statusData.targets,
+        }),
+      ].join('\n');
   const relationshipGuidanceList = buildRelationshipGuidanceList(statusData, playerProfile, options?.scenePresence);
   const activeCharacterCards = buildActiveCharacterCards(
     statusData,
@@ -1515,6 +1512,7 @@ export function buildPrompt(
     '没有进入明确在场或转场目标的角色，即使在摘要、时间线、成长线或世界背景里被提到，也不得默认插话、旁听、吃醋或产生即时心理反应。',
     `当前位置：${statusData.world.currentLocation}`,
     mainEventsContext,
+    fallbackWorldStateContext,
     scenePresenceContext,
     activeCharacterCards,
     relationshipGuidanceList
@@ -1586,10 +1584,18 @@ export function buildPhoneChatPrompt(input: {
 
   const miniPersona = getRelationshipMiniPersona(target);
   const relationshipGuidance = getRelationshipGuidance(target);
-  const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile });
-  const anchorGuidance = getCharacterAnchorGuidance({ target, playerProfile });
+  const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile, currentTime: statusData.world.currentTime });
+  const anchorGuidance = getCharacterAnchorGuidance({ target, playerProfile, currentTime: statusData.world.currentTime });
   const recentEventsContext = buildRecentEventsContext(statusData);
   const mainEventsContext = buildMainEventsContext(statusData);
+  const phoneWorldStateContext = [
+    'World state facts:',
+    ...buildSaenaiWorldStateFactLines({
+      currentTime: statusData.world.currentTime,
+      playerProfile,
+      targets: statusData.targets,
+    }),
+  ].join('\n');
   // 手机聊天天然只有一个聊天对象，绕过 scenePresence 直接指定 targetIds 注入这一张完整卡。
   const activeCharacterCards = buildActiveCharacterCards(statusData, null, input.characterCardLibrary, {
     targetIds: [target.id],
@@ -1605,7 +1611,7 @@ export function buildPhoneChatPrompt(input: {
   const playerProfileText = playerProfile?.name
     ? [
         `玩家姓名：${cleanPlayerName}`,
-        playerProfile.className ? `玩家班级：${sanitizePlaceholders(playerProfile.className, cleanPlayerName)}` : '',
+        playerProfile.className ? `玩家选择班级/年级基底：${sanitizePlaceholders(playerProfile.className, cleanPlayerName)}` : '',
         playerProfile.backgrounds?.length
           ? `玩家背景：${playerProfile.backgrounds.map(item => sanitizePlaceholders(item, cleanPlayerName)).join('、')}`
           : '',
@@ -1629,6 +1635,7 @@ export function buildPhoneChatPrompt(input: {
     `当前时间：${statusData.world.currentTime}`,
     `当前位置：${statusData.world.currentLocation}`,
     mainEventsContext,
+    phoneWorldStateContext,
     activeCharacterCards,
     anchorGuidance ? `身份锚点（原作关系 + 班级换算 + 情感现状）：\n${anchorGuidance}` : '',
     `当前关系：${target.stage} · 好感度 ${target.affinity} · 执念 ${target.obsession}（${target.obsessionStage}）`,

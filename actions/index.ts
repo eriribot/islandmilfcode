@@ -61,11 +61,17 @@ import {
   type StreamingContext,
   updateStreamingText,
 } from './streaming';
-import { getCharacterCanonicalClass, getCharacterRelationToTomoya } from '../relationship';
+import { getCharacterRelationToTomoya } from '../relationship';
 import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
 import { expirePhoneMessageIndex, indexPhoneMessage } from '../memorydatabase/phone-repository';
 import type { IslandMemoryDB, MemoryImpressionRow, MemoryRelationRow } from '../memorydatabase/types';
 import { isPlotEventAllowedByRoute } from '../plot-routing';
+import { buildSaenaiWorldStateFactLines } from '../saenai-world-facts';
+import {
+  buildKirihimeSchoolIdentitySegment,
+  resolvePlayerSchoolIdentity,
+  syncSchoolCalendarState,
+} from '../school-calendar';
 import {
   isPhoneArchiveGoldImpression,
   isPlayerPhonePseudoTarget,
@@ -1105,9 +1111,22 @@ function applyFullProgressUpdate(
   const virginityChanged = applyVirginityFlags(ctx, contextualized);
   const countersChanged = applyIntimacyCounters(ctx, contextualized);
   const statsChanged = applyPlayerStatDeltas(ctx.state.playerProfile, contextualized);
+  const schoolCalendarChanged = syncSchoolCalendarState({
+    currentTime: ctx.state.statusData.world.currentTime,
+    playerProfile: ctx.state.playerProfile,
+    statusData: ctx.state.statusData,
+  });
   ctx.adapter.save(ctx.state.statusData);
   commitProgressToMemoryDB(ctx.memoryDB, filterAdultMarriedVirginityFlags(ctx, contextualized), sourceRange);
-  return targetedAffinityChanged || targetedObsessionChanged || virginityChanged || countersChanged || statsChanged || true;
+  return (
+    targetedAffinityChanged ||
+    targetedObsessionChanged ||
+    virginityChanged ||
+    countersChanged ||
+    statsChanged ||
+    schoolCalendarChanged ||
+    true
+  );
 }
 
 async function simulateGeneration(ctx: ActionContext, userInput: string) {
@@ -1218,6 +1237,15 @@ export async function submitMessage(
       return;
     }
     commitPreGenerationTimeProposal(ctx, scenePresence);
+  }
+  if (
+    syncSchoolCalendarState({
+      currentTime: state.statusData.world.currentTime,
+      playerProfile: state.playerProfile,
+      statusData: state.statusData,
+    })
+  ) {
+    ctx.adapter.save(state.statusData);
   }
 
   // 生成前基于当前时间/地点刷新事件状态。即使上一轮 AI 没输出状态增量,
@@ -1898,32 +1926,6 @@ function normalizeScenePresenceIds(ids: unknown, resolveId: (value: unknown) => 
   return Array.from(new Set(ids.map(resolveId).filter(Boolean)));
 }
 
-function getDatePart(value: string) {
-  return String(value ?? '').match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
-}
-
-function buildSaenaiWorldStateFactLines(currentTime: string) {
-  const date = getDatePart(currentTime);
-  const lines = [
-    '- 《恋爱节拍器》在2011年已完结；当前线可引用销量、读者余波和创作伤口，不要把它默认写成仍在连载。',
-  ];
-
-  if (!date || date < '2012-04-05') {
-    lines.push(
-      '- 2012-04-05才开二年级分班；在此之前不要用2年B班/2年G班判断同班、隔壁班、座位靠窗后排或教室距离。',
-      '- 加藤惠在2012-04-05分班后才是安艺伦也的2年B班同班同学；若当前时间更早，不能把“同班”当作已发生事实。在2012-04-05之前的时间,加藤惠不能出现我是二年级B班或者“同班同学”之类的台词。',
-    );
-  }
-
-  if (!date || date < '2013-02-01') {
-    lines.push(
-      '- 红坂朱音到2013年2月才开始挖走黑金二人组；在此之前只能作为业界人物/未来压力背景，不能写成已经发生。',
-    );
-  }
-
-  return lines;
-}
-
 function isPlayerMemoryId(value: string | undefined) {
   return /^(user|player|玩家|主角)$/.test(String(value ?? '').trim().toLowerCase());
 }
@@ -2235,22 +2237,32 @@ function buildScenePresencePrompts(
     .filter(line => line.trim() !== '[assistant]' && line.trim() !== '[user]')
     .join('\n\n');
 
+  const currentWorldTime = ctx.state.statusData.world.currentTime;
+  const playerSchoolIdentity = resolvePlayerSchoolIdentity(ctx.state.playerProfile, currentWorldTime);
+  const playerClass = playerSchoolIdentity.className || playerSchoolIdentity.label;
   const targets = ctx.state.statusData.targets
     .map(target => {
       const aliases = getPhoneTargetSearchTerms(target)
         .filter(term => term !== target.id && term !== target.name)
         .join('、');
-      const charClass = getCharacterCanonicalClass(target);
       const relation = getCharacterRelationToTomoya(target);
+      const schoolSegment = buildKirihimeSchoolIdentitySegment({
+        target,
+        playerProfile: ctx.state.playerProfile,
+        currentTime: currentWorldTime,
+        relationToTomoya: relation,
+      });
       return `- id=${target.id}；姓名=${target.name}${target.alias ? `；别名=${target.alias}` : ''}${
         aliases ? `；可匹配线索=${aliases}` : ''
-      }${charClass ? `；班级=${charClass}` : ''}${relation ? `；原作关系=${relation}` : ''}`;
+      }${schoolSegment}`;
     })
     .join('\n');
 
-  const playerClass = String(ctx.state.playerProfile?.className ?? '').trim();
-  const currentWorldTime = ctx.state.statusData.world.currentTime;
-  const worldStateFacts = buildSaenaiWorldStateFactLines(currentWorldTime);
+  const worldStateFacts = buildSaenaiWorldStateFactLines({
+    currentTime: currentWorldTime,
+    playerProfile: ctx.state.playerProfile,
+    targets: ctx.state.statusData.targets,
+  });
   const establishedRelationshipFacts = buildEstablishedRelationshipFactLines(ctx);
   const sceneSummaryContext = buildSceneSummaryContextLines(ctx);
 
