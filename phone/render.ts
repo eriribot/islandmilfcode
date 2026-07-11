@@ -13,11 +13,15 @@ import {
 import {
   buildPlotRoutingContext,
   getPlotMachine,
+  isPlotRouteReviewEnabled,
   readActivePlotFlagSnapshots,
   type PlotFlagDefinition,
   type PlotFlagSnapshot,
   type PlotMachineDefinition,
+  type PlotRouteEligibility,
   type PlotRouteFamilyId,
+  type PlotRouteResolution,
+  type PlotRouteVariantId,
 } from '../plot-state-machine';
 import type {
   AppState,
@@ -30,6 +34,7 @@ import type {
 } from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
 import { renderCharacterArchivePanel } from './archive';
+import { getPhoneHomePageItems } from './home-pagination';
 import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
 import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './types';
 import { isPlayerPhonePseudoTarget } from './types';
@@ -128,17 +133,21 @@ export type PhoneRenderers = {
 
 function renderPhoneNotification(notification: NotificationState | null) {
   if (!notification) return '';
+  const appLabel = notification.kind === 'status' ? '剧情系统' : '新消息';
+  const icon = notification.kind === 'status' ? '!' : '💬';
 
   return `
-    <button class="ios-notification" data-action="open-notification">
+    <button class="ios-notification" data-action="open-notification" aria-label="${escapeHtml(`${notification.title}：${notification.preview}`)}">
       <div class="ios-notification-app">
-        <span class="ios-notification-icon">💬</span>
-        <span>${escapeHtml(notification.title)}</span>
+        <span class="ios-notification-icon">${icon}</span>
+        <span>${escapeHtml(appLabel)}</span>
         <span class="ios-notification-time">${escapeHtml(notification.timestamp)}</span>
       </div>
       <div class="ios-notification-title-row">
-        <strong>${escapeHtml(notification.preview)}</strong>
+        <strong>${escapeHtml(notification.title)}</strong>
+        <span class="ios-notification-pill">查看</span>
       </div>
+      <p class="ios-notification-preview">${escapeHtml(notification.preview)}</p>
     </button>
   `;
 }
@@ -430,6 +439,10 @@ function renderPhoneHome(state: AppState) {
     },
   ];
   const dockApps = apps.filter(app => app.dock);
+  const homePage = getPhoneHomePageItems(apps, state.phoneHomePage);
+  const homePages = Array.from({ length: homePage.pageCount }, (_, pageIndex) =>
+    getPhoneHomePageItems(apps, pageIndex),
+  );
 
   return `
     <section class="phone-home phone-route-page" data-phone-route-view="home">
@@ -476,19 +489,58 @@ function renderPhoneHome(state: AppState) {
         </div>
       </div>
 
-      <div class="phone-app-grid">
-        ${apps
-          .map(
-            app => `
-              <button class="phone-app-icon" data-phone-route="${app.route}">
-                <span class="phone-app-icon__glyph">${renderAppIcon(app)}</span>
-                <span class="phone-app-icon__label">${escapeHtml(app.label)}</span>
-                <span class="phone-app-icon__meta">${escapeHtml(app.meta)}</span>
-              </button>
-            `,
-          )
-          .join('')}
+      <div
+        class="phone-app-viewport"
+        data-phone-home-swipe
+        data-phone-home-page-count="${homePage.pageCount}"
+        data-phone-home-active-page="${homePage.activePage}"
+        style="--phone-home-page:${homePage.activePage};"
+      >
+        <div class="phone-app-track">
+          ${homePages
+            .map(page => {
+              const isActivePage = page.activePage === homePage.activePage;
+              return `
+                <div
+                  class="phone-app-grid"
+                  data-phone-home-page-panel="${page.activePage}"
+                  aria-label="应用第 ${page.activePage + 1} 页，共 ${page.pageCount} 页"
+                  aria-hidden="${isActivePage ? 'false' : 'true'}"
+                  ${isActivePage ? '' : 'inert'}
+                >
+                  ${page.items
+                    .map(
+                      app => `
+                        <button class="phone-app-icon" data-phone-route="${app.route}">
+                          <span class="phone-app-icon__glyph">${renderAppIcon(app)}</span>
+                          <span class="phone-app-icon__label">${escapeHtml(app.label)}</span>
+                          <span class="phone-app-icon__meta">${escapeHtml(app.meta)}</span>
+                        </button>
+                      `,
+                    )
+                    .join('')}
+                </div>
+              `;
+            })
+            .join('')}
+        </div>
       </div>
+
+      <nav class="phone-home-pagination" aria-label="桌面分页">
+        ${Array.from({ length: homePage.pageCount }, (_, pageIndex) => {
+          const isActive = pageIndex === homePage.activePage;
+          return `
+            <button
+              type="button"
+              class="phone-home-page-dot ${isActive ? 'is-active' : ''}"
+              data-action="phone-home-page"
+              data-phone-home-page="${pageIndex}"
+              aria-label="前往桌面第 ${pageIndex + 1} 页"
+              ${isActive ? 'aria-current="page"' : ''}
+            ></button>
+          `;
+        }).join('')}
+      </nav>
 
       <nav class="phone-dock" aria-label="常用应用">
         ${dockApps
@@ -1101,7 +1153,7 @@ const V07_STUDIO_GATE_LABELS: Record<string, string> = {
   '2013-02-25': '朱音压力',
   '2013-02-26': '第二作准备',
   '2013-03-01': '惠共同企划',
-  '2013-03-04': '黑金反击',
+  '2013-03-04': '英梨梨、诗羽反击',
 };
 
 function getDatePart(value: string | undefined): string {
@@ -1120,12 +1172,12 @@ function getV07StudioSnapshots(state: AppState): Map<string, PlotFlagSnapshot> {
 
 function getV07StudioHomeMeta(state: AppState): string {
   const machine = getPlotMachine(V07_STUDIO_MACHINE_ID);
-  if (!machine) return '未登记';
-  if (!isV07StudioUnlocked(state)) return '第七章锁定';
+  if (!machine) return '暂不可用';
+  if (!isV07StudioUnlocked(state)) return '第七卷后开放';
   const resolution = buildPlotRoutingContext(state.statusData, state.memoryDB).v07.resolution;
-  if (resolution.choiceState === 'needs_review') return '路线需复核';
-  if (resolution.choice) return '路线已锁定';
-  return `${resolution.eligibleRouteIds.length}/${machine.routes.length} 可选`;
+  if (resolution.choiceState === 'needs_review') return '路线需要检查';
+  if (resolution.choice) return '路线已确认';
+  return `${resolution.eligibleRouteIds.length} 条路线可选`;
 }
 
 const V07_FAMILY_LABELS: Record<PlotRouteFamilyId, string> = {
@@ -1134,32 +1186,80 @@ const V07_FAMILY_LABELS: Record<PlotRouteFamilyId, string> = {
   solo: '单飞',
 };
 
+const V07_ROUTE_LABELS: Record<PlotRouteVariantId, string> = {
+  stay_blackgold: '和英梨梨、诗羽一起留下',
+  stay_user_only: '自己留下继续创作',
+  akane_core: '加入朱音的团队',
+  solo_user_exit: '自己离开并独立创作',
+  solo_group_exit_except_tomoya: '和伙伴们一起离开',
+};
+
+const V07_FLAG_LABELS: Record<string, string> = {
+  akane_pressure_seen: '你已察觉朱音带来的压力',
+  akane_formal_offer_seen: '你已知道朱音的正式邀请',
+  blackgold_shaken: '英梨梨和诗羽受到朱音吸引',
+  akane_route_open: '你开始真正了解朱音',
+  akane_repulsed: '朱音的挖角已经失败',
+  second_project_seed_ready: '第二作已有可执行的初稿',
+  eriri_high_battlefield_supported: '你支持英梨梨挑战更高目标',
+  utaha_author_pride_supported: '你认可诗羽作为作者的坚持',
+  megumi_coplanner: '惠已加入共同企划',
+  blackgold_counterwill: '英梨梨和诗羽决定一起拒绝朱音',
+  user_knows_counterwill: '你已经知道英梨梨和诗羽的决定',
+  solo_route_open: '你已准备独立创作',
+  user_stay_commitment_grounded: '你已经用实际行动决定留下',
+  blackgold_not_staying_confirmed: '英梨梨和诗羽不会固定留下',
+  user_stay_position_available: '你仍可以留在当前团队',
+  user_exit_commitment_grounded: '你已经用实际行动决定离开',
+  group_exit_without_tomoya_grounded: '伙伴们已经分别确认离开',
+  group_exit_participant_snapshot_ready: '已经确认哪些伙伴会一起离开',
+};
+
+export function getV07RouteLabel(route: Pick<PlotRouteEligibility, 'id' | 'label'>): string {
+  return V07_ROUTE_LABELS[route.id];
+}
+
+export function getV07FlagLabel(flagId: string, machine: PlotMachineDefinition): string {
+  return V07_FLAG_LABELS[flagId] ?? machine.flags.find(flag => flag.id === flagId)?.label ?? '未知剧情条件';
+}
+
+function getV07RouteReviewMessage(resolution: PlotRouteResolution, machine: PlotMachineDefinition): string {
+  const selected = resolution.choice ? resolution.routes.find(route => route.id === resolution.choice) : null;
+  if (!selected) return '之前选择的路线已经失效，请回到企划页检查。';
+  if (selected.missingFlagIds.length > 0) {
+    return `这条路线现在还需要：${selected.missingFlagIds.map(flagId => getV07FlagLabel(flagId, machine)).join('、')}。`;
+  }
+  return '这条路线的剧情条件发生了变化，请检查后再继续。';
+}
+
 function renderStudioRoutePlanning(state: AppState, machine: PlotMachineDefinition) {
   const context = buildPlotRoutingContext(state.statusData, state.memoryDB);
   const { resolution } = context.v07;
-  const currentDate = getDatePart(context.evaluationTime);
+  const evaluationDate = getDatePart(context.evaluationTime);
   const insideChoiceWindow =
-    Boolean(currentDate) && currentDate >= machine.promptWindow.start && currentDate <= machine.promptWindow.end;
+    Boolean(evaluationDate) &&
+    evaluationDate >= machine.promptWindow.start &&
+    evaluationDate <= machine.promptWindow.end;
   const selected = resolution.choice ? resolution.routes.find(route => route.id === resolution.choice) ?? null : null;
 
   const choiceSummary = selected
-    ? `已锁定：${V07_FAMILY_LABELS[selected.familyId]} / ${selected.label}`
+    ? `已选择：${getV07RouteLabel(selected)}`
     : insideChoiceWindow
-      ? '尚未确认路线'
-      : `等待确认窗 ${machine.promptWindow.start} ～ ${machine.promptWindow.end}`;
+      ? '请选择接下来的创作方向'
+      : `可在 ${machine.promptWindow.start} 至 ${machine.promptWindow.end} 期间选择`;
 
   return `
     <section class="phone-studio-route-planning">
       <header class="phone-studio-route-planning__head">
         <div>
-          <span>三线入口</span>
+          <span>选择最终路线</span>
           <strong>${escapeHtml(choiceSummary)}</strong>
         </div>
-        <small>${escapeHtml(resolution.choiceReceipt?.basisHash ?? '无 choice receipt')}</small>
+        <small>${resolution.choice ? '选择后不能在这里更换' : '满足条件后可以确认'}</small>
       </header>
       ${
         resolution.choiceState === 'needs_review'
-          ? `<p class="phone-studio-route-warning">${escapeHtml(resolution.needsReviewReason ?? '路线依据需要复核。')}</p>`
+          ? `<p class="phone-studio-route-warning">${escapeHtml(getV07RouteReviewMessage(resolution, machine))}</p>`
           : ''
       }
       <div class="phone-studio-family-list">
@@ -1195,25 +1295,25 @@ function renderStudioRoutePlanning(state: AppState, machine: PlotMachineDefiniti
                         Boolean(resolution.choice) ||
                         resolution.choiceState === 'needs_review';
                       const missingLabels = route.missingFlagIds.map(
-                        flagId => machine.flags.find(flag => flag.id === flagId)?.label ?? flagId,
+                        flagId => getV07FlagLabel(flagId, machine),
                       );
                       const status = isChosen
-                        ? '已锁定'
+                        ? '已选择'
                         : route.eligible
                           ? insideChoiceWindow
-                            ? '可确认'
-                            : '条件齐全，等待日期'
-                          : `缺 ${missingLabels.length} 项`;
+                            ? '选择这条路线'
+                            : '条件已满足，等待开放'
+                          : `还差 ${missingLabels.length} 项`;
                       return `
                         <article class="phone-studio-variant ${isChosen ? 'is-chosen' : ''}">
                           <div>
-                            <strong>${escapeHtml(route.label)}</strong>
-                            <small>${escapeHtml(route.id)}</small>
+                            <strong>${escapeHtml(getV07RouteLabel(route))}</strong>
+                            <small>${escapeHtml(V07_FAMILY_LABELS[route.familyId])}路线</small>
                           </div>
                           <p>${
                             missingLabels.length
-                              ? `缺少：${escapeHtml(missingLabels.join('、'))}`
-                              : '所需路线事实已满足，等待玩家专用按钮确认。'
+                              ? `还需要：${escapeHtml(missingLabels.join('、'))}`
+                              : '条件已经满足，可以在开放日期内选择。'
                           }</p>
                           <button
                             type="button"
@@ -1231,7 +1331,7 @@ function renderStudioRoutePlanning(state: AppState, machine: PlotMachineDefiniti
           })
           .join('')}
       </div>
-      <p class="phone-studio-route-note">自由输入只算叙事意图；只有这里的专用按钮能写入权威 choice。</p>
+      <p class="phone-studio-route-note">在对话里提到想走哪条路线不会自动选择。请在这里亲自确认。</p>
     </section>
   `;
 }
@@ -1245,7 +1345,7 @@ function renderStudioGatePreview(flags: readonly PlotFlagDefinition[]) {
           date => `
             <div class="phone-studio-preview-tile">
               <span>${escapeHtml(date)}</span>
-              <strong>${escapeHtml(V07_STUDIO_GATE_LABELS[date] ?? '路线节点')}</strong>
+              <strong>${escapeHtml(V07_STUDIO_GATE_LABELS[date] ?? '关键剧情')}</strong>
             </div>
           `,
         )
@@ -1271,21 +1371,28 @@ function renderStudioFlagRow(
   const statusText = lockedByDate
     ? '未到日期'
     : snapshot?.value === 'yes'
-      ? '已点亮'
+      ? '已满足'
       : snapshot?.value === 'no'
-        ? '已否定'
-        : '待正文确认';
-  const detailText = snapshot?.value === 'yes' ? flag.yesMeaning : snapshot?.value === 'no' ? flag.noMeaning : '等待正文里的明确行动。';
+        ? '未满足'
+        : '等待剧情推进';
+  const conditionLabel = V07_FLAG_LABELS[flag.id] ?? flag.label;
+  const detailText = lockedByDate
+    ? `这项条件会在 ${flag.earliestDate} 后开始记录。`
+    : snapshot?.value === 'yes'
+      ? '当前剧情已经满足这项条件。'
+      : snapshot?.value === 'no'
+        ? '当前剧情还没有满足这项条件。'
+        : '继续推进剧情后，这里的进度会自动更新。';
 
   return `
     <article class="${className}">
       <div class="phone-studio-flag__main">
-        <strong>${escapeHtml(flag.label)}</strong>
-        <span>${escapeHtml(flag.id)}</span>
+        <strong>${escapeHtml(conditionLabel)}</strong>
+        <span>剧情条件</span>
       </div>
       <div class="phone-studio-flag__state">
         <span>${escapeHtml(statusText)}</span>
-        <small>${escapeHtml(flag.earliestDate)}${currentDate ? ` / ${currentDate}` : ''}</small>
+        <small>开放：${escapeHtml(flag.earliestDate)}${currentDate ? ` · 当前：${escapeHtml(currentDate)}` : ''}</small>
       </div>
       <p>${escapeHtml(detailText)}</p>
     </article>
@@ -1304,7 +1411,7 @@ function renderStudioGateGroup(
     <section class="${groupClass}">
       <header class="phone-studio-group__head">
         <span>${escapeHtml(date)}</span>
-        <strong>${escapeHtml(V07_STUDIO_GATE_LABELS[date] ?? '路线节点')}</strong>
+        <strong>${escapeHtml(V07_STUDIO_GATE_LABELS[date] ?? '关键剧情')}</strong>
       </header>
       <div class="phone-studio-flag-list">
         ${flags.map(flag => renderStudioFlagRow(flag, snapshots.get(flag.id), currentDate, lockedByDate)).join('')}
@@ -1318,7 +1425,6 @@ function renderStudioPhonePage(state: AppState) {
   if (!machine) return renderPhoneHome(state);
 
   const currentDate = getDatePart(state.statusData.world.currentTime);
-  const currentEventId = state.statusData.world.currentMainEventId || '未锁定';
   const unlocked = isV07StudioUnlocked(state);
   const snapshots = getV07StudioSnapshots(state);
   const activeYesCount = [...snapshots.values()].filter(snapshot => snapshot.value === 'yes').length;
@@ -1331,7 +1437,7 @@ function renderStudioPhonePage(state: AppState) {
   if (!unlocked) {
     return `
       <section class="phone-route-page phone-app-page phone-app-page--studio is-locked" data-phone-route-view="app:studio">
-        ${renderPhoneAppHeader(state, '企划', '第七章前预览')}
+        ${renderPhoneAppHeader(state, '企划', '第七卷路线预览')}
         <div class="phone-page-scroll phone-studio-scroll">
           <section class="phone-studio-lock">
             <div class="phone-studio-lock__mark" aria-hidden="true">
@@ -1339,8 +1445,8 @@ function renderStudioPhonePage(state: AppState) {
               <span class="phone-studio-lock__body"></span>
             </div>
             <div class="phone-studio-lock__copy">
-              <strong>第七章后开放</strong>
-              <span>当前只显示日期闸门预览。</span>
+              <strong>进入第七卷后开放</strong>
+              <span>现在可以先查看关键剧情日期。</span>
             </div>
           </section>
           ${renderStudioGatePreview(machine.flags)}
@@ -1355,22 +1461,22 @@ function renderStudioPhonePage(state: AppState) {
 
   return `
     <section class="phone-route-page phone-app-page phone-app-page--studio" data-phone-route-view="app:studio">
-      ${renderPhoneAppHeader(state, '企划', machine.title)}
+      ${renderPhoneAppHeader(state, '企划', '第七卷路线选择')}
       <div class="phone-page-scroll phone-studio-scroll">
         <section class="phone-studio-hero">
           <div>
-            <span class="phone-studio-kicker">User 独立企划</span>
-            <strong>第七卷状态机</strong>
-            <small>${escapeHtml(currentDate || '日期未记录')} · ${escapeHtml(currentEventId)}</small>
+            <span class="phone-studio-kicker">你的独立企划</span>
+            <strong>第七卷路线选择</strong>
+            <small>当前剧情日期：${escapeHtml(currentDate || '未记录')}</small>
           </div>
           <div class="phone-studio-score">
             <strong>${activeYesCount}</strong>
-            <span>点亮</span>
+            <span>已满足</span>
           </div>
         </section>
         <section class="phone-studio-card">
-          <span>记忆库快照</span>
-          <strong>${snapshots.size}/${machine.flags.length} 个开关有当前值</strong>
+          <span>路线进度</span>
+          <strong>${activeYesCount}/${machine.flags.length} 项剧情条件已满足</strong>
         </section>
         ${renderStudioRoutePlanning(state, machine)}
         ${gateDates.map(date => renderStudioGateGroup(date, grouped[date], snapshots, currentDate)).join('')}
@@ -1381,21 +1487,21 @@ function renderStudioPhonePage(state: AppState) {
 
 const GAME_DEVELOPMENT_METRICS: Array<[keyof GameDevelopmentProject, string]> = [
   ['progress', '完成度'],
-  ['fun', '趣味'],
+  ['fun', '好玩程度'],
   ['creativity', '创意'],
   ['writing', '剧本'],
   ['art', '美术'],
   ['code', '程序'],
-  ['polish', '完成感'],
+  ['polish', '打磨度'],
   ['hype', '期待度'],
-  ['bugs', 'Bug'],
+  ['bugs', '待修问题'],
   ['fatigue', '疲劳'],
 ];
 
 function getGameDevelopmentHomeMeta(state: AppState): string {
   const context = buildPlotRoutingContext(state.statusData, state.memoryDB);
   const { resolution } = context.v07;
-  if (resolution.choiceState === 'needs_review') return '路线需复核';
+  if (resolution.choiceState === 'needs_review') return '路线需要检查';
   if (!resolution.choiceReceipt) return '等待路线确认';
   const game = readGameDevelopmentState(state.memoryDB, resolution.choiceReceipt);
   return game.project.created ? `第 ${game.week} 周 · ${game.project.progress}%` : '等待建立项目';
@@ -1408,7 +1514,7 @@ function renderGameDevelopmentLock(state: AppState, reason: string) {
       <div class="phone-page-scroll phone-game-development-scroll">
         <section class="phone-game-lock">
           <span aria-hidden="true">🎮</span>
-          <strong>先完成路线确认</strong>
+          <strong>请先选择创作路线</strong>
           <p>${escapeHtml(reason)}</p>
           <button type="button" data-phone-route="app:studio">前往企划页</button>
         </section>
@@ -1423,15 +1529,15 @@ function renderGameDevelopmentProjectForm(state: AppState, routeLabel: string) {
       ${renderPhoneAppHeader(state, '游戏开发', routeLabel)}
       <div class="phone-page-scroll phone-game-development-scroll">
         <section class="phone-game-hero">
-          <span>路线已锁定</span>
+          <span>已选择创作路线</span>
           <strong>${escapeHtml(routeLabel)}</strong>
-          <p>先建立项目。项目名称确认后才会开放五个工作日与一个周末的计划。</p>
+          <p>填写游戏信息并建立项目后，就可以安排周一到周末的开发计划。</p>
         </section>
         <section class="phone-game-project-form">
           <label>游戏名<input data-field="game-project-title" value="第二作" maxlength="40" /></label>
-          <label>类型<input data-field="game-project-genre" value="青春创作 ADV" maxlength="40" /></label>
+          <label>类型<input data-field="game-project-genre" value="青春创作文字冒险" maxlength="40" /></label>
           <label>主题<input data-field="game-project-theme" value="社团 / 创作者 / 关系修复" maxlength="80" /></label>
-          <label>平台<input data-field="game-project-platform" value="PC 同人游戏" maxlength="40" /></label>
+          <label>平台<input data-field="game-project-platform" value="电脑同人游戏" maxlength="40" /></label>
           <button type="button" data-action="game-create-project">建立项目</button>
         </section>
       </div>
@@ -1443,16 +1549,20 @@ function renderGameDevelopmentPhonePage(state: AppState) {
   const context = buildPlotRoutingContext(state.statusData, state.memoryDB);
   const { resolution } = context.v07;
   if (resolution.choiceState === 'needs_review') {
-    return renderGameDevelopmentLock(state, resolution.needsReviewReason ?? '已锁定路线需要复核。');
+    const machine = getPlotMachine(V07_STUDIO_MACHINE_ID);
+    return renderGameDevelopmentLock(
+      state,
+      machine ? getV07RouteReviewMessage(resolution, machine) : '这条路线需要检查，请先回到企划页。',
+    );
   }
   const receipt = resolution.choiceReceipt;
   if (!receipt || resolution.choiceState !== 'chosen') {
-    return renderGameDevelopmentLock(state, '游戏开发状态只能从企划页的权威 choice 派生，不能在本页自行切线。');
+    return renderGameDevelopmentLock(state, '先去企划页选择接下来的创作路线，确认后就能开始开发游戏。');
   }
 
   const game = readGameDevelopmentState(state.memoryDB, receipt);
   const route = resolution.routes.find(item => item.id === receipt.variantId);
-  const routeLabel = `${V07_FAMILY_LABELS[receipt.familyId]} / ${route?.label ?? receipt.variantId}`;
+  const routeLabel = route ? getV07RouteLabel(route) : V07_FAMILY_LABELS[receipt.familyId];
   if (!game.project.created) return renderGameDevelopmentProjectForm(state, routeLabel);
 
   const selectedSlot = game.slots[game.selectedDay];
@@ -1463,7 +1573,7 @@ function renderGameDevelopmentPhonePage(state: AppState) {
     { id: '', label: selectedSlot.kind === 'weekend' ? '独处休整' : '独自推进' },
     ...state.statusData.targets
       .filter(target => !isPlayerPhonePseudoTarget(target))
-      .map(target => ({ id: target.id, label: target.alias || target.name || target.id })),
+      .map(target => ({ id: target.id, label: target.alias || target.name || '未命名角色' })),
   ];
 
   return `
@@ -1519,13 +1629,13 @@ function renderGameDevelopmentPhonePage(state: AppState) {
             `).join('')}
           </div>
           <label>
-            合作 / 休整对象
+            和谁一起
             <select data-field="game-slot-target" data-game-day="${selectedSlot.dayId}" ${selectedSlot.actionId ? '' : 'disabled'}>
               ${targetOptions.map(target => `<option value="${escapeHtml(target.id)}" ${selectedSlot.targetId === target.id || (!selectedSlot.targetId && !target.id) ? 'selected' : ''}>${escapeHtml(target.label)}</option>`).join('')}
             </select>
           </label>
           <label>
-            本日意图
+            今天想完成什么
             <textarea data-field="game-slot-intent" data-game-day="${selectedSlot.dayId}" maxlength="240" ${selectedSlot.actionId ? '' : 'disabled'}>${escapeHtml(selectedSlot.intent)}</textarea>
           </label>
         </section>
@@ -1537,14 +1647,26 @@ function renderGameDevelopmentPhonePage(state: AppState) {
             return `<div class="${slot.actionId ? 'is-planned' : ''}"><span>${day.label}</span><strong>${escapeHtml(action?.label ?? '待安排')}</strong></div>`;
           }).join('')}
           <button type="button" data-action="game-submit-week" ${ready ? '' : 'disabled'}>
-            ${ready ? '提交并结算本周' : `还差 ${6 - plannedCount} 个行动`}
+            ${ready ? '完成本周计划' : `还有 ${6 - plannedCount} 天未安排`}
           </button>
         </section>
 
         ${game.lastSubmission ? `
           <details class="phone-game-last-submission">
-            <summary>上次提交：第 ${game.lastSubmission.week} 周</summary>
-            <pre>${escapeHtml(game.lastSubmission.context)}</pre>
+            <summary>上周安排：第 ${game.lastSubmission.week} 周</summary>
+            <div class="phone-game-last-submission__days">
+              ${game.lastSubmission.slots
+                .map(slot => {
+                  const action = GAME_DEVELOPMENT_ACTIONS.find(item => item.id === slot.actionId);
+                  const target = state.statusData.targets.find(item => item.id === slot.targetId);
+                  const partner =
+                    target?.alias ||
+                    target?.name ||
+                    (slot.targetId ? '未识别角色' : slot.kind === 'weekend' ? '独处休整' : '独自推进');
+                  return `<div><span>${escapeHtml(slot.label)}</span><strong>${escapeHtml(action?.label ?? '未记录')}</strong><small>${escapeHtml(partner)}</small></div>`;
+                })
+                .join('')}
+            </div>
           </details>
         ` : ''}
       </div>
@@ -1553,12 +1675,25 @@ function renderGameDevelopmentPhonePage(state: AppState) {
 }
 
 function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
+  const plotRouteReviewEnabled = isPlotRouteReviewEnabled(state.runtimeFlags);
   return `
     <section class="phone-route-page phone-app-page" data-phone-route-view="app:settings">
       ${renderPhoneAppHeader(state, '设置 / 保存', state.activeSaveId ? '存档已连接' : '未保存')}
       <section class="panel-card panel-card--generic">
         <div class="panel-title">操作</div>
         <div class="panel-scroll">
+          <label class="phone-settings-toggle">
+            <span>
+              <strong>自动路线事实核对</strong>
+              <small>正文完成后核对路线条件。关闭后仍会更新普通变量，但不会自动写入路线事实。</small>
+            </span>
+            <input
+              type="checkbox"
+              data-field="plot-route-review-enabled"
+              ${plotRouteReviewEnabled ? 'checked' : ''}
+              aria-label="自动路线事实核对"
+            />
+          </label>
           <div class="settings-actions">
             <button class="settings-action" data-action="manual-save">
               <strong>手动保存</strong>

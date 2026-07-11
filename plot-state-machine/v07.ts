@@ -155,8 +155,9 @@ export const V07_PLOT_MACHINE: PlotMachineDefinition = {
       storageKey: 'plotFlag.v07.solo_route_open',
       earliestDate: '2013-02-25',
       label: '单飞路线入口',
-      yesMeaning: 'User 已明确准备脱离 blessing software 与朱音体系，独立推进自己的创作路线。',
-      noMeaning: 'User 本轮明确表示仍未准备独立推进创作路线。',
+      yesMeaning:
+        'User 已在当前现实中明确决定或开始准备脱离 blessing software 与朱音体系，以自己的名义独立推进创作；仅有未来也许会做、愿望、假设或灵感不成立。',
+      noMeaning: 'User 本轮明确仍未决定、未准备以自己的名义独立推进创作。',
     },
     {
       id: 'user_stay_commitment_grounded',
@@ -187,7 +188,8 @@ export const V07_PLOT_MACHINE: PlotMachineDefinition = {
       storageKey: 'plotFlag.v07.user_exit_commitment_grounded',
       earliestDate: '2013-03-04',
       label: 'User 单飞承诺已落地',
-      yesMeaning: 'User 已采取具有实际后果的离开行动。',
+      yesMeaning:
+        'User 已采取使其在原组织中的职责、权限或成员身份实际终止的离开行动；仅表达独立意图或讨论将来离开不成立。',
       noMeaning: 'User 只有独立意图，尚未采取有后果的离开行动。',
     },
     {
@@ -195,16 +197,18 @@ export const V07_PLOT_MACHINE: PlotMachineDefinition = {
       storageKey: 'plotFlag.v07.group_exit_without_tomoya_grounded',
       earliestDate: '2013-03-04',
       label: '除伦也外集体离开已落地',
-      yesMeaning: '除伦也外的相关创作者已通过有后果的剧情行动确认离开。',
-      noMeaning: '集体离开仍只是口头意图或旁白概括。',
+      yesMeaning:
+        '至少一名除 User 与伦也外的具名创作者，已通过有实际后果的行动完成离开原体系并实际加入 User 的同一个独立创作项目；仅邀请、未来承诺、临时合作、各自离开、转投朱音或无人同行均不成立。',
+      noMeaning: '无人实际跟随 User 加入独立项目，或集体同行仍只是邀请、未来承诺、假设或旁白概括。',
     },
     {
       id: 'group_exit_participant_snapshot_ready',
       storageKey: 'plotFlag.v07.group_exit_participant_snapshot_ready',
       earliestDate: '2013-03-04',
       label: '集体单飞参与者快照已确认',
-      yesMeaning: '参与者快照已逐人区分确认离开、临时合作和未表态。',
-      noMeaning: '参与者范围尚未逐人确认。',
+      yesMeaning:
+        '跟随 User 加入同一独立项目的非空参与者集合已经逐人确认，并与临时合作、未表态或去往其他阵营的人区分。',
+      noMeaning: '明确没有人跟随 User，或跟随 User 的参与者范围尚未逐人确认。',
     },
   ],
 } as const;

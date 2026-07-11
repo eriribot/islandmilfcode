@@ -3,15 +3,15 @@ import { upsertAttribute } from '../memorydatabase/upsert';
 import { parsePlotRouteChoiceReceipt } from './resolver';
 import type {
   PlotFlagCommitContext,
-  PlotFlagDelta,
   PlotFlagSnapshot,
   PlotFlagValue,
   PlotRouteChoiceCommit,
   PlotRouteChoiceReceipt,
+  ValidatedPlotFlagDelta,
 } from './types';
 import { V07_PLOT_MACHINE } from './v07';
 
-export function commitPlotFlagDeltas(deltas: PlotFlagDelta[], context: PlotFlagCommitContext): void {
+export function commitPlotFlagDeltas(deltas: readonly ValidatedPlotFlagDelta[], context: PlotFlagCommitContext): void {
   if (!deltas.length) return;
 
   const currentDate = extractDatePart(context.currentTime);
@@ -28,8 +28,11 @@ export function commitPlotFlagDeltas(deltas: PlotFlagDelta[], context: PlotFlagC
       key: definition.storageKey,
       value: delta.value,
       valueType: 'boolean',
-      reason: `${definition.label}: ${delta.value === 'yes' ? definition.yesMeaning : definition.noMeaning}`,
+      reason: `${definition.label}: ${
+        delta.value === 'yes' ? definition.yesMeaning : definition.noMeaning
+      }；本轮可见正文证据：“${delta.evidenceQuote.replace(/\s+/g, ' ').trim().slice(0, 240)}”`,
       sourceRange: context.sourceRange,
+      source: 'progress-commit',
     });
   }
 }

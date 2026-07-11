@@ -1,4 +1,5 @@
 import { extractPlotDate, isPlotDateInWindow } from './date-window';
+import { buildPlotEvidenceUnits } from './proposal-prompt';
 import type {
   PlotFlagProposal,
   PlotFlagProposalDelta,
@@ -10,6 +11,8 @@ import type {
 } from './types';
 
 const PROPOSAL_TAG_RE = /<plot_flag_proposal>([\s\S]*?)<\/plot_flag_proposal>/gi;
+const EVIDENCE_REFERENCE_TOKEN_RE = /^E(\d{4,})$/i;
+const EVIDENCE_REFERENCE_LIKE_RE = /^E[^\p{L}\p{N}]*\d/iu;
 const PROPOSAL_FIELDS = new Set(['checked', 'deltas']);
 const DELTA_FIELDS = new Set(['flagId', 'value', 'evidenceQuote']);
 
@@ -62,7 +65,8 @@ export function reviewPlotFlagProposal(rawResponse: string, context: PlotFlagRev
   const errors: PlotFlagReviewError[] = [];
   const validated: ValidatedPlotFlagDelta[] = [];
   const seen = new Set<string>();
-  const normalizedScene = normalizeEvidence(context.sceneText);
+  const evidenceUnits = buildPlotEvidenceUnits(context.sceneText);
+  const evidenceUnitMap = new Map(evidenceUnits.map(unit => [unit.id, unit.text]));
 
   for (const delta of proposal.deltas) {
     if (seen.has(delta.flagId)) {
@@ -84,19 +88,32 @@ export function reviewPlotFlagProposal(rawResponse: string, context: PlotFlagRev
       });
     }
 
-    const normalizedQuote = normalizeEvidence(delta.evidenceQuote);
-    if ([...normalizedQuote.replace(/\s/g, '')].length < 4) {
+    const resolvedEvidence = resolveEvidenceQuote(delta.evidenceQuote, evidenceUnitMap);
+    const normalizedQuote = normalizeEvidence(resolvedEvidence.quote ?? '');
+    let evidenceQuoteForCommit = resolvedEvidence.quote;
+    if (resolvedEvidence.isReference && !resolvedEvidence.quote) {
+      errors.push({
+        code: 'evidence_not_found',
+        flagId: delta.flagId,
+        message: `${delta.flagId} 引用了不存在、重复或超量的证据单元。`,
+      });
+    } else if ([...normalizedQuote].length < 4) {
       errors.push({
         code: 'evidence_too_short',
         flagId: delta.flagId,
         message: `${delta.flagId} 的证据少于四个可见字符。`,
       });
-    } else if (!normalizedScene.includes(normalizedQuote)) {
-      errors.push({
-        code: 'evidence_not_found',
-        flagId: delta.flagId,
-        message: `${delta.flagId} 的证据不是本轮正文逐字摘录。`,
-      });
+    } else if (!resolvedEvidence.isReference) {
+      const sourceUnit = findNormalizedEvidenceUnit(delta.evidenceQuote, evidenceUnits.map(unit => unit.text));
+      if (sourceUnit) {
+        evidenceQuoteForCommit = sourceUnit;
+      } else {
+        errors.push({
+          code: 'evidence_not_found',
+          flagId: delta.flagId,
+          message: `${delta.flagId} 的证据在本轮正文中没有可核对的来源。`,
+        });
+      }
     }
 
     const currentValue = context.currentValues?.[delta.flagId];
@@ -108,13 +125,13 @@ export function reviewPlotFlagProposal(rawResponse: string, context: PlotFlagRev
       });
     }
 
-    if (currentValue !== delta.value) {
+    if (currentValue !== delta.value && evidenceQuoteForCommit) {
       validated.push({
         machineId: context.machine.id,
         flagId: definition.id,
         storageKey: definition.storageKey,
         value: delta.value,
-        evidenceQuote: delta.evidenceQuote.trim(),
+        evidenceQuote: evidenceQuoteForCommit,
       });
     }
   }
@@ -168,8 +185,44 @@ function parseProposalShape(value: unknown): { proposal: PlotFlagProposal | null
 
 function normalizeEvidence(value: string): string {
   return String(value ?? '')
-    .replace(/\s+/g, ' ')
+    .normalize('NFKC')
+    .replace(/\s+/gu, '')
     .trim();
+}
+
+function resolveEvidenceQuote(
+  rawEvidence: string,
+  evidenceUnitMap: ReadonlyMap<string, string>,
+): { quote: string | null; isReference: boolean } {
+  const rawValue = String(rawEvidence ?? '').trim();
+  const value = rawValue.normalize('NFKC');
+  if (!EVIDENCE_REFERENCE_LIKE_RE.test(value)) return { quote: rawValue, isReference: false };
+
+  const parts = value.split(/[,，、]/).map(part => part.trim());
+  const matches = parts.map(part => part.match(EVIDENCE_REFERENCE_TOKEN_RE));
+  if (!parts.length || parts.length > 4 || matches.some(match => !match)) {
+    return { quote: null, isReference: true };
+  }
+  const ids = parts.map(part => part.toUpperCase());
+  const positions = matches.map(match => Number(match?.[1]));
+  if (
+    new Set(ids).size !== ids.length ||
+    positions.some((position, index) => index > 0 && position <= positions[index - 1])
+  ) {
+    return { quote: null, isReference: true };
+  }
+  const units = ids.map(id => evidenceUnitMap.get(id));
+  if (units.some(unit => unit === undefined)) return { quote: null, isReference: true };
+  return { quote: units.join('\n'), isReference: true };
+}
+
+function findNormalizedEvidenceUnit(rawQuote: string, unitTexts: readonly string[]): string | null {
+  const quote = normalizeEvidence(rawQuote);
+  if (!quote) return null;
+  for (const unitText of unitTexts) {
+    if (normalizeEvidence(unitText).includes(quote)) return unitText;
+  }
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

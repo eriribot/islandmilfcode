@@ -66,6 +66,16 @@ import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
 import { expirePhoneMessageIndex, indexPhoneMessage } from '../memorydatabase/phone-repository';
 import type { IslandMemoryDB, MemoryImpressionRow, MemoryRelationRow } from '../memorydatabase/types';
 import { isPlotEventAllowedByRoute } from '../plot-routing';
+import {
+  commitPlotFlagDeltas,
+  getPlotRouteReviewCancelToken,
+  isPlotRouteReviewEnabled,
+  isPlotRouteReviewRunCancelled,
+  readActivePlotFlagSnapshots,
+  runPlotFlagReviewWithRetry,
+  V07_PLOT_MACHINE,
+  type PlotFlagValueMap,
+} from '../plot-state-machine';
 import { buildSaenaiWorldStateFactLines } from '../saenai-world-facts';
 import {
   buildKirihimeSchoolIdentitySegment,
@@ -201,6 +211,7 @@ export function cancelCurrentGeneration(ctx: ActionContext) {
   state.currentGenerationId = '';
   lastProgressPhoneMessages = null;
   clearBackgroundTask(state, 'progress');
+  clearBackgroundTask(state, 'plot-review');
   clearBackgroundTask(state, 'summary');
   discardStreamingMessage(ctx);
   ctx.persistConversation();
@@ -476,14 +487,22 @@ function buildRouteCheckStatus(
 
 // 把 AI 给的主线事件 id 跟剧情库（世界书里第一卷/第二卷/第三卷条目合并后的 plotLibrary.events）对一遍，
 // 不在白名单里的整条丢掉。这样即使模型在空档期自造 SAE_2-1 之类的野 id，也只会影响正文叙述，不会污染 statusData。
-function sanitizeProgressAgainstPlotLibrary(
+export function sanitizeProgressAgainstPlotLibrary(
   update: ProgressUpdate,
   plotLibrary: PlotLibrary | null | undefined,
   statusData?: StatusData | null,
 ): ProgressUpdate {
-  const whitelist = plotLibrary ? new Set(Object.keys(plotLibrary.events)) : null;
-  // 没有加载到剧情库（初始化中 / 世界书未挂载）时放行，避免误伤正常流程。
-  if (!whitelist || whitelist.size === 0 || !plotLibrary) return update;
+  const whitelist = new Set(Object.keys(plotLibrary?.events ?? {}));
+  if (!plotLibrary || !whitelist.size) {
+    if (Object.keys(update.mainEvents).length || update.currentMainEventId !== undefined) {
+      console.warn('[progress-guard] drop mainEvent mutations while plot library is unavailable');
+    }
+    return {
+      ...update,
+      mainEvents: {},
+      currentMainEventId: undefined,
+    };
+  }
 
   const routeStatusData = buildRouteCheckStatus(statusData, update);
   const currentDate = getProgressDatePart(routeStatusData?.world.currentTime);
@@ -858,6 +877,149 @@ function getLatestCompletedTurnSummaryRange(messages: UiMessage[]): [number, num
     .filter(index => index >= 0);
   if (!indices.length) return undefined;
   return [Math.min(...indices), Math.max(...indices)];
+}
+
+function getAssistantMessageSourceRange(messages: UiMessage[], message: UiMessage): [number, number] | undefined {
+  const index = getSummaryFloorIndexForMessage(messages, message);
+  return index >= 0 ? [index, index] : undefined;
+}
+
+function getAssistantVisibleSceneText(message: UiMessage): string {
+  return (getVisibleMessageText(message) || message.text).trim();
+}
+
+export function selectCompletedAssistantSceneForPlotReview(
+  messages: UiMessage[],
+  assistantMessageId: string,
+): { assistantMessage: UiMessage; sceneText: string } | null {
+  const assistantMessage = messages.find(message => message.id === assistantMessageId);
+  if (!assistantMessage || assistantMessage.role !== 'assistant' || assistantMessage.streaming) return null;
+
+  const sceneText = getAssistantVisibleSceneText(assistantMessage);
+  return sceneText ? { assistantMessage, sceneText } : null;
+}
+
+async function runPostTurnPlotFlagReview(
+  ctx: ActionContext,
+  assistantMessageId: string,
+  isCancelled: () => boolean,
+): Promise<void> {
+  if (!isPlotRouteReviewEnabled(ctx.state.runtimeFlags)) {
+    recordGenerationDebug(ctx, 'plot-route-review:skip-player-disabled', { assistantMessageId });
+    return;
+  }
+  const selectedScene = selectCompletedAssistantSceneForPlotReview(ctx.state.uiMessages, assistantMessageId);
+  if (!selectedScene) {
+    recordGenerationDebug(ctx, 'plot-route-review:skip-missing-assistant', { assistantMessageId });
+    return;
+  }
+  const { assistantMessage, sceneText } = selectedScene;
+  const reviewRunId = ctx.state.activeRunId;
+  const reviewMemoryDB = ctx.memoryDB;
+  const reviewTime = ctx.state.statusData.world.currentTime;
+  const reviewEventId = ctx.state.statusData.world.currentMainEventId;
+  const reviewCancelToken = getPlotRouteReviewCancelToken(ctx.state.runtimeFlags);
+
+  const currentValues = Object.fromEntries(
+    readActivePlotFlagSnapshots(reviewMemoryDB, V07_PLOT_MACHINE.id).map(snapshot => [
+      snapshot.definition.id,
+      snapshot.value,
+    ]),
+  ) as PlotFlagValueMap;
+  const reviewCancelled = () => {
+    const currentScene = selectCompletedAssistantSceneForPlotReview(ctx.state.uiMessages, assistantMessageId);
+    return (
+      isCancelled() ||
+      ctx.state.activeRunId !== reviewRunId ||
+      ctx.memoryDB !== reviewMemoryDB ||
+      !currentScene ||
+      currentScene.assistantMessage !== assistantMessage ||
+      currentScene.sceneText !== sceneText ||
+      isPlotRouteReviewRunCancelled(ctx.state.runtimeFlags, reviewCancelToken)
+    );
+  };
+  setBackgroundTaskRunning(ctx.state, 'plot-review', '准备语义裁决');
+  ctx.render();
+  try {
+    const result = await runPlotFlagReviewWithRetry({
+      machine: V07_PLOT_MACHINE,
+      currentTime: reviewTime,
+      currentEventId: reviewEventId,
+      sceneText,
+      currentValues,
+      isCancelled: reviewCancelled,
+      generate: async (prompts, attempt) => {
+        if (typeof ctx.win.generateRaw !== 'function') {
+          throw new Error('generateRaw unavailable for strict plot-route review');
+        }
+        setBackgroundTaskRunning(ctx.state, 'plot-review', `语义裁决 ${attempt}/2`);
+        ctx.render();
+        return runSecondaryTask({
+          win: ctx.win,
+          kind: 'custom',
+          generationId: `progress-route-review-${crypto.randomUUID()}-${attempt}`,
+          prompts,
+          apiConfig: ctx.summaryApiConfig,
+          isCancelled: reviewCancelled,
+        });
+      },
+    });
+
+    if (result.status === 'skipped' || result.status === 'cancelled') {
+      recordGenerationDebug(ctx, `plot-route-review:${result.status}`, {
+        assistantMessageId,
+        attempts: result.attempts,
+      });
+      return;
+    }
+
+    const review = result.review;
+    if (
+      (result.status === 'accepted' || result.status === 'accepted_no_change') &&
+      review &&
+      review.status !== 'rejected'
+    ) {
+      if (review.deltas.length) {
+        commitPlotFlagDeltas(review.deltas, {
+          db: reviewMemoryDB,
+          currentTime: reviewTime,
+          sourceRange: getAssistantMessageSourceRange(ctx.state.uiMessages, assistantMessage),
+        });
+        ctx.persistConversation();
+      }
+      const accepted = review.deltas.map(delta => ({
+        flagId: delta.flagId,
+        value: delta.value,
+        evidenceQuote: delta.evidenceQuote,
+      }));
+      recordGenerationDebug(ctx, 'plot-route-review:accepted', {
+        assistantMessageId,
+        attempts: result.attempts,
+        deltas: accepted,
+      });
+      console.info('[plot-route-review] accepted', accepted);
+      return;
+    }
+
+    const failure = result.failureMessages.slice(-4).join('；') || '严格路线检查未返回可提交结果。';
+    recordGenerationDebug(ctx, 'plot-route-review:failed', {
+      assistantMessageId,
+      attempts: result.attempts,
+      failure,
+    });
+    console.warn('[plot-route-review] failed:', failure);
+    ctx.showNotification({
+      kind: 'status',
+      title: '本轮路线进度未写入',
+      preview: '自动核对没有得到可靠结果。可继续游戏，或在设置中关闭自动路线事实核对。',
+      targetTab: 'summary',
+      phoneRoute: 'app:settings',
+      timestamp: formatTime(ctx.state.statusData.world.currentTime),
+    });
+  } finally {
+    clearBackgroundTask(ctx.state, 'plot-review');
+    ctx.render();
+  }
 }
 
 function getPhoneProgressSourceRange(ctx: ActionContext, fallbackFloorIndex?: number): [number, number] | undefined {
@@ -1280,8 +1442,11 @@ export async function submitMessage(
   }
 
   let generationSucceeded = false;
+  let routeReviewAssistantMessageId = '';
+  let routeReviewEligible = false;
   try {
-    ensureStreamingMessage(ctx);
+    const streamingMessage = ensureStreamingMessage(ctx);
+    routeReviewAssistantMessageId = streamingMessage.id;
     ctx.render();
 
     // 流式占位助手消息已压入，正文 prompt 的历史要剔除它（preflight 用的是占位前的历史，二者一致）。
@@ -1351,6 +1516,9 @@ export async function submitMessage(
       return;
     }
     finalizeStreamingText(ctx, String(result ?? ''), requestGenerationId);
+    routeReviewEligible = Boolean(
+      selectCompletedAssistantSceneForPlotReview(state.uiMessages, routeReviewAssistantMessageId),
+    );
 
     // 变量更新（含手机消息提取）统一移到 finally：正文后发一次合并 progress，配/不配副 API 都走同一条路。
     // 不再依赖主 API 在正文里内嵌 <progress>（skipProgress 现恒为 true）。
@@ -1453,6 +1621,12 @@ export async function submitMessage(
       if (isGenerationRunCancelled(ctx, generationToken)) {
         recordGenerationDebug(ctx, 'submit:cancelled-after-progress', { requestGenerationId });
         return;
+      }
+
+      if (routeReviewEligible && routeReviewAssistantMessageId) {
+        await runPostTurnPlotFlagReview(ctx, routeReviewAssistantMessageId, () =>
+          isGenerationRunCancelled(ctx, generationToken),
+        );
       }
 
       // ② 手机消息：directive 走专用聊天流；否则消费上一步暂存的 phone_messages（无则正则兜底）。

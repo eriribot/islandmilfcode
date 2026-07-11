@@ -27,6 +27,7 @@ import { clearBackgroundTask } from './background-tasks';
 import { setupStreamingHooks } from './actions/streaming';
 import { extractContextReply, getReaderMessages, getSummaryMessages, invalidateReaderMessagesCache } from './message-format';
 import { bindFloatingPhoneEvents, loadFloatingPhonePosition, syncFloatingPhoneAfterResize } from './phone/floating';
+import { clampPhoneHomePageToCount } from './phone/home-pagination';
 import {
   closePhoneRoute,
   getRouteForTab,
@@ -51,6 +52,8 @@ import {
   setCalendarMonthOffset,
   setCalendarOpenEventId,
   setCalendarSelectedDate,
+  getV07FlagLabel,
+  getV07RouteLabel,
 } from './phone/render';
 import { updateSummaryTextInMemoryDB } from './memorydatabase/commit-points';
 import {
@@ -70,6 +73,7 @@ import {
   commitPlotRouteChoice,
   confirmPlotRouteChoice,
   getPlotMachine,
+  setPlotRouteReviewEnabled,
 } from './plot-state-machine';
 import {
   clearActiveSaveId,
@@ -1262,10 +1266,29 @@ function confirmV07RouteChoice(routeVariantId: string) {
   });
 
   if (confirmation.status === 'rejected') {
+    const requestedRoute = confirmation.resolution.routes.find(item => item.id === routeVariantId);
+    const preview = (() => {
+      switch (confirmation.error.code) {
+        case 'missing_date':
+          return '当前剧情日期无法识别，请先检查剧情时间。';
+        case 'outside_choice_window':
+          return `现在还不能选择路线。可选择时间：${machine.promptWindow.start} 至 ${machine.promptWindow.end}。`;
+        case 'unknown_route':
+          return '这条路线已经失效，请重新打开企划页。';
+        case 'choice_locked':
+          return '你已经选择了其他路线，不能再次更改。';
+        case 'route_not_eligible':
+          return requestedRoute?.missingFlagIds.length
+            ? `这条路线还不能选择，请先完成：${requestedRoute.missingFlagIds.map(flagId => getV07FlagLabel(flagId, machine)).join('、')}。`
+            : '这条路线的剧情条件还没有全部满足。';
+        default:
+          return '这次路线选择没有成功，请稍后再试。';
+      }
+    })();
     ctx.showNotification({
       kind: 'status',
       title: '路线不能确认',
-      preview: confirmation.error.message,
+      preview,
       targetTab: 'status',
       phoneRoute: 'app:studio',
       timestamp: formatTime(state.statusData.world.currentTime),
@@ -1273,10 +1296,11 @@ function confirmV07RouteChoice(routeVariantId: string) {
     return;
   }
   if (confirmation.status === 'unchanged') {
+    const selectedRoute = confirmation.resolution.routes.find(item => item.id === confirmation.choice);
     ctx.showNotification({
       kind: 'status',
-      title: '路线已经锁定',
-      preview: `当前权威 choice 已是 ${confirmation.choice}。`,
+      title: '路线已经确认',
+      preview: selectedRoute ? `你已经选择了「${getV07RouteLabel(selectedRoute)}」，无需重复确认。` : '你已经选择了这条路线，无需重复确认。',
       targetTab: 'status',
       phoneRoute: 'app:studio',
       timestamp: formatTime(state.statusData.world.currentTime),
@@ -1286,7 +1310,8 @@ function confirmV07RouteChoice(routeVariantId: string) {
 
   const route = confirmation.resolution.routes.find(item => item.id === confirmation.choice);
   if (!route) return;
-  const confirmed = window.confirm(`确认进入「${route.label}」？路线 choice 写入后将保持锁定。`);
+  const routeLabel = getV07RouteLabel(route);
+  const confirmed = window.confirm(`确定选择「${routeLabel}」路线吗？确认后将不能更改。`);
   if (!confirmed) return;
 
   // 专用按钮是唯一生产写入口：先完成纯校验，再提交单一 choice receipt，最后立即持久化存档。
@@ -1295,7 +1320,7 @@ function confirmV07RouteChoice(routeVariantId: string) {
   ctx.showNotification({
     kind: 'status',
     title: '路线已确认',
-    preview: `${route.label} 已写入权威 choice receipt。`,
+    preview: `已选择「${routeLabel}」路线。游戏开发功能现已开放。`,
     targetTab: 'status',
     phoneRoute: 'app:studio',
     timestamp: formatTime(state.statusData.world.currentTime),
@@ -1340,7 +1365,7 @@ function createPhoneGameDevelopmentProject() {
   ctx.showNotification({
     kind: 'status',
     title: '项目已建立',
-    preview: `${next.project.title} 已进入第 1 周规划。`,
+    preview: `${next.project.title} 已建立，现在可以安排第 1 周的工作。`,
     targetTab: 'status',
     phoneRoute: 'app:game-development',
     timestamp: formatTime(state.statusData.world.currentTime),
@@ -1354,8 +1379,8 @@ function submitPhoneGameDevelopmentWeek() {
   if (result.status === 'rejected') {
     ctx.showNotification({
       kind: 'status',
-      title: '本周不能提交',
-      preview: result.reason,
+      title: '本周计划还没排完',
+      preview: '请先为周一到周末都安排一项行动。',
       targetTab: 'status',
       phoneRoute: 'app:game-development',
       timestamp: formatTime(state.statusData.world.currentTime),
@@ -1365,8 +1390,8 @@ function submitPhoneGameDevelopmentWeek() {
   saveGameDevelopmentState(result.state, false);
   ctx.showNotification({
     kind: 'status',
-    title: `第 ${current.week} 周已结算`,
-    preview: `项目完成度 ${result.state.project.progress}%，已进入第 ${result.state.week} 周。`,
+    title: `第 ${current.week} 周已完成`,
+    preview: `项目完成度 ${result.state.project.progress}%，现在开始第 ${result.state.week} 周。`,
     targetTab: 'status',
     phoneRoute: 'app:game-development',
     timestamp: formatTime(state.statusData.world.currentTime),
@@ -2547,8 +2572,105 @@ function bindReaderContextMenuEvents() {
 
 // ── Event binding ──
 
+let suppressPhoneHomeAppClickUntil = 0;
+
+function setPhoneHomePage(nextPage: number) {
+  const viewport = root?.querySelector<HTMLElement>('[data-phone-home-swipe]');
+  if (!viewport) return;
+  const pageCount = Number(viewport?.dataset.phoneHomePageCount ?? 1);
+  const page = clampPhoneHomePageToCount(nextPage, pageCount);
+  const currentPage = clampPhoneHomePageToCount(
+    Number(viewport.dataset.phoneHomeActivePage ?? state.phoneHomePage),
+    pageCount,
+  );
+  if (page === currentPage && page === state.phoneHomePage) return;
+
+  state.phoneHomePage = page;
+  viewport.dataset.phoneHomeActivePage = String(page);
+  viewport.style.setProperty('--phone-home-page', String(page));
+
+  root?.querySelectorAll<HTMLElement>('[data-phone-home-page-panel]').forEach(panel => {
+    const isActive = Number(panel.dataset.phoneHomePagePanel ?? -1) === page;
+    panel.toggleAttribute('inert', !isActive);
+    panel.setAttribute('aria-hidden', String(!isActive));
+  });
+
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="phone-home-page"]').forEach(button => {
+    const isActive = Number(button.dataset.phoneHomePage ?? -1) === page;
+    button.classList.toggle('is-active', isActive);
+    if (isActive) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+}
+
+function bindPhoneHomePaginationEvents() {
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="phone-home-page"]').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      setPhoneHomePage(Number(button.dataset.phoneHomePage ?? 0));
+    });
+  });
+
+  const viewport = root?.querySelector<HTMLElement>('[data-phone-home-swipe]');
+  if (!viewport) return;
+
+  let pointerId: number | null = null;
+  let startX = 0;
+  let startY = 0;
+
+  const resetPointer = () => {
+    if (pointerId !== null && viewport.hasPointerCapture?.(pointerId)) {
+      viewport.releasePointerCapture?.(pointerId);
+    }
+    pointerId = null;
+    startX = 0;
+    startY = 0;
+  };
+
+  viewport.addEventListener('pointerdown', event => {
+    if (!event.isPrimary || event.button !== 0) return;
+    pointerId = event.pointerId;
+    startX = event.clientX;
+    startY = event.clientY;
+  });
+
+  viewport.addEventListener('pointermove', event => {
+    if (pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - startX;
+    const deltaY = event.clientY - startY;
+    const crossedSwipeThreshold = Math.abs(deltaX) >= 36 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25;
+    if (crossedSwipeThreshold && !viewport.hasPointerCapture?.(event.pointerId)) {
+      viewport.setPointerCapture?.(event.pointerId);
+    }
+  });
+
+  viewport.addEventListener('pointerup', event => {
+    if (pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - startX;
+    const deltaY = event.clientY - startY;
+    const isHorizontalSwipe = Math.abs(deltaX) >= 36 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25;
+    resetPointer();
+    if (!isHorizontalSwipe) return;
+    event.preventDefault();
+    suppressPhoneHomeAppClickUntil = performance.now() + 400;
+    setPhoneHomePage(state.phoneHomePage + (deltaX < 0 ? 1 : -1));
+  });
+
+  viewport.addEventListener('pointercancel', resetPointer);
+  viewport.addEventListener(
+    'click',
+    event => {
+      if (performance.now() >= suppressPhoneHomeAppClickUntil) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    },
+    true,
+  );
+}
+
 function bindEvents() {
   bindQuickReplyDelegation();
+  bindPhoneHomePaginationEvents();
 
   root?.querySelectorAll<HTMLButtonElement>('[data-action="select-option"]').forEach(button => {
     button.addEventListener('pointerdown', event => {
@@ -3214,6 +3336,18 @@ function bindEvents() {
   root?.querySelector<HTMLButtonElement>('[data-action="return-to-title"]')?.addEventListener('click', () => {
     returnToTitle();
   });
+  root
+    ?.querySelector<HTMLInputElement>('[data-field="plot-route-review-enabled"]')
+    ?.addEventListener('change', event => {
+      const enabled = (event.target as HTMLInputElement).checked;
+      setPlotRouteReviewEnabled(state.runtimeFlags, enabled);
+      if (!enabled) {
+        clearBackgroundTask(state, 'plot-review');
+        if (state.notification?.title.includes('路线')) state.notification = null;
+      }
+      persistToSave();
+      render();
+    });
   root?.querySelector<HTMLButtonElement>('[data-action="manual-save"]')?.addEventListener('click', async () => {
     await persistManualSave();
     render();
@@ -3801,6 +3935,7 @@ function getDebugGameStateText() {
     phoneOpen: state.phoneOpen,
     phoneRoute: state.phoneRoute,
     phoneRouteHistory: state.phoneRouteHistory,
+    phoneHomePage: state.phoneHomePage,
     phoneTab: state.activeTab,
     generating: state.generating,
     focusedMessageIndex: state.focusedMessageIndex,

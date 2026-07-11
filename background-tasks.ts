@@ -2,6 +2,7 @@ import type { AppState, BackgroundTaskKind } from './types';
 
 const BACKGROUND_TASK_LABELS: Record<BackgroundTaskKind, string> = {
   progress: '变量更新中',
+  'plot-review': '路线事实核对中',
   summary: '总结中',
 };
 

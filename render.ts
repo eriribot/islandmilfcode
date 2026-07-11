@@ -1160,9 +1160,14 @@ function renderBackgroundTaskToast(task: BackgroundTaskState) {
 function renderBackgroundTasks(state: AppState) {
   if (!state.backgroundTasks.length) return '';
   const { style } = getBackgroundTaskStackPlacement(state);
+  const taskOrder: Record<BackgroundTaskState['kind'], number> = {
+    progress: 0,
+    'plot-review': 1,
+    summary: 2,
+  };
   const orderedTasks = [...state.backgroundTasks].sort((a, b) => {
     if (a.kind === b.kind) return b.updatedAt - a.updatedAt;
-    return a.kind === 'progress' ? -1 : 1;
+    return taskOrder[a.kind] - taskOrder[b.kind];
   });
   return `
     <aside class="background-task-stack" style="${style}" data-background-task-stack="true" aria-live="polite">

@@ -404,7 +404,7 @@ export type NotificationState = {
   targetId?: string;
 };
 
-export type BackgroundTaskKind = 'progress' | 'summary';
+export type BackgroundTaskKind = 'progress' | 'plot-review' | 'summary';
 
 export type BackgroundTaskState = {
   kind: BackgroundTaskKind;
@@ -465,6 +465,7 @@ export type AppState = {
   phoneOpen: boolean;
   phoneRoute: PhoneRoute;
   phoneRouteHistory: PhoneRoute[];
+  phoneHomePage: number;
   phoneCharacterId: PhoneCharacterId;
   phoneMessages: PhoneMessageStore;
   floatingPhone: FloatingPhonePosition;

@@ -72,3 +72,20 @@ Original prompt: DESIGN.md 根据这个md文件修复提到的问题
 - `phone/styles.css` now reads those variables so the phone UI scales with actual viewport space instead of fixed avatar/body sizes.
 - Validation: `cmd /c pnpm run build` passed.
 - Note: fullscreen host takeover logic in `plugins/fullscreen.ts` was left as-is after reverting the temporary live2d/waifu experiment.
+
+2026-07-11 phone home pagination and V07 UI verification
+
+- Restored the simulated autosave to `2012-12-07 18:00 / SAE_06-1`; the temporary V07 route choice and game-development state are absent.
+- Added a fixed 3 x 3 phone home grid with a horizontally sliding app track, clickable page dots, swipe navigation, and a stationary Dock.
+- Page changes update only the app track; the phone hero and Dock are not re-rendered for pagination.
+- Reworded the V07 planning and game-development UI in plain Chinese and corrected oversized game-development buttons.
+- Verification: production build passed, phone pagination contracts 12/12, V07 simulation 78/78, host bundle safety passed, targeted ESLint passed. `index.ts` retains only its two pre-existing lint errors.
+- Human gate: replace the Tavern regex replacement body with `dist/islandmilfcode/index.html`, save, re-render, then test the live page on port 8000. Do not run watch.
+
+2026-07-11 phone home fit and tap regression
+
+- Live DOM measurement on the 380 x 680 phone shell found each grid row was about 87.5 px while an app icon block was about 97 px, so the third-row descriptions were clipped.
+- `phone/styles.css` now sizes home icons from `--phone-shell-width`, uses explicit compact line heights, and reduces the home-section gap. The measured icon block is about 81.8 px inside a roughly 91.5 px row.
+- Real Chrome clicks confirmed the application route itself worked only when pointer capture was bypassed. `index.ts` now captures the pointer only after a horizontal gesture crosses the 36 px swipe threshold, preserving normal taps.
+- Verification: build passed; pagination contracts 12/12; V07 routing 78/78; host bundle safety passed with all replacement-character checks at zero.
+- Human gate: re-copy the latest build generated at 2026-07-11 12:19:31 into the Tavern regex, then re-run live tap/swipe/layout checks.

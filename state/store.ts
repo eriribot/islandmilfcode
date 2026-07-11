@@ -750,6 +750,7 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     phoneOpen: false,
     phoneRoute: 'home',
     phoneRouteHistory: [],
+    phoneHomePage: 0,
     phoneCharacterId: 'megumi',
     phoneMessages: createDefaultPhoneMessageStore(),
     floatingPhone,

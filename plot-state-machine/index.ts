@@ -39,8 +39,22 @@ export {
   readActivePlotRouteChoice,
 } from './memory';
 export { buildPlotMachinePromptBlock } from './prompt';
-export { buildPlotFlagProposalPrompts, type PlotFlagProposalPrompt } from './proposal-prompt';
+export {
+  buildPlotEvidenceUnits,
+  buildPlotFlagProposalPrompts,
+  type PlotEvidenceUnit,
+  type PlotFlagProposalPrompt,
+} from './proposal-prompt';
 export { reviewPlotFlagProposal, type PlotFlagReviewContext } from './proposal';
+export { runPlotFlagReviewWithRetry, type PlotFlagReviewRunResult } from './review-runner';
+export {
+  getPlotRouteReviewCancelToken,
+  isPlotRouteReviewEnabled,
+  isPlotRouteReviewRunCancelled,
+  PLOT_ROUTE_REVIEW_CANCEL_TOKEN_RUNTIME_FLAG,
+  PLOT_ROUTE_REVIEW_RUNTIME_FLAG,
+  setPlotRouteReviewEnabled,
+} from './review-settings';
 export { createPlotRouteBasisHash, parsePlotRouteChoiceReceipt, resolvePlotRoutes } from './resolver';
 export { buildPlotRoutingContext, type PlotRoutingContext } from './routing-context';
 export { V07_PLOT_MACHINE } from './v07';
