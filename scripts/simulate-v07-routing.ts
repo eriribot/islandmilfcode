@@ -300,9 +300,18 @@ async function main() {
     blackgold_counterwill: 'yes',
     eriri_high_battlefield_supported: 'yes',
     utaha_author_pride_supported: 'yes',
+    user_knows_counterwill: 'yes',
+    akane_repulsed: 'yes',
+    user_stay_commitment_grounded: 'yes',
+    blackgold_not_staying_confirmed: 'yes',
+    user_stay_position_available: 'yes',
     akane_pressure_seen: 'yes',
+    akane_formal_offer_seen: 'yes',
     akane_route_open: 'yes',
     solo_route_open: 'yes',
+    user_exit_commitment_grounded: 'yes',
+    group_exit_without_tomoya_grounded: 'yes',
+    group_exit_participant_snapshot_ready: 'yes',
   };
   const stayOnly = resolvePlotRoutes(V07_PLOT_MACHINE, {
     megumi_coplanner: 'yes',
@@ -310,34 +319,37 @@ async function main() {
     blackgold_counterwill: 'yes',
     eriri_high_battlefield_supported: 'yes',
     utaha_author_pride_supported: 'yes',
+    user_knows_counterwill: 'yes',
+    akane_repulsed: 'yes',
   });
-  assert(stayOnly.eligibleRouteIds.join(',') === 'stay', '只有留下条件齐全时必须仅 stay 可行');
+  assert(stayOnly.eligibleRouteIds.join(',') === 'stay_blackgold', '黑金留下条件不得自动开放 User 独留');
 
   const akaneOnly = resolvePlotRoutes(V07_PLOT_MACHINE, {
     akane_pressure_seen: 'yes',
+    akane_formal_offer_seen: 'yes',
     akane_route_open: 'yes',
   });
-  assert(akaneOnly.eligibleRouteIds.join(',') === 'akane', '只有朱音条件齐全时必须仅 akane 可行');
+  assert(akaneOnly.eligibleRouteIds.join(',') === 'akane_core', '朱音条件齐全时必须仅开放核心变体');
 
-  const soloOnly = resolvePlotRoutes(V07_PLOT_MACHINE, { solo_route_open: 'yes' });
-  assert(soloOnly.eligibleRouteIds.join(',') === 'solo', '只有单飞条件齐全时必须仅 solo 可行');
+  const soloOnly = resolvePlotRoutes(V07_PLOT_MACHINE, {
+    solo_route_open: 'yes',
+    user_exit_commitment_grounded: 'yes',
+  });
+  assert(soloOnly.eligibleRouteIds.join(',') === 'solo_user_exit', 'User 单飞不得自动开放集体单飞');
 
   const allRoutes = resolvePlotRoutes(V07_PLOT_MACHINE, allRouteValues as PlotFlagValueMap);
-  assert(allRoutes.eligibleRouteIds.join(',') === 'stay,akane,solo', '三条 eligibility 必须能同时成立');
-  assert(allRoutes.choice === null, '没有玩家 choice 时 resolver 不得自动选择');
-  const chosenAkane = resolvePlotRoutes(V07_PLOT_MACHINE, allRouteValues, 'akane');
-  assert(chosenAkane.choice === 'akane', '合法玩家 choice 应被读取');
-  const invalidChoice = resolvePlotRoutes(V07_PLOT_MACHINE, { solo_route_open: 'yes' }, 'stay');
   assert(
-    invalidChoice.choice === null && invalidChoice.rejectedChoice === 'stay',
-    '不满足 eligibility 的 choice 必须按未确认处理',
+    allRoutes.eligibleRouteIds.join(',') ===
+      'stay_blackgold,stay_user_only,akane_core,solo_user_exit,solo_group_exit_except_tomoya',
+    '三 family 的五个 variant eligibility 必须能同时成立',
   );
+  assert(allRoutes.choice === null, '没有玩家 choice 时 resolver 不得自动选择');
 
   const aiChoice = confirmPlotRouteChoice({
     machine: V07_PLOT_MACHINE,
     currentTime: '2013-03-04',
     flagValues: allRouteValues,
-    routeId: 'stay',
+    routeId: 'stay_blackgold',
     source: 'ai',
   });
   assert(aiChoice.status === 'rejected' && aiChoice.error.code === 'not_manual', 'AI choice 不能进入确认提交');
@@ -346,7 +358,7 @@ async function main() {
     machine: V07_PLOT_MACHINE,
     currentTime: '2013-03-03',
     flagValues: allRouteValues,
-    routeId: 'stay',
+    routeId: 'stay_blackgold',
     source: 'manual',
   });
   assert(
@@ -357,8 +369,8 @@ async function main() {
   const ineligibleChoice = confirmPlotRouteChoice({
     machine: V07_PLOT_MACHINE,
     currentTime: '2013-03-04',
-    flagValues: { solo_route_open: 'yes' },
-    routeId: 'stay',
+    flagValues: { solo_route_open: 'yes', user_exit_commitment_grounded: 'yes' },
+    routeId: 'stay_blackgold',
     source: 'manual',
   });
   assert(
@@ -370,25 +382,31 @@ async function main() {
     machine: V07_PLOT_MACHINE,
     currentTime: '2013-03-04',
     flagValues: allRouteValues,
-    routeId: 'stay',
+    routeId: 'stay_blackgold',
     source: 'manual',
   });
-  assert(acceptedChoice.status === 'accepted' && acceptedChoice.choice === 'stay', '玩家应能确认当前可行路线');
+  assert(
+    acceptedChoice.status === 'accepted' && acceptedChoice.choice === 'stay_blackgold',
+    '玩家应能确认当前可行 variant',
+  );
   assert(
     acceptedChoice.status === 'accepted' &&
       acceptedChoice.commit.targetId === 'route:v07' &&
       acceptedChoice.commit.key === 'plotRoute.v07.choice' &&
-      acceptedChoice.commit.valueType === 'string' &&
-      acceptedChoice.commit.source === 'manual',
-    'choice commit 必须符合 attributes 存储契约',
+      acceptedChoice.commit.valueType === 'json' &&
+      acceptedChoice.commit.receipt.familyId === 'stay' &&
+      acceptedChoice.commit.receipt.variantId === 'stay_blackgold' &&
+      acceptedChoice.commit.receipt.basisHash.startsWith('fnv1a-'),
+    'choice commit 必须保存 family/variant/basis receipt',
   );
+  if (acceptedChoice.status !== 'accepted') throw new Error('acceptedChoice 类型收窄失败');
 
   const unchangedChoice = confirmPlotRouteChoice({
     machine: V07_PLOT_MACHINE,
     currentTime: '2013-03-31',
     flagValues: allRouteValues,
-    storedChoice: 'stay',
-    routeId: 'stay',
+    storedChoice: acceptedChoice.commit.receipt,
+    routeId: 'stay_blackgold',
     source: 'manual',
   });
   assert(unchangedChoice.status === 'unchanged' && unchangedChoice.commit === null, '重复确认同一路线必须是 no-op');
@@ -397,26 +415,31 @@ async function main() {
     machine: V07_PLOT_MACHINE,
     currentTime: '2013-03-31',
     flagValues: allRouteValues,
-    storedChoice: 'stay',
-    routeId: 'akane',
+    storedChoice: acceptedChoice.commit.receipt,
+    routeId: 'akane_core',
     source: 'manual',
   });
   assert(
-    lockedChoice.status === 'rejected' && lockedChoice.error.code === 'choice_locked' && lockedChoice.choice === 'stay',
+    lockedChoice.status === 'rejected' &&
+      lockedChoice.error.code === 'choice_locked' &&
+      lockedChoice.choice === 'stay_blackgold',
     '已有不同 choice 时必须拒绝覆盖',
   );
 
   const replaceInvalidStoredChoice = confirmPlotRouteChoice({
     machine: V07_PLOT_MACHINE,
     currentTime: '2013-03-31',
-    flagValues: { solo_route_open: 'yes' },
-    storedChoice: 'stay',
-    routeId: 'solo',
+    flagValues: { solo_route_open: 'yes', user_exit_commitment_grounded: 'yes' },
+    storedChoice: acceptedChoice.commit.receipt,
+    routeId: 'solo_user_exit',
     source: 'manual',
   });
   assert(
-    replaceInvalidStoredChoice.status === 'accepted' && replaceInvalidStoredChoice.choice === 'solo',
-    '不再可行的旧 choice 必须按未确认处理',
+    replaceInvalidStoredChoice.status === 'rejected' &&
+      replaceInvalidStoredChoice.error.code === 'choice_locked' &&
+      replaceInvalidStoredChoice.choice === 'stay_blackgold' &&
+      replaceInvalidStoredChoice.resolution.choiceState === 'needs_review',
+    '旧 choice 依据失效后必须保持锁定并进入 needs_review',
   );
 
   traces.push({
@@ -442,7 +465,15 @@ async function main() {
     choice: lockedChoice.choice,
   });
 
-  const choiceAfterWindow = resolvePlotRoutes(V07_PLOT_MACHINE, allRouteValues, 'solo');
+  const soloChoice = confirmPlotRouteChoice({
+    machine: V07_PLOT_MACHINE,
+    currentTime: '2013-03-31',
+    flagValues: allRouteValues,
+    routeId: 'solo_user_exit',
+    source: 'manual',
+  });
+  if (soloChoice.status !== 'accepted') throw new Error('solo choice 应当可确认');
+  const choiceAfterWindow = resolvePlotRoutes(V07_PLOT_MACHINE, allRouteValues, soloChoice.commit.receipt);
   traces.push({
     case: 'choice-persists-prompt-off',
     date: '2013-04-01',
@@ -459,7 +490,7 @@ async function main() {
     eligible: choiceAfterWindow.eligibleRouteIds,
     choice: choiceAfterWindow.choice,
   });
-  assert(choiceAfterWindow.choice === 'solo', '窗口结束后 choice 仍应可由代码读取');
+  assert(choiceAfterWindow.choice === 'solo_user_exit', '窗口结束后 choice receipt 仍应可由代码读取');
 
   if (process.argv.includes('--json')) {
     console.log(JSON.stringify({ assertionCount, traces }, null, 2));

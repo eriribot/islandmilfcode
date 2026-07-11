@@ -1541,6 +1541,408 @@
   line-height: 1.42;
 }
 
+.phone-studio-route-planning {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--studio-line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.phone-studio-route-planning__head,
+.phone-studio-family > header,
+.phone-studio-variant > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.phone-studio-route-planning__head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.phone-studio-route-planning__head span,
+.phone-studio-route-planning__head small,
+.phone-studio-variant small,
+.phone-studio-route-note {
+  color: var(--studio-soft);
+  font-size: 10px;
+}
+
+.phone-studio-route-planning__head strong,
+.phone-studio-family strong,
+.phone-studio-variant strong {
+  color: var(--studio-ink);
+  font-family: var(--studio-font);
+}
+
+.phone-studio-route-warning {
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  color: #7f332d;
+  background: rgba(250, 226, 220, 0.7);
+  font-size: 11px;
+}
+
+.phone-studio-family-list,
+.phone-studio-variant-list {
+  display: grid;
+  gap: 8px;
+}
+
+.phone-studio-family {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.phone-studio-family.is-chosen,
+.phone-studio-variant.is-chosen {
+  border-color: rgba(47, 128, 97, 0.55);
+  background: rgba(221, 246, 237, 0.38);
+}
+
+.phone-studio-family__progress {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(91, 103, 106, 0.2);
+}
+
+.phone-studio-family__progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #528b91, #c28a58);
+}
+
+.phone-studio-variant {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.phone-studio-variant p,
+.phone-studio-route-note {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.phone-studio-variant p {
+  color: var(--studio-soft);
+  font-size: 10.5px;
+}
+
+.phone-studio-variant button {
+  min-height: 32px;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  background: #486b6e;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.phone-studio-variant button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* 游戏开发：真实 phone 页面，状态来自 memoryDB，不复用本地 preview DOM。 */
+.phone-game-development-scroll {
+  display: grid;
+  gap: 10px;
+  padding: 10px 8px 16px;
+  color: #27343a;
+}
+
+.phone-game-lock,
+.phone-game-hero,
+.phone-game-project-form,
+.phone-game-metrics,
+.phone-game-week,
+.phone-game-slot-editor,
+.phone-game-summary,
+.phone-game-last-submission {
+  border: 1px solid rgba(72, 107, 110, 0.22);
+  border-radius: 9px;
+  background: rgba(252, 249, 241, 0.88);
+  box-shadow: 0 6px 18px rgba(30, 45, 50, 0.08);
+}
+
+.phone-game-lock {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 28px 18px;
+  text-align: center;
+}
+
+.phone-game-lock > span {
+  font-size: 42px;
+}
+
+.phone-game-lock p,
+.phone-game-hero p {
+  margin: 0;
+  color: #657279;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.phone-game-lock button,
+.phone-game-project-form button,
+.phone-game-summary button {
+  min-height: 36px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 14px;
+  color: #fff;
+  background: #486b6e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.phone-game-hero {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  background:
+    linear-gradient(135deg, rgba(72, 107, 110, 0.14), rgba(194, 138, 88, 0.13)),
+    rgba(252, 249, 241, 0.92);
+}
+
+.phone-game-hero > span,
+.phone-game-slot-editor header span,
+.phone-game-week header span {
+  color: #84643f;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.phone-game-hero > strong {
+  font-size: 20px;
+}
+
+.phone-game-hero > div {
+  display: flex;
+  gap: 6px;
+}
+
+.phone-game-hero em {
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: #486b6e;
+  background: rgba(72, 107, 110, 0.1);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.phone-game-project-form,
+.phone-game-slot-editor {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+}
+
+.phone-game-project-form label,
+.phone-game-slot-editor label {
+  display: grid;
+  gap: 4px;
+  color: #657279;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.phone-game-project-form input,
+.phone-game-slot-editor select,
+.phone-game-slot-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(72, 107, 110, 0.22);
+  border-radius: 6px;
+  padding: 8px;
+  color: #27343a;
+  background: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 11px;
+}
+
+.phone-game-slot-editor textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
+.phone-game-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+}
+
+.phone-game-metrics > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.38);
+}
+
+.phone-game-metrics span {
+  color: #657279;
+  font-size: 10px;
+}
+
+.phone-game-metrics strong {
+  font-size: 11px;
+}
+
+.phone-game-metrics i {
+  grid-column: 1 / -1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgba(72, 107, 110, 0.14);
+}
+
+.phone-game-metrics b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #528b91, #c28a58);
+}
+
+.phone-game-week {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.phone-game-week > header,
+.phone-game-slot-editor > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.phone-game-days {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.phone-game-days button,
+.phone-game-actions button {
+  min-width: 0;
+  border: 1px solid rgba(72, 107, 110, 0.2);
+  border-radius: 6px;
+  padding: 7px;
+  color: #27343a;
+  background: rgba(255, 255, 255, 0.52);
+  font: inherit;
+  text-align: left;
+}
+
+.phone-game-days button {
+  display: grid;
+  gap: 3px;
+  text-align: center;
+}
+
+.phone-game-days button.is-selected,
+.phone-game-actions button.is-selected {
+  border-color: rgba(72, 107, 110, 0.72);
+  background: rgba(72, 107, 110, 0.14);
+}
+
+.phone-game-days button.is-planned small {
+  color: #2f8061;
+}
+
+.phone-game-days small,
+.phone-game-actions small {
+  overflow: hidden;
+  color: #657279;
+  font-size: 9px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+}
+
+.phone-game-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.phone-game-actions button {
+  display: grid;
+  gap: 4px;
+}
+
+.phone-game-summary {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  padding: 8px;
+}
+
+.phone-game-summary > div {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid rgba(72, 107, 110, 0.1);
+  color: #8b969b;
+  font-size: 10px;
+}
+
+.phone-game-summary > div.is-planned {
+  color: #27343a;
+}
+
+.phone-game-summary button {
+  margin-top: 8px;
+}
+
+.phone-game-summary button:disabled {
+  opacity: 0.46;
+}
+
+.phone-game-last-submission {
+  padding: 10px;
+}
+
+.phone-game-last-submission summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.phone-game-last-submission pre {
+  overflow: auto;
+  max-height: 180px;
+  margin: 8px 0 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(39, 52, 58, 0.06);
+  font-size: 9px;
+  white-space: pre-wrap;
+}
+
 .memory-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

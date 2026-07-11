@@ -9,6 +9,7 @@ export type PhoneRoute =
   | 'app:inventory'
   | 'app:memory'
   | 'app:studio'
+  | 'app:game-development'
   | 'app:music'
   | 'app:drawing'
   | 'app:deepseek-web'

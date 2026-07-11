@@ -54,6 +54,24 @@ import {
 } from './phone/render';
 import { updateSummaryTextInMemoryDB } from './memorydatabase/commit-points';
 import {
+  commitGameDevelopmentState,
+  createGameDevelopmentProject,
+  readGameDevelopmentState,
+  selectGameDevelopmentAction,
+  selectGameDevelopmentDay,
+  submitGameDevelopmentWeek,
+  updateGameDevelopmentSlot,
+  type GameDevelopmentActionId,
+  type GameDevelopmentDayId,
+  type GameDevelopmentState,
+} from './game-development';
+import {
+  buildPlotRoutingContext,
+  commitPlotRouteChoice,
+  confirmPlotRouteChoice,
+  getPlotMachine,
+} from './plot-state-machine';
+import {
   clearActiveSaveId,
   createManualSave,
   createSave,
@@ -1228,6 +1246,131 @@ function navigatePhone(route: PhoneRoute) {
     return;
   }
   navigatePhoneRoute(state, route, ctx);
+}
+
+function confirmV07RouteChoice(routeVariantId: string) {
+  const machine = getPlotMachine('v07');
+  if (!machine) return;
+  const routingContext = buildPlotRoutingContext(state.statusData, state.memoryDB);
+  const confirmation = confirmPlotRouteChoice({
+    machine,
+    currentTime: routingContext.evaluationTime,
+    flagValues: routingContext.v07.flagValues,
+    storedChoice: routingContext.v07.resolution.choiceReceipt,
+    routeId: routeVariantId,
+    source: 'manual',
+  });
+
+  if (confirmation.status === 'rejected') {
+    ctx.showNotification({
+      kind: 'status',
+      title: '路线不能确认',
+      preview: confirmation.error.message,
+      targetTab: 'status',
+      phoneRoute: 'app:studio',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+    return;
+  }
+  if (confirmation.status === 'unchanged') {
+    ctx.showNotification({
+      kind: 'status',
+      title: '路线已经锁定',
+      preview: `当前权威 choice 已是 ${confirmation.choice}。`,
+      targetTab: 'status',
+      phoneRoute: 'app:studio',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+    return;
+  }
+
+  const route = confirmation.resolution.routes.find(item => item.id === confirmation.choice);
+  if (!route) return;
+  const confirmed = window.confirm(`确认进入「${route.label}」？路线 choice 写入后将保持锁定。`);
+  if (!confirmed) return;
+
+  // 专用按钮是唯一生产写入口：先完成纯校验，再提交单一 choice receipt，最后立即持久化存档。
+  commitPlotRouteChoice(state.memoryDB, confirmation.commit);
+  ctx.persistConversation();
+  ctx.showNotification({
+    kind: 'status',
+    title: '路线已确认',
+    preview: `${route.label} 已写入权威 choice receipt。`,
+    targetTab: 'status',
+    phoneRoute: 'app:studio',
+    timestamp: formatTime(state.statusData.world.currentTime),
+  });
+}
+
+function getActiveGameDevelopmentState(): GameDevelopmentState | null {
+  const routingContext = buildPlotRoutingContext(state.statusData, state.memoryDB);
+  if (routingContext.v07.resolution.choiceState !== 'chosen') return null;
+  const receipt = routingContext.v07.resolution.choiceReceipt;
+  return receipt ? readGameDevelopmentState(state.memoryDB, receipt) : null;
+}
+
+function saveGameDevelopmentState(next: GameDevelopmentState, shouldRender = true) {
+  commitGameDevelopmentState(state.memoryDB, next);
+  ctx.persistConversation();
+  if (shouldRender) render();
+}
+
+function createPhoneGameDevelopmentProject() {
+  const current = getActiveGameDevelopmentState();
+  if (!current || current.project.created) return;
+  const value = (field: string) => root?.querySelector<HTMLInputElement>(`[data-field="${field}"]`)?.value ?? '';
+  const next = createGameDevelopmentProject(current, {
+    title: value('game-project-title'),
+    genre: value('game-project-genre'),
+    theme: value('game-project-theme'),
+    platform: value('game-project-platform'),
+  });
+  if (!next.project.created) {
+    ctx.showNotification({
+      kind: 'status',
+      title: '项目尚未建立',
+      preview: '请先填写游戏名。',
+      targetTab: 'status',
+      phoneRoute: 'app:game-development',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+    return;
+  }
+  saveGameDevelopmentState(next, false);
+  ctx.showNotification({
+    kind: 'status',
+    title: '项目已建立',
+    preview: `${next.project.title} 已进入第 1 周规划。`,
+    targetTab: 'status',
+    phoneRoute: 'app:game-development',
+    timestamp: formatTime(state.statusData.world.currentTime),
+  });
+}
+
+function submitPhoneGameDevelopmentWeek() {
+  const current = getActiveGameDevelopmentState();
+  if (!current) return;
+  const result = submitGameDevelopmentWeek(current, state.statusData.world.currentTime || new Date().toISOString());
+  if (result.status === 'rejected') {
+    ctx.showNotification({
+      kind: 'status',
+      title: '本周不能提交',
+      preview: result.reason,
+      targetTab: 'status',
+      phoneRoute: 'app:game-development',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+    return;
+  }
+  saveGameDevelopmentState(result.state, false);
+  ctx.showNotification({
+    kind: 'status',
+    title: `第 ${current.week} 周已结算`,
+    preview: `项目完成度 ${result.state.project.progress}%，已进入第 ${result.state.week} 周。`,
+    targetTab: 'status',
+    phoneRoute: 'app:game-development',
+    timestamp: formatTime(state.statusData.world.currentTime),
+  });
 }
 
 function navigatePhoneBack() {
@@ -2447,6 +2590,49 @@ function bindEvents() {
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-phone-route]').forEach(button => {
     button.addEventListener('click', () => navigatePhone(button.dataset.phoneRoute as PhoneRoute));
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="confirm-v07-route"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const routeVariantId = button.dataset.routeVariant;
+      if (routeVariantId) confirmV07RouteChoice(routeVariantId);
+    });
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="game-create-project"]')?.addEventListener('click', () => {
+    createPhoneGameDevelopmentProject();
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="game-select-day"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const current = getActiveGameDevelopmentState();
+      const dayId = button.dataset.gameDay as GameDevelopmentDayId | undefined;
+      if (current && dayId) saveGameDevelopmentState(selectGameDevelopmentDay(current, dayId));
+    });
+  });
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="game-select-action"]').forEach(button => {
+    button.addEventListener('click', () => {
+      const current = getActiveGameDevelopmentState();
+      const dayId = button.dataset.gameDay as GameDevelopmentDayId | undefined;
+      const actionId = button.dataset.gameAction as GameDevelopmentActionId | undefined;
+      if (current && dayId && actionId) {
+        saveGameDevelopmentState(selectGameDevelopmentAction(current, dayId, actionId));
+      }
+    });
+  });
+  root?.querySelector<HTMLSelectElement>('[data-field="game-slot-target"]')?.addEventListener('change', event => {
+    const current = getActiveGameDevelopmentState();
+    const select = event.target as HTMLSelectElement;
+    const dayId = select.dataset.gameDay as GameDevelopmentDayId | undefined;
+    if (current && dayId) saveGameDevelopmentState(updateGameDevelopmentSlot(current, dayId, { targetId: select.value }));
+  });
+  root?.querySelector<HTMLTextAreaElement>('[data-field="game-slot-intent"]')?.addEventListener('change', event => {
+    const current = getActiveGameDevelopmentState();
+    const textarea = event.target as HTMLTextAreaElement;
+    const dayId = textarea.dataset.gameDay as GameDevelopmentDayId | undefined;
+    if (current && dayId) {
+      saveGameDevelopmentState(updateGameDevelopmentSlot(current, dayId, { intent: textarea.value }));
+    }
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="game-submit-week"]')?.addEventListener('click', () => {
+    submitPhoneGameDevelopmentWeek();
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="switch-phone-character"]').forEach(button => {
     button.addEventListener('click', () => {

@@ -953,18 +953,119 @@ D:\card\tavern_helper_template-main\tavern_helper_template-main\src\islandmilfco
 
 ## 22. 5.6 sol 接手入口
 
-本轮新增的可执行产品规则和酒馆同层手工仿真，集中记录在：
+最新精简路线模型、未完成项、新发现问题和开发难度排序集中记录在：
 
 `docs/v07-game-development-difficulty-and-tavern-simulation-handoff-v0.1.md`
 
-接手时优先确认以下七项：
+本节修正此前“只讨论单飞/朱音”的不完整口径。V07 保持三个 route family，但包含五个 route variant：
 
-1. `concept` 只在没有项目名时开放；项目建立后永久从周计划行动池移除。
-2. 路线判断先于开发 session，choice 由玩家手动确认并锁定。
-3. 每周固定五个工作日开发 slot 和一个周末 `rest_date` slot。
-4. 六个 slot 未填满时不能提交本周正文。
-5. 周计划以 Markdown 形式存在于酒馆同层，不创建隐藏楼层、不写代码。
-6. AI 只按冻结行动写正文，不自行结算 progress、quality、fatigue、budget 或 bond。
-7. 先完成单飞线和朱音线各一份同层仿真记录，再申请下一轮代码范围。
+1. `stay_blackgold`：黑金留下。
+2. `stay_user_only`：User 一个人留下。
+3. `akane_core`：进入朱音高压创作环境。
+4. `solo_user_exit`：User 自己跑路。
+5. `solo_group_exit_except_tomoya`：除伦也外其他相关创作者都跑路。
+
+5.6 sol 评审发现：生产 choice 链不存在、本地周计划可绕过 choice、证据校验不验证语义、失效 choice 可被静默替换、`SAE_07-8` 可绕过日期上界。以上问题未解决前，不得宣称路线触发稳定。
+
+最先开发的范围固定为：`routeFamily + routeVariant` 纯领域模型、五变体 resolver 和反口胡合同测试。不要继续先扩 UI。
 
 本文件和新增交接文件都只是设计/仿真材料；当前仍不能宣称生产路线、项目状态或酒馆接通已经完成。
+
+## 23. 手机企划页三线进度条评审
+
+架构结论不是在旧版“三个路线 ID”和新版“family + variant”之间二选一，而是分层使用：领域层采用新版 `routeFamily + routeVariant`，以免“留下”和“单飞”内部不同结局被错误合并；手机企划页首屏则只显示留下、朱音、单飞三条进度，保持玩家可读性。展开某一条后才能查看该 family 下各 variant 的缺失条件和证据。
+
+三条进度条表示“当前证据离路线可选条件还有多远”，不表示剧情概率、好感度，也不代表已经进入该路线。family 的显示进度可取其各 variant 中的最高完成度，但权威状态必须保留每个 variant 的 `satisfiedCount / requiredCount`，不能只保存一个百分比。
+
+玩家在开放窗口前解决条件时，状态进入 `prequalified`：进度可以显示 100%，同时标记“等待抉择窗口”。它不会自动写入 choice、不会启动路线 session，也不会把路线提示词注入正文。窗口开放时 resolver 必须用当时的 active facts 重新校验；提前证据若已失效或被后续剧情否定，则转为 `needs_review`，不得静默换线。
+
+当前 `phone/render.ts` 的企划页直接读取原始 plot flags，并在页面内部重复日期与事件前缀判断。正式接入三线进度条时，页面必须改为只消费统一的 `RoutePlanningViewModel`；资格、窗口、变体聚合和失效判定均由同一个 resolver 产出，避免手机显示可进入、正文却判定不可进入的双重真相。
+
+实现顺序仍然是：先完成五变体 resolver、严格事实写入和 choice receipt，再接手机进度条；手机页完成后，才接路线 session 与六行动周计划。进度条设计已确认可行，但不能倒过来作为路线判定器。
+
+## 24. 2026-07-11 “进入三条线”代码交接
+
+本轮获得了新的代码实施授权，范围只有三条路线 family 的生产进入入口。此前章节中“禁止修改代码”“生产 choice 链不存在”和“手机页尚未接统一 resolver”是实施前状态；本节记录实施后的差量，但不把后续 route session 或游戏开发玩法标成完成。
+
+### 当前完成边界
+
+- `[已实现]` 领域 choice 从旧 `stay/akane/solo` 单字符串升级为三 family / 五 variant。
+- `[已实现]` 手机企划页按“留下 / 朱音 / 单飞”显示 family 进度，并在 family 内显示稳定 variant、缺项和专用确认按钮。
+- `[已实现]` 专用按钮调用确定性 guard，生成带 `familyId`、`variantId`、`confirmedAt`、`basisFlagIds` 和 `basisHash` 的 receipt。
+- `[已实现]` receipt 写入 `memoryDB.attributes` 的 `plotRoute.v07.choice`，随后调用现有 `ctx.persistConversation()` 进入存档。
+- `[已实现]` 新增只读 `plot-state-machine/routing-context.ts`，从同一 memoryDB 权威值组合 flags、choice 和 resolver 结果。
+- `[已实现]` choice basis 失效后仍保持锁定并进入 `needs_review`，不会自动接受另一条线。
+- `[未实现]` 没有已批准的 route session 日期和事件，因此 `PlotRoutingContext` 尚未驱动 `syncMainEvents()` 进入开发玩法。
+
+### 代码定位
+
+详细逐文件清单见同层文档 `docs/v07-game-development-difficulty-and-tavern-simulation-handoff-v0.1.md` 第 16 节。核心入口如下：
+
+```text
+phone/render.ts
+  data-action="confirm-v07-route"
+      -> index.ts / confirmV07RouteChoice()
+      -> plot-state-machine/choice.ts / confirmPlotRouteChoice()
+      -> plot-state-machine/memory.ts / commitPlotRouteChoice()
+      -> memoryDB + ctx.persistConversation()
+
+plot-state-machine/routing-context.ts
+  buildPlotRoutingContext()
+      -> readActivePlotFlagSnapshots()
+      -> readActivePlotRouteChoice()
+      -> resolvePlotRoutes()
+```
+
+### 后续接手注意
+
+下一步若要让 choice 真正激活单飞/朱音/留下的游戏开发 session，必须先由人确认各 variant 的下游事件 ID 与开始/结束日期，再让 `plot-routing.ts` 和 `syncMainEvents()` 消费 `PlotRoutingContext`。不得用 `SAE_07-GAME-DEVELOP`、事件前缀或 route 名猜一个 session，也不得从 family 自动推导固定员工。
+
+本轮只执行了 UTF-8 `rg` 核对和 `git diff --check`。按用户要求没有运行 build、安全脚本或真实 SillyTavern 验证；因此状态是“choice 进入代码已落项目”，不是“完整三线路线 session 已验收”。
+
+## 25. 2026-07-11 phone 游戏开发生产页面交接
+
+本轮继续获得“把游戏开发画面实装到 phone”的授权。实现没有复制 `gamedevelop-preview` 的 DOM 或独立路线开关，而是新建生产领域模块，并让 phone 页面从第 24 节的 choice receipt 派生路线。
+
+### 架构结果
+
+```text
+PlotRoutingContext.v07.resolution
+    -> choiceState === chosen
+    -> readGameDevelopmentState(memoryDB, choiceReceipt)
+    -> phone/render.ts 只读渲染
+    -> index.ts 收集专用控件 action
+    -> game-development 纯状态函数
+    -> commitGameDevelopmentState(memoryDB)
+    -> ctx.persistConversation()
+```
+
+新边界如下：
+
+- `game-development/index.ts` 负责项目、六日计划、行动合法性、确定性指标结算和序列化；不写 DOM，不修改路线事实和 choice。
+- `phone/render.ts` 负责实际 phone 画面；不自行切换 route，不直接计算路线 eligibility。
+- `index.ts` 只负责编排 DOM 事件、提交状态和现有存档持久化。
+- `plot-state-machine` 仍是 route family/variant 与 choice 的唯一权威。
+
+### 玩家可见完成项
+
+- phone 首页出现“开发”应用和当前周/完成度摘要。
+- 未选路线或 `needs_review` 时显示锁定态及企划页入口。
+- 路线确认后可建立项目，填写游戏名、类型、主题和平台。
+- 项目建立后显示项目阶段、剩余周数、预算，以及完成度、趣味、创意、剧本、美术、程序、完成感、期待度、Bug、疲劳十项指标。
+- 周计划固定五个工作日加一个周末；每格可选行动、当前存档角色作为合作/休整对象，并填写本日意图。
+- family/variant 专属行动由领域层过滤，提交时再次验证。
+- 六格排满后可确定性结算，保存冻结上下文并进入下一周。
+
+### 文件清单
+
+- 新增：`game-development/index.ts`。
+- 修改：`phone/types.ts`、`phone/render.ts`、`phone/styles.css`、`index.ts`。
+- 详细字段、行为和核对状态见 `docs/v07-game-development-difficulty-and-tavern-simulation-handoff-v0.1.md` 第 17 节。
+
+### 接通声明边界
+
+本轮可以声明“游戏开发画面、交互状态和存档链已进入实际 phone 项目”，不能声明“游戏开发正文 AI 或路线 session 已接通”。`[GAME_DEVELOPMENT_WEEK]` 目前只作为冻结审计上下文保存，没有进入主 prompt；session 日期、Reader 回滚账本、actionInstanceId 幂等和宿主 E2E 仍待后续。
+
+### 编码检查
+
+对 Unicode replacement character（`U+FFFD`）的固定字符串检索为零命中；所有相关改动文件均通过严格 UTF-8 解码。上一轮命令输出中的该符号属于搜索模式显示，不是源码乱码。按用户要求没有执行 webpack/build。

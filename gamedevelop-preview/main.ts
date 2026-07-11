@@ -3,7 +3,13 @@ import { confirmPlotRouteChoice } from '../plot-state-machine/choice';
 import { buildPlotFlagProposalPrompts } from '../plot-state-machine/proposal-prompt';
 import { reviewPlotFlagProposal } from '../plot-state-machine/proposal';
 import { resolvePlotRoutes } from '../plot-state-machine/resolver';
-import type { PlotFlagDelta, PlotFlagReviewResult, PlotFlagValue, PlotRouteId } from '../plot-state-machine/types';
+import type {
+  PlotFlagDelta,
+  PlotFlagReviewResult,
+  PlotFlagValue,
+  PlotRouteChoiceReceipt,
+  PlotRouteId,
+} from '../plot-state-machine/types';
 import { V07_PLOT_MACHINE } from '../plot-state-machine/v07';
 import { LAB_SCENARIOS, type LabScenario } from './scenarios';
 
@@ -120,7 +126,7 @@ type GameState = {
   evidence: Record<string, string | undefined>;
   reviewQueue: ReviewCandidate[];
   lastTriggerChain: string[];
-  localChoice: PlotRouteId | null;
+  localChoice: PlotRouteChoiceReceipt | null;
   weeklyPlan: WeeklyPlan;
   lab: LabState;
 };
@@ -1053,8 +1059,8 @@ function confirmLocalRoute(routeId: PlotRouteId, skipDialog = false): boolean {
 
   const route = confirmation.resolution.routes.find(item => item.id === routeId);
   if (!route) return false;
-  if (!skipDialog && !window.confirm(`仅在本地预览中确认「${route.label}」路线？正式 choice 尚未接通。`)) return false;
-  state.localChoice = confirmation.commit.value;
+  if (!skipDialog && !window.confirm(`仅在本地预览中确认「${route.label}」路线？此操作不写生产 memoryDB。`)) return false;
+  state.localChoice = confirmation.commit.receipt;
   state.lastTriggerChain = [
     `local route click: ${routeId}`,
     'confirmPlotRouteChoice(): verify manual source, date, eligibility, and lock',

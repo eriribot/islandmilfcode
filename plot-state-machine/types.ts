@@ -4,7 +4,17 @@ export type PlotMachineId = 'v07';
 
 export type PlotFlagValue = 'yes' | 'no';
 
-export type PlotRouteId = 'stay' | 'akane' | 'solo';
+export type PlotRouteFamilyId = 'stay' | 'akane' | 'solo';
+
+export type PlotRouteVariantId =
+  | 'stay_blackgold'
+  | 'stay_user_only'
+  | 'akane_core'
+  | 'solo_user_exit'
+  | 'solo_group_exit_except_tomoya';
+
+/** 兼容旧调用方的类型名；权威 choice 已从 family 升级为具体 variant。 */
+export type PlotRouteId = PlotRouteVariantId;
 
 export type PlotDateWindow = {
   start: string;
@@ -21,7 +31,8 @@ export type PlotFlagDefinition = {
 };
 
 export type PlotRouteDefinition = {
-  id: PlotRouteId;
+  id: PlotRouteVariantId;
+  familyId: PlotRouteFamilyId;
   label: string;
   requiredFlagIds: readonly string[];
 };
@@ -105,26 +116,43 @@ export type PlotFlagReviewResult =
     };
 
 export type PlotRouteEligibility = {
-  id: PlotRouteId;
+  id: PlotRouteVariantId;
+  familyId: PlotRouteFamilyId;
   label: string;
   eligible: boolean;
+  satisfiedFlagIds: string[];
   missingFlagIds: string[];
+};
+
+export type PlotRouteChoiceReceipt = {
+  schemaVersion: 1;
+  machineId: PlotMachineId;
+  familyId: PlotRouteFamilyId;
+  variantId: PlotRouteVariantId;
+  confirmedAt: string;
+  source: 'manual';
+  basisHash: string;
+  basisFlagIds: string[];
 };
 
 export type PlotRouteResolution = {
   machineId: PlotMachineId;
   routes: PlotRouteEligibility[];
-  eligibleRouteIds: PlotRouteId[];
-  choice: PlotRouteId | null;
+  eligibleRouteIds: PlotRouteVariantId[];
+  choice: PlotRouteVariantId | null;
+  choiceReceipt: PlotRouteChoiceReceipt | null;
+  choiceState: 'unchosen' | 'chosen' | 'needs_review';
+  needsReviewReason: string | null;
   rejectedChoice: string | null;
 };
 
 export type PlotRouteChoiceCommit = {
   targetId: string;
   key: `plotRoute.${string}.choice`;
-  value: PlotRouteId;
-  valueType: 'string';
+  value: string;
+  valueType: 'json';
   source: 'manual';
+  receipt: PlotRouteChoiceReceipt;
 };
 
 export type PlotRouteChoiceConfirmationErrorCode =
@@ -139,21 +167,21 @@ export type PlotRouteChoiceConfirmationResult =
   | {
       status: 'accepted';
       changed: true;
-      choice: PlotRouteId;
+      choice: PlotRouteVariantId;
       commit: PlotRouteChoiceCommit;
       resolution: PlotRouteResolution;
     }
   | {
       status: 'unchanged';
       changed: false;
-      choice: PlotRouteId;
+      choice: PlotRouteVariantId;
       commit: null;
       resolution: PlotRouteResolution;
     }
   | {
       status: 'rejected';
       changed: false;
-      choice: PlotRouteId | null;
+      choice: PlotRouteVariantId | null;
       commit: null;
       error: {
         code: PlotRouteChoiceConfirmationErrorCode;

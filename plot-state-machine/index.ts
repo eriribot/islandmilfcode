@@ -17,11 +17,14 @@ export type {
   PlotMachineDefinition,
   PlotMachineId,
   PlotRouteDefinition,
+  PlotRouteFamilyId,
   PlotRouteEligibility,
+  PlotRouteChoiceReceipt,
   PlotRouteChoiceCommit,
   PlotRouteChoiceConfirmationErrorCode,
   PlotRouteChoiceConfirmationResult,
   PlotRouteId,
+  PlotRouteVariantId,
   PlotRouteResolution,
   ValidatedPlotFlagDelta,
 } from './types';
@@ -29,11 +32,17 @@ export type {
 export { confirmPlotRouteChoice } from './choice';
 export { extractPlotDate, isPlotDateInWindow } from './date-window';
 export { parsePlotFlagDeltaLine } from './parser';
-export { commitPlotFlagDeltas, readActivePlotFlagSnapshots } from './memory';
+export {
+  commitPlotFlagDeltas,
+  commitPlotRouteChoice,
+  readActivePlotFlagSnapshots,
+  readActivePlotRouteChoice,
+} from './memory';
 export { buildPlotMachinePromptBlock } from './prompt';
 export { buildPlotFlagProposalPrompts, type PlotFlagProposalPrompt } from './proposal-prompt';
 export { reviewPlotFlagProposal, type PlotFlagReviewContext } from './proposal';
-export { resolvePlotRoutes } from './resolver';
+export { createPlotRouteBasisHash, parsePlotRouteChoiceReceipt, resolvePlotRoutes } from './resolver';
+export { buildPlotRoutingContext, type PlotRoutingContext } from './routing-context';
 export { V07_PLOT_MACHINE } from './v07';
 
 const PLOT_MACHINES: Record<PlotMachineId, PlotMachineDefinition> = {

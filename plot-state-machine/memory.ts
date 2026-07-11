@@ -1,6 +1,14 @@
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import { upsertAttribute } from '../memorydatabase/upsert';
-import type { PlotFlagCommitContext, PlotFlagDelta, PlotFlagSnapshot, PlotFlagValue } from './types';
+import { parsePlotRouteChoiceReceipt } from './resolver';
+import type {
+  PlotFlagCommitContext,
+  PlotFlagDelta,
+  PlotFlagSnapshot,
+  PlotFlagValue,
+  PlotRouteChoiceCommit,
+  PlotRouteChoiceReceipt,
+} from './types';
 import { V07_PLOT_MACHINE } from './v07';
 
 export function commitPlotFlagDeltas(deltas: PlotFlagDelta[], context: PlotFlagCommitContext): void {
@@ -37,6 +45,26 @@ export function readActivePlotFlagSnapshots(db: IslandMemoryDB, machineId: strin
       return { definition, value };
     })
     .filter((item): item is PlotFlagSnapshot => Boolean(item));
+}
+
+export function commitPlotRouteChoice(db: IslandMemoryDB, commit: PlotRouteChoiceCommit): void {
+  upsertAttribute(db, {
+    targetId: commit.targetId,
+    key: commit.key,
+    value: commit.value,
+    valueType: commit.valueType,
+    reason: `玩家手动确认路线 ${commit.receipt.familyId}/${commit.receipt.variantId}，basis ${commit.receipt.basisHash}`,
+    source: 'manual',
+  });
+}
+
+export function readActivePlotRouteChoice(db: IslandMemoryDB, machineId: string): PlotRouteChoiceReceipt | null {
+  const machine = machineId === V07_PLOT_MACHINE.id ? V07_PLOT_MACHINE : null;
+  if (!machine) return null;
+  return parsePlotRouteChoiceReceipt(
+    readActiveAttributeValue(db, machine.targetId, machine.choiceStorageKey),
+    machine,
+  );
 }
 
 function isPlotFlagValue(value: string | undefined): value is PlotFlagValue {

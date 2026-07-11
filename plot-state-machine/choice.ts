@@ -1,8 +1,9 @@
 import { extractPlotDate, isPlotDateInWindow } from './date-window';
-import { resolvePlotRoutes } from './resolver';
+import { createPlotRouteBasisHash, resolvePlotRoutes } from './resolver';
 import type {
   PlotFlagValueMap,
   PlotMachineDefinition,
+  PlotRouteChoiceReceipt,
   PlotRouteChoiceConfirmationErrorCode,
   PlotRouteChoiceConfirmationResult,
 } from './types';
@@ -11,7 +12,7 @@ export function confirmPlotRouteChoice(input: {
   machine: PlotMachineDefinition;
   currentTime?: string;
   flagValues: PlotFlagValueMap;
-  storedChoice?: string | null;
+  storedChoice?: string | PlotRouteChoiceReceipt | null;
   routeId: string;
   source: string;
 }): PlotRouteChoiceConfirmationResult {
@@ -53,6 +54,17 @@ export function confirmPlotRouteChoice(input: {
     return rejected('route_not_eligible', `${route.id} 路线仍缺少：${route.missingFlagIds.join('、')}。`, resolution);
   }
 
+  const receipt: PlotRouteChoiceReceipt = {
+    schemaVersion: 1,
+    machineId: input.machine.id,
+    familyId: route.familyId,
+    variantId: route.id,
+    confirmedAt: input.currentTime ?? currentDate,
+    source: 'manual',
+    basisHash: createPlotRouteBasisHash(input.machine.id, route.id, route.satisfiedFlagIds),
+    basisFlagIds: [...route.satisfiedFlagIds].sort(),
+  };
+
   return {
     status: 'accepted',
     changed: true,
@@ -60,9 +72,10 @@ export function confirmPlotRouteChoice(input: {
     commit: {
       targetId: input.machine.targetId,
       key: input.machine.choiceStorageKey,
-      value: route.id,
-      valueType: 'string',
+      value: JSON.stringify(receipt),
+      valueType: 'json',
       source: 'manual',
+      receipt,
     },
     resolution,
   };
