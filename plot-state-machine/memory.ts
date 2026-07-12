@@ -90,8 +90,62 @@ export function clearPlotRouteChoiceAfterFloor(
     return false;
   }
 
-  // 中文注释：路线选择发生在时间线头部。回退/删除跨过确认锚点后写正式 tombstone，
-  // 不直接删除旧 receipt，也不恢复整个 memoryDB；旧确认实例留在 supersede 链中供审计。
+  writePlotRouteChoiceTombstone(
+    db,
+    machine,
+    receipt,
+    `楼层回退越过路线确认点 ${receipt.anchorFloorIndex}，清除确认实例 ${receipt.confirmationId}`,
+    { firstRemovedFloorIndex },
+  );
+  return true;
+}
+
+export function reconcilePlotRouteChoiceAfterTimelineChange(
+  db: IslandMemoryDB,
+  machineId: string,
+  input: {
+    currentTime?: string;
+    currentMainEventId?: string;
+    mainEvents?: Readonly<Record<string, string>>;
+    readerFloorCount: number;
+  },
+): boolean {
+  const machine = machineId === V07_PLOT_MACHINE.id ? V07_PLOT_MACHINE : null;
+  if (!machine) return false;
+  const receipt = readActivePlotRouteChoice(db, machineId);
+  if (!receipt) return false;
+
+  const currentDate = extractDatePart(input.currentTime);
+  const sae078State = String(input.mainEvents?.['SAE_07-8'] ?? '').trim();
+  const lifecycleRewound =
+    Date.parse(currentDate) < Date.parse('2013-03-04') ||
+    String(input.currentMainEventId ?? '').trim() === 'SAE_07-8' ||
+    Boolean(sae078State && !/已结束|已完成/.test(sae078State));
+  const readerHeadIndex = Math.max(-1, Math.floor(input.readerFloorCount) - 1);
+  const anchorRemoved = receipt.schemaVersion === 2 && receipt.anchorFloorIndex > readerHeadIndex;
+  if (!lifecycleRewound && !anchorRemoved) return false;
+
+  // 中文注释：旧版本可能已经把跨 DDL 回退后的 choice 保存进存档。加载时必须用权威时间线
+  // 再做一次对账；否则 UI 会在 2012 年仍显示已选路线和游戏开发进度。
+  const reason = anchorRemoved
+    ? `当前时间线头部 ${readerHeadIndex} 早于路线确认点 ${receipt.anchorFloorIndex}`
+    : `权威剧情状态已回到 V07 DDL 之前（${currentDate || '日期未知'} / ${sae078State || 'SAE_07-8 无终态'}）`;
+  writePlotRouteChoiceTombstone(db, machine, receipt, reason, {
+    readerHeadIndex,
+    currentDate: currentDate || null,
+  });
+  return true;
+}
+
+function writePlotRouteChoiceTombstone(
+  db: IslandMemoryDB,
+  machine: typeof V07_PLOT_MACHINE,
+  receipt: PlotRouteChoiceReceipt,
+  reason: string,
+  details: Record<string, unknown>,
+): void {
+  // 中文注释：只写 supersede tombstone，不物理删除旧 receipt；这样既让读取立刻失效，
+  // 又保留旧确认实例供存档审计。游戏开发状态由 confirmationId 隔离，不在这里改写。
   upsertAttribute(db, {
     targetId: machine.targetId,
     key: machine.choiceStorageKey,
@@ -99,14 +153,13 @@ export function clearPlotRouteChoiceAfterFloor(
       schemaVersion: 1,
       state: 'cleared',
       clearedAt: new Date().toISOString(),
-      confirmationId: receipt.confirmationId,
-      firstRemovedFloorIndex,
+      confirmationId: receipt.schemaVersion === 2 ? receipt.confirmationId : null,
+      ...details,
     }),
     valueType: 'json',
-    reason: `楼层回退越过路线确认点 ${receipt.anchorFloorIndex}，清除确认实例 ${receipt.confirmationId}`,
+    reason,
     source: 'manual',
   });
-  return true;
 }
 
 function isPlotFlagValue(value: string | undefined): value is PlotFlagValue {

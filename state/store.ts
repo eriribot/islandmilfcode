@@ -20,11 +20,18 @@ import { createDefaultMemoryDB } from '../memorydatabase/defaults';
 import { createDefaultMemoryEditorState } from '../memorydatabase/editor';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import type { IslandMemoryDB, MemoryBaseRow } from '../memorydatabase/types';
+import { upsertAttribute } from '../memorydatabase/upsert';
 import { createEmptyCharacterCardLibrary } from '../worldbook';
 import { isInlineImageDataUrl, persistInlineImageDataAsAssetSync } from './image-assets';
-import { clearPlotRouteChoiceAfterFloor } from '../plot-state-machine/memory';
+import type { GameDevelopmentState } from '../game-development/types';
+import {
+  clearPlotRouteChoiceAfterFloor,
+  reconcilePlotRouteChoiceAfterTimelineChange,
+} from '../plot-state-machine/memory';
 
 export const MESSAGE_MARKER = 'islandmilfcode';
+const GAME_DEVELOPMENT_TARGET_ID = 'route:v07';
+const GAME_DEVELOPMENT_STORAGE_KEY = 'gameDevelopment.v1.state';
 const PROFILE_KEYS = {
   role: ['gen', 'der'].join('') as keyof NonNullable<RollbackSnapshot['playerProfile']>,
 };
@@ -50,6 +57,7 @@ const MEMORY_ROW_TABLES = [
 const serializedMessageCache = new WeakMap<
   UiMessage,
   {
+    id: string;
     role: UiMessage['role'];
     speaker: string;
     text: string;
@@ -69,6 +77,78 @@ function applyProfileDefaults<T extends Record<string, unknown>>(profile: T): T 
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function hasOwn(input: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(input, key);
+}
+
+export function normalizeGameDevelopmentSnapshotValue(input: unknown): GameDevelopmentState | null | undefined {
+  if (input === null) return null;
+  if (!input || typeof input !== 'object') return undefined;
+  const raw = input as { schemaVersion?: unknown; pendingTurn?: unknown };
+  if (raw.schemaVersion !== 3) return undefined;
+
+  const snapshot = cloneJson(input) as GameDevelopmentState;
+  const pendingTurn = snapshot.pendingTurn;
+  if (pendingTurn?.status === 'generating') {
+    return {
+      ...snapshot,
+      pendingTurn: {
+        ...pendingTurn,
+        status: 'prepared',
+        generationAttemptId: null,
+        failurePhase: null,
+        assistantReceipt: null,
+        failureReason: null,
+        completedAt: null,
+      },
+    } as GameDevelopmentState;
+  }
+  return snapshot;
+}
+
+function readGameDevelopmentSnapshot(db: IslandMemoryDB): GameDevelopmentState | null {
+  const row = db.attributes
+    .filter(
+      item =>
+        !item.expired && item.targetId === GAME_DEVELOPMENT_TARGET_ID && item.key === GAME_DEVELOPMENT_STORAGE_KEY,
+    )
+    .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')))[0];
+  if (!row) return null;
+  try {
+    return normalizeGameDevelopmentSnapshotValue(JSON.parse(row.value)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function restoreGameDevelopmentSnapshot(db: IslandMemoryDB, snapshot: GameDevelopmentState | null): void {
+  if (snapshot) {
+    upsertAttribute(db, {
+      targetId: GAME_DEVELOPMENT_TARGET_ID,
+      key: GAME_DEVELOPMENT_STORAGE_KEY,
+      value: JSON.stringify(snapshot),
+      valueType: 'json',
+      source: 'manual',
+      reason: `Reader 回退恢复游戏开发 schema v${snapshot.schemaVersion} 状态`,
+    });
+    return;
+  }
+
+  const updatedAt = new Date().toISOString();
+  for (const row of db.attributes) {
+    if (row.expired || row.targetId !== GAME_DEVELOPMENT_TARGET_ID || row.key !== GAME_DEVELOPMENT_STORAGE_KEY) {
+      continue;
+    }
+    try {
+      if (normalizeGameDevelopmentSnapshotValue(JSON.parse(row.value)) === undefined) continue;
+    } catch {
+      continue;
+    }
+    row.expired = true;
+    row.updatedAt = updatedAt;
+  }
 }
 
 function normalizeImageRerollContext(context?: ImageRerollContext): ImageRerollContext | undefined {
@@ -91,8 +171,9 @@ function normalizeImageRerollContext(context?: ImageRerollContext): ImageRerollC
 
 function normalizeIllustrationForPersistence(illustration: NonNullable<UiMessage['illustrations']>[number]) {
   const prompt = illustration.prompt ? String(illustration.prompt) : undefined;
-  const assetId = illustration.assetId
-    || (isInlineImageDataUrl(illustration.imageData)
+  const assetId =
+    illustration.assetId ||
+    (isInlineImageDataUrl(illustration.imageData)
       ? persistInlineImageDataAsAssetSync(illustration.imageData, { prompt })
       : '');
   if (!assetId) return null;
@@ -111,8 +192,9 @@ function normalizeIllustrationForPersistence(illustration: NonNullable<UiMessage
 
 function normalizeIllustrationForUi(illustration: NonNullable<PersistedMessage['illustrations']>[number]) {
   const prompt = illustration.prompt ? String(illustration.prompt) : undefined;
-  const assetId = illustration.assetId
-    || (isInlineImageDataUrl(illustration.imageData)
+  const assetId =
+    illustration.assetId ||
+    (isInlineImageDataUrl(illustration.imageData)
       ? persistInlineImageDataAsAssetSync(illustration.imageData, { prompt })
       : '');
   if (!assetId && !illustration.imageData) return null;
@@ -133,17 +215,19 @@ function normalizeIllustrationForUi(illustration: NonNullable<PersistedMessage['
 function getIllustrationSignature(illustrations: UiMessage['illustrations']) {
   if (!illustrations?.length) return '';
   return illustrations
-    .map(illustration => [
-      illustration.id,
-      illustration.assetId || '',
-      illustration.imageData ? `inline:${illustration.imageData.length}` : '',
-      illustration.prompt || '',
-      illustration.anchorIndex ?? '',
-      illustration.createdAt || '',
-      illustration.rerollContext?.prompt || '',
-      illustration.rerollContext?.negativePrompt || '',
-      illustration.rerollContext?.change || '',
-    ].join('|'))
+    .map(illustration =>
+      [
+        illustration.id,
+        illustration.assetId || '',
+        illustration.imageData ? `inline:${illustration.imageData.length}` : '',
+        illustration.prompt || '',
+        illustration.anchorIndex ?? '',
+        illustration.createdAt || '',
+        illustration.rerollContext?.prompt || '',
+        illustration.rerollContext?.negativePrompt || '',
+        illustration.rerollContext?.change || '',
+      ].join('|'),
+    )
     .join('\n');
 }
 
@@ -156,6 +240,7 @@ function serializeMessage(message: UiMessage): PersistedMessage | null {
   const cached = serializedMessageCache.get(message);
   if (
     cached &&
+    cached.id === message.id &&
     cached.role === message.role &&
     cached.speaker === speaker &&
     cached.text === text &&
@@ -167,6 +252,7 @@ function serializeMessage(message: UiMessage): PersistedMessage | null {
   }
 
   const base: PersistedMessage = {
+    id: message.id,
     role: message.role,
     speaker,
     text,
@@ -185,6 +271,7 @@ function serializeMessage(message: UiMessage): PersistedMessage | null {
   }
 
   serializedMessageCache.set(message, {
+    id: message.id,
     role: message.role,
     speaker,
     text,
@@ -320,6 +407,11 @@ function normalizeRollbackSnapshot(input: unknown, options: { includeSideWindows
     statusData: normalizeStatusData(raw.statusData ?? defaultStatusData),
   };
 
+  if (hasOwn(raw, 'gameDevelopment')) {
+    const gameDevelopment = normalizeGameDevelopmentSnapshotValue(raw.gameDevelopment);
+    if (gameDevelopment !== undefined) snapshot.gameDevelopment = gameDevelopment;
+  }
+
   if (raw.playerProfile && typeof raw.playerProfile === 'object') {
     snapshot.playerProfile = applyProfileDefaults(cloneJson(raw.playerProfile as RollbackSnapshot['playerProfile']));
   }
@@ -343,10 +435,14 @@ function normalizeRollbackSnapshot(input: unknown, options: { includeSideWindows
 }
 
 export function createRollbackSnapshot(
-  state: Pick<AppState, 'statusData' | 'playerProfile' | 'drawingSettings' | 'phoneMessages' | 'summaryStore' | 'memoryDB'>,
-) {
+  state: Pick<
+    AppState,
+    'statusData' | 'playerProfile' | 'drawingSettings' | 'phoneMessages' | 'summaryStore' | 'memoryDB'
+  >,
+): RollbackSnapshot {
   return {
     statusData: cloneJson(state.statusData),
+    gameDevelopment: readGameDevelopmentSnapshot(state.memoryDB),
     playerProfile: applyProfileDefaults(cloneJson(state.playerProfile)),
     drawingSettings: normalizeDrawingSettings(state.drawingSettings),
   };
@@ -370,27 +466,26 @@ export function normalizeDrawingSettings(input: unknown): DrawingSettings {
   const fallback = createDefaultDrawingSettings();
   const raw = typeof input === 'object' && input ? (input as Partial<DrawingSettings>) : {};
   const anchors = Array.isArray(raw.characterAnchors)
-    ? raw.characterAnchors
-        .map(anchor => ({
-          id: String(anchor?.id || crypto.randomUUID()),
-          name: String(anchor?.name ?? '').trim(),
-          prompt: String(anchor?.prompt ?? '').trim(),
-        }))
-        // 保留所有角色，包括新添加的空角色，以便用户可以填写
-    : [];
+    ? raw.characterAnchors.map(anchor => ({
+        id: String(anchor?.id || crypto.randomUUID()),
+        name: String(anchor?.name ?? '').trim(),
+        prompt: String(anchor?.prompt ?? '').trim(),
+      }))
+    : // 保留所有角色，包括新添加的空角色，以便用户可以填写
+      [];
 
-    return {
-      enabled: Boolean(raw.enabled),
-      qualityPrompt: String(raw.qualityPrompt ?? fallback.qualityPrompt),
-      negativePrompt: String(raw.negativePrompt ?? fallback.negativePrompt),
-      contextMessageCount: Math.max(0, Math.min(20, Math.round(Number(raw.contextMessageCount ?? 0) || 0))),
-      width: Math.max(256, Math.min(2048, Math.round(Number(raw.width ?? fallback.width) || fallback.width))),
-      height: Math.max(256, Math.min(2048, Math.round(Number(raw.height ?? fallback.height) || fallback.height))),
-      manualPrompt: String(raw.manualPrompt ?? ''),
-      characterAnchors: anchors,
-      systemPrompt: String(raw.systemPrompt ?? ''),
-    };
-  }
+  return {
+    enabled: Boolean(raw.enabled),
+    qualityPrompt: String(raw.qualityPrompt ?? fallback.qualityPrompt),
+    negativePrompt: String(raw.negativePrompt ?? fallback.negativePrompt),
+    contextMessageCount: Math.max(0, Math.min(20, Math.round(Number(raw.contextMessageCount ?? 0) || 0))),
+    width: Math.max(256, Math.min(2048, Math.round(Number(raw.width ?? fallback.width) || fallback.width))),
+    height: Math.max(256, Math.min(2048, Math.round(Number(raw.height ?? fallback.height) || fallback.height))),
+    manualPrompt: String(raw.manualPrompt ?? ''),
+    characterAnchors: anchors,
+    systemPrompt: String(raw.systemPrompt ?? ''),
+  };
+}
 
 function restoreRollbackSnapshot(state: AppState, snapshot: RollbackSnapshot) {
   state.statusData = protectTargetAffinityReset(cloneJson(snapshot.statusData), state.statusData, 'rollback-snapshot');
@@ -409,6 +504,10 @@ function restoreRollbackSnapshot(state: AppState, snapshot: RollbackSnapshot) {
   }
   if (snapshot.memoryDB) {
     state.memoryDB = cloneMemoryDBForSnapshot(snapshot.memoryDB) ?? state.memoryDB;
+  }
+  if (hasOwn(snapshot, 'gameDevelopment')) {
+    const gameDevelopment = normalizeGameDevelopmentSnapshotValue(snapshot.gameDevelopment);
+    if (gameDevelopment !== undefined) restoreGameDevelopmentSnapshot(state.memoryDB, gameDevelopment);
   }
 }
 
@@ -463,10 +562,7 @@ function isRangePastRollbackBoundary(range: unknown, summaryFloorCount: number) 
   return end >= summaryFloorCount;
 }
 
-function rangeSurvivesRollbackBoundary(
-  range: unknown,
-  summaryFloorCount: number,
-): range is [number, number] {
+function rangeSurvivesRollbackBoundary(range: unknown, summaryFloorCount: number): range is [number, number] {
   return Array.isArray(range) && range.length >= 2 && !isRangePastRollbackBoundary(range, summaryFloorCount);
 }
 
@@ -483,10 +579,7 @@ function pruneSummaryStoreAfterSummaryFloorCount(state: AppState, summaryFloorCo
   if (state.summaryStore.global && state.summaryStore.lastSummarizedIndex > summaryFloorCount) {
     state.summaryStore.global = null;
   }
-  state.summaryStore.lastSummarizedIndex = Math.min(
-    state.summaryStore.lastSummarizedIndex,
-    summaryFloorCount,
-  );
+  state.summaryStore.lastSummarizedIndex = Math.min(state.summaryStore.lastSummarizedIndex, summaryFloorCount);
 }
 
 function pruneMemoryRowsAfterSummaryFloorCount(state: AppState, summaryFloorCount: number) {
@@ -575,8 +668,10 @@ function mergeSummaryStoreAfterSnapshotRestore(
 function rowSurvivesRollback(row: MemoryBaseRow, summaryFloorCount: number) {
   const summaryRange = 'range' in row ? (row as { range?: unknown }).range : undefined;
   if (row.sourceRange || summaryRange) {
-    return !isRangePastRollbackBoundary(row.sourceRange, summaryFloorCount) &&
-      !isRangePastRollbackBoundary(summaryRange, summaryFloorCount);
+    return (
+      !isRangePastRollbackBoundary(row.sourceRange, summaryFloorCount) &&
+      !isRangePastRollbackBoundary(summaryRange, summaryFloorCount)
+    );
   }
   return false;
 }
@@ -671,8 +766,8 @@ function pruneMemoryAndSummariesAfterRollback(
   state.summaryStore.global = hydrated.global;
   state.summaryStore.major = filterHydratedEntriesAfterRollback(hydrated.major, pruneThreshold);
   state.summaryStore.minor = filterHydratedEntriesAfterRollback(hydrated.minor, pruneThreshold);
-  state.summaryStore.keyFacts = hydrated.keyFacts.filter(
-    fact => rangeSurvivesRollbackBoundary(fact.sourceRange, pruneThreshold),
+  state.summaryStore.keyFacts = hydrated.keyFacts.filter(fact =>
+    rangeSurvivesRollbackBoundary(fact.sourceRange, pruneThreshold),
   );
   if (state.summaryStore.global && state.summaryStore.lastSummarizedIndex > pruneThreshold) {
     state.summaryStore.global = null;
@@ -703,9 +798,7 @@ function isLegacyHiddenMessage(message: NonNullable<ReturnType<NonNullable<Taver
 
 /** 将界面消息序列化为存档槽里的 PersistedMessage[]。 */
 export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
-  return messages
-    .map(serializeMessage)
-    .filter((message): message is PersistedMessage => Boolean(message));
+  return messages.map(serializeMessage).filter((message): message is PersistedMessage => Boolean(message));
 }
 
 /** 将存档槽里的 PersistedMessage[] 反序列化为界面消息。 */
@@ -715,7 +808,7 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
     .filter(msg => msg && (msg.role === 'user' || msg.role === 'assistant') && typeof msg.text === 'string')
     .map(msg => {
       const ui: UiMessage = {
-        id: crypto.randomUUID(),
+        id: String(msg.id || crypto.randomUUID()),
         role: msg.role,
         speaker: String(msg.speaker || (msg.role === 'assistant' ? 'Assistant' : 'User')),
         text: String(msg.text ?? ''),
@@ -926,6 +1019,12 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   // 中文注释：choice 绑定确认时的时间线头部，而不是玩家当时正在翻看的页面。
   // 回退跨过确认楼层后只写路线 tombstone，不恢复整个 memoryDB；保留锚点之后的回退则继续锁定原 choice。
   clearPlotRouteChoiceAfterFloor(state.memoryDB, 'v07', target.sourceReaderIndex);
+  reconcilePlotRouteChoiceAfterTimelineChange(state.memoryDB, 'v07', {
+    currentTime: state.statusData.world.currentTime,
+    currentMainEventId: state.statusData.world.currentMainEventId,
+    mainEvents: state.statusData.world.mainEvents,
+    readerFloorCount: getReaderMessages(state.uiMessages).length,
+  });
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
   state.notification = null;
@@ -968,6 +1067,12 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
   });
   // 中文注释：删除较早楼层会使其后的路线确认失去因果基础，即使确认时的消息文本仍留在列表中也必须清除。
   clearPlotRouteChoiceAfterFloor(state.memoryDB, 'v07', readerIndex);
+  reconcilePlotRouteChoiceAfterTimelineChange(state.memoryDB, 'v07', {
+    currentTime: state.statusData.world.currentTime,
+    currentMainEventId: state.statusData.world.currentMainEventId,
+    mainEvents: state.statusData.world.mainEvents,
+    readerFloorCount: getReaderMessages(state.uiMessages).length,
+  });
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
   state.notification = null;

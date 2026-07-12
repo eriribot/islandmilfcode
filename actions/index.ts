@@ -3,6 +3,7 @@ import {
   buildPhoneProgressPrompt,
   buildProgressPrompt,
   buildPrompt,
+  extractCompleteTaggedReply,
   extractPhoneChatReply,
   extractTaggedReply,
   getReaderMessages,
@@ -14,12 +15,8 @@ import {
   sanitizePromptInputText,
 } from '../message-format';
 import { clearBackgroundTask, setBackgroundTaskFailed, setBackgroundTaskRunning } from '../background-tasks';
-import {
-  SecondaryTaskCancelledError,
-  runSecondaryTask,
-  type SecondaryTaskKind,
-} from '../secondary-api';
-import { createRollbackSnapshot, pushMessage } from '../state/store';
+import { SecondaryTaskCancelledError, runSecondaryTask, type SecondaryTaskKind } from '../secondary-api';
+import { createRollbackSnapshot, pushMessage, syncFocusedMessage } from '../state/store';
 import {
   buildFactAnchorFromStatus,
   repairSummaryStore,
@@ -58,6 +55,7 @@ import {
   ensureStreamingMessage,
   finalizeStreamingText,
   recordGenerationDebug,
+  removeGenerationAssistantMessage,
   type StreamingContext,
   updateStreamingText,
 } from './streaming';
@@ -95,10 +93,7 @@ import {
   isImageGenerationPluginAvailable,
   requestImageGeneration,
 } from '../plugins/image-generation';
-import {
-  buildDeepSeekEvidenceContext,
-  collectDeepSeekWebLookupEvidence,
-} from '../plugins/deepseek-web-lookup';
+import { buildDeepSeekEvidenceContext, collectDeepSeekWebLookupEvidence } from '../plugins/deepseek-web-lookup';
 import { saveImageDataUrlAsAsset } from '../state/image-assets';
 
 export type ActionContext = StreamingContext & {
@@ -110,6 +105,24 @@ export type ActionContext = StreamingContext & {
   summaryApiConfig: SummaryApiConfig | null;
   onSummaryStoreUpdated: () => void;
   readonly memoryDB: IslandMemoryDB;
+};
+
+export type MainAssistantAcceptedReceipt = {
+  readonly assistantMessageId: string;
+  readonly hostMessageId: number | null;
+  readonly sceneText: string;
+  readonly generationSource: 'tavern_generate' | 'tavern_generate_raw';
+  readonly acceptedAt: string;
+};
+
+export type SubmitMessageOptions = {
+  text?: string;
+  keepDraft?: boolean;
+  clearDraftOnSuccess?: boolean;
+  gameDevelopmentContext?: string;
+  requireCompleteMainAssistant?: boolean;
+  reuseLatestUserMessage?: boolean;
+  onMainAssistantAccepted?: (receipt: MainAssistantAcceptedReceipt) => void | Promise<void>;
 };
 
 const PHONE_PROACTIVE_COOLDOWN_MS = 3 * 60 * 1000;
@@ -175,10 +188,7 @@ function beginPhoneRun(ctx: Pick<ActionContext, 'state'>): number {
 }
 
 function isGenerationRunCancelled(ctx: Pick<ActionContext, 'state'>, token: number): boolean {
-  return (
-    Boolean(ctx.state.runtimeFlags?.generationCancelRequested) ||
-    getGenerationCancelToken(ctx) !== token
-  );
+  return Boolean(ctx.state.runtimeFlags?.generationCancelRequested) || getGenerationCancelToken(ctx) !== token;
 }
 
 function isPhoneRunCancelled(ctx: Pick<ActionContext, 'state'>, token: number): boolean {
@@ -341,11 +351,7 @@ function getProgressDatePart(value: string | undefined): string {
 // 终态（已结束/跳过/延后）对未来事件仍然放行——User 主动跳过本就需要把后续事件结算掉。
 // 这是 syncMainEvents 之外的第二道闸：模型把未来卷的事件写成"进行中"是
 // "莫名跳到第三卷 / 日历显示未来事件进行中"的根因，且一旦写入会强制结算前序事件、难以回退。
-function isMainEventActivatableByDate(
-  eventId: string,
-  plotLibrary: PlotLibrary,
-  currentDate: string,
-): boolean {
+function isMainEventActivatableByDate(eventId: string, plotLibrary: PlotLibrary, currentDate: string): boolean {
   if (!currentDate) return true; // 没有可比对的当前日期时放行，避免误伤初始化流程。
   const scheduleDate = getProgressDatePart(plotLibrary.events[eventId]?.schedule?.date);
   if (!scheduleDate) return true; // 没有排期日期的事件不参与时间闸。
@@ -480,9 +486,7 @@ function buildRouteCheckStatus(
         ...(update.mainEvents ?? {}),
       },
       currentMainEventId:
-        update.currentMainEventId !== undefined
-          ? update.currentMainEventId
-          : statusData.world.currentMainEventId,
+        update.currentMainEventId !== undefined ? update.currentMainEventId : statusData.world.currentMainEventId,
     },
   };
 }
@@ -514,11 +518,11 @@ export function sanitizeProgressAgainstPlotLibrary(
   // 正常主正文成功链显式授予的、成对提交的结束请求；手机 progress、后台重试等旁路拿不到该权限。
   const requestsSae078SameDayCompletion = Boolean(
     options.allowSae078SameDayCompletion &&
-      currentDate === '2013-03-04' &&
-      statusData?.world.currentMainEventId === SAE_07_8_EVENT_ID &&
-      isActivatingStatus(statusData.world.mainEvents?.[SAE_07_8_EVENT_ID] ?? '') &&
-      isTerminalMainEventStatus(update.mainEvents?.[SAE_07_8_EVENT_ID] ?? '') &&
-      update.currentMainEventId === '',
+    currentDate === '2013-03-04' &&
+    statusData?.world.currentMainEventId === SAE_07_8_EVENT_ID &&
+    isActivatingStatus(statusData.world.mainEvents?.[SAE_07_8_EVENT_ID] ?? '') &&
+    isTerminalMainEventStatus(update.mainEvents?.[SAE_07_8_EVENT_ID] ?? '') &&
+    update.currentMainEventId === '',
   );
 
   const sanitizedMainEvents: Record<string, string> = {};
@@ -545,15 +549,20 @@ export function sanitizeProgressAgainstPlotLibrary(
       !canCloseCurrentMainEventByScheduleOrRoute(id, plotLibrary, routeStatusData, currentDate) &&
       !(id === SAE_07_8_EVENT_ID && requestsSae078SameDayCompletion)
     ) {
-      console.warn('[progress-guard] drop same-window terminal current mainEvent:', id, status, 'currentDate:', currentDate);
+      console.warn(
+        '[progress-guard] drop same-window terminal current mainEvent:',
+        id,
+        status,
+        'currentDate:',
+        currentDate,
+      );
       continue;
     }
     sanitizedMainEvents[id] = status;
   }
 
   const acceptedSae078SameDayCompletion =
-    requestsSae078SameDayCompletion &&
-    isTerminalMainEventStatus(sanitizedMainEvents[SAE_07_8_EVENT_ID] ?? '');
+    requestsSae078SameDayCompletion && isTerminalMainEventStatus(sanitizedMainEvents[SAE_07_8_EVENT_ID] ?? '');
   let sanitizedCurrentId = update.currentMainEventId;
   if (
     sanitizedCurrentId === '' &&
@@ -580,10 +589,7 @@ export function sanitizeProgressAgainstPlotLibrary(
   } else if (sanitizedCurrentId && !whitelist.has(sanitizedCurrentId)) {
     console.warn('[progress-guard] drop unknown currentMainEventId:', sanitizedCurrentId);
     sanitizedCurrentId = undefined;
-  } else if (
-    sanitizedCurrentId &&
-    !isMainEventActivatableByDate(sanitizedCurrentId, plotLibrary, currentDate)
-  ) {
+  } else if (sanitizedCurrentId && !isMainEventActivatableByDate(sanitizedCurrentId, plotLibrary, currentDate)) {
     // 设为当前事件等价于激活：未到触发日期时丢弃，防止游标跳到未来卷。
     console.warn(
       '[progress-guard] drop premature currentMainEventId:',
@@ -830,9 +836,7 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
             : result.error
               ? '生图失败'
               : '生图请求已发送',
-        preview:
-          result.error ||
-          (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
+        preview: result.error || (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
         targetTab: 'summary',
         timestamp: formatTime(ctx.state.statusData.world.currentTime),
       });
@@ -855,13 +859,12 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
       });
       ctx.render();
     }
-  })()
-    .catch(error => {
-      console.warn('[image-generation] emit failed:', error);
-      recordGenerationDebug(ctx, 'image-generation:error', {
-        error: error instanceof Error ? error.message : String(error),
-      });
+  })().catch(error => {
+    console.warn('[image-generation] emit failed:', error);
+    recordGenerationDebug(ctx, 'image-generation:error', {
+      error: error instanceof Error ? error.message : String(error),
     });
+  });
 }
 
 function getLatestCompletedTurnMessages(messages: UiMessage[]) {
@@ -1042,9 +1045,7 @@ async function runPostTurnPlotFlagReview(
 }
 
 function getPhoneProgressSourceRange(ctx: ActionContext, fallbackFloorIndex?: number): [number, number] | undefined {
-  const floorIndex = Number.isFinite(fallbackFloorIndex)
-    ? Number(fallbackFloorIndex)
-    : getCurrentReaderFloorIndex(ctx);
+  const floorIndex = Number.isFinite(fallbackFloorIndex) ? Number(fallbackFloorIndex) : getCurrentReaderFloorIndex(ctx);
   if (!Number.isFinite(floorIndex) || floorIndex < 0) return undefined;
   const safeFloorIndex = Math.floor(floorIndex);
   return [safeFloorIndex, safeFloorIndex];
@@ -1127,10 +1128,7 @@ function clampAffinityByVerdict(delta: number, verdict: AffinityVerdict): number
   return delta;
 }
 
-function clampLegacyAffinityDelta(
-  update: ProgressUpdate,
-  targetId?: string | null,
-): number | undefined {
+function clampLegacyAffinityDelta(update: ProgressUpdate, targetId?: string | null): number | undefined {
   if (update.affinityDelta === undefined || update.affinityDelta === 0) return update.affinityDelta;
   if (targetId) return update.affinityDelta;
 
@@ -1282,16 +1280,15 @@ function applyFullProgressUpdate(
   options: { allowSae078SameDayCompletion?: boolean } = {},
 ) {
   if (!update) return false;
-  const sanitized = sanitizeProgressAgainstPlotLibrary(
-    update,
-    ctx.state.plotLibrary,
-    ctx.state.statusData,
-    options,
-  );
+  const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary, ctx.state.statusData, options);
   const legacyDelta = clampLegacyAffinityDelta(sanitized, targetId);
   // 主场景没有明确对象时，丢弃旧单目标着装更新，避免误写到 activeTargetId。
   const outfitChanges = targetId ? sanitized.outfitChanges : {};
-  const contextualized: ProgressUpdate = filterLockedItemsLost(ctx, { ...sanitized, affinityDelta: legacyDelta, outfitChanges });
+  const contextualized: ProgressUpdate = filterLockedItemsLost(ctx, {
+    ...sanitized,
+    affinityDelta: legacyDelta,
+    outfitChanges,
+  });
   applyProgressUpdate(ctx.state.statusData, contextualized, targetId ?? null, ctx.state.plotLibrary);
   const targetedAffinityChanged = applyTargetedAffinityDeltas(ctx, contextualized, targetId, scenePresence);
   const targetedObsessionChanged = applyTargetedObsessionDeltas(ctx, contextualized, targetId, scenePresence);
@@ -1352,13 +1349,14 @@ function commitSae078GraduationCeremonyTrigger(ctx: ActionContext, eligibleAtPro
   return true;
 }
 
-export async function submitMessage(
-  ctx: ActionContext,
-  options: { text?: string; keepDraft?: boolean; clearDraftOnSuccess?: boolean } = {},
-) {
+export async function submitMessage(ctx: ActionContext, options: SubmitMessageOptions = {}) {
   const { state, win } = ctx;
   const userInput = (options.text ?? state.draft).trim();
-  if (!userInput || state.generating) {
+  if (!userInput) return;
+  if (state.generating) {
+    if (options.requireCompleteMainAssistant || options.onMainAssistantAccepted) {
+      throw new Error('当前已有主正文请求，游戏开发回合尚未发送。');
+    }
     return;
   }
   const cleanUserInput = sanitizePromptInputText(userInput).trim();
@@ -1374,6 +1372,9 @@ export async function submitMessage(
   state.finalizedGenerationId = '';
   state.focusedMessagePage = 0;
   const hasTavernGenerate = typeof win.generate === 'function' || typeof win.generateRaw === 'function';
+  const requiresCompleteMainAssistant = Boolean(
+    options.requireCompleteMainAssistant || options.onMainAssistantAccepted,
+  );
   let phoneDirective: PhoneDirective | null = null;
   let phoneDirectiveSource: string | null = null;
   if (hasTavernGenerate && hasExplicitPhoneSendIntent(cleanUserInput)) {
@@ -1393,6 +1394,12 @@ export async function submitMessage(
   }
   if (isGenerationRunCancelled(ctx, generationToken)) {
     recordGenerationDebug(ctx, 'submit:cancelled-before-push', { requestGenerationId });
+    if (requiresCompleteMainAssistant) {
+      state.generating = false;
+      state.currentGenerationId = '';
+      state.finalizedGenerationId = '';
+      throw new Error('游戏开发正文请求在创建楼层前被取消。');
+    }
     return;
   }
   recordGenerationDebug(ctx, 'submit:start', {
@@ -1404,13 +1411,26 @@ export async function submitMessage(
   ctx.clearNotification(false);
   ctx.closeReaderContextMenu(false);
 
-  pushMessage(state, {
-    id: crypto.randomUUID(),
-    role: 'user',
-    speaker: 'User',
-    text: userInput,
-    statusSnapshot: createRollbackSnapshot(state),
-  });
+  const latestBeforeSubmit = state.uiMessages[state.uiMessages.length - 1];
+  const reusableUserMessage =
+    options.reuseLatestUserMessage &&
+    latestBeforeSubmit?.role === 'user' &&
+    latestBeforeSubmit.text.trim() === userInput;
+  const submittedUserMessageId = reusableUserMessage ? latestBeforeSubmit.id : crypto.randomUUID();
+  if (!reusableUserMessage) {
+    pushMessage(state, {
+      id: submittedUserMessageId,
+      role: 'user',
+      speaker: 'User',
+      text: userInput,
+      statusSnapshot: createRollbackSnapshot(state),
+    });
+  }
+  const removeNewStrictUserMessage = () => {
+    if (reusableUserMessage) return;
+    state.uiMessages = state.uiMessages.filter(message => message.id !== submittedUserMessageId);
+    syncFocusedMessage(state, { keepLatest: true });
+  };
   ctx.persistConversation();
   ctx.render();
 
@@ -1434,11 +1454,27 @@ export async function submitMessage(
     scenePresence = await detectScenePresence(ctx, preflightHistory, cleanUserInput);
     if (isGenerationRunCancelled(ctx, generationToken)) {
       recordGenerationDebug(ctx, 'submit:cancelled-after-preflight', { requestGenerationId });
+      if (requiresCompleteMainAssistant) {
+        removeNewStrictUserMessage();
+        state.generating = false;
+        state.currentGenerationId = '';
+        state.finalizedGenerationId = '';
+        ctx.persistConversation();
+        throw new Error('游戏开发正文请求在生成前被取消。');
+      }
       return;
     }
     scenePresence = await enrichScenePresenceWithDeepSeekEvidence(ctx, scenePresence, preflightHistory, cleanUserInput);
     if (isGenerationRunCancelled(ctx, generationToken)) {
       recordGenerationDebug(ctx, 'submit:cancelled-after-deepseek-web', { requestGenerationId });
+      if (requiresCompleteMainAssistant) {
+        removeNewStrictUserMessage();
+        state.generating = false;
+        state.currentGenerationId = '';
+        state.finalizedGenerationId = '';
+        ctx.persistConversation();
+        throw new Error('游戏开发正文请求在生成前被取消。');
+      }
       return;
     }
     commitPreGenerationTimeProposal(ctx, scenePresence);
@@ -1471,6 +1507,23 @@ export async function submitMessage(
   });
 
   if (!hasTavernGenerate) {
+    if (requiresCompleteMainAssistant) {
+      const error = new Error('真实主正文生成接口不可用，严格正文请求未执行。');
+      removeNewStrictUserMessage();
+      state.generating = false;
+      state.currentGenerationId = '';
+      state.finalizedGenerationId = '';
+      ctx.persistConversation();
+      ctx.showNotification({
+        kind: 'status',
+        title: '生成失败',
+        preview: error.message,
+        targetTab: 'summary',
+        timestamp: formatTime(state.statusData.world.currentTime),
+      });
+      ctx.render();
+      throw error;
+    }
     await simulateGeneration(ctx, cleanUserInput || userInput);
     if (isGenerationRunCancelled(ctx, generationToken)) {
       recordGenerationDebug(ctx, 'submit:cancelled-after-simulate', { requestGenerationId });
@@ -1495,6 +1548,10 @@ export async function submitMessage(
   let generationSucceeded = false;
   let routeReviewAssistantMessageId = '';
   let routeReviewEligible = false;
+  let mainAssistantCallbackFailed = false;
+  let mainAssistantCallbackError: unknown;
+  let strictMainAssistantFailed = false;
+  let strictMainAssistantError: unknown;
   try {
     const streamingMessage = ensureStreamingMessage(ctx);
     routeReviewAssistantMessageId = streamingMessage.id;
@@ -1504,6 +1561,8 @@ export async function submitMessage(
     const promptHistory = state.uiMessages.slice(0, -1);
     requestGenerationId = state.currentGenerationId;
     const generator = win.generate ?? win.generateRaw;
+    const generationSource: MainAssistantAcceptedReceipt['generationSource'] =
+      generator === win.generateRaw ? 'tavern_generate_raw' : 'tavern_generate';
     const baseConfig: Record<string, unknown> = {
       should_stream: true,
       should_silence: true,
@@ -1533,6 +1592,7 @@ export async function submitMessage(
                   scenePresence,
                   memoryDB: ctx.memoryDB,
                   drawingSettings: state.drawingSettings,
+                  gameDevelopmentContext: options.gameDevelopmentContext,
                 }),
               },
               {
@@ -1554,22 +1614,46 @@ export async function submitMessage(
               scenePresence,
               memoryDB: ctx.memoryDB,
               drawingSettings: state.drawingSettings,
+              gameDevelopmentContext: options.gameDevelopmentContext,
             }),
           },
     );
 
+    const rawResult = String(result ?? '');
     recordGenerationDebug(ctx, 'submit:generate-returned', {
       requestGenerationId,
-      resultLength: String(result ?? '').length,
+      resultLength: rawResult.length,
     });
     if (isGenerationRunCancelled(ctx, generationToken)) {
       recordGenerationDebug(ctx, 'submit:cancelled-after-generate-returned', { requestGenerationId });
+      if (requiresCompleteMainAssistant) {
+        removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
+        removeNewStrictUserMessage();
+        throw new Error('游戏开发正文请求在主生成返回前被取消。');
+      }
       return;
     }
-    finalizeStreamingText(ctx, String(result ?? ''), requestGenerationId);
-    routeReviewEligible = Boolean(
-      selectCompletedAssistantSceneForPlotReview(state.uiMessages, routeReviewAssistantMessageId),
+    const completeSceneText = requiresCompleteMainAssistant
+      ? extractCompleteTaggedReply(rawResult, 'content').trim()
+      : '';
+    if (requiresCompleteMainAssistant && !completeSceneText) {
+      removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
+      throw new Error('主正文未返回完整且非空的 <content>...</content>。');
+    }
+
+    finalizeStreamingText(ctx, rawResult, requestGenerationId);
+    const selectedMainAssistant = selectCompletedAssistantSceneForPlotReview(
+      state.uiMessages,
+      routeReviewAssistantMessageId,
     );
+    if (
+      requiresCompleteMainAssistant &&
+      (!selectedMainAssistant || selectedMainAssistant.sceneText !== completeSceneText)
+    ) {
+      removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
+      throw new Error('主正文最终楼层与完整 <content> 返回值不一致。');
+    }
+    routeReviewEligible = Boolean(selectedMainAssistant);
     if (routeReviewEligible) {
       commitSae078GraduationCeremonyTrigger(ctx, sae078CeremonyEligibleAtPromptBuild);
     }
@@ -1577,10 +1661,36 @@ export async function submitMessage(
     // 变量更新（含手机消息提取）统一移到 finally：正文后发一次合并 progress，配/不配副 API 都走同一条路。
     // 不再依赖主 API 在正文里内嵌 <progress>（skipProgress 现恒为 true）。
 
-    // 在最新助手消息上保存 statusData 快照，供回溯使用。
-    const lastMsg = state.uiMessages[state.uiMessages.length - 1];
-    if (lastMsg && lastMsg.role === 'assistant') {
-      lastMsg.statusSnapshot = createRollbackSnapshot(state);
+    // 严格接点使用本次精确助手；普通 submit 保留原有的最新助手快照行为。
+    const latestMessage = state.uiMessages[state.uiMessages.length - 1];
+    const snapshotAssistantMessage =
+      selectedMainAssistant?.assistantMessage ?? (latestMessage?.role === 'assistant' ? latestMessage : null);
+    if (snapshotAssistantMessage) {
+      snapshotAssistantMessage.statusSnapshot = createRollbackSnapshot(state);
+    }
+
+    if (options.onMainAssistantAccepted && selectedMainAssistant) {
+      const receipt: MainAssistantAcceptedReceipt = {
+        assistantMessageId: selectedMainAssistant.assistantMessage.id,
+        hostMessageId: selectedMainAssistant.assistantMessage.tavernMessageId ?? null,
+        sceneText: selectedMainAssistant.sceneText,
+        generationSource,
+        acceptedAt: new Date().toISOString(),
+      };
+      try {
+        await options.onMainAssistantAccepted(receipt);
+      } catch (error) {
+        mainAssistantCallbackFailed = true;
+        mainAssistantCallbackError = error;
+        recordGenerationDebug(ctx, 'submit:main-assistant-callback-failed', {
+          requestGenerationId,
+          assistantMessageId: receipt.assistantMessageId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (snapshotAssistantMessage) {
       ctx.persistConversation();
     }
     queueDrawingPluginTasks(ctx, userInput);
@@ -1594,36 +1704,34 @@ export async function submitMessage(
     // 手机消息/主动手机 与 变量更新 的顺序依赖统一在 finally 处理（progress → phone → summary）。
   } catch (error) {
     if (isGenerationRunCancelled(ctx, generationToken) || error instanceof SecondaryTaskCancelledError) {
+      if (requiresCompleteMainAssistant) {
+        removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
+        removeNewStrictUserMessage();
+        state.currentGenerationId = '';
+        state.finalizedGenerationId = '';
+        state.generating = false;
+        strictMainAssistantFailed = true;
+        strictMainAssistantError = error;
+        ctx.persistConversation();
+      }
       recordGenerationDebug(ctx, 'submit:catch-cancelled', {
         requestGenerationId,
         error: error instanceof Error ? error.message : String(error),
       });
-      return;
+      if (!requiresCompleteMainAssistant) return;
     }
     recordGenerationDebug(ctx, 'submit:catch', {
       error: error instanceof Error ? error.message : String(error),
     });
-    const currentStreamingMessage = state.uiMessages[state.uiMessages.length - 1];
-    const hasStreamingText = hasVisibleStreamingText(currentStreamingMessage);
-    const removedStreamingMessage = discardStreamingMessage(ctx);
-    state.currentGenerationId = '';
-    if (hasStreamingText && !removedStreamingMessage) {
-      // 流式正文已经写入时，把它当作成功楼层处理；不要再回填草稿或弹失败。
-      const lastMsg = state.uiMessages[state.uiMessages.length - 1];
-      if (lastMsg && lastMsg.role === 'assistant') {
-        lastMsg.statusSnapshot = createRollbackSnapshot(state);
-        ctx.persistConversation();
-      }
-      queueDrawingPluginTasks(ctx, userInput);
-      if (options.clearDraftOnSuccess) {
-        state.draft = '';
-      }
-      generationSucceeded = true;
-      state.generating = false;
-      recordGenerationDebug(ctx, 'submit:catch-preserved-as-success');
-      // 变量更新 + 手机消息统一在 finally 处理（progress → phone → summary）。
-    } else {
+    if (requiresCompleteMainAssistant) {
+      removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
+      removeNewStrictUserMessage();
+      state.currentGenerationId = '';
+      state.finalizedGenerationId = '';
       state.draft = userInput;
+      state.generating = false;
+      strictMainAssistantFailed = true;
+      strictMainAssistantError = error;
       ctx.persistConversation();
       ctx.showNotification({
         kind: 'status',
@@ -1632,6 +1740,37 @@ export async function submitMessage(
         targetTab: 'summary',
         timestamp: formatTime(state.statusData.world.currentTime),
       });
+    } else {
+      const currentStreamingMessage = state.uiMessages[state.uiMessages.length - 1];
+      const hasStreamingText = hasVisibleStreamingText(currentStreamingMessage);
+      const removedStreamingMessage = discardStreamingMessage(ctx);
+      state.currentGenerationId = '';
+      if (hasStreamingText && !removedStreamingMessage) {
+        // 流式正文已经写入时，把它当作成功楼层处理；不要再回填草稿或弹失败。
+        const lastMsg = state.uiMessages[state.uiMessages.length - 1];
+        if (lastMsg && lastMsg.role === 'assistant') {
+          lastMsg.statusSnapshot = createRollbackSnapshot(state);
+          ctx.persistConversation();
+        }
+        queueDrawingPluginTasks(ctx, userInput);
+        if (options.clearDraftOnSuccess) {
+          state.draft = '';
+        }
+        generationSucceeded = true;
+        state.generating = false;
+        recordGenerationDebug(ctx, 'submit:catch-preserved-as-success');
+        // 变量更新 + 手机消息统一在 finally 处理（progress → phone → summary）。
+      } else {
+        state.draft = userInput;
+        ctx.persistConversation();
+        ctx.showNotification({
+          kind: 'status',
+          title: '生成失败',
+          preview: error instanceof Error ? error.message : String(error),
+          targetTab: 'summary',
+          timestamp: formatTime(state.statusData.world.currentTime),
+        });
+      }
     }
   } finally {
     if (drawingEnabledAtSubmit && !state.drawingSettings.enabled) {
@@ -1651,6 +1790,7 @@ export async function submitMessage(
     // 退回独立的 phone-scene-extract 副 API，形成"正文 + 手机提取 + 含手机的progress"三发请求。
     if (
       generationSucceeded &&
+      !mainAssistantCallbackFailed &&
       !isGenerationRunCancelled(ctx, generationToken) &&
       (typeof win.generateRaw === 'function' || typeof win.generate === 'function')
     ) {
@@ -1748,6 +1888,12 @@ export async function submitMessage(
       ctx.persistConversation();
       ctx.render();
     }
+  }
+  if (mainAssistantCallbackFailed) {
+    throw mainAssistantCallbackError;
+  }
+  if (strictMainAssistantFailed) {
+    throw strictMainAssistantError;
   }
 }
 
@@ -2158,7 +2304,11 @@ function normalizeScenePresenceIds(ids: unknown, resolveId: (value: unknown) => 
 }
 
 function isPlayerMemoryId(value: string | undefined) {
-  return /^(user|player|玩家|主角)$/.test(String(value ?? '').trim().toLowerCase());
+  return /^(user|player|玩家|主角)$/.test(
+    String(value ?? '')
+      .trim()
+      .toLowerCase(),
+  );
 }
 
 function mentionsPlayer(value: string | undefined) {
@@ -2181,7 +2331,9 @@ function normalizeMemoryIdentity(value: unknown) {
 }
 
 function addMemoryIdentity(set: Set<string>, value: unknown) {
-  const raw = String(value ?? '').trim().toLowerCase();
+  const raw = String(value ?? '')
+    .trim()
+    .toLowerCase();
   const normalized = normalizeMemoryIdentity(value);
   if (raw) set.add(raw);
   if (normalized) set.add(normalized);
@@ -2197,7 +2349,9 @@ function buildTargetMemoryIdentitySet(target: TargetStatus) {
 }
 
 function memoryIdentityMatches(value: unknown, identities: Set<string>) {
-  const raw = String(value ?? '').trim().toLowerCase();
+  const raw = String(value ?? '')
+    .trim()
+    .toLowerCase();
   const normalized = normalizeMemoryIdentity(value);
   return Boolean((raw && identities.has(raw)) || (normalized && identities.has(normalized)));
 }
@@ -2451,11 +2605,7 @@ function buildSceneSummaryContextLines(ctx: ActionContext): string[] {
   return lines;
 }
 
-function buildScenePresencePrompts(
-  ctx: ActionContext,
-  promptHistory: UiMessage[],
-  userInput: string,
-): RawPrompt[] {
+function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[], userInput: string): RawPrompt[] {
   const cleanUserInput = sanitizePromptInputText(userInput);
   const recentVisible = promptHistory
     .filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
@@ -2757,7 +2907,11 @@ function parseRecallPlan(raw: unknown): ScenePresence['recallPlan'] {
       .filter((item): item is { type: string; queryHint: string; reason: string; priority?: number } => Boolean(item))
       .slice(0, limit);
   const mustRecall = parseItems(obj.mustRecall, 5);
-  const niceToRecall = parseItems(obj.niceToRecall, 3).map(({ type, queryHint, reason }) => ({ type, queryHint, reason }));
+  const niceToRecall = parseItems(obj.niceToRecall, 3).map(({ type, queryHint, reason }) => ({
+    type,
+    queryHint,
+    reason,
+  }));
   const summaryRecall = (Array.isArray(obj.summaryRecall) ? obj.summaryRecall : [])
     .map(item => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
@@ -2774,7 +2928,9 @@ function parseRecallPlan(raw: unknown): ScenePresence['recallPlan'] {
       };
     })
     .filter(
-      (item): item is {
+      (
+        item,
+      ): item is {
         sourceLevel: 'global' | 'major' | 'minor';
         queryHint: string;
         content: string;
@@ -2832,7 +2988,12 @@ function parseTimeProposal(raw: unknown): ScenePresence['timeProposal'] {
   const time = String(obj.time ?? '').trim();
   // 至少要有 YYYY-MM-DD 才算有效建议；没有日期的（仅时段）不在 preflight 处理，留给生成后 progress。
   if (!/\d{4}-\d{2}-\d{2}/.test(time)) return undefined;
-  const confidence = String(obj.confidence ?? '').trim().toLowerCase() === 'high' ? 'high' : 'low';
+  const confidence =
+    String(obj.confidence ?? '')
+      .trim()
+      .toLowerCase() === 'high'
+      ? 'high'
+      : 'low';
   return {
     time,
     confidence,
@@ -2929,7 +3090,9 @@ async function enrichScenePresenceWithDeepSeekEvidence(
     if (pack.kind === 'APPEARANCE' && pack.characterId) {
       const existing = appearanceGuards.find(guard => guard.id === pack.characterId);
       const mustFollow = [...(pack.mustFollow ?? []), ...pack.facts].filter(Boolean).slice(0, 8);
-      const mustNotInvent = pack.mustNotInfer?.length ? pack.mustNotInfer : ['不得补充未在世界书、近期正文或联网证据中出现的外貌细节'];
+      const mustNotInvent = pack.mustNotInfer?.length
+        ? pack.mustNotInfer
+        : ['不得补充未在世界书、近期正文或联网证据中出现的外貌细节'];
       if (existing) {
         existing.mustFollow = Array.from(new Set([...(existing.mustFollow ?? []), ...mustFollow])).slice(0, 8);
         existing.mustNotInvent = Array.from(new Set([...(existing.mustNotInvent ?? []), ...mustNotInvent])).slice(0, 8);

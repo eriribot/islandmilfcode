@@ -1,7 +1,7 @@
 import type { SummaryStore } from '../summary/types';
 import { compareVersions } from 'compare-versions';
 import { createDefaultSummaryStore } from '../summary/types';
-import { extractContextReply, getSummaryMessages, isFrontendHtmlShell } from '../message-format';
+import { extractContextReply, getReaderMessages, getSummaryMessages, isFrontendHtmlShell } from '../message-format';
 import type {
   Difficulty,
   GameState,
@@ -16,7 +16,7 @@ import type {
   SaveTargetMeta,
   StatusData,
 } from '../types';
-import { normalizeDrawingSettings, normalizePhoneMessageStore } from './store';
+import { normalizeDrawingSettings, normalizeGameDevelopmentSnapshotValue, normalizePhoneMessageStore } from './store';
 import { affinityStage, defaultStatusData, normalizeStatusData, obsessionStage } from '../variables/normalize';
 import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import { rebuildIndexes } from '../memorydatabase/indexes';
@@ -24,6 +24,7 @@ import type { IslandMemoryDB } from '../memorydatabase/types';
 import { migrateSummaryStoreToMemoryDB, hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
 import { sweepLegacyMemoryDB } from '../memorydatabase/sweep';
 import { createDefaultMemoryDB } from '../memorydatabase/defaults';
+import { reconcilePlotRouteChoiceAfterTimelineChange } from '../plot-state-machine/memory';
 import {
   applyPlayerBackgroundsToInitialState,
   getPlayerBackgroundCost,
@@ -87,8 +88,9 @@ function normalizeImageRerollContext(context?: ImageRerollContext): ImageRerollC
 function normalizePersistedIllustration(illustration: NonNullable<PersistedMessage['illustrations']>[number]) {
   if (!illustration || typeof illustration !== 'object') return null;
   const prompt = illustration.prompt ? String(illustration.prompt) : undefined;
-  const assetId = illustration.assetId
-    || (isInlineImageDataUrl(illustration.imageData)
+  const assetId =
+    illustration.assetId ||
+    (isInlineImageDataUrl(illustration.imageData)
       ? persistInlineImageDataAsAssetSync(illustration.imageData, { prompt })
       : '');
   if (!assetId) return null;
@@ -279,6 +281,10 @@ function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function hasOwn(input: object, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(input, key);
+}
+
 function getPayloadStorageKey(saveId: string) {
   return `${SAVE_PAYLOAD_STORAGE_PREFIX}${saveId}`;
 }
@@ -323,11 +329,16 @@ function normalizePersistedStatusSnapshot(input: unknown): RollbackSnapshot | un
   }
 
   const raw = input as Partial<RollbackSnapshot>;
-  return {
+  const snapshot: RollbackSnapshot = {
     statusData: normalizeStatusData(raw.statusData ?? defaultStatusData),
     ...(raw.playerProfile ? { playerProfile: normalizePlayerProfile(raw.playerProfile) } : {}),
     ...(raw.drawingSettings ? { drawingSettings: normalizeDrawingSettings(raw.drawingSettings) } : {}),
   };
+  if (hasOwn(raw, 'gameDevelopment')) {
+    const gameDevelopment = normalizeGameDevelopmentSnapshotValue(raw.gameDevelopment);
+    if (gameDevelopment !== undefined) snapshot.gameDevelopment = gameDevelopment;
+  }
+  return snapshot;
 }
 
 function hasHeavyPersistedStatusSnapshot(input: unknown): boolean {
@@ -338,21 +349,40 @@ function hasHeavyPersistedStatusSnapshot(input: unknown): boolean {
 
 function shouldCompactPersistedMessages(messages: unknown): boolean {
   if (!Array.isArray(messages)) return false;
-  return messages.some(message => hasHeavyPersistedStatusSnapshot((message as Partial<PersistedMessage> | null)?.statusSnapshot));
+  return messages.some(message =>
+    hasHeavyPersistedStatusSnapshot((message as Partial<PersistedMessage> | null)?.statusSnapshot),
+  );
 }
 
 function hasInlinePersistedImageData(messages: unknown): boolean {
   if (!Array.isArray(messages)) return false;
-  return messages.some(message =>
-    Array.isArray((message as Partial<PersistedMessage> | null)?.illustrations) &&
-    ((message as Partial<PersistedMessage>).illustrations ?? []).some(illustration =>
-      isInlineImageDataUrl(illustration.imageData),
-    ),
+  return messages.some(
+    message =>
+      Array.isArray((message as Partial<PersistedMessage> | null)?.illustrations) &&
+      ((message as Partial<PersistedMessage>).illustrations ?? []).some(illustration =>
+        isInlineImageDataUrl(illustration.imageData),
+      ),
   );
+}
+
+function needsPersistedMessageIdMigration(messages: unknown): boolean {
+  if (!Array.isArray(messages)) return false;
+  const seen = new Set<string>();
+  for (const message of messages) {
+    if (!message || typeof message !== 'object') continue;
+    const raw = message as Partial<PersistedMessage>;
+    if (raw.role !== 'user' && raw.role !== 'assistant') continue;
+    if (isFrontendHtmlShell(String(raw.rawText || raw.text || ''))) continue;
+    const id = typeof raw.id === 'string' ? raw.id.trim() : '';
+    if (!id || raw.id !== id || seen.has(id)) return true;
+    seen.add(id);
+  }
+  return false;
 }
 
 function normalizePersistedMessages(messages: PersistedMessage[] | undefined): PersistedMessage[] {
   if (!Array.isArray(messages)) return [];
+  const seenIds = new Set<string>();
   return messages
     .filter(
       message =>
@@ -362,7 +392,11 @@ function normalizePersistedMessages(messages: PersistedMessage[] | undefined): P
     )
     .map(message => {
       const statusSnapshot = normalizePersistedStatusSnapshot(message.statusSnapshot);
+      let id = typeof message.id === 'string' ? message.id.trim() : '';
+      while (!id || seenIds.has(id)) id = crypto.randomUUID();
+      seenIds.add(id);
       return {
+        id,
         role: message.role,
         speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
         text: String(message.text ?? ''),
@@ -409,7 +443,9 @@ function normalizeTargetIdentity(value: unknown) {
     .replace(/[·・\s　._-]/g, '');
 }
 
-function getBuiltInTargetKeyFromStatusTarget(target: Partial<SavePayload['gameState']['statusData']['targets'][number]>) {
+function getBuiltInTargetKeyFromStatusTarget(
+  target: Partial<SavePayload['gameState']['statusData']['targets'][number]>,
+) {
   const identityHaystack = [target.id, target.name, target.meta?.worldbookEntryName]
     .map(normalizeTargetIdentity)
     .join('\n');
@@ -421,7 +457,8 @@ function getBuiltInTargetKeyFromStatusTarget(target: Partial<SavePayload['gameSt
   if (/霞之丘|霞ヶ丘|诗羽|詩羽|霞诗子|utaha|kasumigaoka/.test(haystack)) return 'utaha';
   if (/波岛|波島|出海|izumi|hashima/.test(haystack)) return 'izumi';
   if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(haystack)) return 'michiru';
-  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack)) return 'akane';
+  if (/高坂茜|红坂朱音|紅坂朱音|高坂|红坂|紅坂|朱音|茜|akane|kosaka|kousaka|kurenai/.test(identityHaystack))
+    return 'akane';
   return '';
 }
 
@@ -753,9 +790,7 @@ function readPayload(saveId: string): SavePayload | null {
   // 一次性 sweep：旧 schema 残留（流水账 attributes、伪 worldState 行）的清洗。幂等。
   const sweepStats = sweepLegacyMemoryDB(memoryDB);
   const sweepHadEffect =
-    sweepStats.worldRowsMigrated > 0
-    || sweepStats.duplicatesCollapsed > 0
-    || sweepStats.deltaRowsFolded > 0;
+    sweepStats.worldRowsMigrated > 0 || sweepStats.duplicatesCollapsed > 0 || sweepStats.deltaRowsFolded > 0;
   if (sweepHadEffect) {
     rebuildIndexes(memoryDB);
   }
@@ -764,6 +799,7 @@ function readPayload(saveId: string): SavePayload | null {
   // 这一步是为了修复存档加载后摘要丢失、全部历史被塞进 prompt 的问题。
   const hydrated = hydrateSummaryStoreFromMemoryDB(memoryDB);
   const hadInlineImages = hasInlinePersistedImageData(payload.chatLog);
+  const messageIdsMigrated = needsPersistedMessageIdMigration(payload.chatLog);
   const chatLog = normalizePersistedMessages(payload.chatLog);
   const previousVersion = payload.version ?? '';
   const isLegacyVersion = isOlderSaveVersion(previousVersion);
@@ -773,24 +809,27 @@ function readPayload(saveId: string): SavePayload | null {
     saveSchemaVersion: SAVE_VERSION,
     ...(isLegacyVersion && previousVersion ? { migratedFromSaveSchemaVersion: previousVersion } : {}),
   };
-  const megumiRecovery =
-    isLegacyVersion
-      ? recoverLegacyMegumiAffinityFromSnapshots(normalizedGameState.statusData, chatLog)
-      : { statusData: normalizedGameState.statusData, recovered: false };
+  const megumiRecovery = isLegacyVersion
+    ? recoverLegacyMegumiAffinityFromSnapshots(normalizedGameState.statusData, chatLog)
+    : { statusData: normalizedGameState.statusData, recovered: false };
   if (megumiRecovery.recovered) {
     normalizedGameState.statusData = megumiRecovery.statusData;
   }
-  const summaryFloorCount = getSummaryMessages(
-    chatLog.map(message => ({
-      id: crypto.randomUUID(),
-      role: message.role,
-      speaker: message.speaker,
-      text: message.text,
-      rawText: message.rawText,
-      illustrations: message.illustrations,
-    })),
-    true,
-  ).length;
+  const normalizedUiMessages = chatLog.map(message => ({
+    id: message.id,
+    role: message.role,
+    speaker: message.speaker,
+    text: message.text,
+    rawText: message.rawText,
+    illustrations: message.illustrations,
+  }));
+  const plotRouteReconciled = reconcilePlotRouteChoiceAfterTimelineChange(memoryDB, 'v07', {
+    currentTime: normalizedGameState.statusData.world.currentTime,
+    currentMainEventId: normalizedGameState.statusData.world.currentMainEventId,
+    mainEvents: normalizedGameState.statusData.world.mainEvents,
+    readerFloorCount: getReaderMessages(normalizedUiMessages).length,
+  });
+  const summaryFloorCount = getSummaryMessages(normalizedUiMessages, true).length;
   const summaryCursor = Math.min(summaryFloorCount, getSummaryCursorFromMemoryDB(memoryDB));
   memoryDB.lastProcessedIndex = summaryCursor;
 
@@ -810,7 +849,9 @@ function readPayload(saveId: string): SavePayload | null {
     sweepHadEffect ||
     shouldCompactPersistedMessages(payload.chatLog) ||
     hadInlineImages ||
+    messageIdsMigrated ||
     megumiRecovery.recovered ||
+    plotRouteReconciled ||
     payload.version !== SAVE_VERSION
   ) {
     writePayloadSync(saveId, {
@@ -1077,13 +1118,16 @@ export function writeSave(
   return index[saveId];
 }
 
-export function writeAutosave(data: {
-  runId: string;
-  gameState: GameState;
-  chatLog: PersistedMessage[];
-  summaryStore: SummaryStore;
-  memoryDB?: import('../memorydatabase/types').IslandMemoryDB;
-}, saveId = getAutosaveBranchSaveId({ runId: data.runId })): SaveMeta | null {
+export function writeAutosave(
+  data: {
+    runId: string;
+    gameState: GameState;
+    chatLog: PersistedMessage[];
+    summaryStore: SummaryStore;
+    memoryDB?: import('../memorydatabase/types').IslandMemoryDB;
+  },
+  saveId = getAutosaveBranchSaveId({ runId: data.runId }),
+): SaveMeta | null {
   return writeSave(saveId, {
     ...data,
     kind: 'autosave',
@@ -1291,7 +1335,11 @@ export function exportSaveAsJson(saveId: string): string {
   return exportSaveAsJsonParts(saveId).join('');
 }
 
-function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): { imported: number; skipped: number; saveId: string } {
+function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): {
+  imported: number;
+  skipped: number;
+  saveId: string;
+} {
   if (Array.isArray(parsed.imageAssets)) {
     parsed.imageAssets.forEach(asset => {
       restoreImageAssetFromBackup(asset).catch(error => console.warn('[saves] image asset import failed:', error));
@@ -1372,7 +1420,9 @@ export function importAllSavesFromJson(json: string): { imported: number; skippe
     try {
       if (key === indexKey) {
         // save index → 写入 IndexedDB
-        const indexData = (typeof value === 'object' && value !== null ? value : JSON.parse(value as string)) as SaveIndexRecord;
+        const indexData = (
+          typeof value === 'object' && value !== null ? value : JSON.parse(value as string)
+        ) as SaveIndexRecord;
         // 合并到现有 index（覆盖同名 saveId）
         const currentIndex = readSaveIndex();
         importedIndex = { ...currentIndex, ...indexData };
@@ -1381,7 +1431,9 @@ export function importAllSavesFromJson(json: string): { imported: number; skippe
       } else if (key.startsWith(payloadPrefix)) {
         // save payload → 写入 IndexedDB
         const saveId = key.slice(payloadPrefix.length);
-        const payloadData = (typeof value === 'object' && value !== null ? value : JSON.parse(value as string)) as Record<string, unknown>;
+        const payloadData = (
+          typeof value === 'object' && value !== null ? value : JSON.parse(value as string)
+        ) as Record<string, unknown>;
         writePayloadSync(saveId, payloadData);
         imported += 1;
       } else {

@@ -42,6 +42,9 @@ export type PlotMachineDefinition = {
   targetId: string;
   title: string;
   proposalWindow: PlotDateWindow;
+  /**
+   * @deprecated 只供尚未迁移的预览/合同调用方读取；当前 DDL 由 SAE_07-8 权威生命周期决定。
+   */
   promptWindow: PlotDateWindow;
   choiceStorageKey: `plotRoute.${string}.choice`;
   routes: readonly PlotRouteDefinition[];
@@ -133,23 +136,33 @@ export type PlotRouteFamilyAdvisory = {
   missingFlagIds: string[];
 };
 
-export type PlotRouteChoiceReceipt = {
-  /** schemaVersion 1 是旧五变体 receipt；2 是当前三线玩家选择。 */
-  schemaVersion: 1 | 2;
+type PlotRouteChoiceReceiptBase = {
   machineId: PlotMachineId;
   familyId: PlotRouteFamilyId;
-  /** 旧存档字段；新版 choice 不再把内部 variant 当作玩家最终路线。 */
-  variantId?: PlotRouteVariantId;
-  /** 新版每次确认的唯一实例，用于隔离回退后重新选择产生的游戏开发状态。 */
-  confirmationId?: string;
-  /** 确认发生时的时间线头部楼层；只用于因果回退，不使用正在浏览的楼层。 */
-  anchorFloorIndex?: number;
   confirmedAt: string;
   source: 'manual';
-  /** 旧存档审计字段；新版路线由玩家强制决定，不再依赖 flag basis。 */
-  basisHash?: string;
-  basisFlagIds?: string[];
 };
+
+export type PlotRouteChoiceReceipt =
+  | (PlotRouteChoiceReceiptBase & {
+      /** 旧五变体 receipt；这些字段在 v1 必须完整存在，才能安全读取旧存档。 */
+      schemaVersion: 1;
+      variantId: PlotRouteVariantId;
+      basisHash: string;
+      basisFlagIds: string[];
+      confirmationId?: never;
+      anchorFloorIndex?: never;
+    })
+  | (PlotRouteChoiceReceiptBase & {
+      /** 当前三线玩家选择；确认实例和楼层锚点共同隔离回退后的新时间线。 */
+      schemaVersion: 2;
+      confirmationId: string;
+      anchorFloorIndex: number;
+      /** 兼容早期候选数据；v2 的权威选择仍只看 familyId。 */
+      variantId?: PlotRouteVariantId;
+      basisHash?: string;
+      basisFlagIds?: string[];
+    });
 
 export type PlotRouteResolution = {
   machineId: PlotMachineId;
@@ -172,6 +185,8 @@ export type PlotRouteChoiceCommit = {
   receipt: PlotRouteChoiceReceipt;
 };
 
+// 中文注释：outside_choice_window / route_not_eligible 只为旧预览和合同脚本保留。
+// 当前三线确认不按日期上界或 flag eligibility 拒绝玩家，生产路径不再产生这两个错误码。
 export type PlotRouteChoiceConfirmationErrorCode =
   | 'not_manual'
   | 'missing_date'

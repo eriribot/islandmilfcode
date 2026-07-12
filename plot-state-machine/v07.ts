@@ -11,6 +11,8 @@ export const V07_PLOT_MACHINE: PlotMachineDefinition = {
     start: '2013-02-08',
     end: '2013-03-03',
   },
+  // 中文注释：legacy 窗口只保留给尚未迁移的 preview/合同脚本显示与断言。
+  // 正式 DDL 不读取它，也没有 2013-03-31 上界；唯一权威是 SAE_07-8 正常终态进入 statusData。
   promptWindow: {
     start: '2013-03-04',
     end: '2013-03-31',

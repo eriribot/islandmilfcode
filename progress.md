@@ -82,6 +82,21 @@ Original prompt: DESIGN.md 根据这个md文件修复提到的问题
 - Verification: production build passed, phone pagination contracts 12/12, V07 simulation 78/78, host bundle safety passed, targeted ESLint passed. `index.ts` retains only its two pre-existing lint errors.
 - Human gate: replace the Tavern regex replacement body with `dist/islandmilfcode/index.html`, save, re-render, then test the live page on port 8000. Do not run watch.
 
+2026-07-12 V07 rollback boundary reconciliation
+
+- User evidence showed a save restored to `2012-12-07 18:00` while the V07 route choice and week-one game-development UI remained active.
+- Root cause: rollback cleanup only reliably handled v2 receipts during the live rollback action; previously corrupted/legacy saves were trusted unchanged during `loadSave`.
+- Added timeline reconciliation in `plot-state-machine/memory.ts`:
+  - clear when the authoritative date/event lifecycle has rewound before the DDL;
+  - clear v2 receipts when the current reader head is earlier than `anchorFloorIndex`;
+  - write an auditable tombstone instead of physically deleting receipt history.
+- `state/store.ts` now runs the same reconciliation after rollback/delete.
+- `state/saves.ts` reconciles on load and persists the repaired memoryDB, so already-broken saves self-heal without touching `index.ts`.
+- Direct execution evidence: pre-DDL and removed-anchor scenarios clear the choice; an intact anchor after the DDL remains selected.
+- `npm run build:dev` passed. Targeted ESLint passed except the existing irregular-whitespace issue in `state/saves.ts`; filtered TypeScript output showed only pre-existing errors.
+- Browser smoke test reached an unauthenticated 8000 entry and returned 401, so no real-page acceptance is claimed.
+- Human gate: load the affected rolled-back save and confirm route choice/game-development are no longer active; then confirm a post-DDL save with an intact anchor still keeps its choice.
+
 2026-07-11 phone home fit and tap regression
 
 - Live DOM measurement on the 380 x 680 phone shell found each grid row was about 87.5 px while an app icon block was about 97 px, so the third-row descriptions were clipped.
@@ -89,3 +104,15 @@ Original prompt: DESIGN.md 根据这个md文件修复提到的问题
 - Real Chrome clicks confirmed the application route itself worked only when pointer capture was bypassed. `index.ts` now captures the pointer only after a horizontal gesture crosses the 36 px swipe threshold, preserving normal taps.
 - Verification: build passed; pagination contracts 12/12; V07 routing 78/78; host bundle safety passed with all replacement-character checks at zero.
 - Human gate: re-copy the latest build generated at 2026-07-11 12:19:31 into the Tavern regex, then re-run live tap/swipe/layout checks.
+
+2026-07-12 game-development real narrative integration
+
+- Replaced the production six-slot weekly state with schema v3 `workday -> weekend` turns.
+- Enabled all three player route families. The frozen development profile preserves `stay_blackgold` separately from `stay_user_only`.
+- Connected the phone page through `submitGameDevelopmentTurn()` to the existing real `submitMessage()` generator path.
+- A turn settles only after a complete non-empty `<content>` result is finalized to the exact assistant message and the acceptance callback succeeds.
+- Simulation, partial-stream recovery, cancellation, and missing Tavern generator paths cannot fire the game-development acceptance callback.
+- Added stable persisted message IDs, durable `commit_pending`, retry-without-renarration, deterministic settlement, v2 baseline migration, and Reader rollback snapshots.
+- The 2013-03-04 entry week treats Monday as consumed by SAE_07-8/route confirmation; its first workday range is 2013-03-05 through 2013-03-08.
+- Verification evidence (not human acceptance): production webpack build passed; exact final inline HTML host safety passed with all replacement/entity/syntax risk counts at zero; no simulation or browser gameplay automation was run.
+- Human gate: user will replace the Tavern artifact and test the complete real generator/save/rollback flow in one pass.

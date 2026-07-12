@@ -32,11 +32,7 @@ function openDb(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
-function txStore(
-  db: IDBDatabase,
-  storeName: string,
-  mode: IDBTransactionMode,
-): IDBObjectStore {
+function txStore(db: IDBDatabase, storeName: string, mode: IDBTransactionMode): IDBObjectStore {
   return db.transaction(storeName, mode).objectStore(storeName);
 }
 
@@ -44,6 +40,14 @@ function promisifyRequest<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error ?? new Error('idb request failed'));
+  });
+}
+
+function waitForTransaction(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onabort = () => reject(tx.error ?? new Error('idb transaction aborted'));
+    tx.onerror = () => reject(tx.error ?? new Error('idb transaction failed'));
   });
 }
 
@@ -60,13 +64,19 @@ export async function idbGet<T>(storeName: string, id: string): Promise<T | null
 /** 写入一条记录（覆盖式）。 */
 export async function idbPut<T>(storeName: string, id: string, value: T): Promise<void> {
   const db = await openDb();
-  await promisifyRequest(txStore(db, storeName, 'readwrite').put({ id, value }));
+  const tx = db.transaction(storeName, 'readwrite');
+  const completed = waitForTransaction(tx);
+  const requested = promisifyRequest(tx.objectStore(storeName).put({ id, value }));
+  await Promise.all([requested, completed]);
 }
 
 /** 删除一条记录。 */
 export async function idbDelete(storeName: string, id: string): Promise<void> {
   const db = await openDb();
-  await promisifyRequest(txStore(db, storeName, 'readwrite').delete(id));
+  const tx = db.transaction(storeName, 'readwrite');
+  const completed = waitForTransaction(tx);
+  const requested = promisifyRequest(tx.objectStore(storeName).delete(id));
+  await Promise.all([requested, completed]);
 }
 
 /** 取整个 store 的所有记录。 */

@@ -4,10 +4,10 @@ import type { IslandMemoryDB } from '../memorydatabase/types';
 import { getReaderMessages } from '../message-format';
 import {
   GAME_DEVELOPMENT_ACTIONS,
-  GAME_DEVELOPMENT_DAYS,
-  getGameDevelopmentActions,
+  getAllowedGameDevelopmentActions,
+  getGameDevelopmentPhaseCalendarRange,
+  getLastCompletedGameDevelopmentTurn,
   isGameDevelopmentRouteChoice,
-  isGameDevelopmentWeekReady,
   readGameDevelopmentState,
   type GameDevelopmentProject,
 } from '../game-development';
@@ -315,7 +315,11 @@ function renderMusicHero(state: AppState) {
 
 // 状态栏
 function renderPhoneHome(state: AppState) {
-  const playerMeta = state.playerProfile.schoolIdentityLabel || state.playerProfile.className || state.playerProfile.gender || '主角档案';
+  const playerMeta =
+    state.playerProfile.schoolIdentityLabel ||
+    state.playerProfile.className ||
+    state.playerProfile.gender ||
+    '主角档案';
   const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
   const characterRows = [PHONE_CHARACTER_ORDER.slice(0, 3), PHONE_CHARACTER_ORDER.slice(3)];
   const phoneThreadCount = Object.values(state.phoneMessages.threads).filter(thread => thread.messages.length).length;
@@ -1110,7 +1114,8 @@ function renderSummaryPhonePage(state: AppState, renderers: PhoneRenderers) {
 }
 
 function renderStatusPhonePage(state: AppState, renderers: PhoneRenderers) {
-  const profileSubtitle = state.playerProfile.schoolIdentityLabel || state.playerProfile.className || state.playerProfile.gender || '';
+  const profileSubtitle =
+    state.playerProfile.schoolIdentityLabel || state.playerProfile.className || state.playerProfile.gender || '';
   return `
     <section class="phone-route-page phone-app-page" data-phone-route-view="app:status">
       ${renderPhoneAppHeader(state, '状态', profileSubtitle)}
@@ -1168,7 +1173,12 @@ function isV07StudioUnlocked(state: AppState): boolean {
 }
 
 function getV07StudioSnapshots(state: AppState): Map<string, PlotFlagSnapshot> {
-  return new Map(readActivePlotFlagSnapshots(state.memoryDB, V07_STUDIO_MACHINE_ID).map(snapshot => [snapshot.definition.id, snapshot]));
+  return new Map(
+    readActivePlotFlagSnapshots(state.memoryDB, V07_STUDIO_MACHINE_ID).map(snapshot => [
+      snapshot.definition.id,
+      snapshot,
+    ]),
+  );
 }
 
 function getV07StudioHomeMeta(state: AppState): string {
@@ -1460,6 +1470,7 @@ const GAME_DEVELOPMENT_METRICS: Array<[keyof GameDevelopmentProject, string]> = 
   ['creativity', '创意'],
   ['writing', '剧本'],
   ['art', '美术'],
+  ['music', '音乐'],
   ['code', '程序'],
   ['polish', '打磨度'],
   ['hype', '期待度'],
@@ -1472,8 +1483,15 @@ function getGameDevelopmentHomeMeta(state: AppState): string {
   const { resolution } = context.v07;
   if (!resolution.choiceReceipt) return '等待路线确认';
   if (!isGameDevelopmentRouteChoice(resolution.choiceReceipt)) return '当前路线未开启';
-  const game = readGameDevelopmentState(state.memoryDB, resolution.choiceReceipt);
-  return game.project.created ? `第 ${game.week} 周 · ${game.project.progress}%` : '等待建立项目';
+  const game = readGameDevelopmentState(
+    state.memoryDB,
+    resolution.choiceReceipt,
+    resolution,
+    state.statusData.world.currentTime,
+  );
+  return game.projectStatus === 'not_created'
+    ? '等待建立项目'
+    : `第 ${game.week} 周 · ${game.activePhase === 'workday' ? '工作日' : '周末'} · ${game.project.progress}%`;
 }
 
 function renderGameDevelopmentLock(state: AppState, reason: string) {
@@ -1500,7 +1518,7 @@ function renderGameDevelopmentProjectForm(state: AppState, routeLabel: string) {
         <section class="phone-game-hero">
           <span>已选择创作路线</span>
           <strong>${escapeHtml(routeLabel)}</strong>
-          <p>填写游戏信息并建立项目后，就可以安排周一到周末的开发计划。</p>
+          <p>填写游戏信息并建立项目后，每周依次完成一个工作日正文回合和一个周末正文回合。</p>
         </section>
         <section class="phone-game-project-form">
           <label>游戏名<input data-field="game-project-title" value="第二作" maxlength="40" /></label>
@@ -1522,32 +1540,47 @@ function renderGameDevelopmentPhonePage(state: AppState) {
     return renderGameDevelopmentLock(state, '先去企划页选择接下来的创作路线，确认后就能开始开发游戏。');
   }
   if (!isGameDevelopmentRouteChoice(receipt)) {
-    return renderGameDevelopmentLock(state, '“留下”是剧情路线，不会自动开启单飞或朱音的游戏开发模式。');
+    return renderGameDevelopmentLock(state, '当前路线 receipt 无法进入游戏开发。');
   }
 
-  const game = readGameDevelopmentState(state.memoryDB, receipt);
+  const game = readGameDevelopmentState(state.memoryDB, receipt, resolution, state.statusData.world.currentTime);
   const routeLabel = V07_FAMILY_LABELS[receipt.familyId];
-  if (!game.project.created) return renderGameDevelopmentProjectForm(state, routeLabel);
+  if (game.projectStatus === 'not_created') return renderGameDevelopmentProjectForm(state, routeLabel);
 
-  const selectedSlot = game.slots[game.selectedDay];
-  const availableActions = getGameDevelopmentActions(game, selectedSlot.kind);
-  const plannedCount = GAME_DEVELOPMENT_DAYS.filter(day => Boolean(game.slots[day.id].actionId)).length;
-  const ready = isGameDevelopmentWeekReady(game);
+  const availableActions = getAllowedGameDevelopmentActions(game);
+  const pending = game.pendingTurn;
+  const locked = Boolean(pending);
+  const visibleActionId = pending?.actionId ?? game.draft.actionId;
+  const visibleTargetId = pending?.selectedTargetId ?? game.draft.selectedTargetId;
+  const visibleIntent = pending?.intent ?? game.draft.intent;
+  const lastCompleted = getLastCompletedGameDevelopmentTurn(game);
+  const dateRange = getGameDevelopmentPhaseCalendarRange(game, game.activePhase);
+  const variantLabel = V07_VARIANT_LABELS[game.routeVariant] ?? game.routeVariant;
   const targetOptions = [
-    { id: '', label: selectedSlot.kind === 'weekend' ? '独处休整' : '独自推进' },
+    { id: '', label: game.activePhase === 'weekend' ? '独自休息' : '独自工作' },
     ...state.statusData.targets
       .filter(target => !isPlayerPhonePseudoTarget(target))
       .map(target => ({ id: target.id, label: target.alias || target.name || '未命名角色' })),
   ];
+
+  const pendingStatus = (() => {
+    if (!pending) return '';
+    if (pending.status === 'prepared') return '行动已经冻结，等待发送真实正文请求。';
+    if (pending.status === 'generating') return '正在通过现有主正文链生成，本回合行动已锁定。';
+    if (pending.status === 'commit_pending') return '主正文已经接受，正在持久化确定性结算。';
+    if (pending.failurePhase === 'accepted_commit') return `正文已保留，结算提交失败：${pending.failureReason}`;
+    return `生成失败：${pending.failureReason}`;
+  })();
+  const terminal = game.projectStatus === 'completed' || game.projectStatus === 'deadline_reached';
 
   return `
     <section class="phone-route-page phone-app-page phone-app-page--game-development" data-phone-route-view="app:game-development">
       ${renderPhoneAppHeader(state, '游戏开发', routeLabel)}
       <div class="phone-page-scroll phone-game-development-scroll">
         <section class="phone-game-hero">
-          <span>第 ${game.week} 周 · ${escapeHtml(game.project.phase)}</span>
+          <span>第 ${game.week} 周 · ${game.activePhase === 'workday' ? '工作日' : '周末'} · ${escapeHtml(dateRange.start)}～${escapeHtml(dateRange.end)}</span>
           <strong>${escapeHtml(game.project.title)}</strong>
-          <p>${escapeHtml(game.project.genre)} · ${escapeHtml(game.project.theme)} · ${escapeHtml(game.project.platform)}</p>
+          <p>${escapeHtml(game.project.genre)} · ${escapeHtml(game.project.theme)} · ${escapeHtml(game.project.platform)}<br />开发档案：${escapeHtml(variantLabel)}</p>
           <div><em>剩余 ${game.project.weeksLeft} 周</em><em>预算 ${game.project.budget}</em></div>
         </section>
 
@@ -1559,80 +1592,84 @@ function renderGameDevelopmentPhonePage(state: AppState) {
         </section>
 
         <section class="phone-game-week">
-          <header><span>本周计划</span><strong>${plannedCount}/6</strong></header>
-          <div class="phone-game-days" role="tablist">
-            ${GAME_DEVELOPMENT_DAYS.map(day => {
-              const slot = game.slots[day.id];
-              const action = GAME_DEVELOPMENT_ACTIONS.find(item => item.id === slot.actionId);
-              return `
-                <button
-                  type="button"
-                  data-action="game-select-day"
-                  data-game-day="${day.id}"
-                  class="${game.selectedDay === day.id ? 'is-selected' : ''} ${slot.actionId ? 'is-planned' : ''}"
-                ><span>${day.label}</span><small>${escapeHtml(action?.label ?? '待安排')}</small></button>
-              `;
-            }).join('')}
+          <header><span>本周顺序</span><strong>${game.activePhase === 'workday' ? '1 / 2' : '2 / 2'}</strong></header>
+          <div class="phone-game-days">
+            <button type="button" class="${game.activePhase === 'workday' ? 'is-selected' : 'is-planned'}" disabled><span>工作日</span><small>${game.activePhase === 'workday' ? '当前回合' : '已经完成'}</small></button>
+            <button type="button" class="${game.activePhase === 'weekend' ? 'is-selected' : ''}" disabled><span>周末</span><small>${game.activePhase === 'weekend' ? '当前回合' : '工作日后解锁'}</small></button>
           </div>
         </section>
 
         <section class="phone-game-slot-editor">
           <header>
-            <span>${escapeHtml(selectedSlot.label)} · ${selectedSlot.kind === 'weekend' ? '周末行动' : '开发行动'}</span>
-            <strong>${escapeHtml(GAME_DEVELOPMENT_ACTIONS.find(item => item.id === selectedSlot.actionId)?.label ?? '未安排')}</strong>
+            <span>${game.activePhase === 'weekend' ? '周末行动' : '开发行动'}</span>
+            <strong>${escapeHtml(GAME_DEVELOPMENT_ACTIONS.find(item => item.id === visibleActionId)?.label ?? '未选择')}</strong>
           </header>
           <div class="phone-game-actions">
-            ${availableActions.map(action => `
+            ${availableActions
+              .map(
+                action => `
               <button
                 type="button"
                 data-action="game-select-action"
-                data-game-day="${selectedSlot.dayId}"
                 data-game-action="${action.id}"
-                class="${selectedSlot.actionId === action.id ? 'is-selected' : ''}"
+                class="${visibleActionId === action.id ? 'is-selected' : ''}"
+                ${locked || terminal ? 'disabled' : ''}
               ><strong>${escapeHtml(action.label)}</strong><small>${escapeHtml(action.hint)}</small></button>
-            `).join('')}
+            `,
+              )
+              .join('')}
           </div>
           <label>
-            和谁一起
-            <select data-field="game-slot-target" data-game-day="${selectedSlot.dayId}" ${selectedSlot.actionId ? '' : 'disabled'}>
-              ${targetOptions.map(target => `<option value="${escapeHtml(target.id)}" ${selectedSlot.targetId === target.id || (!selectedSlot.targetId && !target.id) ? 'selected' : ''}>${escapeHtml(target.label)}</option>`).join('')}
+            ${game.activePhase === 'weekend' ? '和谁约会' : '和谁一起'}
+            <select data-field="game-turn-target" ${visibleActionId && !locked && !terminal ? '' : 'disabled'}>
+              ${targetOptions.map(target => `<option value="${escapeHtml(target.id)}" ${visibleTargetId === target.id || (!visibleTargetId && !target.id) ? 'selected' : ''}>${escapeHtml(target.label)}</option>`).join('')}
             </select>
           </label>
           <label>
-            今天想完成什么
-            <textarea data-field="game-slot-intent" data-game-day="${selectedSlot.dayId}" maxlength="240" ${selectedSlot.actionId ? '' : 'disabled'}>${escapeHtml(selectedSlot.intent)}</textarea>
+            本回合想发生什么
+            <textarea data-field="game-turn-intent" maxlength="240" ${visibleActionId && !locked && !terminal ? '' : 'disabled'}>${escapeHtml(visibleIntent)}</textarea>
           </label>
         </section>
 
         <section class="phone-game-summary">
-          ${GAME_DEVELOPMENT_DAYS.map(day => {
-            const slot = game.slots[day.id];
-            const action = GAME_DEVELOPMENT_ACTIONS.find(item => item.id === slot.actionId);
-            return `<div class="${slot.actionId ? 'is-planned' : ''}"><span>${day.label}</span><strong>${escapeHtml(action?.label ?? '待安排')}</strong></div>`;
-          }).join('')}
-          <button type="button" data-action="game-submit-week" ${ready ? '' : 'disabled'}>
-            ${ready ? '完成本周计划' : `还有 ${6 - plannedCount} 天未安排`}
-          </button>
+          <div class="${visibleActionId ? 'is-planned' : ''}"><span>当前行动</span><strong>${escapeHtml(GAME_DEVELOPMENT_ACTIONS.find(item => item.id === visibleActionId)?.label ?? '待选择')}</strong></div>
+          ${pendingStatus ? `<div class="${pending?.status === 'failed' ? '' : 'is-planned'}"><span>回合状态</span><strong>${escapeHtml(pendingStatus)}</strong></div>` : ''}
+          ${terminal ? `<div class="is-planned"><span>项目结果</span><strong>${game.projectStatus === 'completed' ? '项目完成' : '期限已到'}</strong></div>` : ''}
+          ${
+            pending?.status === 'failed'
+              ? `
+            <button type="button" data-action="game-retry-turn">
+              ${pending.failurePhase === 'accepted_commit' ? '重试结算（不重新生成）' : '重试同一回合'}
+            </button>
+          `
+              : !terminal
+                ? `
+            <button type="button" data-action="game-submit-turn" ${visibleActionId && !locked ? '' : 'disabled'}>
+              ${locked ? '回合处理中' : game.activePhase === 'workday' ? '开始本周工作' : '开始周末安排'}
+            </button>
+          `
+                : ''
+          }
         </section>
 
-        ${game.lastSubmission ? `
+        ${
+          lastCompleted
+            ? `
           <details class="phone-game-last-submission">
-            <summary>上周安排：第 ${game.lastSubmission.week} 周</summary>
+            <summary>最近完成：第 ${lastCompleted.week} 周 ${lastCompleted.phase === 'workday' ? '工作日' : '周末'}</summary>
             <div class="phone-game-last-submission__days">
-              ${game.lastSubmission.slots
-                .map(slot => {
-                  const action = GAME_DEVELOPMENT_ACTIONS.find(item => item.id === slot.actionId);
-                  const target = state.statusData.targets.find(item => item.id === slot.targetId);
-                  const partner =
-                    target?.alias ||
-                    target?.name ||
-                    (slot.targetId ? '未识别角色' : slot.kind === 'weekend' ? '独处休整' : '独自推进');
-                  return `<div><span>${escapeHtml(slot.label)}</span><strong>${escapeHtml(action?.label ?? '未记录')}</strong><small>${escapeHtml(partner)}</small></div>`;
-                })
+              <div><span>行动</span><strong>${escapeHtml(GAME_DEVELOPMENT_ACTIONS.find(item => item.id === lastCompleted.actionId)?.label ?? lastCompleted.actionId)}</strong><small>正文 ID：${escapeHtml(lastCompleted.assistantReceipt.messageIdentity.assistantMessageId)}</small></div>
+              ${Object.entries(lastCompleted.settlement.deltas)
+                .map(
+                  ([key, value]) =>
+                    `<div><span>${escapeHtml(key)}</span><strong>${Number(value) >= 0 ? '+' : ''}${Number(value)}</strong></div>`,
+                )
                 .join('')}
             </div>
           </details>
-        ` : ''}
+        `
+            : ''
+        }
       </div>
     </section>
   `;
@@ -1750,13 +1787,7 @@ function renderMusicPhonePage(state: AppState) {
     resultsBlock = '<div class="phone-music-empty">这个关键词没找到结果，换个词试试。</div>';
   } else if (search.status === 'ready') {
     resultsBlock = `<div class="phone-music-list">${search.results
-      .map(track =>
-        renderMusicTrackRow(
-          track,
-          isMusicTrackCurrent(track, activeTrack),
-          loadingTrackId === track.id,
-        ),
-      )
+      .map(track => renderMusicTrackRow(track, isMusicTrackCurrent(track, activeTrack), loadingTrackId === track.id))
       .join('')}</div>`;
   } else {
     resultsBlock = '<div class="phone-music-empty">还没搜索过。试试搜"加藤惠"、"恋爱循环"或任意你想听的歌名。</div>';

@@ -28,7 +28,8 @@ export function recordGenerationDebug(
     lastRole: last?.role ?? '',
     lastStreaming: Boolean(last?.streaming),
     lastTextLength: String(last?.text ?? '').length,
-    lastVisibleLength: last?.role === 'assistant' ? extractContextReply(last.text).length : String(last?.text ?? '').length,
+    lastVisibleLength:
+      last?.role === 'assistant' ? extractContextReply(last.text).length : String(last?.text ?? '').length,
     ...detail,
   };
 
@@ -111,6 +112,27 @@ export function discardStreamingMessage(ctx: StreamingContext) {
   syncFocusedMessage(state, { keepLatest: true });
   ctx.persistConversation();
   recordGenerationDebug(ctx, 'discard:removed-empty-streaming');
+  return true;
+}
+
+export function removeGenerationAssistantMessage(ctx: StreamingContext, messageId: string, generationId?: string) {
+  const { state } = ctx;
+  const messageIndex = state.uiMessages.findIndex(message => message.id === messageId && message.role === 'assistant');
+  if (messageIndex < 0) {
+    recordGenerationDebug(ctx, 'remove-generation-message:skip-missing', { messageId, generationId });
+    return false;
+  }
+
+  state.uiMessages = [...state.uiMessages.slice(0, messageIndex), ...state.uiMessages.slice(messageIndex + 1)];
+  if (!generationId || state.currentGenerationId === generationId) {
+    state.currentGenerationId = '';
+  }
+  if (!generationId || state.finalizedGenerationId === generationId) {
+    state.finalizedGenerationId = '';
+  }
+  syncFocusedMessage(state, { keepLatest: true });
+  ctx.persistConversation();
+  recordGenerationDebug(ctx, 'remove-generation-message:removed', { messageId, generationId });
   return true;
 }
 
@@ -227,7 +249,10 @@ export function setupStreamingHooks(ctx: StreamingContext, eventStops: Array<() 
   if (fully) {
     const stop = win.eventOn(fully, (fullText: string, generationId: string) => {
       if (isBackgroundGeneration(generationId)) {
-        recordGenerationDebug(ctx, 'event:fully-ignore-background', { generationId, rawLength: String(fullText ?? '').length });
+        recordGenerationDebug(ctx, 'event:fully-ignore-background', {
+          generationId,
+          rawLength: String(fullText ?? '').length,
+        });
         return;
       }
       if (isActiveMainGeneration(generationId)) {
@@ -246,7 +271,10 @@ export function setupStreamingHooks(ctx: StreamingContext, eventStops: Array<() 
   if (ended) {
     const stop = win.eventOn(ended, (text: string, generationId: string) => {
       if (isBackgroundGeneration(generationId)) {
-        recordGenerationDebug(ctx, 'event:ended-ignore-background', { generationId, rawLength: String(text ?? '').length });
+        recordGenerationDebug(ctx, 'event:ended-ignore-background', {
+          generationId,
+          rawLength: String(text ?? '').length,
+        });
         return;
       }
       // 无 id 的结束事件容易和后续显式 finalize 重复，只让主请求返回值负责最终落正文。

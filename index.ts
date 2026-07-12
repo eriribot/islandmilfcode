@@ -25,7 +25,12 @@ import {
 import { generateOpeningScene } from './actions/opening';
 import { clearBackgroundTask } from './background-tasks';
 import { setupStreamingHooks } from './actions/streaming';
-import { extractContextReply, getReaderMessages, getSummaryMessages, invalidateReaderMessagesCache } from './message-format';
+import {
+  extractContextReply,
+  getReaderMessages,
+  getSummaryMessages,
+  invalidateReaderMessagesCache,
+} from './message-format';
 import { bindFloatingPhoneEvents, loadFloatingPhonePosition, syncFloatingPhoneAfterResize } from './phone/floating';
 import { clampPhoneHomePageToCount } from './phone/home-pagination';
 import {
@@ -45,6 +50,16 @@ import {
   searchMusic,
 } from './phone/music';
 import { renderApp } from './render';
+import { getDebugGameStateText, installDebugGlobals } from './index/debug';
+import {
+  canFlipReader,
+  captureReaderBodyScroll,
+  resetReaderCardTransform,
+  resolveReaderIndex,
+  restoreReaderBodyScroll,
+} from './index/reader-ui';
+import { buildSummaryModelsUrl, parseSummaryModelsResponse } from './index/summary-models';
+import { createGameDevelopmentController, type GameDevelopmentController } from './index/game-development';
 import { mountRadarChart, unmountRadarChart } from './phone/radar';
 import {
   getCalendarMonthOffset,
@@ -55,19 +70,7 @@ import {
   getV07FamilyLabel,
 } from './phone/render';
 import { updateSummaryTextInMemoryDB } from './memorydatabase/commit-points';
-import {
-  commitGameDevelopmentState,
-  createGameDevelopmentProject,
-  isGameDevelopmentRouteChoice,
-  readGameDevelopmentState,
-  selectGameDevelopmentAction,
-  selectGameDevelopmentDay,
-  submitGameDevelopmentWeek,
-  updateGameDevelopmentSlot,
-  type GameDevelopmentActionId,
-  type GameDevelopmentDayId,
-  type GameDevelopmentState,
-} from './game-development';
+import { isGameDevelopmentRouteChoice } from './game-development';
 import {
   buildPlotRoutingContext,
   commitPlotRouteChoice,
@@ -121,8 +124,8 @@ import {
   resumeAutoSummary,
   runSummary,
   saveSummaryApiConfig,
-} from "./summary";
-import type { SummaryApiConfig, SummaryModelOption } from './summary/types';
+} from './summary';
+import type { SummaryApiConfig } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
 import type {
@@ -163,7 +166,11 @@ import {
 import { getIndexStats } from './memorydatabase/indexes';
 import type { IslandMemoryDB, MemoryBaseRow } from './memorydatabase/types';
 import { loadMemoryConfig, saveMemoryConfig, resetMemoryConfig } from './memory-config';
-import { getImageGenerationPromptAtAnchor, isImageGenerationPluginAvailable, requestImageGeneration } from './plugins/image-generation';
+import {
+  getImageGenerationPromptAtAnchor,
+  isImageGenerationPluginAvailable,
+  requestImageGeneration,
+} from './plugins/image-generation';
 import { isChatu8PluginAvailable, openChatu8Plugin } from './plugins/chatu8-integration';
 import {
   buildFallbackFanGeneratedProfile,
@@ -200,12 +207,6 @@ let quickReplyDelegationBound = false;
 let calendarEventDelegationBound = false;
 let v07DdlAutoOpened = false;
 
-type ReaderBodyScrollSnapshot = {
-  readerIndex: number;
-  scrollTop: number;
-  wasAtBottom: boolean;
-};
-
 let readerDragState: {
   pointerId: number;
   startX: number;
@@ -234,48 +235,6 @@ let backgroundTaskDragState: {
   startTop: number;
   moved: boolean;
 } | null = null;
-
-function canFlipReader(direction: 'prev' | 'next') {
-  const readerMessages = getReaderMessages(state.uiMessages);
-  if (direction === 'prev') return state.focusedMessageIndex > 0;
-  return state.focusedMessageIndex < readerMessages.length - 1;
-}
-
-function resetReaderCardTransform(reader: HTMLElement) {
-  const card = reader.querySelector<HTMLElement>('.reader-card');
-  if (!card) return;
-  card.style.transition = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.3s ease';
-  card.style.transform = '';
-  card.style.opacity = '';
-}
-
-function captureReaderBodyScroll(): ReaderBodyScrollSnapshot | null {
-  const body = root?.querySelector<HTMLElement>('.reader-card__body');
-  const card = body?.closest<HTMLElement>('.reader-card[data-reader-index]');
-  const readerIndex = Number(card?.dataset.readerIndex);
-  if (!body || !Number.isFinite(readerIndex)) return null;
-  const distanceFromBottom = body.scrollHeight - body.scrollTop - body.clientHeight;
-  return {
-    readerIndex,
-    scrollTop: body.scrollTop,
-    wasAtBottom: distanceFromBottom <= 24,
-  };
-}
-
-function restoreReaderBodyScroll(snapshot: ReaderBodyScrollSnapshot | null) {
-  if (!snapshot) return;
-  const body = root?.querySelector<HTMLElement>(
-    `.reader-card[data-reader-index="${snapshot.readerIndex}"] .reader-card__body`,
-  );
-  if (!body) return;
-  const restore = () => {
-    body.scrollTop = snapshot.wasAtBottom
-      ? body.scrollHeight
-      : Math.min(snapshot.scrollTop, Math.max(0, body.scrollHeight - body.clientHeight));
-  };
-  restore();
-  window.requestAnimationFrame(restore);
-}
 
 function compactCalendarLookupText(value: string | null | undefined) {
   return (value ?? '').replace(/\s+/g, '').trim();
@@ -331,15 +290,6 @@ function bindCalendarEventDelegation() {
     const row = event.target.closest<HTMLElement>('.phone-calendar-event, [data-action="calendar-open-event"]');
     if (row) openCalendarEventRow(row, event);
   });
-}
-
-function resolveReaderIndex(readerIndex: number, readerId?: string | null) {
-  if (readerId) {
-    const byId = getReaderMessages(state.uiMessages).findIndex(message => message.id === readerId);
-    if (byId >= 0) return byId;
-  }
-  if (Number.isFinite(readerIndex)) return readerIndex;
-  return state.focusedMessageIndex;
 }
 
 function setPaperTheme(theme: string | undefined) {
@@ -581,6 +531,22 @@ function flushPendingAutosave() {
   }
   writeCurrentAutosave();
 }
+
+async function persistToSaveImmediately() {
+  if (!state.activeRunId || restoringSave) return;
+  flushPendingAutosave();
+  await flushSaveStore();
+}
+
+const gameDevelopmentController: GameDevelopmentController = createGameDevelopmentController({
+  getState: () => state,
+  getRoot: () => root,
+  render: () => render(),
+  persist: () => persistToSave(),
+  persistImmediately: () => persistToSaveImmediately(),
+  submitMainMessage: options => submitMessage(ctx, options),
+  notify: notification => ctx.showNotification(notification),
+});
 
 async function persistManualSave() {
   if (!state.activeRunId) return;
@@ -902,20 +868,23 @@ function scheduleWorldbookRefreshRetry(runId: string | null, attempt = 1) {
   if (Object.keys(state.plotLibrary.events).length > 0) return;
 
   const token = worldbookRefreshRetryToken;
-  worldbookRefreshRetryTimer = window.setTimeout(() => {
-    worldbookRefreshRetryTimer = null;
-    if (token !== worldbookRefreshRetryToken || state.activeRunId !== runId) return;
-    void refreshCharacterWorldbookTargets()
-      .catch(error => {
-        console.warn('[worldbook] delayed refresh failed:', error);
-      })
-      .finally(() => {
-        if (token !== worldbookRefreshRetryToken || state.activeRunId !== runId) return;
-        if (Object.keys(state.plotLibrary.events).length === 0) {
-          scheduleWorldbookRefreshRetry(runId, attempt + 1);
-        }
-      });
-  }, retryDelays[attempt - 1]);
+  worldbookRefreshRetryTimer = window.setTimeout(
+    () => {
+      worldbookRefreshRetryTimer = null;
+      if (token !== worldbookRefreshRetryToken || state.activeRunId !== runId) return;
+      void refreshCharacterWorldbookTargets()
+        .catch(error => {
+          console.warn('[worldbook] delayed refresh failed:', error);
+        })
+        .finally(() => {
+          if (token !== worldbookRefreshRetryToken || state.activeRunId !== runId) return;
+          if (Object.keys(state.plotLibrary.events).length === 0) {
+            scheduleWorldbookRefreshRetry(runId, attempt + 1);
+          }
+        });
+    },
+    retryDelays[attempt - 1],
+  );
 }
 
 function getMemoryDBTableCounts(memoryDB: IslandMemoryDB) {
@@ -1032,7 +1001,7 @@ function returnToTitle() {
 // ── UI actions (thin wrappers that stay in index.ts) ──
 
 function openReaderContextMenu(readerIndex: number, clientX: number, clientY: number, readerId?: string | null) {
-  const resolvedReaderIndex = resolveReaderIndex(readerIndex, readerId);
+  const resolvedReaderIndex = resolveReaderIndex(state, readerIndex, readerId);
   const message = getReaderMessageByIndex(state, resolvedReaderIndex);
   if (!message) return;
   const maxX = Math.max(
@@ -1054,7 +1023,7 @@ function openReaderContextMenu(readerIndex: number, clientX: number, clientY: nu
 }
 
 function openReaderEditor(readerIndex: number, readerId?: string | null) {
-  const resolvedReaderIndex = resolveReaderIndex(readerIndex, readerId);
+  const resolvedReaderIndex = resolveReaderIndex(state, readerIndex, readerId);
   const message = getReaderMessageByIndex(state, resolvedReaderIndex);
   if (!message) return;
   state.readerEditing = {
@@ -1227,9 +1196,7 @@ function isV07RouteChoiceBlockingMainText(): boolean {
   });
 }
 
-async function submitMainMessage(
-  options: { text?: string; keepDraft?: boolean; clearDraftOnSuccess?: boolean } = {},
-) {
+async function submitMainMessage(options: { text?: string; keepDraft?: boolean; clearDraftOnSuccess?: boolean } = {}) {
   if (isV07RouteChoiceBlockingMainText()) {
     // 中文注释：SAE_07-8 已结束但玩家尚未选线时，DDL 必须先于下一段正文。
     // 这里只阻止新的主正文提交，不伪造 choice，也不阻止玩家查看刚完成的事件楼层。
@@ -1256,6 +1223,7 @@ async function rerunReaderMessage(readerIndex: number) {
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
   render();
+  if (await gameDevelopmentController.resumePreparedTurnAfterRollback(target.sourceUserText)) return;
   await submitMainMessage({ text: target.sourceUserText, keepDraft: true, clearDraftOnSuccess: true });
 }
 
@@ -1284,7 +1252,7 @@ function navigatePhone(route: PhoneRoute) {
   navigatePhoneRoute(state, route, ctx);
 }
 
-function confirmV07RouteChoice(routeFamilyId: string) {
+async function confirmV07RouteChoice(routeFamilyId: string) {
   const machine = getPlotMachine('v07');
   if (!machine) return;
   const routingContext = buildPlotRoutingContext(state.statusData, state.memoryDB);
@@ -1351,87 +1319,20 @@ function confirmV07RouteChoice(routeFamilyId: string) {
   // 中文注释：专用按钮是唯一生产写入口。副 API、自由输入和剧情 flag 都不能生成 choice；
   // 玩家若要换线，只能回退到确认楼层之前，让回退账本正式清除本次 receipt。
   commitPlotRouteChoice(state.memoryDB, confirmation.commit);
-  ctx.persistConversation();
+  const committedRouting = buildPlotRoutingContext(state.statusData, state.memoryDB);
+  await gameDevelopmentController.initializeAfterRouteChoice(
+    confirmation.commit.receipt,
+    committedRouting.v07.resolution,
+  );
   const opensGameDevelopment = isGameDevelopmentRouteChoice(confirmation.commit.receipt);
   ctx.showNotification({
     kind: 'status',
     title: '路线已确认',
     preview: opensGameDevelopment
       ? `已选择「${routeLabel}」路线，对应游戏开发模式现已开放。`
-      : `已选择「${routeLabel}」路线。该路线不会自动开启单飞或朱音的游戏开发模式。`,
+      : `已选择「${routeLabel}」路线。`,
     targetTab: 'status',
     phoneRoute: 'app:studio',
-    timestamp: formatTime(state.statusData.world.currentTime),
-  });
-}
-
-function getActiveGameDevelopmentState(): GameDevelopmentState | null {
-  const routingContext = buildPlotRoutingContext(state.statusData, state.memoryDB);
-  if (routingContext.v07.resolution.choiceState !== 'chosen') return null;
-  const receipt = routingContext.v07.resolution.choiceReceipt;
-  return receipt && isGameDevelopmentRouteChoice(receipt) ? readGameDevelopmentState(state.memoryDB, receipt) : null;
-}
-
-function saveGameDevelopmentState(next: GameDevelopmentState, shouldRender = true) {
-  commitGameDevelopmentState(state.memoryDB, next);
-  ctx.persistConversation();
-  if (shouldRender) render();
-}
-
-function createPhoneGameDevelopmentProject() {
-  const current = getActiveGameDevelopmentState();
-  if (!current || current.project.created) return;
-  const value = (field: string) => root?.querySelector<HTMLInputElement>(`[data-field="${field}"]`)?.value ?? '';
-  const next = createGameDevelopmentProject(current, {
-    title: value('game-project-title'),
-    genre: value('game-project-genre'),
-    theme: value('game-project-theme'),
-    platform: value('game-project-platform'),
-  });
-  if (!next.project.created) {
-    ctx.showNotification({
-      kind: 'status',
-      title: '项目尚未建立',
-      preview: '请先填写游戏名。',
-      targetTab: 'status',
-      phoneRoute: 'app:game-development',
-      timestamp: formatTime(state.statusData.world.currentTime),
-    });
-    return;
-  }
-  saveGameDevelopmentState(next, false);
-  ctx.showNotification({
-    kind: 'status',
-    title: '项目已建立',
-    preview: `${next.project.title} 已建立，现在可以安排第 1 周的工作。`,
-    targetTab: 'status',
-    phoneRoute: 'app:game-development',
-    timestamp: formatTime(state.statusData.world.currentTime),
-  });
-}
-
-function submitPhoneGameDevelopmentWeek() {
-  const current = getActiveGameDevelopmentState();
-  if (!current) return;
-  const result = submitGameDevelopmentWeek(current, state.statusData.world.currentTime || new Date().toISOString());
-  if (result.status === 'rejected') {
-    ctx.showNotification({
-      kind: 'status',
-      title: '本周计划还没排完',
-      preview: '请先为周一到周末都安排一项行动。',
-      targetTab: 'status',
-      phoneRoute: 'app:game-development',
-      timestamp: formatTime(state.statusData.world.currentTime),
-    });
-    return;
-  }
-  saveGameDevelopmentState(result.state, false);
-  ctx.showNotification({
-    kind: 'status',
-    title: `第 ${current.week} 周已完成`,
-    preview: `项目完成度 ${result.state.project.progress}%，现在开始第 ${result.state.week} 周。`,
-    targetTab: 'status',
-    phoneRoute: 'app:game-development',
     timestamp: formatTime(state.statusData.world.currentTime),
   });
 }
@@ -1440,7 +1341,10 @@ function navigatePhoneBack() {
   syncDrawingSettingsFromMountedControls();
   syncDeepSeekFanForm(false);
   setCalendarOpenEventId(null);
-  if (state.phoneRouteHistory[state.phoneRouteHistory.length - 1] === 'app:deepseek-web' && !state.deepSeekModeEnabled) {
+  if (
+    state.phoneRouteHistory[state.phoneRouteHistory.length - 1] === 'app:deepseek-web' &&
+    !state.deepSeekModeEnabled
+  ) {
     state.phoneRouteHistory = state.phoneRouteHistory.filter(route => route !== 'app:deepseek-web');
   }
   navigatePhoneBackRoute(state, ctx);
@@ -1855,17 +1759,11 @@ async function generateReaderImage(messageId: string, anchorIndex: number) {
     timestamp: formatTime(state.statusData.world.currentTime),
   });
 
-  const result = await requestImageGeneration(
-    win,
-    imagePrompt.prompt,
-    state.drawingSettings,
-    imagePrompt.change,
-    {
-      sceneText,
-      rawText,
-      summaryApiConfig: state.summaryApiConfig,
-    },
-  );
+  const result = await requestImageGeneration(win, imagePrompt.prompt, state.drawingSettings, imagePrompt.change, {
+    sceneText,
+    rawText,
+    summaryApiConfig: state.summaryApiConfig,
+  });
 
   if (result.imageData && !result.error) {
     const illustrations = message.illustrations ?? [];
@@ -1894,9 +1792,7 @@ async function generateReaderImage(messageId: string, anchorIndex: number) {
   ctx.showNotification({
     kind: 'message',
     title: result.sent && !result.error ? '生图请求已发送' : '生图失败',
-    preview:
-      result.error ||
-      (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
+    preview: result.error || (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
     targetTab: 'summary',
     timestamp: formatTime(state.statusData.world.currentTime),
   });
@@ -1989,8 +1885,13 @@ async function rerollReaderImage(
   const anchorPrompt = Number.isFinite(anchorIndex)
     ? getImageGenerationPromptAtAnchor(rawText, Math.max(0, Math.floor(anchorIndex)))
     : null;
-  const prompt = editedPrompt?.trim() || illustration.rerollContext?.prompt || anchorPrompt?.prompt || illustration.prompt || '';
-  const negativePrompt = editedNegativePrompt?.trim() ?? illustration.rerollContext?.negativePrompt ?? state.drawingSettings.negativePrompt ?? '';
+  const prompt =
+    editedPrompt?.trim() || illustration.rerollContext?.prompt || anchorPrompt?.prompt || illustration.prompt || '';
+  const negativePrompt =
+    editedNegativePrompt?.trim() ??
+    illustration.rerollContext?.negativePrompt ??
+    state.drawingSettings.negativePrompt ??
+    '';
   const change = illustration.rerollContext?.change ?? anchorPrompt?.change ?? '';
   const sceneText = illustration.rerollContext?.sceneText || extractContextReply(rawText);
   const rerollSettings = {
@@ -2044,9 +1945,7 @@ async function rerollReaderImage(
   ctx.showNotification({
     kind: 'message',
     title: result.sent && !result.error ? '图片已重 roll' : '重 roll 失败',
-    preview:
-      result.error ||
-      (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
+    preview: result.error || (result.reason === 'timeout' ? '智绘姬生成较慢，请到插件图片面板查看。' : ''),
     targetTab: 'summary',
     timestamp: formatTime(state.statusData.world.currentTime),
   });
@@ -2213,50 +2112,6 @@ function readSummaryApiConfigForm(): SummaryApiConfig {
   return { apiurl, key, model, source };
 }
 
-function buildSummaryModelsUrl(apiurl: string): string {
-  const url = new URL(apiurl);
-  const path = url.pathname.replace(/\/+$/, '');
-
-  if (/\/models$/i.test(path)) {
-    return url.toString();
-  }
-
-  if (/\/chat\/completions$/i.test(path)) {
-    url.pathname = path.replace(/\/chat\/completions$/i, '/models');
-    return url.toString();
-  }
-
-  if (/\/(completions|responses)$/i.test(path)) {
-    url.pathname = path.replace(/\/(completions|responses)$/i, '/models');
-    return url.toString();
-  }
-
-  url.pathname = path ? `${path}/models` : '/v1/models';
-  return url.toString();
-}
-
-function parseSummaryModelsResponse(payload: unknown): SummaryModelOption[] {
-  const rawList =
-    payload && typeof payload === 'object' && Array.isArray((payload as { data?: unknown }).data)
-      ? (payload as { data: unknown[] }).data
-      : Array.isArray(payload)
-        ? payload
-        : [];
-  const byId = new Map<string, SummaryModelOption>();
-
-  for (const raw of rawList) {
-    if (!raw || typeof raw !== 'object') continue;
-    const item = raw as { id?: unknown; name?: unknown; owned_by?: unknown; ownedBy?: unknown };
-    const id = typeof item.id === 'string' ? item.id : typeof item.name === 'string' ? item.name : '';
-    if (!id) continue;
-    const ownedBy =
-      typeof item.owned_by === 'string' ? item.owned_by : typeof item.ownedBy === 'string' ? item.ownedBy : undefined;
-    byId.set(id, { id, ...(ownedBy ? { ownedBy } : {}) });
-  }
-
-  return Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
-}
-
 async function fetchSummaryModels() {
   if (state.summaryModelFetch.loading) return;
   const config = readSummaryApiConfigForm();
@@ -2362,7 +2217,7 @@ function bindReaderDragEvents() {
       const card = reader.querySelector<HTMLElement>('.reader-card');
       if (!card) return;
       const tryingDirection = dx < 0 ? 'next' : 'prev';
-      const canFlip = canFlipReader(tryingDirection);
+      const canFlip = canFlipReader(state, tryingDirection);
       if (!canFlip) {
         const resistedOffset = Math.sign(dx) * Math.min(Math.abs(dx), 18) * 0.18;
         card.style.transition = 'none';
@@ -2387,11 +2242,11 @@ function bindReaderDragEvents() {
       if (scrolling) return;
       const THRESHOLD = 60;
       if (moved && Math.abs(dx) >= THRESHOLD) {
-        if (dx < 0 && canFlipReader('next')) {
+        if (dx < 0 && canFlipReader(state, 'next')) {
           focusMessage(1);
           return;
         }
-        if (dx > 0 && canFlipReader('prev')) {
+        if (dx > 0 && canFlipReader(state, 'prev')) {
           focusMessage(-1);
           return;
         }
@@ -2754,46 +2609,10 @@ function bindEvents() {
   root?.querySelectorAll<HTMLButtonElement>('[data-action="confirm-v07-route"]').forEach(button => {
     button.addEventListener('click', () => {
       const routeFamilyId = button.dataset.routeFamily;
-      if (routeFamilyId) confirmV07RouteChoice(routeFamilyId);
+      if (routeFamilyId) void confirmV07RouteChoice(routeFamilyId);
     });
   });
-  root?.querySelector<HTMLButtonElement>('[data-action="game-create-project"]')?.addEventListener('click', () => {
-    createPhoneGameDevelopmentProject();
-  });
-  root?.querySelectorAll<HTMLButtonElement>('[data-action="game-select-day"]').forEach(button => {
-    button.addEventListener('click', () => {
-      const current = getActiveGameDevelopmentState();
-      const dayId = button.dataset.gameDay as GameDevelopmentDayId | undefined;
-      if (current && dayId) saveGameDevelopmentState(selectGameDevelopmentDay(current, dayId));
-    });
-  });
-  root?.querySelectorAll<HTMLButtonElement>('[data-action="game-select-action"]').forEach(button => {
-    button.addEventListener('click', () => {
-      const current = getActiveGameDevelopmentState();
-      const dayId = button.dataset.gameDay as GameDevelopmentDayId | undefined;
-      const actionId = button.dataset.gameAction as GameDevelopmentActionId | undefined;
-      if (current && dayId && actionId) {
-        saveGameDevelopmentState(selectGameDevelopmentAction(current, dayId, actionId));
-      }
-    });
-  });
-  root?.querySelector<HTMLSelectElement>('[data-field="game-slot-target"]')?.addEventListener('change', event => {
-    const current = getActiveGameDevelopmentState();
-    const select = event.target as HTMLSelectElement;
-    const dayId = select.dataset.gameDay as GameDevelopmentDayId | undefined;
-    if (current && dayId) saveGameDevelopmentState(updateGameDevelopmentSlot(current, dayId, { targetId: select.value }));
-  });
-  root?.querySelector<HTMLTextAreaElement>('[data-field="game-slot-intent"]')?.addEventListener('change', event => {
-    const current = getActiveGameDevelopmentState();
-    const textarea = event.target as HTMLTextAreaElement;
-    const dayId = textarea.dataset.gameDay as GameDevelopmentDayId | undefined;
-    if (current && dayId) {
-      saveGameDevelopmentState(updateGameDevelopmentSlot(current, dayId, { intent: textarea.value }));
-    }
-  });
-  root?.querySelector<HTMLButtonElement>('[data-action="game-submit-week"]')?.addEventListener('click', () => {
-    submitPhoneGameDevelopmentWeek();
-  });
+  gameDevelopmentController.bind(root);
   root?.querySelectorAll<HTMLButtonElement>('[data-action="switch-phone-character"]').forEach(button => {
     button.addEventListener('click', () => {
       const characterId = button.dataset.characterId as PhoneCharacterId | undefined;
@@ -2916,11 +2735,13 @@ function bindEvents() {
       state.imageRerollEditing.prompt = (event.target as HTMLTextAreaElement).value;
     }
   });
-  root?.querySelector<HTMLTextAreaElement>('[data-field="image-reroll-negative-prompt"]')?.addEventListener('input', event => {
-    if (state.imageRerollEditing) {
-      state.imageRerollEditing.negativePrompt = (event.target as HTMLTextAreaElement).value;
-    }
-  });
+  root
+    ?.querySelector<HTMLTextAreaElement>('[data-field="image-reroll-negative-prompt"]')
+    ?.addEventListener('input', event => {
+      if (state.imageRerollEditing) {
+        state.imageRerollEditing.negativePrompt = (event.target as HTMLTextAreaElement).value;
+      }
+    });
   root?.querySelectorAll<HTMLElement>('[data-action="reader-edit-cancel"]').forEach(element => {
     element.addEventListener('click', event => {
       event.stopPropagation();
@@ -3001,9 +2822,7 @@ function bindEvents() {
   });
 
   root
-    ?.querySelectorAll<
-      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >('[data-field^="deepseek-fan-"]')
+    ?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('[data-field^="deepseek-fan-"]')
     .forEach(input => {
       input.addEventListener('input', () => syncDeepSeekFanForm(false));
       input.addEventListener('change', () => syncDeepSeekFanForm(false));
@@ -3018,9 +2837,9 @@ function bindEvents() {
     setDeepSeekWebLookupEnabled((event.target as HTMLInputElement).checked);
   });
   root
-    ?.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
-      '[data-field="deepseek-web-search-source"], [data-field="deepseek-web-ddg-region"], [data-field="deepseek-web-timeout"], [data-field="deepseek-web-max-results"]',
-    )
+    ?.querySelectorAll<
+      HTMLInputElement | HTMLSelectElement
+    >('[data-field="deepseek-web-search-source"], [data-field="deepseek-web-ddg-region"], [data-field="deepseek-web-timeout"], [data-field="deepseek-web-max-results"]')
     .forEach(input => {
       input.addEventListener('input', () => updateDeepSeekWebLookupSettingsFromControls(false));
       input.addEventListener('change', () => updateDeepSeekWebLookupSettingsFromControls(false));
@@ -3314,21 +3133,23 @@ function bindEvents() {
     persistToSave();
     renderMemoryKeepScroll();
   });
-  root?.querySelector<HTMLButtonElement>('[data-action="memory-expire-all-unlocked-items"]')?.addEventListener('click', () => {
-    if (!confirm('确定要删除全部未锁定物品吗？锁定物品会保留。')) return;
-    const names = state.memoryDB.items
-      .filter(item => !item.expired && !item.locked)
-      .map(item => item.name)
-      .filter(Boolean);
-    const expired = expireAllUnlockedItems(state.memoryDB);
-    if (!expired) return;
-    for (const name of names) delete state.statusData.player.inventory[name];
-    state.memoryEditor.expandedRowId = null;
-    state.memoryEditor.editingRowId = null;
-    state.memoryEditor.error = null;
-    persistToSave();
-    renderMemoryKeepScroll();
-  });
+  root
+    ?.querySelector<HTMLButtonElement>('[data-action="memory-expire-all-unlocked-items"]')
+    ?.addEventListener('click', () => {
+      if (!confirm('确定要删除全部未锁定物品吗？锁定物品会保留。')) return;
+      const names = state.memoryDB.items
+        .filter(item => !item.expired && !item.locked)
+        .map(item => item.name)
+        .filter(Boolean);
+      const expired = expireAllUnlockedItems(state.memoryDB);
+      if (!expired) return;
+      for (const name of names) delete state.statusData.player.inventory[name];
+      state.memoryEditor.expandedRowId = null;
+      state.memoryEditor.editingRowId = null;
+      state.memoryEditor.error = null;
+      persistToSave();
+      renderMemoryKeepScroll();
+    });
   root?.querySelector<HTMLButtonElement>('[data-action="memory-new-row"]')?.addEventListener('click', () => {
     state.memoryEditor.creating = true;
     state.memoryEditor.creatingDraft = '';
@@ -3337,15 +3158,11 @@ function bindEvents() {
   });
   root?.querySelector<HTMLButtonElement>('[data-action="memory-save-new"]')?.addEventListener('click', () => {
     try {
-      const newId = insertMemoryRow(
-        state.memoryDB,
-        'facts',
-        {
-          ...createUserEventMemoryPayload(state.memoryEditor.creatingDraft),
-          gameTime: state.statusData.world.currentTime,
-          extra: { location: state.statusData.world.currentLocation },
-        },
-      );
+      const newId = insertMemoryRow(state.memoryDB, 'facts', {
+        ...createUserEventMemoryPayload(state.memoryEditor.creatingDraft),
+        gameTime: state.statusData.world.currentTime,
+        extra: { location: state.statusData.world.currentLocation },
+      });
       if (!newId) throw new Error('写入失败');
       state.memoryEditor.creating = false;
       state.memoryEditor.creatingDraft = '';
@@ -3495,19 +3312,19 @@ function bindEvents() {
       getFactAnchor: () => buildFactAnchorFromStatus(state.statusData),
     };
     try {
-    // 在开始摘要前，先运行一次自动修复，清理遗留问题
-    try {
-      const repairResult = repairSummaryStore(state.summaryStore, state.uiMessages, {
-        removeOrphanedMinors: false,
-        fixLastSummarizedIndex: true,
-        removeOverlapping: true,
-      });
-      if (repairResult.fixed) {
-        persistToSave();
+      // 在开始摘要前，先运行一次自动修复，清理遗留问题
+      try {
+        const repairResult = repairSummaryStore(state.summaryStore, state.uiMessages, {
+          removeOrphanedMinors: false,
+          fixLastSummarizedIndex: true,
+          removeOverlapping: true,
+        });
+        if (repairResult.fixed) {
+          persistToSave();
+        }
+      } catch (error) {
+        console.warn('[summary] 自动修复失败:', error);
       }
-    } catch (error) {
-      console.warn('[summary] 自动修复失败:', error);
-    }
 
       const result = await runSummary(ctxArg, mode);
       if (mode === 'minor') {
@@ -3797,7 +3614,7 @@ function render() {
   syncRuntimeProfile();
   applyDrawingEnabledPreference();
   syncDrawingSettingsFromMountedControls();
-  const readerBodyScroll = captureReaderBodyScroll();
+  const readerBodyScroll = captureReaderBodyScroll(root);
   if (state.activeRunId) {
     // 游戏界面。
     if (syncMainEvents(state.statusData, state.plotLibrary)) {
@@ -3819,7 +3636,7 @@ function render() {
     root.innerHTML = renderApp(state, flipDirection);
     bindCalendarEventDelegation();
     bindEvents();
-    restoreReaderBodyScroll(readerBodyScroll);
+    restoreReaderBodyScroll(root, readerBodyScroll);
     hydrateImageAssetElements(root, `floor:${state.focusedMessageIndex}`);
 
     // 状态页打开时挂载 P5 雷达图
@@ -3961,7 +3778,9 @@ async function init() {
       if (document.visibilityState === 'hidden') {
         syncDrawingSettingsFromMountedControls();
         flushPendingAutosave();
-        Promise.all([flushImageAssetStore(), flushSaveStore()]).catch(err => console.warn('[init] flush on hidden failed:', err));
+        Promise.all([flushImageAssetStore(), flushSaveStore()]).catch(err =>
+          console.warn('[init] flush on hidden failed:', err),
+        );
       }
     });
     window.addEventListener('beforeunload', () => {
@@ -3975,59 +3794,7 @@ init();
 
 // ── Debug interfaces ──
 
-function getDebugGameStateText() {
-  return JSON.stringify({
-    screen: state.activeRunId ? 'game' : 'title',
-    activeRunId: state.activeRunId,
-    activeSaveId: state.activeSaveId,
-    phoneOpen: state.phoneOpen,
-    phoneRoute: state.phoneRoute,
-    phoneRouteHistory: state.phoneRouteHistory,
-    phoneHomePage: state.phoneHomePage,
-    phoneTab: state.activeTab,
-    generating: state.generating,
-    focusedMessageIndex: state.focusedMessageIndex,
-    draft: state.draft,
-    drawingSettings: state.drawingSettings,
-    world: state.statusData.world,
-    plot: {
-      eventCount: Object.keys(state.plotLibrary.events).length,
-      currentEventLoaded: Boolean(
-        state.statusData.world.currentMainEventId &&
-        state.plotLibrary.events[state.statusData.world.currentMainEventId],
-      ),
-      sources: state.plotLibrary.sourceEntryNames,
-    },
-    activeTargetId: state.statusData.activeTargetId,
-    targets: state.statusData.targets.map(target => ({
-      id: target.id,
-      name: target.name,
-      affinity: target.affinity,
-      stage: target.stage,
-    })),
-    messageCount: state.uiMessages.length,
-  });
-}
-
-function installDebugGlobals() {
-  const debugApi = {
-    render_game_to_text: getDebugGameStateText,
-    islandmilfcode_debug_state: () => JSON.parse(getDebugGameStateText()),
-  };
-  Object.assign(window as any, debugApi);
-  Object.assign(globalThis as any, debugApi);
-
-  try {
-    if (window.parent && window.parent !== window) {
-      (window.parent as any).islandmilfcodeFrame = window;
-      Object.assign(window.parent as any, debugApi);
-    }
-  } catch {
-    // Cross-origin/sandboxed iframes cannot expose helpers to the parent window.
-  }
-}
-
-installDebugGlobals();
+installDebugGlobals(() => getDebugGameStateText(state));
 
 (window as any).advanceTime = () => {
   if (adapter) {
@@ -4039,5 +3806,3 @@ installDebugGlobals();
     }
   }
 };
-
-

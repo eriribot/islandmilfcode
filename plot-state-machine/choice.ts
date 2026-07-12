@@ -57,7 +57,8 @@ export function confirmPlotRouteChoice(input: {
     return rejected('ddl_not_reached', 'SAE_07-8 尚未正式结束，现在不能进行最终路线选择。', resolution);
   }
 
-  if (!Number.isInteger(input.anchorFloorIndex) || Number(input.anchorFloorIndex) < 0) {
+  const anchorFloorIndex = input.anchorFloorIndex;
+  if (typeof anchorFloorIndex !== 'number' || !Number.isInteger(anchorFloorIndex) || anchorFloorIndex < 0) {
     return rejected('missing_anchor', '当前时间线没有可绑定的已完成楼层。', resolution);
   }
 
@@ -66,7 +67,7 @@ export function confirmPlotRouteChoice(input: {
     machineId: input.machine.id,
     familyId: family.id,
     confirmationId: crypto.randomUUID(),
-    anchorFloorIndex: input.anchorFloorIndex,
+    anchorFloorIndex,
     confirmedAt: input.currentTime ?? currentDate,
     source: 'manual',
   };
@@ -96,10 +97,10 @@ export function isV07RouteChoiceRequired(input: {
   if (input.hasChoice) return false;
   const currentDate = extractPlotDate(input.currentTime);
   if (!currentDate || currentDate < '2013-03-04') return false;
-  if (input.currentMainEventId === 'SAE_07-8') return false;
+  if (String(input.currentMainEventId ?? '').trim()) return false;
 
-  // 中文注释：DDL 只认 SAE_07-8 的正常完成终态。到达日期、检查器关闭、跳过或延后事件
-  // 都不能代替正文生命周期；只有事件确实写成“已结束/已完成”后才强制玩家三选一。
+  // 中文注释：DDL 只认“SAE_07-8 正常终态 + 当前主事件已清空”这一对权威状态。
+  // 到达日期、检查器关闭、跳过/延后，或异常跳到其他主事件，都不能代替正文后的正式 progress。
   return /已结束|已完成/.test(String(input.mainEvents?.['SAE_07-8'] ?? '').trim());
 }
 

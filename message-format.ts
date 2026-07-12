@@ -47,9 +47,7 @@ const SELECTION_OPTION_TAGS = [
   '选择',
 ] as const;
 const SELECTION_CHILD_OPTION_TAGS = ['selection', 'option', 'choice', '选项', '选择'] as const;
-const REPEATED_SELECTION_OPTION_TAGS = Array.from(
-  new Set([...SELECTION_CHILD_OPTION_TAGS, ...SELECTION_OPTION_TAGS]),
-);
+const REPEATED_SELECTION_OPTION_TAGS = Array.from(new Set([...SELECTION_CHILD_OPTION_TAGS, ...SELECTION_OPTION_TAGS]));
 const MAIN_EVENT_NOT_STARTED = '未进行';
 const MAIN_EVENT_RUNNING = '进行中';
 const MAIN_EVENT_FINISHED = '已结束';
@@ -269,7 +267,10 @@ export function extractTaggedReply(raw: string, tagName: string, streaming: bool
   }
 
   if (streaming) {
-    const openedTag = new RegExp(`${tagPatternSource(tagName, { closing: 'open' })}([\\s\\S]*)${REGEX_END_ANCHOR}`, 'i');
+    const openedTag = new RegExp(
+      `${tagPatternSource(tagName, { closing: 'open' })}([\\s\\S]*)${REGEX_END_ANCHOR}`,
+      'i',
+    );
     const openedMatch = raw.match(openedTag);
     if (openedMatch) {
       return dedupeAdjacentReply(stripMetaSubtags((openedMatch[1] ?? '').replace(/<[^>]*$/, '')));
@@ -287,6 +288,11 @@ export function extractTaggedReply(raw: string, tagName: string, streaming: bool
   }
 
   return '';
+}
+
+export function extractCompleteTaggedReply(raw: string, tagName: string) {
+  const closedBody = findClosedTaggedBody(String(raw ?? ''), tagName);
+  return closedBody == null ? '' : dedupeAdjacentReply(stripMetaSubtags(closedBody));
 }
 
 export function extractTucaoBlocks(text: string, { streaming = false }: { streaming?: boolean } = {}) {
@@ -337,7 +343,9 @@ export function extractOptionsBlock(text: string, { streaming = false }: { strea
 }
 
 function parseStrictOptionLines(content: string, { allowPartial = false }: { allowPartial?: boolean } = {}) {
-  const normalized = String(content ?? '').replace(/\r\n/g, '\n').trim();
+  const normalized = String(content ?? '')
+    .replace(/\r\n/g, '\n')
+    .trim();
   if (!normalized) return [];
 
   const lines = normalized.split('\n').map(line => line.trim());
@@ -425,7 +433,9 @@ function uniqueOptions(options: string[]) {
 }
 
 function parseSelectionOptionLines(content: string) {
-  const normalized = String(content ?? '').replace(/\r\n/g, '\n').trim();
+  const normalized = String(content ?? '')
+    .replace(/\r\n/g, '\n')
+    .trim();
   if (!normalized) return [];
 
   const childOptions = SELECTION_CHILD_OPTION_TAGS.flatMap(tagName =>
@@ -1160,10 +1170,10 @@ function buildScenePresenceContext(
     ? [
         '[夏野雾姬的因果页边批注]',
         `剧情偏转：${plotImpact.shiftLevel}；当前事件处理：${plotImpact.currentEventShould}`,
-        butterfly
-          ? `蝴蝶效应：${butterfly.rippleLevel}；路线损伤：${butterfly.routeDamage}`
+        butterfly ? `蝴蝶效应：${butterfly.rippleLevel}；路线损伤：${butterfly.routeDamage}` : '',
+        plotImpact.causalTrace?.length
+          ? ['因果短链：', ...plotImpact.causalTrace.map(line => `- ${line}`)].join('\n')
           : '',
-        plotImpact.causalTrace?.length ? ['因果短链：', ...plotImpact.causalTrace.map(line => `- ${line}`)].join('\n') : '',
         butterfly?.shortTermEffects?.length
           ? ['本轮/下一轮必须承认的涟漪：', ...butterfly.shortTermEffects.map(line => `- ${line}`)].join('\n')
           : '',
@@ -1218,7 +1228,11 @@ function buildRelationshipGuidanceList(
     .filter(target => !allowedIds || allowedIds.has(target.id))
     .map(target => {
       const guidance = getRelationshipGuidance(target);
-      const address = getRelationshipAddressGuidance({ target, playerProfile, currentTime: statusData.world.currentTime });
+      const address = getRelationshipAddressGuidance({
+        target,
+        playerProfile,
+        currentTime: statusData.world.currentTime,
+      });
       const anchor = getCharacterAnchorGuidance({ target, playerProfile, currentTime: statusData.world.currentTime });
       if (!guidance && !address && !anchor) return '';
       return [
@@ -1369,11 +1383,13 @@ export function buildPrompt(
     scenePresence?: ScenePresence | null;
     memoryDB?: import('./memorydatabase/types').IslandMemoryDB | null;
     drawingSettings?: DrawingSettings | null;
+    gameDevelopmentContext?: string;
   },
 ) {
   const cleanUserInput = sanitizePromptInputText(userInput);
-  const topEvent = Object.entries(statusData.world.recentEvents)
-    .find(([name, description]) => name !== '初始记录' && String(description ?? '').trim());
+  const topEvent = Object.entries(statusData.world.recentEvents).find(
+    ([name, description]) => name !== '初始记录' && String(description ?? '').trim(),
+  );
   const playerProfile = options?.playerProfile;
   const playerProfileText = playerProfile?.name
     ? [
@@ -1471,6 +1487,14 @@ export function buildPrompt(
   // 否则世界书里反复出现某角色名时，会让局部审计变成每轮全局常驻规则。
   const localAuditContext = [recentSceneContext, cleanUserInput].filter(Boolean).join('\n');
   const localAuditGuidance = buildLocalCharacterAuditList(statusData, localAuditContext, options?.scenePresence);
+  const gameDevelopmentContext = String(options?.gameDevelopmentContext ?? '').trim();
+  const gameDevelopmentTurnGuidance = gameDevelopmentContext
+    ? [
+        '游戏开发回合只读上下文：以下内容由 TypeScript 冻结并完成确定性结算。',
+        '只能演出其中已经选择的行动、对象和意图；不得改选、补选或重新计算数值。',
+        gameDevelopmentContext,
+      ].join('\n')
+    : '';
   const phoneMessageBoundary = options?.suppressPhoneMessageContent
     ? [
         '手机消息边界：',
@@ -1528,6 +1552,7 @@ export function buildPrompt(
     phoneMessageBoundary,
     buildCharacterDataImportPrompt(options?.drawingSettings),
     buildImageGenerationPrompt(options?.drawingSettings),
+    gameDevelopmentTurnGuidance,
     plotContext,
     summaryContext,
     conversationHistory,
@@ -1590,8 +1615,16 @@ export function buildPhoneChatPrompt(input: {
 
   const miniPersona = getRelationshipMiniPersona(target);
   const relationshipGuidance = getRelationshipGuidance(target);
-  const addressGuidance = getRelationshipAddressGuidance({ target, playerProfile, currentTime: statusData.world.currentTime });
-  const anchorGuidance = getCharacterAnchorGuidance({ target, playerProfile, currentTime: statusData.world.currentTime });
+  const addressGuidance = getRelationshipAddressGuidance({
+    target,
+    playerProfile,
+    currentTime: statusData.world.currentTime,
+  });
+  const anchorGuidance = getCharacterAnchorGuidance({
+    target,
+    playerProfile,
+    currentTime: statusData.world.currentTime,
+  });
   const recentEventsContext = buildRecentEventsContext(statusData);
   const mainEventsContext = buildMainEventsContext(statusData);
   const phoneWorldStateContext = [
@@ -1617,7 +1650,9 @@ export function buildPhoneChatPrompt(input: {
   const playerProfileText = playerProfile?.name
     ? [
         `玩家姓名：${cleanPlayerName}`,
-        playerProfile.className ? `玩家选择班级/年级基底：${sanitizePlaceholders(playerProfile.className, cleanPlayerName)}` : '',
+        playerProfile.className
+          ? `玩家选择班级/年级基底：${sanitizePlaceholders(playerProfile.className, cleanPlayerName)}`
+          : '',
         playerProfile.backgrounds?.length
           ? `玩家背景：${playerProfile.backgrounds.map(item => sanitizePlaceholders(item, cleanPlayerName)).join('、')}`
           : '',

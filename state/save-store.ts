@@ -14,14 +14,7 @@
 // - 常规写入是 fire-and-forget（写队列内顺序异步落盘）。
 // - 用户手动存档/导出/退出前，调用 flushSaveStore() 等待全部已入队写入完成。
 
-import {
-  IDB_STORE_INDEX,
-  IDB_STORE_PAYLOAD,
-  idbGet,
-  idbGetAll,
-  idbPut,
-  idbDelete,
-} from './idb';
+import { IDB_STORE_INDEX, IDB_STORE_PAYLOAD, idbGet, idbGetAll, idbPut, idbDelete } from './idb';
 
 // ── 类型 ──
 // 这里用宽泛的 unknown 接，具体形状由 saves.ts 保证；本模块只做存取。
@@ -47,28 +40,52 @@ let lastInitDiagnostics = {
 
 // ── 写队列：per (store,id) 串行 ──
 const writeQueues = new Map<string, Promise<void>>();
+const writeFailures = new Map<string, unknown>();
 
-function enqueue(queueKey: string, op: () => Promise<void>): void {
+function enqueue(queueKey: string, op: () => Promise<void>): Promise<void> {
   const prev = writeQueues.get(queueKey) ?? Promise.resolve();
-  const next = prev.then(op).catch(async err => {
-    console.error('[save-store] write failed:', queueKey, err);
-    // 失败重试一次。
-    try {
-      await op();
-    } catch (err2) {
-      console.error('[save-store] retry failed:', queueKey, err2);
-    }
-  });
+  const next = prev
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        await op();
+        writeFailures.delete(queueKey);
+      } catch (firstError) {
+        console.error('[save-store] write failed, retrying:', queueKey, firstError);
+        try {
+          await op();
+          writeFailures.delete(queueKey);
+        } catch (retryError) {
+          console.error('[save-store] retry failed:', queueKey, retryError);
+          writeFailures.set(queueKey, retryError);
+          throw retryError;
+        }
+      }
+    });
   writeQueues.set(queueKey, next);
+  // 常规调用方允许 fire-and-forget；挂拒绝处理器避免未观察的 Promise 告警，
+  // 但返回的原始 next 仍保持 rejected，供 flush/立即持久化路径观察。
+  void next.catch(() => undefined);
   // 任务完成后清理已结束的链尾，避免 Map 无限增长。
-  next.finally(() => {
-    if (writeQueues.get(queueKey) === next) writeQueues.delete(queueKey);
-  });
+  void next.then(
+    () => {
+      if (writeQueues.get(queueKey) === next) writeQueues.delete(queueKey);
+    },
+    () => {
+      if (writeQueues.get(queueKey) === next) writeQueues.delete(queueKey);
+    },
+  );
+  return next;
 }
 
 /** 等待所有已入队的写入落盘。在导出/手动存档/退出前调用。 */
 export async function flushSaveStore(): Promise<void> {
-  await Promise.allSettled([...writeQueues.values()]);
+  while (writeQueues.size > 0) {
+    const pending = [...writeQueues.values()];
+    await Promise.allSettled(pending);
+  }
+  const failure = writeFailures.values().next();
+  if (!failure.done) throw failure.value;
 }
 
 // ── BroadcastChannel：跨 tab 同步 ──
@@ -249,28 +266,28 @@ export function readSaveIndexSync(): StoreSaveIndex {
   return indexMap;
 }
 
-/** 同步写 payload：先更新内存，再异步入队落盘。 */
-export function writePayloadSync(saveId: string, payload: StoreSavePayload): void {
+/** 同步更新内存并返回本次异步落盘 Promise；常规调用方可以忽略返回值。 */
+export function writePayloadSync(saveId: string, payload: StoreSavePayload): Promise<void> {
   payloadMap.set(saveId, payload);
-  enqueue(`payload:${saveId}`, async () => {
+  return enqueue(`payload:${saveId}`, async () => {
     await idbPut(IDB_STORE_PAYLOAD, saveId, payload);
     broadcast({ type: 'payload-changed', saveId });
   });
 }
 
-/** 同步删除 payload：先更新内存，再异步入队落盘。 */
-export function deletePayloadSync(saveId: string): void {
+/** 同步更新内存并返回本次异步删除 Promise；常规调用方可以忽略返回值。 */
+export function deletePayloadSync(saveId: string): Promise<void> {
   payloadMap.delete(saveId);
-  enqueue(`payload:${saveId}`, async () => {
+  return enqueue(`payload:${saveId}`, async () => {
     await idbDelete(IDB_STORE_PAYLOAD, saveId);
     broadcast({ type: 'payload-deleted', saveId });
   });
 }
 
-/** 同步写 index：先更新内存，再异步入队落盘。 */
-export function writeSaveIndexSync(index: StoreSaveIndex): void {
+/** 同步更新内存并返回本次异步落盘 Promise；常规调用方可以忽略返回值。 */
+export function writeSaveIndexSync(index: StoreSaveIndex): Promise<void> {
   indexMap = index;
-  enqueue('index', async () => {
+  return enqueue('index', async () => {
     await idbPut(IDB_STORE_INDEX, INDEX_SINGLETON_ID, index);
     broadcast({ type: 'index-changed' });
   });

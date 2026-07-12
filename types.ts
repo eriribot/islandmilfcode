@@ -2,6 +2,7 @@ import type { SummaryApiConfig, SummaryModelFetchState, SummaryStore } from './s
 import type { FloatingPhonePosition, MusicPlayerState, PhoneCharacterId, PhoneRoute } from './phone/types';
 import type { IslandMemoryDB } from './memorydatabase/types';
 import type { MemoryTableName } from './memorydatabase/editor';
+import type { GameDevelopmentState } from './game-development/types';
 
 export type TabKey = 'summary' | 'status' | 'inventory';
 
@@ -94,6 +95,7 @@ export type MessageSnapshot = {
 };
 
 export type PersistedMessage = {
+  id: string;
   role: 'user' | 'assistant';
   speaker: string;
   text: string;
@@ -153,6 +155,8 @@ export type PhoneMessageStore = {
 
 export type RollbackSnapshot = {
   statusData: StatusData;
+  /** Missing means a legacy snapshot with no authority over game-development state; null explicitly clears it. */
+  gameDevelopment?: GameDevelopmentState | null;
   playerProfile?: PlayerProfile;
   drawingSettings?: DrawingSettings;
   phoneMessages?: PhoneMessageStore;
