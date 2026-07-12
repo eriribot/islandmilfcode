@@ -84,6 +84,17 @@ function normalizeTarget(raw: Record<string, any>, fallback: TargetStatus): Targ
 
 function normalizeWorld(raw: Record<string, any>) {
   const mainEventsInput = raw?.world?.mainEvents ?? {};
+  const rawEventTriggerCounts = raw?.world?.eventTriggerCounts;
+  const eventTriggerCountsInput =
+    rawEventTriggerCounts && typeof rawEventTriggerCounts === 'object' && !Array.isArray(rawEventTriggerCounts)
+      ? rawEventTriggerCounts
+      : {};
+  const eventTriggerCounts: Record<string, number> = {};
+  for (const [key, value] of Object.entries(eventTriggerCountsInput)) {
+    const count = Number(value);
+    if (!key || !Number.isFinite(count) || !Number.isInteger(count) || count < 0) continue;
+    eventTriggerCounts[String(key)] = count;
+  }
   return {
     currentTime: String(raw?.world?.currentTime ?? defaultStatusData.world.currentTime),
     currentLocation: String(raw?.world?.currentLocation ?? defaultStatusData.world.currentLocation),
@@ -98,6 +109,7 @@ function normalizeWorld(raw: Record<string, any>) {
     },
     // recentEvents is a transient prompt signal. Do not revive stale entries from saves/snapshots.
     recentEvents: {},
+    eventTriggerCounts,
   };
 }
 
@@ -164,6 +176,7 @@ export function serializeStatusData(statusData: StatusData): Record<string, any>
       currentMainEventId: statusData.world.currentMainEventId,
       mainEvents: statusData.world.mainEvents,
       recentEvents: statusData.world.recentEvents,
+      eventTriggerCounts: statusData.world.eventTriggerCounts,
     },
     targets: statusData.targets.map(target => ({
       id: target.id,

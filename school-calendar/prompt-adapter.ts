@@ -1,16 +1,33 @@
 import type { PlayerProfile, TargetStatus } from '../types';
+import { isFinishedMainEventStatus } from '../plot-routing';
 import { CLASS_SPLIT_DATE, TOYOGASAKI_2013_SCHOOL_YEAR_DATE, UTAHA_GRADUATION_DATE } from './constants';
 import { buildSchoolRelationGuardLine } from './relationship-guards';
 import { resolvePlayerSchoolIdentity, resolveTargetSchoolIdentity, type ResolvedSchoolIdentity } from './identity-resolver';
+
+export const SAE_07_8_EVENT_ID = 'SAE_07-8';
+const SAE_07_8_DATE = '2013-03-04';
 
 export type SchoolCalendarFactInput = {
   currentTime: string;
   playerProfile?: PlayerProfile | null;
   targets?: TargetStatus[];
+  currentMainEventId?: string;
+  mainEvents?: Record<string, string>;
+  eventTriggerCounts?: Record<string, number>;
 };
 
 function getDatePart(value: string | undefined): string {
   return String(value ?? '').match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
+}
+
+export function shouldInjectSae078GraduationCeremony(input: SchoolCalendarFactInput): boolean {
+  const date = getDatePart(input.currentTime);
+  return (
+    date === SAE_07_8_DATE &&
+    input.currentMainEventId === SAE_07_8_EVENT_ID &&
+    !isFinishedMainEventStatus(input.mainEvents?.[SAE_07_8_EVENT_ID]) &&
+    (input.eventTriggerCounts?.[SAE_07_8_EVENT_ID] ?? 0) === 0
+  );
 }
 
 export function formatSchoolIdentity(identity: ResolvedSchoolIdentity): string {
@@ -28,7 +45,27 @@ export function buildSchoolCalendarFactLines(input: SchoolCalendarFactInput): st
   }
 
   if (date >= UTAHA_GRADUATION_DATE) {
-    lines.push('- School calendar: 2013-03-04 is Utaha graduation ceremony day; after this date, do not write Utaha as a normal third-year student attending daily classes.');
+    lines.push(
+      '- School calendar: Utaha\'s ongoing identity is a graduate from 2013-03-04 onward; do not write her as a normal third-year student attending daily classes. This continuing identity does not mean the graduation ceremony repeats.',
+    );
+  }
+
+  const graduationCeremonyActive = shouldInjectSae078GraduationCeremony(input);
+  if (graduationCeremonyActive) {
+    lines.push(
+      '- School calendar: today (2013-03-04) is the active SAE_07-8 graduation ceremony. Treat it as a one-time story event that ends with the main-event state, not as an annually or per-turn repeating calendar event.',
+    );
+
+    for (const target of input.targets ?? []) {
+      const identity = resolveTargetSchoolIdentity(target, input.currentTime);
+      if (identity.kind === 'graduate') continue;
+      const currentIdentity = formatSchoolIdentity(identity);
+      lines.push(
+        `- School calendar: today is the graduation ceremony, but ${identity.name} is NOT graduating${
+          currentIdentity ? ` (current school identity: ${currentIdentity})` : ' and has no graduating-student identity'
+        }. Do not write ${identity.name} as a graduate or as officially finishing school today.`,
+      );
+    }
   }
 
   if (date >= TOYOGASAKI_2013_SCHOOL_YEAR_DATE) {

@@ -94,7 +94,7 @@ function getTimeMinutes(value: string): number {
   return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
 }
 
-function isFinishedMainEventStatus(status: string | undefined) {
+export function isFinishedMainEventStatus(status: string | undefined) {
   return /已结束|跳过|延后|已完成/.test(String(status ?? '').trim());
 }
 

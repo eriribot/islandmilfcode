@@ -4,9 +4,12 @@ export const V07_PLOT_MACHINE: PlotMachineDefinition = {
   id: 'v07',
   targetId: 'route:v07',
   title: '第七卷路线开关',
+  // 中文注释：路线事实副 API 只在第七章内辅助记录剧情倾向。
+  // 2013-03-04 是 SAE_07-8 结束后由玩家强制选线的 DDL，当天起检查器必须关闭；
+  // 即使副 API 没运行、失败或所有事实都是 0，也不能限制玩家选择“留下 / 单飞 / 朱音”。
   proposalWindow: {
-    start: '2013-02-25',
-    end: '2013-03-31',
+    start: '2013-02-08',
+    end: '2013-03-03',
   },
   promptWindow: {
     start: '2013-03-04',

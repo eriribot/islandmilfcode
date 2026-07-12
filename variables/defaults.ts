@@ -198,6 +198,7 @@ export const defaultStatusData: StatusData = {
       'SAE_04-8': '未进行',
     },
     recentEvents: {},
+    eventTriggerCounts: {},
   },
   // 中文注释：内置可攻略角色先作为变量种子存在；世界书载入后会按姓名合并并保留好感。
   targets: builtInTargetSeeds,

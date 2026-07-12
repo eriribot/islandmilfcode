@@ -1,8 +1,10 @@
 import { buildSaenaiWorldStateFactLines } from '../saenai-world-facts';
+import { getCharacterAnchorGuidance } from '../relationship';
 import {
   buildEducationProfileFromText,
   buildKirihimeSchoolIdentitySegment,
   buildSchoolRelationGuardLine,
+  getSchoolYearCount,
   resolvePlayerSchoolIdentity,
   resolveTargetSchoolIdentity,
   syncSchoolCalendarState,
@@ -91,6 +93,7 @@ function makeStatus(currentTime: string, targets: TargetStatus[]): StatusData {
       currentMainEventId: '',
       recentEvents: {},
       mainEvents: {},
+      eventTriggerCounts: {},
     },
     targets,
     activeTargetId: null,
@@ -179,6 +182,27 @@ const cases: SimulationCase[] = [
     },
   },
   {
+    name: 'player graduation supports first-year, second-year, and third-year starting classes',
+    run: () => {
+      const firstYear = player(CLASS_1_A);
+      assert(resolvePlayerSchoolIdentity(firstYear, '2012-04-05 09:00').className === CLASS_1_A, 'first-year base must remain first-year in 2012');
+      assert(resolvePlayerSchoolIdentity(firstYear, '2013-04-01 09:00').className === '2年A班', 'first-year base must advance to second-year in 2013');
+      assert(resolvePlayerSchoolIdentity(firstYear, '2014-04-01 09:00').className === '3年A班', 'first-year base must advance to third-year in 2014');
+      assert(resolvePlayerSchoolIdentity(firstYear, '2015-03-03 09:00').kind === 'student', 'first-year base must remain a student before the 2015 ceremony');
+      assert(resolvePlayerSchoolIdentity(firstYear, '2015-03-04 09:00').kind === 'graduate', 'first-year base must graduate in 2015');
+
+      const secondYear = player(CLASS_2_B);
+      assert(resolvePlayerSchoolIdentity(secondYear, '2012-04-05 09:00').className === CLASS_2_B, 'second-year base must remain second-year in 2012');
+      assert(resolvePlayerSchoolIdentity(secondYear, '2013-04-01 09:00').className === '3年B班', 'second-year base must advance to third-year in 2013');
+      assert(resolvePlayerSchoolIdentity(secondYear, '2014-03-03 09:00').kind === 'student', 'second-year base must remain a student before the 2014 ceremony');
+      assert(resolvePlayerSchoolIdentity(secondYear, '2014-03-04 09:00').kind === 'graduate', 'second-year base must graduate in 2014');
+
+      const thirdYear = player(CLASS_3_C);
+      assert(resolvePlayerSchoolIdentity(thirdYear, '2013-03-03 09:00').className === CLASS_3_C, 'third-year base must remain third-year before the 2013 ceremony');
+      assert(resolvePlayerSchoolIdentity(thirdYear, '2013-03-04 09:00').kind === 'graduate', 'third-year base must graduate in 2013');
+    },
+  },
+  {
     name: 'state sync does not rewrite selected class or target meta className',
     run: () => {
       const profile = player(CLASS_2_B);
@@ -218,6 +242,122 @@ const cases: SimulationCase[] = [
       assert(facts.includes(`加藤惠 = 私立丰之崎学园 ${CLASS_3_A}`), 'expected Megumi resolved fact');
       assert(facts.includes(`泽村·斯宾塞·英梨梨 = 私立丰之崎学园 ${CLASS_3_F}`), 'expected Eriri resolved fact');
       assert(facts.includes('霞之丘诗羽 = 私立丰之崎学园 graduate / 早应大学文学系'), 'expected Utaha graduate fact');
+    },
+  },
+  {
+    name: 'school-year count advances only at the April boundary',
+    run: () => {
+      assert(getSchoolYearCount('2012-12-07') === 0, 'expected 2012 school year count 0');
+      assert(getSchoolYearCount('2013-03-04') === 0, 'expected graduation day to remain in 2012 school year');
+      assert(getSchoolYearCount('2013-03-31') === 0, 'expected March 31 count 0');
+      assert(getSchoolYearCount('2013-04-01') === 1, 'expected April 1 count 1');
+    },
+  },
+  {
+    name: 'school-age targets never become high-school fourth-years',
+    run: () => {
+      const megumi = resolveTargetSchoolIdentity(target('megumi', '加藤惠'), '2014-04-01 09:00');
+      const eriri = resolveTargetSchoolIdentity(target('eriri', '泽村·斯宾塞·英梨梨'), '2014-04-01 09:00');
+      assert(megumi.kind === 'graduate', `expected Megumi graduate instead of high-school fourth-year, got ${megumi.label}`);
+      assert(eriri.kind === 'graduate', `expected Eriri graduate instead of high-school fourth-year, got ${eriri.label}`);
+      assert(!megumi.className.includes('4年'), `must not create Megumi high-school fourth-year: ${megumi.className}`);
+      assert(!eriri.className.includes('4年'), `must not create Eriri high-school fourth-year: ${eriri.className}`);
+    },
+  },
+  {
+    name: 'DLC school profiles use the same grade boundary',
+    run: () => {
+      const shoko = target('shoko', '西宫硝子');
+      const thirdYear = resolveTargetSchoolIdentity(shoko, '2013-04-01 09:00');
+      const graduate = resolveTargetSchoolIdentity(shoko, '2014-03-01 09:00');
+      assert(thirdYear.className === '3年', `expected DLC third-year identity, got ${thirdYear.label}`);
+      assert(graduate.kind === 'graduate', `expected DLC graduate boundary, got ${graduate.label}`);
+      assert(!graduate.className.includes('4年'), `must not create DLC high-school fourth-year: ${graduate.className}`);
+    },
+  },
+  {
+    name: 'Utaha graduation identity rolls back with story date',
+    run: () => {
+      const utaha = target('utaha', '霞之丘诗羽');
+      const after = resolveTargetSchoolIdentity(utaha, '2013-03-10 09:00');
+      const before = resolveTargetSchoolIdentity(utaha, '2013-03-01 09:00');
+      assert(after.kind === 'graduate', `expected graduate after ceremony, got ${after.kind}`);
+      assert(before.kind === 'student', `expected rollback to student identity, got ${before.kind}`);
+    },
+  },
+  {
+    name: 'cached school sync time is never used to guess current grade',
+    run: () => {
+      const megumi = target('megumi', '加藤惠');
+      megumi.meta = { ...megumi.meta, schoolCalendarSyncedAt: '2013-04-01' };
+      const guidance = getCharacterAnchorGuidance({ target: megumi, playerProfile: player(CLASS_2_B) });
+      assert(!guidance.includes('School relation guard'), `must not use cached school time: ${guidance}`);
+      assert(!guidance.includes('3年'), `must not infer a current grade without current story time: ${guidance}`);
+    },
+  },
+  {
+    name: 'SAE-07-8 ceremony is active only before its successful trigger count increments',
+    run: () => {
+      const targets = [
+        target('utaha', '霞之丘诗羽'),
+        target('izumi', '波岛出海'),
+        target('shoko', '西宫硝子'),
+        target('akane', '红坂朱音'),
+        target('sonoko', '町田苑子'),
+        target('sayuri', '泽村小百合'),
+      ];
+      const baseInput = {
+        currentTime: '2013-03-04 15:00',
+        playerProfile: player(CLASS_2_B),
+        targets,
+        currentMainEventId: 'SAE_07-8',
+        mainEvents: { 'SAE_07-8': '进行中' },
+      };
+      const firstTrigger = buildSaenaiWorldStateFactLines({
+        ...baseInput,
+        eventTriggerCounts: { 'SAE_07-8': 0 },
+      }).join('\n');
+      const alreadyTriggered = buildSaenaiWorldStateFactLines({
+        ...baseInput,
+        eventTriggerCounts: { 'SAE_07-8': 1 },
+      }).join('\n');
+      assert(firstTrigger.includes('active SAE_07-8 graduation ceremony'), 'expected first ceremony trigger');
+      for (const name of ['波岛出海', '西宫硝子', '红坂朱音', '町田苑子', '泽村小百合']) {
+        assert(firstTrigger.includes(`${name} is NOT graduating`), `expected explicit non-graduate guard for ${name}`);
+      }
+      assert(!firstTrigger.includes('霞之丘诗羽 is NOT graduating'), 'Utaha must remain the graduating participant');
+      assert(!alreadyTriggered.includes('active SAE_07-8 graduation ceremony'), 'count 1 must block repeated ceremony');
+    },
+  },
+  {
+    name: 'SAE-07-8 ceremony requires the active unfinished event on the exact date',
+    run: () => {
+      const baseInput = {
+        playerProfile: player(CLASS_2_B),
+        targets: [target('utaha', '霞之丘诗羽'), target('izumi', '波岛出海')],
+        eventTriggerCounts: { 'SAE_07-8': 0 },
+      };
+      const inactive = buildSaenaiWorldStateFactLines({
+        ...baseInput,
+        currentTime: '2013-03-04 15:00',
+        currentMainEventId: 'SAE_07-7',
+        mainEvents: { 'SAE_07-8': '未触发' },
+      }).join('\n');
+      const finished = buildSaenaiWorldStateFactLines({
+        ...baseInput,
+        currentTime: '2013-03-04 15:00',
+        currentMainEventId: 'SAE_07-8',
+        mainEvents: { 'SAE_07-8': '已结束' },
+      }).join('\n');
+      const later = buildSaenaiWorldStateFactLines({
+        ...baseInput,
+        currentTime: '2013-03-05 09:00',
+        currentMainEventId: 'SAE_07-8',
+        mainEvents: { 'SAE_07-8': '进行中' },
+      }).join('\n');
+      assert(!inactive.includes('active SAE_07-8 graduation ceremony'), 'inactive event must not trigger ceremony');
+      assert(!finished.includes('active SAE_07-8 graduation ceremony'), 'finished event must not trigger ceremony');
+      assert(!later.includes('active SAE_07-8 graduation ceremony'), 'later date must not trigger ceremony');
     },
   },
   {

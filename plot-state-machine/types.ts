@@ -13,8 +13,8 @@ export type PlotRouteVariantId =
   | 'solo_user_exit'
   | 'solo_group_exit_except_tomoya';
 
-/** 兼容旧调用方的类型名；权威 choice 已从 family 升级为具体 variant。 */
-export type PlotRouteId = PlotRouteVariantId;
+/** 玩家最终选择只保留三条 family；variant 仅用于剧情倾向和旧存档兼容。 */
+export type PlotRouteId = PlotRouteFamilyId;
 
 export type PlotDateWindow = {
   start: string;
@@ -124,22 +124,39 @@ export type PlotRouteEligibility = {
   missingFlagIds: string[];
 };
 
+export type PlotRouteFamilyAdvisory = {
+  id: PlotRouteFamilyId;
+  label: string;
+  /** 当前事实最接近的内部剧情细分，只用于提示玩家，不是选择资格。 */
+  bestVariantId: PlotRouteVariantId;
+  satisfiedFlagIds: string[];
+  missingFlagIds: string[];
+};
+
 export type PlotRouteChoiceReceipt = {
-  schemaVersion: 1;
+  /** schemaVersion 1 是旧五变体 receipt；2 是当前三线玩家选择。 */
+  schemaVersion: 1 | 2;
   machineId: PlotMachineId;
   familyId: PlotRouteFamilyId;
-  variantId: PlotRouteVariantId;
+  /** 旧存档字段；新版 choice 不再把内部 variant 当作玩家最终路线。 */
+  variantId?: PlotRouteVariantId;
+  /** 新版每次确认的唯一实例，用于隔离回退后重新选择产生的游戏开发状态。 */
+  confirmationId?: string;
+  /** 确认发生时的时间线头部楼层；只用于因果回退，不使用正在浏览的楼层。 */
+  anchorFloorIndex?: number;
   confirmedAt: string;
   source: 'manual';
-  basisHash: string;
-  basisFlagIds: string[];
+  /** 旧存档审计字段；新版路线由玩家强制决定，不再依赖 flag basis。 */
+  basisHash?: string;
+  basisFlagIds?: string[];
 };
 
 export type PlotRouteResolution = {
   machineId: PlotMachineId;
   routes: PlotRouteEligibility[];
+  families: PlotRouteFamilyAdvisory[];
   eligibleRouteIds: PlotRouteVariantId[];
-  choice: PlotRouteVariantId | null;
+  choice: PlotRouteFamilyId | null;
   choiceReceipt: PlotRouteChoiceReceipt | null;
   choiceState: 'unchosen' | 'chosen' | 'needs_review';
   needsReviewReason: string | null;
@@ -158,7 +175,9 @@ export type PlotRouteChoiceCommit = {
 export type PlotRouteChoiceConfirmationErrorCode =
   | 'not_manual'
   | 'missing_date'
+  | 'missing_anchor'
   | 'outside_choice_window'
+  | 'ddl_not_reached'
   | 'unknown_route'
   | 'route_not_eligible'
   | 'choice_locked';
@@ -167,21 +186,21 @@ export type PlotRouteChoiceConfirmationResult =
   | {
       status: 'accepted';
       changed: true;
-      choice: PlotRouteVariantId;
+      choice: PlotRouteFamilyId;
       commit: PlotRouteChoiceCommit;
       resolution: PlotRouteResolution;
     }
   | {
       status: 'unchanged';
       changed: false;
-      choice: PlotRouteVariantId;
+      choice: PlotRouteFamilyId;
       commit: null;
       resolution: PlotRouteResolution;
     }
   | {
       status: 'rejected';
       changed: false;
-      choice: PlotRouteVariantId | null;
+      choice: PlotRouteFamilyId | null;
       commit: null;
       error: {
         code: PlotRouteChoiceConfirmationErrorCode;

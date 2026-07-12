@@ -1,5 +1,5 @@
 import type { PlayerProfile, TargetStatus } from '../types';
-import { CLASS_SPLIT_DATE, TOYOGASAKI_2013_SCHOOL_YEAR_DATE, UTAHA_GRADUATION_DATE } from './constants';
+import { CLASS_SPLIT_DATE, TOYOGASAKI_2013_SCHOOL_YEAR_DATE } from './constants';
 import {
   type EducationProfile,
   getGradeNumber,
@@ -33,7 +33,6 @@ type BuiltInEducationRule = {
   schoolName: string;
   universityName?: string;
   universityDepartment?: string;
-  graduationDate?: string;
   steps: Array<{ date: string; className: string; schoolName?: string; rawText?: string }>;
 };
 
@@ -59,7 +58,6 @@ const BUILT_IN_RULES: Record<string, BuiltInEducationRule> = {
     schoolName: '私立丰之崎学园',
     universityName: '早应大学',
     universityDepartment: '文学系',
-    graduationDate: UTAHA_GRADUATION_DATE,
     steps: [{ date: '', className: '3年C班' }],
   },
   izumi: {
@@ -81,7 +79,6 @@ const BUILT_IN_RULES: Record<string, BuiltInEducationRule> = {
   shoko: {
     birthday: '',
     schoolName: '外校',
-    graduationDate: '2014-03-01',
     steps: [
       { date: '', className: '2年' },
       { date: TOYOGASAKI_2013_SCHOOL_YEAR_DATE, className: '3年' },
@@ -90,6 +87,7 @@ const BUILT_IN_RULES: Record<string, BuiltInEducationRule> = {
 };
 
 const ADULT_ELDER_KEYS = new Set(['sayuri', 'sonoko', 'akane']);
+const DEFAULT_HIGH_SCHOOL_GRADUATION_MONTH_DAY = '03-04';
 
 function text(value: unknown): string {
   return String(value ?? '').trim();
@@ -99,12 +97,17 @@ function getDatePart(value: string | undefined): string {
   return text(value).match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? '';
 }
 
-function getSchoolYear(date: string): number | null {
+export function getSchoolYear(date: string): number | null {
   const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
   const year = Number(match[1]);
   const month = Number(match[2]);
   return month >= 4 ? year : year - 1;
+}
+
+export function getSchoolYearCount(date: string): number | null {
+  const schoolYear = getSchoolYear(date);
+  return schoolYear === null ? null : schoolYear - 2012;
 }
 
 function getHighSchoolStartYear(birthday: string): number | null {
@@ -116,10 +119,10 @@ function getHighSchoolStartYear(birthday: string): number | null {
 }
 
 function getHighSchoolGradeFromBirthday(birthday: string, date: string): number | null {
-  const schoolYear = getSchoolYear(date);
+  const schoolYearCount = getSchoolYearCount(date);
   const highSchoolStartYear = getHighSchoolStartYear(birthday);
-  if (schoolYear === null || highSchoolStartYear === null) return null;
-  return schoolYear - highSchoolStartYear + 1;
+  if (schoolYearCount === null || highSchoolStartYear === null) return null;
+  return 2012 + schoolYearCount - highSchoolStartYear + 1;
 }
 
 function identityHaystack(target: Pick<TargetStatus, 'id' | 'name' | 'alias'>): string {
@@ -185,13 +188,25 @@ function isToyogasakiSchool(schoolName: string): boolean {
   return /丰之崎|丰崎|Toyogasaki/i.test(schoolName);
 }
 
-function advanceClassFor2013(className: string): { className: string; graduated: boolean } {
+function hasReachedSchoolYearGraduation(date: string, schoolYearCount: number, currentGrade: number): boolean {
+  if (currentGrade !== 3) return false;
+  const graduationYear = 2012 + schoolYearCount + 1;
+  return date >= `${graduationYear}-${DEFAULT_HIGH_SCHOOL_GRADUATION_MONTH_DAY}`;
+}
+
+function advanceClassBySchoolYearCount(
+  className: string,
+  schoolYearCount: number,
+  date: string,
+): { className: string; graduated: boolean } {
   const value = normalizeClassName(className);
   const match = value.match(/^([123])年(.*)$/);
   if (!match) return { className: value, graduated: false };
-  const year = Number(match[1]);
-  if (year >= 3) return { className: '', graduated: true };
-  return { className: `${year + 1}年${match[2] ?? ''}`, graduated: false };
+  const currentGrade = Number(match[1]) + schoolYearCount;
+  if (currentGrade > 3 || hasReachedSchoolYearGraduation(date, schoolYearCount, currentGrade)) {
+    return { className: '', graduated: true };
+  }
+  return { className: `${currentGrade}年${match[2] ?? ''}`, graduated: false };
 }
 
 function selectClassStep(profile: EducationProfile, date: string): { schoolName: string; className: string; rawText: string } | null {
@@ -248,31 +263,22 @@ function mergeWithBuiltInProfile(profile: EducationProfile, key: string): Educat
   const rule = BUILT_IN_RULES[key];
   if (!rule) return profile;
 
+  const builtInClassSteps = rule.steps.map(step => ({
+    date: step.date,
+    className: normalizeClassName(step.className),
+    schoolName: step.schoolName || rule.schoolName,
+    rawText: step.rawText || step.className,
+  }));
+
   // DLC 设定只确定硝子与伦也、惠同届且属于外校，不虚构具体校名或班级。
   if (key === 'shoko') {
     return {
       ...profile,
       birthday: '',
       schoolName: rule.schoolName,
-      graduationDate: rule.graduationDate || '',
-      classSteps: rule.steps.map(step => ({
-        date: step.date,
-        className: normalizeClassName(step.className),
-        schoolName: rule.schoolName,
-        rawText: step.rawText || step.className,
-      })),
+      graduationDate: '',
+      classSteps: builtInClassSteps,
       source: 'fallback',
-    };
-  }
-
-  if (profile.classSteps.length) {
-    return {
-      ...profile,
-      birthday: profile.birthday || rule.birthday,
-      schoolName: profile.schoolName || rule.schoolName,
-      universityName: profile.universityName || rule.universityName || '',
-      universityDepartment: profile.universityDepartment || rule.universityDepartment || '',
-      graduationDate: profile.graduationDate || rule.graduationDate || '',
     };
   }
 
@@ -282,13 +288,9 @@ function mergeWithBuiltInProfile(profile: EducationProfile, key: string): Educat
     birthday: profile.birthday || rule.birthday,
     universityName: profile.universityName || rule.universityName || '',
     universityDepartment: profile.universityDepartment || rule.universityDepartment || '',
-    graduationDate: profile.graduationDate || rule.graduationDate || '',
-    classSteps: rule.steps.map(step => ({
-      date: step.date,
-      className: normalizeClassName(step.className),
-      schoolName: step.schoolName || rule.schoolName,
-      rawText: step.rawText || step.className,
-    })),
+    // 毕业身份只由 baseClass、学年 count 与统一毕业月日推导，不接受世界书或角色特例旁路。
+    graduationDate: '',
+    classSteps: builtInClassSteps,
     source: 'fallback',
   };
 }
@@ -306,28 +308,6 @@ function resolveProfileIdentity(input: {
 
   if (!input.date) return resolveUnknown(input.id, input.name);
 
-  if (profile.graduationDate && input.date >= profile.graduationDate) {
-    if (!profile.schoolName) return resolveUnknown(input.id, input.name);
-    const label =
-      profile.universityName || profile.universityDepartment
-        ? `${profile.schoolName} graduate / ${[profile.universityName, profile.universityDepartment]
-            .filter(Boolean)
-            .join('')}`
-        : `${profile.schoolName} graduate`;
-    return makeIdentity({
-      id: input.id,
-      name: input.name,
-      kind: 'graduate',
-      schoolName: profile.schoolName,
-      className: '',
-      source: input.source,
-      label,
-      baseGrade,
-      relationGrade: baseGrade,
-      facts: [`${input.date}: ${input.name} is ${label}.`],
-    });
-  }
-
   if (input.beforeSplitApplies && input.date < CLASS_SPLIT_DATE) {
     return makeIdentity({
       id: input.id,
@@ -343,9 +323,10 @@ function resolveProfileIdentity(input: {
     });
   }
 
-  const birthdayGrade = getHighSchoolGradeFromBirthday(profile.birthday, input.date);
-  if (birthdayGrade !== null) {
-    if (birthdayGrade > 3) {
+  const schoolYearCount = getSchoolYearCount(input.date);
+  const currentGrade = baseGrade !== null && schoolYearCount !== null ? baseGrade + schoolYearCount : null;
+  if (currentGrade !== null && schoolYearCount !== null) {
+    if (currentGrade > 3 || hasReachedSchoolYearGraduation(input.date, schoolYearCount, currentGrade)) {
       if (!profile.schoolName) return resolveUnknown(input.id, input.name);
       const label =
         profile.universityName || profile.universityDepartment
@@ -367,9 +348,9 @@ function resolveProfileIdentity(input: {
       });
     }
 
-    if (birthdayGrade >= 1) {
-      const classStep = selectClassForGrade(profile, birthdayGrade);
-      const className = classStep?.className || `${birthdayGrade}年`;
+    if (currentGrade >= 1) {
+      const classStep = selectClassForGrade(profile, currentGrade);
+      const className = classStep?.className || `${currentGrade}年`;
       const schoolName = classStep?.schoolName || profile.schoolName;
       if (!schoolName) return resolveUnknown(input.id, input.name);
       return makeIdentity({
@@ -380,7 +361,7 @@ function resolveProfileIdentity(input: {
         className,
         source: input.source,
         baseGrade,
-        facts: [`${input.date}: ${input.name} should be treated as ${[schoolName, className].filter(Boolean).join(' ')} by birthday-based school-year calculation.`],
+        facts: [`${input.date}: ${input.name} should be treated as ${[schoolName, className].filter(Boolean).join(' ')} by base-grade plus school-year-count calculation.`],
       });
     }
 
@@ -394,7 +375,7 @@ function resolveProfileIdentity(input: {
         className: middleSchool.className,
         source: input.source,
         baseGrade,
-        facts: [`${input.date}: ${input.name} should be treated as ${[middleSchool.schoolName, middleSchool.className].filter(Boolean).join(' ')} by birthday-based school-year calculation.`],
+        facts: [`${input.date}: ${input.name} should be treated as ${[middleSchool.schoolName, middleSchool.className].filter(Boolean).join(' ')} by base-grade plus school-year-count calculation.`],
       });
     }
   }
@@ -442,7 +423,11 @@ export function resolvePlayerSchoolIdentity(
   }
 
   const baseClass = educationProfile.classSteps[0]?.className || baseClassName;
-  const rollover = date >= TOYOGASAKI_2013_SCHOOL_YEAR_DATE ? advanceClassFor2013(baseClass) : { className: baseClass, graduated: false };
+  const schoolYearCount = getSchoolYearCount(date);
+  const rollover =
+    schoolYearCount === null
+      ? { className: baseClass, graduated: false }
+      : advanceClassBySchoolYearCount(baseClass, schoolYearCount, date);
 
   return makeIdentity({
     id: 'user',

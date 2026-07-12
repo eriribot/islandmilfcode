@@ -47,6 +47,7 @@ export type GameDevelopmentSlot = {
 
 export type GameDevelopmentSubmission = {
   submissionId: string;
+  routeConfirmationId: string;
   week: number;
   routeFamily: PlotRouteFamilyId;
   routeVariant: PlotRouteVariantId;
@@ -56,7 +57,8 @@ export type GameDevelopmentSubmission = {
 };
 
 export type GameDevelopmentState = {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  routeConfirmationId: string;
   routeFamily: PlotRouteFamilyId;
   routeVariant: PlotRouteVariantId;
   project: GameDevelopmentProject;
@@ -182,10 +184,12 @@ const GAME_DEVELOPMENT_TARGET_ID = 'route:v07';
 const GAME_DEVELOPMENT_STORAGE_KEY = 'gameDevelopment.v1.state';
 
 export function createInitialGameDevelopmentState(receipt: PlotRouteChoiceReceipt): GameDevelopmentState {
+  const routeConfirmationId = getRouteConfirmationId(receipt);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    routeConfirmationId,
     routeFamily: receipt.familyId,
-    routeVariant: receipt.variantId,
+    routeVariant: getInternalDevelopmentVariant(receipt),
     project: {
       created: false,
       title: '第二作',
@@ -222,17 +226,37 @@ export function readGameDevelopmentState(
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.value;
   if (!raw) return createInitialGameDevelopmentState(receipt);
   try {
-    const parsed = JSON.parse(raw) as Partial<GameDevelopmentState>;
+    const parsed = JSON.parse(raw) as Partial<Omit<GameDevelopmentState, 'schemaVersion'>> & {
+      schemaVersion?: number;
+    };
+    const routeConfirmationId = getRouteConfirmationId(receipt);
     if (
-      parsed.schemaVersion !== 1 ||
-      parsed.routeFamily !== receipt.familyId ||
-      parsed.routeVariant !== receipt.variantId ||
-      !parsed.project ||
-      !parsed.slots
+      parsed.schemaVersion === 2 &&
+      parsed.routeConfirmationId === routeConfirmationId &&
+      parsed.routeFamily === receipt.familyId &&
+      parsed.project &&
+      parsed.slots
     ) {
-      return createInitialGameDevelopmentState(receipt);
+      return parsed as GameDevelopmentState;
     }
-    return parsed as GameDevelopmentState;
+
+    // 中文注释：旧 v1 choice/state 只在彼此仍是同一旧 variant 时兼容升级；
+    // 新 DDL receipt 拥有新的 confirmationId，绝不能复活旧时间线里同名路线的开发进度。
+    const legacyStateMatchesReceipt =
+      receipt.schemaVersion === 1 &&
+      parsed.schemaVersion === 1 &&
+      parsed.routeFamily === receipt.familyId &&
+      parsed.routeVariant === receipt.variantId &&
+      Boolean(parsed.project) &&
+      Boolean(parsed.slots);
+    if (legacyStateMatchesReceipt) {
+      return {
+        ...(parsed as Omit<GameDevelopmentState, 'schemaVersion' | 'routeConfirmationId'>),
+        schemaVersion: 2,
+        routeConfirmationId,
+      };
+    }
+    return createInitialGameDevelopmentState(receipt);
   } catch {
     return createInitialGameDevelopmentState(receipt);
   }
@@ -245,7 +269,7 @@ export function commitGameDevelopmentState(db: IslandMemoryDB, state: GameDevelo
     value: JSON.stringify(state),
     valueType: 'json',
     source: 'manual',
-    reason: `游戏开发第 ${state.week} 周状态；路线 ${state.routeFamily}/${state.routeVariant}`,
+    reason: `游戏开发第 ${state.week} 周状态；路线 ${state.routeFamily}/${state.routeVariant}；确认实例 ${state.routeConfirmationId}`,
   });
 }
 
@@ -347,7 +371,8 @@ export function submitGameDevelopmentWeek(
   project.weeksLeft = Math.max(0, project.weeksLeft - 1);
   const context = buildSubmissionContext(state, slots);
   const submission: GameDevelopmentSubmission = {
-    submissionId: `gd-${state.routeVariant}-w${state.week}`,
+    submissionId: `gd-${state.routeConfirmationId}-${state.routeVariant}-w${state.week}`,
+    routeConfirmationId: state.routeConfirmationId,
     week: state.week,
     routeFamily: state.routeFamily,
     routeVariant: state.routeVariant,
@@ -395,10 +420,31 @@ function buildSubmissionContext(state: GameDevelopmentState, slots: GameDevelopm
     '[GAME_DEVELOPMENT_WEEK]',
     `route_family=${state.routeFamily}`,
     `route_variant=${state.routeVariant}`,
+    `route_confirmation_id=${state.routeConfirmationId}`,
     `week=${state.week}`,
     ...slots.map(slot =>
       `${slot.dayId}: action=${slot.actionId}; target=${slot.targetId ?? 'none'}; intent=${slot.intent || 'none'}`,
     ),
     '[/GAME_DEVELOPMENT_WEEK]',
   ].join('\n');
+}
+
+export function isGameDevelopmentRouteChoice(receipt: PlotRouteChoiceReceipt | null | undefined): boolean {
+  // 中文注释：玩家的三线 choice 与开发玩法开关分层；只有单飞和朱音开启当前开发模块。
+  return receipt?.familyId === 'solo' || receipt?.familyId === 'akane';
+}
+
+function getRouteConfirmationId(receipt: PlotRouteChoiceReceipt): string {
+  if (receipt.schemaVersion === 2 && receipt.confirmationId) return receipt.confirmationId;
+  return `legacy-${receipt.familyId}-${receipt.variantId ?? 'family'}-${receipt.confirmedAt}`;
+}
+
+function getInternalDevelopmentVariant(receipt: PlotRouteChoiceReceipt): PlotRouteVariantId {
+  if (receipt.familyId === 'akane') return 'akane_core';
+  if (receipt.familyId === 'solo') {
+    return receipt.variantId === 'solo_group_exit_except_tomoya'
+      ? 'solo_group_exit_except_tomoya'
+      : 'solo_user_exit';
+  }
+  return receipt.variantId === 'stay_blackgold' ? 'stay_blackgold' : 'stay_user_only';
 }

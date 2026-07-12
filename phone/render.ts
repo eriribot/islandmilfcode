@@ -6,6 +6,7 @@ import {
   GAME_DEVELOPMENT_ACTIONS,
   GAME_DEVELOPMENT_DAYS,
   getGameDevelopmentActions,
+  isGameDevelopmentRouteChoice,
   isGameDevelopmentWeekReady,
   readGameDevelopmentState,
   type GameDevelopmentProject,
@@ -20,9 +21,9 @@ import {
   type PlotMachineDefinition,
   type PlotRouteEligibility,
   type PlotRouteFamilyId,
-  type PlotRouteResolution,
   type PlotRouteVariantId,
 } from '../plot-state-machine';
+import { isV07RouteChoiceRequired } from '../plot-state-machine/choice';
 import type {
   AppState,
   NotificationState,
@@ -1175,9 +1176,14 @@ function getV07StudioHomeMeta(state: AppState): string {
   if (!machine) return '暂不可用';
   if (!isV07StudioUnlocked(state)) return '第七卷后开放';
   const resolution = buildPlotRoutingContext(state.statusData, state.memoryDB).v07.resolution;
-  if (resolution.choiceState === 'needs_review') return '路线需要检查';
-  if (resolution.choice) return '路线已确认';
-  return `${resolution.eligibleRouteIds.length} 条路线可选`;
+  if (resolution.choice) return `已选${V07_FAMILY_LABELS[resolution.choice]}`;
+  const required = isV07RouteChoiceRequired({
+    currentTime: state.statusData.world.currentTime,
+    currentMainEventId: state.statusData.world.currentMainEventId,
+    mainEvents: state.statusData.world.mainEvents,
+    hasChoice: false,
+  });
+  return required ? '等待你的决定' : '记录剧情倾向';
 }
 
 const V07_FAMILY_LABELS: Record<PlotRouteFamilyId, string> = {
@@ -1219,34 +1225,30 @@ export function getV07RouteLabel(route: Pick<PlotRouteEligibility, 'id' | 'label
   return V07_ROUTE_LABELS[route.id];
 }
 
+export function getV07FamilyLabel(familyId: PlotRouteFamilyId): string {
+  return V07_FAMILY_LABELS[familyId];
+}
+
 export function getV07FlagLabel(flagId: string, machine: PlotMachineDefinition): string {
   return V07_FLAG_LABELS[flagId] ?? machine.flags.find(flag => flag.id === flagId)?.label ?? '未知剧情条件';
 }
 
-function getV07RouteReviewMessage(resolution: PlotRouteResolution, machine: PlotMachineDefinition): string {
-  const selected = resolution.choice ? resolution.routes.find(route => route.id === resolution.choice) : null;
-  if (!selected) return '之前选择的路线已经失效，请回到企划页检查。';
-  if (selected.missingFlagIds.length > 0) {
-    return `这条路线现在还需要：${selected.missingFlagIds.map(flagId => getV07FlagLabel(flagId, machine)).join('、')}。`;
-  }
-  return '这条路线的剧情条件发生了变化，请检查后再继续。';
-}
-
-function renderStudioRoutePlanning(state: AppState, machine: PlotMachineDefinition) {
+function renderStudioRoutePlanning(state: AppState) {
   const context = buildPlotRoutingContext(state.statusData, state.memoryDB);
   const { resolution } = context.v07;
-  const evaluationDate = getDatePart(context.evaluationTime);
-  const insideChoiceWindow =
-    Boolean(evaluationDate) &&
-    evaluationDate >= machine.promptWindow.start &&
-    evaluationDate <= machine.promptWindow.end;
-  const selected = resolution.choice ? resolution.routes.find(route => route.id === resolution.choice) ?? null : null;
+  const choiceRequired = isV07RouteChoiceRequired({
+    currentTime: context.evaluationTime,
+    currentMainEventId: state.statusData.world.currentMainEventId,
+    mainEvents: state.statusData.world.mainEvents,
+    hasChoice: Boolean(resolution.choiceReceipt),
+  });
+  const selectedFamily = resolution.choice;
 
-  const choiceSummary = selected
-    ? `已选择：${getV07RouteLabel(selected)}`
-    : insideChoiceWindow
-      ? '请选择接下来的创作方向'
-      : `可在 ${machine.promptWindow.start} 至 ${machine.promptWindow.end} 期间选择`;
+  const choiceSummary = selectedFamily
+    ? `已选择：${V07_FAMILY_LABELS[selectedFamily]}`
+    : choiceRequired
+      ? '第七章已结束，请决定最终路线'
+      : 'SAE_07-8 结束后由你亲自选择';
 
   return `
     <section class="phone-studio-route-planning">
@@ -1255,83 +1257,50 @@ function renderStudioRoutePlanning(state: AppState, machine: PlotMachineDefiniti
           <span>选择最终路线</span>
           <strong>${escapeHtml(choiceSummary)}</strong>
         </div>
-        <small>${resolution.choice ? '选择后不能在这里更换' : '满足条件后可以确认'}</small>
+        <small>${resolution.choice ? '选择后只能通过楼层回退重选' : '剧情事实只作参考，不限制选择'}</small>
       </header>
-      ${
-        resolution.choiceState === 'needs_review'
-          ? `<p class="phone-studio-route-warning">${escapeHtml(getV07RouteReviewMessage(resolution, machine))}</p>`
-          : ''
-      }
       <div class="phone-studio-family-list">
-        ${(['stay', 'akane', 'solo'] as const)
-          .map(familyId => {
-            const variants = resolution.routes.filter(route => route.familyId === familyId);
-            const best = variants.reduce((current, route) => {
-              if (!current) return route;
-              const routeRatio = route.satisfiedFlagIds.length / Math.max(1, route.satisfiedFlagIds.length + route.missingFlagIds.length);
-              const currentRatio =
-                current.satisfiedFlagIds.length /
-                Math.max(1, current.satisfiedFlagIds.length + current.missingFlagIds.length);
-              return routeRatio > currentRatio ? route : current;
-            }, variants[0]);
-            const bestSatisfied = best?.satisfiedFlagIds.length ?? 0;
-            const bestRequired = bestSatisfied + (best?.missingFlagIds.length ?? 0);
+        ${resolution.families
+          .map(family => {
+            const satisfied = family.satisfiedFlagIds.length;
+            const total = satisfied + family.missingFlagIds.length;
+            const isChosen = selectedFamily === family.id;
+            const disabled = Boolean(selectedFamily) || !choiceRequired;
+            const tendency = total ? `${satisfied}/${total} 项剧情倾向` : '暂无剧情倾向记录';
             return `
-              <section class="phone-studio-family ${selected?.familyId === familyId ? 'is-chosen' : ''}">
+              <section class="phone-studio-family ${isChosen ? 'is-chosen' : ''}">
                 <header>
-                  <strong>${escapeHtml(V07_FAMILY_LABELS[familyId])}</strong>
-                  <span>${bestSatisfied}/${bestRequired}</span>
+                  <strong>${escapeHtml(V07_FAMILY_LABELS[family.id])}</strong>
+                  <span>${escapeHtml(tendency)}</span>
                 </header>
-                <div class="phone-studio-family__progress" aria-label="${bestSatisfied}/${bestRequired}">
-                  <span style="width:${bestRequired ? Math.round((bestSatisfied / bestRequired) * 100) : 0}%"></span>
+                <div class="phone-studio-family__progress" aria-label="${satisfied}/${total}">
+                  <span style="width:${total ? Math.round((satisfied / total) * 100) : 0}%"></span>
                 </div>
                 <div class="phone-studio-variant-list">
-                  ${variants
-                    .map(route => {
-                      const isChosen = resolution.choice === route.id;
-                      const disabled =
-                        !insideChoiceWindow ||
-                        !route.eligible ||
-                        Boolean(resolution.choice) ||
-                        resolution.choiceState === 'needs_review';
-                      const missingLabels = route.missingFlagIds.map(
-                        flagId => getV07FlagLabel(flagId, machine),
-                      );
-                      const status = isChosen
-                        ? '已选择'
-                        : route.eligible
-                          ? insideChoiceWindow
-                            ? '选择这条路线'
-                            : '条件已满足，等待开放'
-                          : `还差 ${missingLabels.length} 项`;
-                      return `
-                        <article class="phone-studio-variant ${isChosen ? 'is-chosen' : ''}">
-                          <div>
-                            <strong>${escapeHtml(getV07RouteLabel(route))}</strong>
-                            <small>${escapeHtml(V07_FAMILY_LABELS[route.familyId])}路线</small>
-                          </div>
-                          <p>${
-                            missingLabels.length
-                              ? `还需要：${escapeHtml(missingLabels.join('、'))}`
-                              : '条件已经满足，可以在开放日期内选择。'
-                          }</p>
-                          <button
-                            type="button"
-                            data-action="confirm-v07-route"
-                            data-route-variant="${escapeHtml(route.id)}"
-                            ${disabled ? 'disabled' : ''}
-                          >${escapeHtml(status)}</button>
-                        </article>
-                      `;
-                    })
-                    .join('')}
+                  <article class="phone-studio-variant ${isChosen ? 'is-chosen' : ''}">
+                    <div>
+                      <strong>${escapeHtml(V07_FAMILY_LABELS[family.id])}</strong>
+                      <small>${family.id === 'stay' ? '剧情路线' : '剧情路线 · 开启对应游戏开发模式'}</small>
+                    </div>
+                    <p>${escapeHtml(
+                      family.missingFlagIds.length
+                        ? `此前剧情还有 ${family.missingFlagIds.length} 项倾向未记录，但不影响你的决定。`
+                        : '此前剧情倾向记录完整；最终决定仍只属于玩家。',
+                    )}</p>
+                    <button
+                      type="button"
+                      data-action="confirm-v07-route"
+                      data-route-family="${escapeHtml(family.id)}"
+                      ${disabled ? 'disabled' : ''}
+                    >${escapeHtml(isChosen ? '已选择' : choiceRequired ? '选择这条路线' : '等待第七章结束')}</button>
+                  </article>
                 </div>
               </section>
             `;
           })
           .join('')}
       </div>
-      <p class="phone-studio-route-note">在对话里提到想走哪条路线不会自动选择。请在这里亲自确认。</p>
+      <p class="phone-studio-route-note">副 API、自由输入和剧情倾向都不能替你选线。SAE_07-8 结束后必须在这里亲自确认。</p>
     </section>
   `;
 }
@@ -1478,7 +1447,7 @@ function renderStudioPhonePage(state: AppState) {
           <span>路线进度</span>
           <strong>${activeYesCount}/${machine.flags.length} 项剧情条件已满足</strong>
         </section>
-        ${renderStudioRoutePlanning(state, machine)}
+        ${renderStudioRoutePlanning(state)}
         ${gateDates.map(date => renderStudioGateGroup(date, grouped[date], snapshots, currentDate)).join('')}
       </div>
     </section>
@@ -1501,8 +1470,8 @@ const GAME_DEVELOPMENT_METRICS: Array<[keyof GameDevelopmentProject, string]> = 
 function getGameDevelopmentHomeMeta(state: AppState): string {
   const context = buildPlotRoutingContext(state.statusData, state.memoryDB);
   const { resolution } = context.v07;
-  if (resolution.choiceState === 'needs_review') return '路线需要检查';
   if (!resolution.choiceReceipt) return '等待路线确认';
+  if (!isGameDevelopmentRouteChoice(resolution.choiceReceipt)) return '当前路线未开启';
   const game = readGameDevelopmentState(state.memoryDB, resolution.choiceReceipt);
   return game.project.created ? `第 ${game.week} 周 · ${game.project.progress}%` : '等待建立项目';
 }
@@ -1548,21 +1517,16 @@ function renderGameDevelopmentProjectForm(state: AppState, routeLabel: string) {
 function renderGameDevelopmentPhonePage(state: AppState) {
   const context = buildPlotRoutingContext(state.statusData, state.memoryDB);
   const { resolution } = context.v07;
-  if (resolution.choiceState === 'needs_review') {
-    const machine = getPlotMachine(V07_STUDIO_MACHINE_ID);
-    return renderGameDevelopmentLock(
-      state,
-      machine ? getV07RouteReviewMessage(resolution, machine) : '这条路线需要检查，请先回到企划页。',
-    );
-  }
   const receipt = resolution.choiceReceipt;
   if (!receipt || resolution.choiceState !== 'chosen') {
     return renderGameDevelopmentLock(state, '先去企划页选择接下来的创作路线，确认后就能开始开发游戏。');
   }
+  if (!isGameDevelopmentRouteChoice(receipt)) {
+    return renderGameDevelopmentLock(state, '“留下”是剧情路线，不会自动开启单飞或朱音的游戏开发模式。');
+  }
 
   const game = readGameDevelopmentState(state.memoryDB, receipt);
-  const route = resolution.routes.find(item => item.id === receipt.variantId);
-  const routeLabel = route ? getV07RouteLabel(route) : V07_FAMILY_LABELS[receipt.familyId];
+  const routeLabel = V07_FAMILY_LABELS[receipt.familyId];
   if (!game.project.created) return renderGameDevelopmentProjectForm(state, routeLabel);
 
   const selectedSlot = game.slots[game.selectedDay];

@@ -5,6 +5,9 @@ export type SaenaiWorldFactInput = {
   currentTime: string;
   playerProfile?: PlayerProfile | null;
   targets?: TargetStatus[];
+  currentMainEventId?: string;
+  mainEvents?: Record<string, string>;
+  eventTriggerCounts?: Record<string, number>;
 };
 
 function getDatePart(value: string): string {
@@ -19,6 +22,9 @@ export function buildSaenaiWorldStateFactLines(input: SaenaiWorldFactInput): str
       currentTime: input.currentTime,
       playerProfile: input.playerProfile,
       targets: input.targets,
+      currentMainEventId: input.currentMainEventId,
+      mainEvents: input.mainEvents,
+      eventTriggerCounts: input.eventTriggerCounts,
     }),
   ];
 
@@ -30,4 +36,3 @@ export function buildSaenaiWorldStateFactLines(input: SaenaiWorldFactInput): str
 
   return Array.from(new Set(lines));
 }
-

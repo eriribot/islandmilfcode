@@ -52,13 +52,13 @@ import {
   setCalendarMonthOffset,
   setCalendarOpenEventId,
   setCalendarSelectedDate,
-  getV07FlagLabel,
-  getV07RouteLabel,
+  getV07FamilyLabel,
 } from './phone/render';
 import { updateSummaryTextInMemoryDB } from './memorydatabase/commit-points';
 import {
   commitGameDevelopmentState,
   createGameDevelopmentProject,
+  isGameDevelopmentRouteChoice,
   readGameDevelopmentState,
   selectGameDevelopmentAction,
   selectGameDevelopmentDay,
@@ -75,6 +75,7 @@ import {
   getPlotMachine,
   setPlotRouteReviewEnabled,
 } from './plot-state-machine';
+import { isV07RouteChoiceRequired } from './plot-state-machine/choice';
 import {
   clearActiveSaveId,
   createManualSave,
@@ -197,6 +198,7 @@ let phoneBgmResolvedUrl = '';
 let restoringSave = false;
 let quickReplyDelegationBound = false;
 let calendarEventDelegationBound = false;
+let v07DdlAutoOpened = false;
 
 type ReaderBodyScrollSnapshot = {
   readerIndex: number;
@@ -1215,6 +1217,36 @@ async function rollbackToReaderInput(readerIndex: number) {
   focusComposer();
 }
 
+function isV07RouteChoiceBlockingMainText(): boolean {
+  const routingContext = buildPlotRoutingContext(state.statusData, state.memoryDB);
+  return isV07RouteChoiceRequired({
+    currentTime: state.statusData.world.currentTime,
+    currentMainEventId: state.statusData.world.currentMainEventId,
+    mainEvents: state.statusData.world.mainEvents,
+    hasChoice: Boolean(routingContext.v07.resolution.choiceReceipt),
+  });
+}
+
+async function submitMainMessage(
+  options: { text?: string; keepDraft?: boolean; clearDraftOnSuccess?: boolean } = {},
+) {
+  if (isV07RouteChoiceBlockingMainText()) {
+    // 中文注释：SAE_07-8 已结束但玩家尚未选线时，DDL 必须先于下一段正文。
+    // 这里只阻止新的主正文提交，不伪造 choice，也不阻止玩家查看刚完成的事件楼层。
+    openPhone('app:studio');
+    ctx.showNotification({
+      kind: 'status',
+      title: '请先决定最终路线',
+      preview: '第七章已经结束，请在企划页从“留下 / 单飞 / 朱音”中亲自选择一条路线。',
+      targetTab: 'status',
+      phoneRoute: 'app:studio',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+    return;
+  }
+  await submitMessage(ctx, options);
+}
+
 async function rerunReaderMessage(readerIndex: number) {
   if (state.generating) return;
   const target = await rollbackConversation(state, readerIndex, win);
@@ -1224,7 +1256,7 @@ async function rerunReaderMessage(readerIndex: number) {
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
   render();
-  await submitMessage(ctx, { text: target.sourceUserText, keepDraft: true, clearDraftOnSuccess: true });
+  await submitMainMessage({ text: target.sourceUserText, keepDraft: true, clearDraftOnSuccess: true });
 }
 
 async function deleteReaderFloor(readerIndex: number) {
@@ -1252,7 +1284,7 @@ function navigatePhone(route: PhoneRoute) {
   navigatePhoneRoute(state, route, ctx);
 }
 
-function confirmV07RouteChoice(routeVariantId: string) {
+function confirmV07RouteChoice(routeFamilyId: string) {
   const machine = getPlotMachine('v07');
   if (!machine) return;
   const routingContext = buildPlotRoutingContext(state.statusData, state.memoryDB);
@@ -1261,26 +1293,31 @@ function confirmV07RouteChoice(routeVariantId: string) {
     currentTime: routingContext.evaluationTime,
     flagValues: routingContext.v07.flagValues,
     storedChoice: routingContext.v07.resolution.choiceReceipt,
-    routeId: routeVariantId,
+    routeId: routeFamilyId,
     source: 'manual',
+    currentMainEventId: state.statusData.world.currentMainEventId,
+    mainEvents: state.statusData.world.mainEvents,
+    // 中文注释：确认动作绑定当前时间线最后一个已完成楼层，不绑定玩家正在翻看的 focusedMessageIndex。
+    anchorFloorIndex: Math.max(0, getReaderMessages(state.uiMessages).length - 1),
   });
 
   if (confirmation.status === 'rejected') {
-    const requestedRoute = confirmation.resolution.routes.find(item => item.id === routeVariantId);
     const preview = (() => {
       switch (confirmation.error.code) {
         case 'missing_date':
           return '当前剧情日期无法识别，请先检查剧情时间。';
+        case 'missing_anchor':
+          return '当前还没有可以绑定路线确认的已完成剧情楼层。';
+        case 'ddl_not_reached':
+          return '请先完成 2013-03-04 的 SAE_07-8；事件正式结束后会要求你选择路线。';
         case 'outside_choice_window':
-          return `现在还不能选择路线。可选择时间：${machine.promptWindow.start} 至 ${machine.promptWindow.end}。`;
+          return '当前还没有进入路线选择阶段。';
         case 'unknown_route':
           return '这条路线已经失效，请重新打开企划页。';
         case 'choice_locked':
           return '你已经选择了其他路线，不能再次更改。';
         case 'route_not_eligible':
-          return requestedRoute?.missingFlagIds.length
-            ? `这条路线还不能选择，请先完成：${requestedRoute.missingFlagIds.map(flagId => getV07FlagLabel(flagId, machine)).join('、')}。`
-            : '这条路线的剧情条件还没有全部满足。';
+          return '剧情事实只作参考，不应阻止玩家选择；请重新打开企划页。';
         default:
           return '这次路线选择没有成功，请稍后再试。';
       }
@@ -1296,11 +1333,10 @@ function confirmV07RouteChoice(routeVariantId: string) {
     return;
   }
   if (confirmation.status === 'unchanged') {
-    const selectedRoute = confirmation.resolution.routes.find(item => item.id === confirmation.choice);
     ctx.showNotification({
       kind: 'status',
       title: '路线已经确认',
-      preview: selectedRoute ? `你已经选择了「${getV07RouteLabel(selectedRoute)}」，无需重复确认。` : '你已经选择了这条路线，无需重复确认。',
+      preview: `你已经选择了「${getV07FamilyLabel(confirmation.choice)}」，无需重复确认。`,
       targetTab: 'status',
       phoneRoute: 'app:studio',
       timestamp: formatTime(state.statusData.world.currentTime),
@@ -1308,19 +1344,21 @@ function confirmV07RouteChoice(routeVariantId: string) {
     return;
   }
 
-  const route = confirmation.resolution.routes.find(item => item.id === confirmation.choice);
-  if (!route) return;
-  const routeLabel = getV07RouteLabel(route);
+  const routeLabel = getV07FamilyLabel(confirmation.choice);
   const confirmed = window.confirm(`确定选择「${routeLabel}」路线吗？确认后将不能更改。`);
   if (!confirmed) return;
 
-  // 专用按钮是唯一生产写入口：先完成纯校验，再提交单一 choice receipt，最后立即持久化存档。
+  // 中文注释：专用按钮是唯一生产写入口。副 API、自由输入和剧情 flag 都不能生成 choice；
+  // 玩家若要换线，只能回退到确认楼层之前，让回退账本正式清除本次 receipt。
   commitPlotRouteChoice(state.memoryDB, confirmation.commit);
   ctx.persistConversation();
+  const opensGameDevelopment = isGameDevelopmentRouteChoice(confirmation.commit.receipt);
   ctx.showNotification({
     kind: 'status',
     title: '路线已确认',
-    preview: `已选择「${routeLabel}」路线。游戏开发功能现已开放。`,
+    preview: opensGameDevelopment
+      ? `已选择「${routeLabel}」路线，对应游戏开发模式现已开放。`
+      : `已选择「${routeLabel}」路线。该路线不会自动开启单飞或朱音的游戏开发模式。`,
     targetTab: 'status',
     phoneRoute: 'app:studio',
     timestamp: formatTime(state.statusData.world.currentTime),
@@ -1331,7 +1369,7 @@ function getActiveGameDevelopmentState(): GameDevelopmentState | null {
   const routingContext = buildPlotRoutingContext(state.statusData, state.memoryDB);
   if (routingContext.v07.resolution.choiceState !== 'chosen') return null;
   const receipt = routingContext.v07.resolution.choiceReceipt;
-  return receipt ? readGameDevelopmentState(state.memoryDB, receipt) : null;
+  return receipt && isGameDevelopmentRouteChoice(receipt) ? readGameDevelopmentState(state.memoryDB, receipt) : null;
 }
 
 function saveGameDevelopmentState(next: GameDevelopmentState, shouldRender = true) {
@@ -2689,7 +2727,7 @@ function bindEvents() {
     textarea.addEventListener('keydown', event => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
         event.preventDefault();
-        void submitMessage(ctx);
+        void submitMainMessage();
       }
     });
   });
@@ -2715,8 +2753,8 @@ function bindEvents() {
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="confirm-v07-route"]').forEach(button => {
     button.addEventListener('click', () => {
-      const routeVariantId = button.dataset.routeVariant;
-      if (routeVariantId) confirmV07RouteChoice(routeVariantId);
+      const routeFamilyId = button.dataset.routeFamily;
+      if (routeFamilyId) confirmV07RouteChoice(routeFamilyId);
     });
   });
   root?.querySelector<HTMLButtonElement>('[data-action="game-create-project"]')?.addEventListener('click', () => {
@@ -3408,7 +3446,7 @@ function bindEvents() {
         cancelCurrentGeneration(ctx);
         return;
       }
-      void submitMessage(ctx);
+      void submitMainMessage();
     }),
   );
   root
@@ -3765,6 +3803,16 @@ function render() {
     if (syncMainEvents(state.statusData, state.plotLibrary)) {
       guardedAdapterSave(state.statusData);
       persistToSave();
+    }
+    const routeChoiceRequired = isV07RouteChoiceBlockingMainText();
+    if (routeChoiceRequired && !v07DdlAutoOpened) {
+      // 中文注释：事件终态已经进入权威状态后才自动打开一次 DDL。玩家可以关掉手机查看正文，
+      // 但 submitMainMessage 仍会阻止下一段正文，直到正式 choice receipt 落盘。
+      state.phoneOpen = true;
+      state.phoneRoute = 'app:studio';
+      v07DdlAutoOpened = true;
+    } else if (!routeChoiceRequired) {
+      v07DdlAutoOpened = false;
     }
     syncFocusedMessage(state);
     syncPaperFullscreenHost(isPaperWorkspaceFullscreen(state));

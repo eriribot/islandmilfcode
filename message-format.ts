@@ -1150,6 +1150,9 @@ function buildScenePresenceContext(
     currentTime: statusData.world.currentTime,
     playerProfile,
     targets: statusData.targets,
+    currentMainEventId: statusData.world.currentMainEventId,
+    mainEvents: statusData.world.mainEvents,
+    eventTriggerCounts: statusData.world.eventTriggerCounts,
   });
   const plotImpact = scenePresence.plotImpact;
   const butterfly = plotImpact?.butterflyEffects;
@@ -1447,6 +1450,9 @@ export function buildPrompt(
           currentTime: statusData.world.currentTime,
           playerProfile,
           targets: statusData.targets,
+          currentMainEventId: statusData.world.currentMainEventId,
+          mainEvents: statusData.world.mainEvents,
+          eventTriggerCounts: statusData.world.eventTriggerCounts,
         }),
       ].join('\n');
   const relationshipGuidanceList = buildRelationshipGuidanceList(statusData, playerProfile, options?.scenePresence);

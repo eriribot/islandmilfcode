@@ -365,6 +365,8 @@ export type StatusData = {
     currentMainEventId: string;
     recentEvents: Record<string, string>;
     mainEvents: Record<string, string>;
+    /** 成功落地的主事件正文次数；生成失败不增加，回滚随状态快照恢复。 */
+    eventTriggerCounts: Record<string, number>;
   };
   targets: TargetStatus[];
   activeTargetId: string | null;

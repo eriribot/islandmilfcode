@@ -163,13 +163,6 @@ function extractUniversity(source: string): { universityName: string; university
   };
 }
 
-function inferGraduationDate(name: string, source: string, classSteps: EducationClassStep[]): string {
-  const haystack = [name, source].join('\n').toLowerCase();
-  if (/utaha|霞之丘|霞ヶ丘|诗羽|詩羽/.test(haystack)) return '2013-03-04';
-  if (/毕业/.test(source) && classSteps.some(step => getGradeNumber(step.className) === 3)) return '2014-03-01';
-  return '';
-}
-
 export function buildEducationProfileFromText(input: {
   name?: string;
   content?: string;
@@ -189,7 +182,8 @@ export function buildEducationProfileFromText(input: {
     schoolName,
     universityName: university.universityName,
     universityDepartment: university.universityDepartment,
-    graduationDate: inferGraduationDate(text(input.name), source, classSteps),
+    // 世界书叙述可能同时提到多名角色，不能据此推断当前角色的毕业日期。
+    graduationDate: '',
     classSteps,
     source: 'worldbook',
   };

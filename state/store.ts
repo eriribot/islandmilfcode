@@ -22,6 +22,7 @@ import { normalizeMemoryDB } from '../memorydatabase/normalize';
 import type { IslandMemoryDB, MemoryBaseRow } from '../memorydatabase/types';
 import { createEmptyCharacterCardLibrary } from '../worldbook';
 import { isInlineImageDataUrl, persistInlineImageDataAsAssetSync } from './image-assets';
+import { clearPlotRouteChoiceAfterFloor } from '../plot-state-machine/memory';
 
 export const MESSAGE_MARKER = 'islandmilfcode';
 const PROFILE_KEYS = {
@@ -860,6 +861,7 @@ export function getRollbackTargetForReaderIndex(state: AppState, index: number) 
     return {
       sourceUserText: targetMessage.text.trim(),
       sourceUserIndex: targetUiIndex,
+      sourceReaderIndex: index,
     };
   }
 
@@ -869,6 +871,10 @@ export function getRollbackTargetForReaderIndex(state: AppState, index: number) 
       return {
         sourceUserText: candidate.text.trim(),
         sourceUserIndex: cursor,
+        sourceReaderIndex: Math.max(
+          0,
+          getReaderMessages(state.uiMessages).findIndex(message => message.id === candidate.id),
+        ),
       };
     }
   }
@@ -917,6 +923,9 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackSummaryFloorIndex, {
     mergePrevious: false,
   });
+  // 中文注释：choice 绑定确认时的时间线头部，而不是玩家当时正在翻看的页面。
+  // 回退跨过确认楼层后只写路线 tombstone，不恢复整个 memoryDB；保留锚点之后的回退则继续锁定原 choice。
+  clearPlotRouteChoiceAfterFloor(state.memoryDB, 'v07', target.sourceReaderIndex);
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
   state.notification = null;
@@ -957,6 +966,8 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
   pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, deletedSummaryFloorIndex, {
     mergePrevious: false,
   });
+  // 中文注释：删除较早楼层会使其后的路线确认失去因果基础，即使确认时的消息文本仍留在列表中也必须清除。
+  clearPlotRouteChoiceAfterFloor(state.memoryDB, 'v07', readerIndex);
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
   state.notification = null;

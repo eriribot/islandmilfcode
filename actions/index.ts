@@ -80,6 +80,8 @@ import { buildSaenaiWorldStateFactLines } from '../saenai-world-facts';
 import {
   buildKirihimeSchoolIdentitySegment,
   resolvePlayerSchoolIdentity,
+  SAE_07_8_EVENT_ID,
+  shouldInjectSae078GraduationCeremony,
   syncSchoolCalendarState,
 } from '../school-calendar';
 import {
@@ -491,6 +493,7 @@ export function sanitizeProgressAgainstPlotLibrary(
   update: ProgressUpdate,
   plotLibrary: PlotLibrary | null | undefined,
   statusData?: StatusData | null,
+  options: { allowSae078SameDayCompletion?: boolean } = {},
 ): ProgressUpdate {
   const whitelist = new Set(Object.keys(plotLibrary?.events ?? {}));
   if (!plotLibrary || !whitelist.size) {
@@ -506,6 +509,17 @@ export function sanitizeProgressAgainstPlotLibrary(
 
   const routeStatusData = buildRouteCheckStatus(statusData, update);
   const currentDate = getProgressDatePart(routeStatusData?.world.currentTime);
+  // 中文注释：SAE_07-8 是 2013-03-04 当天结束且没有后继事件的 V07 叶子节点。
+  // 通用 same-window 防线会把它合法的“已结束 + 当前事件清空”误判成提前结算，所以这里只识别
+  // 正常主正文成功链显式授予的、成对提交的结束请求；手机 progress、后台重试等旁路拿不到该权限。
+  const requestsSae078SameDayCompletion = Boolean(
+    options.allowSae078SameDayCompletion &&
+      currentDate === '2013-03-04' &&
+      statusData?.world.currentMainEventId === SAE_07_8_EVENT_ID &&
+      isActivatingStatus(statusData.world.mainEvents?.[SAE_07_8_EVENT_ID] ?? '') &&
+      isTerminalMainEventStatus(update.mainEvents?.[SAE_07_8_EVENT_ID] ?? '') &&
+      update.currentMainEventId === '',
+  );
 
   const sanitizedMainEvents: Record<string, string> = {};
   for (const [id, status] of Object.entries(update.mainEvents)) {
@@ -528,7 +542,8 @@ export function sanitizeProgressAgainstPlotLibrary(
     if (
       id === statusData?.world.currentMainEventId &&
       isTerminalMainEventStatus(status) &&
-      !canCloseCurrentMainEventByScheduleOrRoute(id, plotLibrary, routeStatusData, currentDate)
+      !canCloseCurrentMainEventByScheduleOrRoute(id, plotLibrary, routeStatusData, currentDate) &&
+      !(id === SAE_07_8_EVENT_ID && requestsSae078SameDayCompletion)
     ) {
       console.warn('[progress-guard] drop same-window terminal current mainEvent:', id, status, 'currentDate:', currentDate);
       continue;
@@ -536,6 +551,9 @@ export function sanitizeProgressAgainstPlotLibrary(
     sanitizedMainEvents[id] = status;
   }
 
+  const acceptedSae078SameDayCompletion =
+    requestsSae078SameDayCompletion &&
+    isTerminalMainEventStatus(sanitizedMainEvents[SAE_07_8_EVENT_ID] ?? '');
   let sanitizedCurrentId = update.currentMainEventId;
   if (
     sanitizedCurrentId === '' &&
@@ -545,7 +563,8 @@ export function sanitizeProgressAgainstPlotLibrary(
       plotLibrary,
       routeStatusData,
       currentDate,
-    )
+    ) &&
+    !acceptedSae078SameDayCompletion
   ) {
     console.warn(
       '[progress-guard] drop same-window currentMainEvent clear:',
@@ -1260,9 +1279,15 @@ function applyFullProgressUpdate(
   targetId?: string | null,
   scenePresence?: ScenePresence | null,
   sourceRange?: [number, number],
+  options: { allowSae078SameDayCompletion?: boolean } = {},
 ) {
   if (!update) return false;
-  const sanitized = sanitizeProgressAgainstPlotLibrary(update, ctx.state.plotLibrary, ctx.state.statusData);
+  const sanitized = sanitizeProgressAgainstPlotLibrary(
+    update,
+    ctx.state.plotLibrary,
+    ctx.state.statusData,
+    options,
+  );
   const legacyDelta = clampLegacyAffinityDelta(sanitized, targetId);
   // 主场景没有明确对象时，丢弃旧单目标着装更新，避免误写到 activeTargetId。
   const outfitChanges = targetId ? sanitized.outfitChanges : {};
@@ -1307,6 +1332,24 @@ async function simulateGeneration(ctx: ActionContext, userInput: string) {
   }
 
   finalizeStreamingText(ctx, `<content>${built}</content>`);
+}
+
+function commitSae078GraduationCeremonyTrigger(ctx: ActionContext, eligibleAtPromptBuild: boolean): boolean {
+  if (!eligibleAtPromptBuild) return false;
+  const counts = (ctx.state.statusData.world.eventTriggerCounts ??= {});
+  const currentCount = counts[SAE_07_8_EVENT_ID] ?? 0;
+  if (currentCount !== 0) {
+    recordGenerationDebug(ctx, 'school-calendar:graduation-trigger-stale-skip', { currentCount });
+    return false;
+  }
+
+  counts[SAE_07_8_EVENT_ID] = currentCount + 1;
+  ctx.adapter.save(ctx.state.statusData);
+  recordGenerationDebug(ctx, 'school-calendar:graduation-trigger-committed', {
+    eventId: SAE_07_8_EVENT_ID,
+    count: counts[SAE_07_8_EVENT_ID],
+  });
+  return true;
 }
 
 export async function submitMessage(
@@ -1420,12 +1463,20 @@ export async function submitMessage(
     });
   }
 
+  const sae078CeremonyEligibleAtPromptBuild = shouldInjectSae078GraduationCeremony({
+    currentTime: state.statusData.world.currentTime,
+    currentMainEventId: state.statusData.world.currentMainEventId,
+    mainEvents: state.statusData.world.mainEvents,
+    eventTriggerCounts: state.statusData.world.eventTriggerCounts,
+  });
+
   if (!hasTavernGenerate) {
     await simulateGeneration(ctx, cleanUserInput || userInput);
     if (isGenerationRunCancelled(ctx, generationToken)) {
       recordGenerationDebug(ctx, 'submit:cancelled-after-simulate', { requestGenerationId });
       return;
     }
+    commitSae078GraduationCeremonyTrigger(ctx, sae078CeremonyEligibleAtPromptBuild);
     if (options.clearDraftOnSuccess) {
       state.draft = '';
     }
@@ -1519,6 +1570,9 @@ export async function submitMessage(
     routeReviewEligible = Boolean(
       selectCompletedAssistantSceneForPlotReview(state.uiMessages, routeReviewAssistantMessageId),
     );
+    if (routeReviewEligible) {
+      commitSae078GraduationCeremonyTrigger(ctx, sae078CeremonyEligibleAtPromptBuild);
+    }
 
     // 变量更新（含手机消息提取）统一移到 finally：正文后发一次合并 progress，配/不配副 API 都走同一条路。
     // 不再依赖主 API 在正文里内嵌 <progress>（skipProgress 现恒为 true）。
@@ -1616,6 +1670,9 @@ export async function submitMessage(
           scenePresence,
           isCancelled: () => isGenerationRunCancelled(ctx, generationToken),
           sourceRange: getLatestCompletedTurnSummaryRange(state.uiMessages),
+          // 中文注释：只有主正文已经成功完成后的这次 progress 能结束同日的 SAE_07-8。
+          // 该权限不下放给手机消息、手动后台重试或其他静默状态任务。
+          allowSae078SameDayCompletion: true,
         },
       );
       if (isGenerationRunCancelled(ctx, generationToken)) {
@@ -2436,6 +2493,9 @@ function buildScenePresencePrompts(
     currentTime: currentWorldTime,
     playerProfile: ctx.state.playerProfile,
     targets: ctx.state.statusData.targets,
+    currentMainEventId: ctx.state.statusData.world.currentMainEventId,
+    mainEvents: ctx.state.statusData.world.mainEvents,
+    eventTriggerCounts: ctx.state.statusData.world.eventTriggerCounts,
   });
   const establishedRelationshipFacts = buildEstablishedRelationshipFactLines(ctx);
   const sceneSummaryContext = buildSceneSummaryContextLines(ctx);
@@ -2947,6 +3007,7 @@ async function runSecondaryProgressUpdate(
     isCancelled?: () => boolean;
     sourceRange?: [number, number];
     phoneMessages?: PhoneChatMessage[];
+    allowSae078SameDayCompletion?: boolean;
   } = {},
 ): Promise<boolean> {
   const showTask = options.showTask ?? true;
@@ -2975,6 +3036,7 @@ async function runSecondaryProgressUpdate(
       options.scenePresence,
       options.sourceRange,
       options.phoneMessages,
+      options.allowSae078SameDayCompletion,
     );
     if (showTask) clearBackgroundTask(ctx.state, 'progress');
     if (committed.applied) {
@@ -3002,6 +3064,7 @@ function commitProgressAnalysis(
   scenePresence?: ScenePresence | null,
   sourceRange?: [number, number],
   phoneMessages?: PhoneChatMessage[],
+  allowSae078SameDayCompletion = false,
 ): { applied: boolean; update: ProgressUpdate | null } {
   // 主回合 progress 现在合并了 phone_messages 提取；如果 raw 里带 <phone_messages> 块，
   // 解析并暂存，由 maybeQueueProactivePhoneMessage 接力消费、跳过原本 phone-scene-extract 副 API。
@@ -3016,7 +3079,9 @@ function commitProgressAnalysis(
   const parsed = parseProgressUpdate(raw);
   const update = targetId && parsed ? filterPhoneProgressUpdate(ctx, parsed, phoneMessages) : parsed;
   if (!update) return { applied: false, update: null };
-  applyFullProgressUpdate(ctx, update, targetId, scenePresence, sourceRange);
+  applyFullProgressUpdate(ctx, update, targetId, scenePresence, sourceRange, {
+    allowSae078SameDayCompletion,
+  });
   return { applied: true, update };
 }
 

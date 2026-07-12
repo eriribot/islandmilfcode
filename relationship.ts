@@ -978,7 +978,7 @@ export function getCharacterAnchorGuidance(input: AddressGuidanceInput | null): 
   const target = input.target;
   const key = getTargetCharacterKey(target);
   const profile = CHARACTER_ORIGINAL_PROFILES[key];
-  const currentTime = String(input.currentTime ?? target.meta?.schoolCalendarSyncedAt ?? '').trim();
+  const currentTime = String(input.currentTime ?? '').trim();
 
   const lines: string[] = [];
   if (profile?.relationToTomoya) {
