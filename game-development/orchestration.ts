@@ -6,6 +6,7 @@ import {
   prepareGameDevelopmentTurn,
   retryGameDevelopmentCommit,
 } from './state';
+import { getGameDevelopmentPhaseCalendarRange } from './rules';
 import type { GameDevelopmentState, PendingGameDevelopmentTurn } from './types';
 
 type MainAssistantAcceptedReceipt = {
@@ -21,9 +22,16 @@ export type GameDevelopmentSubmitMessageOptions = {
   readonly keepDraft: boolean;
   readonly clearDraftOnSuccess: boolean;
   readonly gameDevelopmentContext: string;
+  readonly gameDevelopmentTimeRange: GameDevelopmentTurnTimeRange;
   readonly requireCompleteMainAssistant: true;
   readonly reuseLatestUserMessage: true;
   readonly onMainAssistantAccepted: (receipt: MainAssistantAcceptedReceipt) => void | Promise<void>;
+};
+
+export type GameDevelopmentTurnTimeRange = {
+  readonly startDate: string;
+  readonly endDate: string;
+  readonly completionTime: string;
 };
 
 export type GameDevelopmentOrchestrationDependencies = {
@@ -71,11 +79,24 @@ export async function submitGameDevelopmentTurn(
   await dependencies.persistImmediately();
 
   try {
+    const dateRange = getGameDevelopmentPhaseCalendarRange(
+      {
+        calendarWeekStart: pending.calendarWeekStart ?? pending.preTurnSnapshot.calendarWeekStart,
+        routeEnteredAt: pending.routeEnteredAt,
+        week: pending.week,
+      },
+      pending.phase,
+    );
     await dependencies.submitMainMessage({
-      text: getGameDevelopmentFixedInput(pending.phase),
+      text: pending.intent.trim(),
       keepDraft: true,
-      clearDraftOnSuccess: false,
+      clearDraftOnSuccess: true,
       gameDevelopmentContext: pending.context,
+      gameDevelopmentTimeRange: {
+        startDate: dateRange.start,
+        endDate: dateRange.end,
+        completionTime: pending.phase === 'workday' ? '18:00' : '22:00',
+      },
       requireCompleteMainAssistant: true,
       reuseLatestUserMessage: true,
       onMainAssistantAccepted: receipt =>
@@ -116,15 +137,19 @@ export async function retryGameDevelopmentCommitOnly(
   return retryAcceptedCommit(dependencies, pending);
 }
 
-export function getGameDevelopmentFixedInput(phase: PendingGameDevelopmentTurn['phase']): string {
-  return phase === 'workday' ? '（游戏开发：生成本周工作日回合正文）' : '（游戏开发：生成本周周末回合正文）';
-}
-
-export function isGameDevelopmentFixedInput(value: string): boolean {
-  const normalized = String(value ?? '').trim();
-  return (
-    normalized === getGameDevelopmentFixedInput('workday') || normalized === getGameDevelopmentFixedInput('weekend')
-  );
+export function getGameDevelopmentTargetLabel(value: string): string {
+  const source = String(value ?? '').trim();
+  const normalized = source.toLowerCase();
+  if (/泽村小百合|澤村小百合|小百合|sayuri/.test(normalized)) return '泽村小百合';
+  if (/町田苑子|町田|苑子|sonoko|machida/.test(normalized)) return '町田苑子';
+  if (/高坂茜|红坂朱音|紅坂朱音|朱音|akane|kosaka|kousaka|kurenai/.test(normalized)) return '红坂朱音';
+  if (/西宫硝子|西宮硝子|西宫|西宮|硝子|shoko|shouko|nishimiya/.test(normalized)) return '西宫硝子';
+  if (/英梨梨|eriri|sawamura/.test(normalized)) return '泽村·斯宾塞·英梨梨';
+  if (/加藤|惠|恵|megumi|katou|kato/.test(normalized)) return '加藤惠';
+  if (/霞之丘|霞ヶ丘|诗羽|詩羽|霞诗子|霞詩子|utaha|kasumigaoka/.test(normalized)) return '霞之丘诗羽';
+  if (/波岛|波島|出海|izumi|hashima/.test(normalized)) return '波岛出海';
+  if (/冰堂|氷堂|美智留|michiru|hyodo|hyoudou/.test(normalized)) return '冰堂美智留';
+  return source.match(/[\u3400-\u9fff]+/g)?.join('') || '未命名角色';
 }
 
 async function acceptAndCommitGameDevelopmentTurn(

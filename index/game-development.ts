@@ -2,9 +2,10 @@ import {
   commitGameDevelopmentState,
   createGameDevelopmentProject,
   createInitialGameDevelopmentState,
-  getGameDevelopmentFixedInput,
-  isGameDevelopmentFixedInput,
+  GAME_DEVELOPMENT_ACTIONS,
+  getGameDevelopmentTargetLabel,
   readGameDevelopmentState,
+  restorePendingGameDevelopmentTurnForRollback,
   submitGameDevelopmentTurn,
   updateGameDevelopmentDraft,
   type GameDevelopmentActionId,
@@ -21,7 +22,9 @@ export type GameDevelopmentController = {
     receipt: PlotRouteChoiceReceipt,
     resolution: PlotRouteResolution,
   ) => Promise<void>;
-  readonly resumePreparedTurnAfterRollback: (sourceUserText: string) => Promise<boolean>;
+  readonly submitFromMainDraft: (sourceUserText: string) => Promise<boolean>;
+  readonly restoreEditorAfterRollback: (sourceUserText: string) => boolean;
+  readonly submitRestoredTurn: (sourceUserText: string) => Promise<boolean>;
 };
 
 export function createGameDevelopmentController(dependencies: {
@@ -32,7 +35,11 @@ export function createGameDevelopmentController(dependencies: {
   readonly persistImmediately: () => Promise<void>;
   readonly submitMainMessage: Parameters<typeof submitGameDevelopmentTurn>[0]['submitMainMessage'];
   readonly notify: (notification: NotificationState) => void;
+  readonly focusComposer: () => void;
 }): GameDevelopmentController {
+  const gameChoiceEditFlag = 'gameDevelopmentChoiceEdit';
+  let projectCreationPending = false;
+
   const readActiveState = (): GameDevelopmentState | null => {
     const appState = dependencies.getState();
     const routing = buildPlotRoutingContext(appState.statusData, appState.memoryDB);
@@ -43,14 +50,15 @@ export function createGameDevelopmentController(dependencies: {
       receipt,
       routing.v07.resolution,
       appState.statusData.world.currentTime || new Date().toISOString(),
+      { recoverInterruptedTurn: !appState.generating },
     );
   };
 
-  const writeState = (next: GameDevelopmentState) => {
+  const writeState = (next: GameDevelopmentState, shouldRender = true) => {
     const appState = dependencies.getState();
     commitGameDevelopmentState(appState.memoryDB, next);
     dependencies.persist();
-    dependencies.render();
+    if (shouldRender) dependencies.render();
   };
 
   const allowedTargetIds = () =>
@@ -71,15 +79,56 @@ export function createGameDevelopmentController(dependencies: {
     });
   };
 
+  const clearGameChoiceEdit = () => {
+    delete dependencies.getState().runtimeFlags[gameChoiceEditFlag];
+  };
+
+  const getTurnTargetLabel = (selectedTargetId: string | null, phase: GameDevelopmentState['activePhase']) => {
+    if (!selectedTargetId) return phase === 'weekend' ? '独自休息' : '独自工作';
+    const target = dependencies.getState().statusData.targets.find(item => item.id === selectedTargetId);
+    return getGameDevelopmentTargetLabel(
+      [target?.id ?? selectedTargetId, target?.name, target?.alias].filter(Boolean).join(' / '),
+    );
+  };
+
+  const setGameChoiceEdit = (current: GameDevelopmentState) => {
+    const turn = current.pendingTurn ?? current.draft;
+    if (!turn.actionId) return false;
+    dependencies.getState().runtimeFlags[gameChoiceEditFlag] = {
+      routeConfirmationId: current.routeConfirmationId,
+      week: current.week,
+      phase: turn.phase,
+      actionId: turn.actionId,
+      actionLabel: GAME_DEVELOPMENT_ACTIONS.find(action => action.id === turn.actionId)?.label ?? '待选择',
+      selectedTargetId: turn.selectedTargetId,
+      targetLabel: getTurnTargetLabel(turn.selectedTargetId, turn.phase),
+    };
+    return true;
+  };
+
+  const hasCurrentGameChoiceEdit = (current: GameDevelopmentState) => {
+    const raw = dependencies.getState().runtimeFlags[gameChoiceEditFlag];
+    if (!raw || typeof raw !== 'object') return false;
+    const flag = raw as Record<string, unknown>;
+    const turn = current.pendingTurn ?? current.draft;
+    return (
+      flag.routeConfirmationId === current.routeConfirmationId &&
+      Number(flag.week) === current.week &&
+      flag.phase === turn.phase &&
+      flag.actionId === turn.actionId &&
+      String(flag.selectedTargetId ?? '') === String(turn.selectedTargetId ?? '')
+    );
+  };
+
   const submit = async () => {
     if (dependencies.getState().generating) {
       notify('当前正在生成正文', '请等待现有主正文请求结束后再开始游戏开发回合。');
-      return;
+      return false;
     }
     const current = readActiveState();
     if (!current) {
       notify('游戏开发尚未开放', '请先完成第七卷路线确认。');
-      return;
+      return false;
     }
     try {
       const result = await submitGameDevelopmentTurn({
@@ -93,8 +142,10 @@ export function createGameDevelopmentController(dependencies: {
       });
       if (result.status === 'rejected') {
         notify('本回合不能提交', result.reason);
-        return;
+        return false;
       }
+      clearGameChoiceEdit();
+      dependencies.persist();
       const lastTurn = result.state.turnLedger[result.state.turnLedger.length - 1];
       notify(
         result.state.projectStatus === 'completed'
@@ -108,30 +159,43 @@ export function createGameDevelopmentController(dependencies: {
           ? `当前进入第 ${result.state.week} 周 ${result.state.activePhase === 'workday' ? '工作日' : '周末'}阶段。`
           : `当前完成度 ${result.state.project.progress}%。`,
       );
+      return true;
     } catch (error) {
       notify('游戏开发回合失败', error instanceof Error ? error.message : String(error));
-      dependencies.render();
+      return false;
     }
   };
 
   const createProject = async () => {
+    if (projectCreationPending) return;
     const current = readActiveState();
     if (!current) return;
     const root = dependencies.getRoot();
     const value = (field: string) => root?.querySelector<HTMLInputElement>(`[data-field="${field}"]`)?.value ?? '';
-    const result = createGameDevelopmentProject(current, {
-      title: value('game-project-title'),
-      genre: value('game-project-genre'),
-      theme: value('game-project-theme'),
-      platform: value('game-project-platform'),
-    });
+    const result = createGameDevelopmentProject(
+      current,
+      {
+        title: value('game-project-title'),
+        genre: value('game-project-genre'),
+        theme: value('game-project-theme'),
+        platform: value('game-project-platform'),
+      },
+      dependencies.getState().statusData.world.currentTime,
+    );
     if (result.status === 'rejected') {
       notify('项目尚未建立', result.reason);
       return;
     }
-    writeState(result.value);
-    await dependencies.persistImmediately();
-    notify('项目已建立', `${result.value.project.title} 已建立，可以开始第 1 周工作日回合。`);
+    projectCreationPending = true;
+    try {
+      writeState(result.value, false);
+      await dependencies.persistImmediately();
+      notify('项目已建立', `${result.value.project.title} 已建立，可以开始第 1 周工作日回合。`);
+    } catch (error) {
+      notify('项目已建立，但保存失败', error instanceof Error ? error.message : String(error));
+    } finally {
+      projectCreationPending = false;
+    }
   };
 
   const updateDraft = (patch: Parameters<typeof updateGameDevelopmentDraft>[1]) => {
@@ -142,7 +206,65 @@ export function createGameDevelopmentController(dependencies: {
       notify('行动不能修改', result.reason);
       return;
     }
+    clearGameChoiceEdit();
     writeState(result.value);
+  };
+
+  const reviewInComposer = () => {
+    const current = readActiveState();
+    if (!current?.draft.actionId) {
+      notify('尚未选择行动', '请先选择本回合的开发行动。');
+      return;
+    }
+    const appState = dependencies.getState();
+    const body = appState.draft.trim();
+    const updated = updateGameDevelopmentDraft(current, { intent: body }, allowedTargetIds());
+    if (updated.status === 'rejected') {
+      notify('记录框不能打开', updated.reason);
+      return;
+    }
+    commitGameDevelopmentState(appState.memoryDB, updated.value);
+    setGameChoiceEdit(updated.value);
+    appState.draft = body;
+    dependencies.persist();
+    appState.phoneOpen = false;
+    appState.phoneRoute = 'home';
+    appState.phoneRouteHistory = [];
+    dependencies.render();
+    dependencies.focusComposer();
+  };
+
+  const restoreEditorAfterRollback = (sourceUserText: string) => {
+    let current = readActiveState();
+    const body = String(sourceUserText ?? '')
+      .replace(/^（游戏开发：[^\r\n]*）\s*/, '')
+      .trim();
+    if (current?.pendingTurn && current.pendingTurn.intent.trim() === body) {
+      current = restorePendingGameDevelopmentTurnForRollback(current);
+      commitGameDevelopmentState(dependencies.getState().memoryDB, current);
+      dependencies.persist();
+    }
+    if (!current || current.pendingTurn || !current.draft.actionId || current.draft.intent.trim() !== body) {
+      clearGameChoiceEdit();
+      return false;
+    }
+    dependencies.getState().draft = body;
+    return setGameChoiceEdit(current);
+  };
+
+  const submitRestoredTurn = async (sourceUserText: string) => {
+    if (!restoreEditorAfterRollback(sourceUserText)) return false;
+    const current = readActiveState();
+    if (!current || !hasCurrentGameChoiceEdit(current)) return false;
+    const body = dependencies.getState().draft.trim();
+    if (!body) return false;
+    const updated = updateGameDevelopmentDraft(current, { intent: body }, allowedTargetIds());
+    if (updated.status === 'rejected') return false;
+    writeState(updated.value, false);
+    clearGameChoiceEdit();
+    dependencies.persist();
+    await submit();
+    return true;
   };
 
   return {
@@ -159,11 +281,8 @@ export function createGameDevelopmentController(dependencies: {
       root?.querySelector<HTMLSelectElement>('[data-field="game-turn-target"]')?.addEventListener('change', event => {
         updateDraft({ selectedTargetId: (event.target as HTMLSelectElement).value || null });
       });
-      root?.querySelector<HTMLTextAreaElement>('[data-field="game-turn-intent"]')?.addEventListener('change', event => {
-        updateDraft({ intent: (event.target as HTMLTextAreaElement).value });
-      });
       root?.querySelector<HTMLButtonElement>('[data-action="game-submit-turn"]')?.addEventListener('click', () => {
-        void submit();
+        reviewInComposer();
       });
       root?.querySelector<HTMLButtonElement>('[data-action="game-retry-turn"]')?.addEventListener('click', () => {
         void submit();
@@ -172,19 +291,48 @@ export function createGameDevelopmentController(dependencies: {
 
     async initializeAfterRouteChoice(receipt, resolution) {
       const appState = dependencies.getState();
+      clearGameChoiceEdit();
       const initial = createInitialGameDevelopmentState(receipt, resolution);
       commitGameDevelopmentState(appState.memoryDB, initial);
       await dependencies.persistImmediately();
-      dependencies.render();
     },
 
-    async resumePreparedTurnAfterRollback(sourceUserText) {
+    async submitFromMainDraft(sourceUserText) {
       const current = readActiveState();
-      if (!current?.pendingTurn || !isGameDevelopmentFixedInput(sourceUserText)) return false;
-      if (sourceUserText.trim() !== getGameDevelopmentFixedInput(current.pendingTurn.phase)) return false;
-      dependencies.getState().draft = '';
-      await submit();
+      if (!current) return false;
+      if (!hasCurrentGameChoiceEdit(current)) return false;
+      if (!current.pendingTurn && !current.draft.actionId) return false;
+      const body = String(sourceUserText ?? '').trim();
+      if (!body) {
+        notify('正文尚未填写', '请在游戏开发选择框下方补充本回合正文或大纲后再记录。');
+        dependencies.focusComposer();
+        return true;
+      }
+      if (current.pendingTurn && body !== current.pendingTurn.intent.trim()) {
+        dependencies.getState().draft = current.pendingTurn.intent;
+        notify('回合内容已经冻结', '重试时不能改动已冻结的正文或大纲。');
+        dependencies.focusComposer();
+        return true;
+      }
+      if (!current.pendingTurn) {
+        const updated = updateGameDevelopmentDraft(current, { intent: body }, allowedTargetIds());
+        if (updated.status === 'rejected') {
+          notify('正文不能提交', updated.reason);
+          return true;
+        }
+        writeState(updated.value, false);
+      }
+      clearGameChoiceEdit();
+      dependencies.persist();
+      const submitted = await submit();
+      if (!submitted) {
+        const latest = readActiveState();
+        if (latest && !latest.pendingTurn) setGameChoiceEdit(latest);
+      }
       return true;
     },
+
+    restoreEditorAfterRollback,
+    submitRestoredTurn,
   };
 }

@@ -989,6 +989,19 @@ function renderJournalHeader(state: AppState, controlsHtml = '') {
 
 export function renderPaperWorkspace(state: AppState, flipDir: string = '', options: { embedded?: boolean } = {}) {
   const embedded = options.embedded ?? false;
+  const rawGameChoice = state.runtimeFlags.gameDevelopmentChoiceEdit;
+  const gameChoice =
+    rawGameChoice && typeof rawGameChoice === 'object'
+      ? (rawGameChoice as Record<string, unknown>)
+      : null;
+  const isGameDevelopmentDraft = Boolean(
+    gameChoice &&
+      Number.isFinite(Number(gameChoice.week)) &&
+      (gameChoice.phase === 'workday' || gameChoice.phase === 'weekend') &&
+      typeof gameChoice.actionLabel === 'string' &&
+      typeof gameChoice.targetLabel === 'string',
+  );
+  const hasGameDevelopmentBody = !isGameDevelopmentDraft || Boolean(state.draft.trim());
   const composerId = embedded ? 'islandmilfcode-phone-composer' : 'islandmilfcode-composer';
   const readerMessages = getReaderMessages(state.uiMessages);
   const currentReaderIndex = Math.min(Math.max(state.focusedMessageIndex, 0), Math.max(readerMessages.length - 1, 0));
@@ -1037,20 +1050,54 @@ export function renderPaperWorkspace(state: AppState, flipDir: string = '', opti
       </div>
 
       <div class="paper-composer-card">
-        <label class="paper-composer-card__label" for="${composerId}">这个故事的后续…</label>
+        <label class="paper-composer-card__label" for="${composerId}">${
+          isGameDevelopmentDraft ? '本回合正文或大纲' : '这个故事的后续…'
+        }</label>
+        ${
+          isGameDevelopmentDraft && gameChoice
+            ? `
+          <section class="composer-game-choice" aria-label="游戏开发选择">
+            <header><span>游戏开发选择</span><strong>第 ${Number(gameChoice.week)} 周 · ${gameChoice.phase === 'workday' ? '工作日' : '周末'}</strong></header>
+            <div><span>行动</span><strong>${escapeHtml(String(gameChoice.actionLabel))}</strong></div>
+            <div><span>对象</span><strong>${escapeHtml(String(gameChoice.targetLabel))}</strong></div>
+          </section>
+        `
+            : ''
+        }
         <textarea
           id="${composerId}"
           class="composer-input"
           name="islandmilfcode-composer"
-          placeholder="在这里写下接下来的内容……"
+          rows="2"
+          placeholder="${isGameDevelopmentDraft ? '填写本回合正文或大纲……' : '在这里写下接下来的内容……'}"
           ${state.generating ? 'disabled' : ''}
         >${escapeHtml(state.draft)}</textarea>
 
         <div class="composer-actions">
-          ${composerTopButton}
-          ${composerActionsButton}
-          ${state.generating ? '<span class="composer-tip">写入中……</span>' : ''}
-          <button class="send-btn" data-action="send">${state.generating ? '取消' : '记录'}</button>
+          <div class="composer-tool-actions">
+            ${composerTopButton}
+            ${composerActionsButton}
+            <button
+              class="composer-editor-open"
+              type="button"
+              data-action="open-composer-editor"
+              title="打开正文大编辑器"
+              aria-label="打开正文大编辑器"
+              ${state.generating ? 'disabled' : ''}
+            >✎</button>
+          </div>
+          ${
+            state.generating
+              ? '<span class="composer-tip">写入中……</span>'
+              : isGameDevelopmentDraft && !hasGameDevelopmentBody
+                ? '<span class="composer-tip">正文存在后才能提交</span>'
+                : ''
+          }
+          <button class="send-btn" data-action="send" ${
+            isGameDevelopmentDraft && !hasGameDevelopmentBody && !state.generating ? 'disabled' : ''
+          }>${
+            state.generating ? '取消' : isGameDevelopmentDraft ? '提交游戏回合' : '记录'
+          }</button>
         </div>
       </div>
     </section>

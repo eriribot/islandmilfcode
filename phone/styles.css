@@ -1786,6 +1786,7 @@
 
 .phone-game-lock button,
 .phone-game-project-form button,
+.phone-game-slot-editor > .phone-game-review-button,
 .phone-game-summary button {
   width: min(100%, 168px);
   min-height: 42px;
@@ -1808,6 +1809,7 @@
 }
 
 .phone-game-project-form button,
+.phone-game-slot-editor > .phone-game-review-button,
 .phone-game-summary button {
   width: 100%;
   max-width: none;
@@ -1837,6 +1839,42 @@
 .phone-game-hero > div {
   display: flex;
   gap: 6px;
+}
+
+.phone-game-hero > .phone-game-project-progress {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 5px 8px;
+  margin-top: 3px;
+  border-radius: 7px;
+  padding: 8px 9px;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.phone-game-project-progress > span {
+  color: #486b6e;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.phone-game-project-progress > strong {
+  color: #27343a;
+  font-size: 12px;
+}
+
+.phone-game-project-progress > i {
+  grid-column: 1 / -1;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(72, 107, 110, 0.16);
+}
+
+.phone-game-project-progress > i > b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #528b91, #c28a58);
 }
 
 .phone-game-hero em {
@@ -1882,6 +1920,10 @@
 .phone-game-slot-editor textarea {
   min-height: 64px;
   resize: vertical;
+}
+
+.phone-game-slot-editor > .phone-game-review-button {
+  margin-top: 3px;
 }
 
 .phone-game-metrics {
@@ -2834,11 +2876,10 @@
 
 .paper-workspace--phone .composer-input {
   min-height: 72px;
-  max-height: 45dvh;
+  max-height: none;
   padding: 2px 0;
-  resize: vertical;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  resize: none;
+  overflow-y: hidden;
   line-height: 1.75;
 }
 
@@ -2850,7 +2891,12 @@
   margin-top: 6px;
 }
 
-.paper-workspace--phone .composer-floor-actions {
+.paper-workspace--phone .composer-tool-actions {
+  gap: 8px;
+}
+
+.paper-workspace--phone .composer-floor-actions,
+.paper-workspace--phone .composer-editor-open {
   width: 34px;
   height: 34px;
   font-size: 1.18rem;
@@ -3202,19 +3248,38 @@
 }
 
 .ios-notification {
+  position: absolute;
+  z-index: 20;
+  top: clamp(28px, calc(var(--phone-shell-height, 680px) * 0.052), 38px);
+  left: 50%;
+  transform: translateX(-50%);
   display: block;
-  width: calc(100% - 20px);
-  margin: 6px 10px 0;
-  border-radius: var(--radius-soft);
-  padding: 10px 12px;
+  width: calc(100% - clamp(18px, 5vw, 28px));
+  max-width: calc(100% - 18px);
+  margin: 0;
+  border-radius: clamp(10px, calc(var(--phone-shell-width, 380px) * 0.038), 16px);
+  padding: clamp(8px, calc(var(--phone-shell-width, 380px) * 0.03), 12px);
   color: var(--ink-dark);
   text-align: left;
   cursor: pointer;
-  background: rgba(255, 252, 245, 0.85);
-  border: 1.5px solid rgba(180, 160, 130, 0.2);
-  box-shadow: 0 4px 12px rgba(80, 60, 30, 0.08);
-  backdrop-filter: blur(6px);
-  transition: background 0.15s ease;
+  background: rgba(255, 252, 245, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 10px 30px rgba(45, 35, 30, 0.2);
+  backdrop-filter: blur(16px) saturate(1.18);
+  -webkit-backdrop-filter: blur(16px) saturate(1.18);
+  transition: background 0.15s ease, transform 0.18s ease;
+  animation: phone-notification-drop 0.22s ease both;
+}
+
+@keyframes phone-notification-drop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
 }
 
 .ios-notification:hover {

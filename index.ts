@@ -60,6 +60,7 @@ import {
 } from './index/reader-ui';
 import { buildSummaryModelsUrl, parseSummaryModelsResponse } from './index/summary-models';
 import { createGameDevelopmentController, type GameDevelopmentController } from './index/game-development';
+import { bindComposerEditor } from './index/composer-editor';
 import { mountRadarChart, unmountRadarChart } from './phone/radar';
 import {
   getCalendarMonthOffset,
@@ -76,6 +77,7 @@ import {
   commitPlotRouteChoice,
   confirmPlotRouteChoice,
   getPlotMachine,
+  readActivePlotRouteChoice,
   setPlotRouteReviewEnabled,
 } from './plot-state-machine';
 import { isV07RouteChoiceRequired } from './plot-state-machine/choice';
@@ -546,6 +548,7 @@ const gameDevelopmentController: GameDevelopmentController = createGameDevelopme
   persistImmediately: () => persistToSaveImmediately(),
   submitMainMessage: options => submitMessage(ctx, options),
   notify: notification => ctx.showNotification(notification),
+  focusComposer: () => focusComposer(),
 });
 
 async function persistManualSave() {
@@ -1179,6 +1182,7 @@ async function rollbackToReaderInput(readerIndex: number) {
   const target = await rollbackConversation(state, readerIndex, win);
   if (!target?.sourceUserText) return;
   state.draft = target.sourceUserText;
+  gameDevelopmentController.restoreEditorAfterRollback(target.sourceUserText);
   guardedAdapterSave(state.statusData);
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
@@ -1187,16 +1191,35 @@ async function rollbackToReaderInput(readerIndex: number) {
 }
 
 function isV07RouteChoiceBlockingMainText(): boolean {
-  const routingContext = buildPlotRoutingContext(state.statusData, state.memoryDB);
   return isV07RouteChoiceRequired({
     currentTime: state.statusData.world.currentTime,
     currentMainEventId: state.statusData.world.currentMainEventId,
     mainEvents: state.statusData.world.mainEvents,
-    hasChoice: Boolean(routingContext.v07.resolution.choiceReceipt),
+    hasChoice: Boolean(readActivePlotRouteChoice(state.memoryDB, 'v07')),
   });
 }
 
+function growComposerInput(textarea: HTMLTextAreaElement) {
+  const touchLayout = window.innerWidth <= 700 || window.matchMedia('(pointer: coarse)').matches;
+  const previousHeight = textarea.style.height;
+  textarea.style.height = 'auto';
+  const contentHeight = textarea.scrollHeight;
+  const minimumHeight = touchLayout ? 88 : 64;
+  const manuallyExpandedHeight = touchLayout ? 0 : Number.parseFloat(previousHeight) || 0;
+  textarea.style.height = `${Math.max(minimumHeight, contentHeight, manuallyExpandedHeight)}px`;
+  textarea.style.overflowY = 'hidden';
+}
+
+function syncComposerSubmitAvailability(textarea: HTMLTextAreaElement) {
+  if (!state.runtimeFlags.gameDevelopmentChoiceEdit) return;
+  const button = textarea.closest<HTMLElement>('.paper-composer-card')?.querySelector<HTMLButtonElement>('[data-action="send"]');
+  if (!button || state.generating) return;
+  button.disabled = !textarea.value.trim();
+}
+
 async function submitMainMessage(options: { text?: string; keepDraft?: boolean; clearDraftOnSuccess?: boolean } = {}) {
+  const userInput = (options.text ?? state.draft).trim();
+  if (await gameDevelopmentController.submitFromMainDraft(userInput)) return;
   if (isV07RouteChoiceBlockingMainText()) {
     // 中文注释：SAE_07-8 已结束但玩家尚未选线时，DDL 必须先于下一段正文。
     // 这里只阻止新的主正文提交，不伪造 choice，也不阻止玩家查看刚完成的事件楼层。
@@ -1223,7 +1246,7 @@ async function rerunReaderMessage(readerIndex: number) {
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
   render();
-  if (await gameDevelopmentController.resumePreparedTurnAfterRollback(target.sourceUserText)) return;
+  if (await gameDevelopmentController.submitRestoredTurn(target.sourceUserText)) return;
   await submitMainMessage({ text: target.sourceUserText, keepDraft: true, clearDraftOnSuccess: true });
 }
 
@@ -1235,6 +1258,7 @@ async function deleteReaderFloor(readerIndex: number) {
   if (deletedSourceText && state.draft.trim() === deletedSourceText) {
     state.draft = '';
   }
+  gameDevelopmentController.restoreEditorAfterRollback(state.draft);
   guardedAdapterSave(state.statusData);
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
@@ -2564,6 +2588,23 @@ function bindPhoneHomePaginationEvents() {
 function bindEvents() {
   bindQuickReplyDelegation();
   bindPhoneHomePaginationEvents();
+  bindComposerEditor({
+    root,
+    getDraft: () => state.draft,
+    setDraft: value => {
+      state.draft = value;
+    },
+    getContextLabel: () => {
+      const raw = state.runtimeFlags.gameDevelopmentChoiceEdit;
+      if (!raw || typeof raw !== 'object') return '正文或大纲';
+      const choice = raw as Record<string, unknown>;
+      const phase = choice.phase === 'weekend' ? '周末' : '工作日';
+      return `第 ${Number(choice.week) || 1} 周 · ${phase} · ${String(choice.actionLabel ?? '待选择')} · ${String(choice.targetLabel ?? '未选择对象')}`;
+    },
+    getSubmitLabel: () => (state.runtimeFlags.gameDevelopmentChoiceEdit ? '提交游戏回合' : '记录'),
+    isGenerating: () => state.generating,
+    submit: () => submitMainMessage(),
+  });
 
   root?.querySelectorAll<HTMLButtonElement>('[data-action="select-option"]').forEach(button => {
     button.addEventListener('pointerdown', event => {
@@ -2572,10 +2613,19 @@ function bindEvents() {
   });
 
   root?.querySelectorAll<HTMLTextAreaElement>('.composer-input').forEach(textarea => {
+    growComposerInput(textarea);
+    syncComposerSubmitAvailability(textarea);
     textarea.addEventListener('input', event => {
-      state.draft = (event.target as HTMLTextAreaElement).value;
+      const activeTextarea = event.target as HTMLTextAreaElement;
+      state.draft = activeTextarea.value;
+      growComposerInput(activeTextarea);
+      syncComposerSubmitAvailability(activeTextarea);
       root?.querySelectorAll<HTMLTextAreaElement>('.composer-input').forEach(other => {
-        if (other !== event.target) other.value = state.draft;
+        if (other !== event.target) {
+          other.value = state.draft;
+          growComposerInput(other);
+          syncComposerSubmitAvailability(other);
+        }
       });
     });
 

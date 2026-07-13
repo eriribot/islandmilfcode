@@ -6,6 +6,7 @@ import {
   GAME_DEVELOPMENT_ACTIONS,
   getAllowedGameDevelopmentActions,
   getGameDevelopmentPhaseCalendarRange,
+  getGameDevelopmentTargetLabel,
   getLastCompletedGameDevelopmentTurn,
   isGameDevelopmentRouteChoice,
   readGameDevelopmentState,
@@ -1290,7 +1291,7 @@ function renderStudioRoutePlanning(state: AppState) {
                   <article class="phone-studio-variant ${isChosen ? 'is-chosen' : ''}">
                     <div>
                       <strong>${escapeHtml(V07_FAMILY_LABELS[family.id])}</strong>
-                      <small>${family.id === 'stay' ? '剧情路线' : '剧情路线 · 开启对应游戏开发模式'}</small>
+                      <small>剧情路线 · 开启对应游戏开发模式</small>
                     </div>
                     <p>${escapeHtml(
                       family.missingFlagIds.length
@@ -1488,6 +1489,7 @@ function getGameDevelopmentHomeMeta(state: AppState): string {
     resolution.choiceReceipt,
     resolution,
     state.statusData.world.currentTime,
+    { recoverInterruptedTurn: !state.generating },
   );
   return game.projectStatus === 'not_created'
     ? '等待建立项目'
@@ -1543,24 +1545,30 @@ function renderGameDevelopmentPhonePage(state: AppState) {
     return renderGameDevelopmentLock(state, '当前路线 receipt 无法进入游戏开发。');
   }
 
-  const game = readGameDevelopmentState(state.memoryDB, receipt, resolution, state.statusData.world.currentTime);
+  const game = readGameDevelopmentState(state.memoryDB, receipt, resolution, state.statusData.world.currentTime, {
+    recoverInterruptedTurn: !state.generating,
+  });
   const routeLabel = V07_FAMILY_LABELS[receipt.familyId];
   if (game.projectStatus === 'not_created') return renderGameDevelopmentProjectForm(state, routeLabel);
 
   const availableActions = getAllowedGameDevelopmentActions(game);
+  const availableActionIds = new Set(availableActions.map(action => action.id));
   const pending = game.pendingTurn;
   const locked = Boolean(pending);
-  const visibleActionId = pending?.actionId ?? game.draft.actionId;
-  const visibleTargetId = pending?.selectedTargetId ?? game.draft.selectedTargetId;
-  const visibleIntent = pending?.intent ?? game.draft.intent;
+  const candidateActionId = pending?.actionId ?? game.draft.actionId;
+  const visibleActionId = candidateActionId && availableActionIds.has(candidateActionId) ? candidateActionId : null;
+  const visibleTargetId = visibleActionId ? pending?.selectedTargetId ?? game.draft.selectedTargetId : null;
   const lastCompleted = getLastCompletedGameDevelopmentTurn(game);
   const dateRange = getGameDevelopmentPhaseCalendarRange(game, game.activePhase);
-  const variantLabel = V07_VARIANT_LABELS[game.routeVariant] ?? game.routeVariant;
+  const variantLabel = V07_ROUTE_LABELS[game.routeVariant] ?? game.routeVariant;
   const targetOptions = [
     { id: '', label: game.activePhase === 'weekend' ? '独自休息' : '独自工作' },
     ...state.statusData.targets
       .filter(target => !isPlayerPhonePseudoTarget(target))
-      .map(target => ({ id: target.id, label: target.alias || target.name || '未命名角色' })),
+      .map(target => ({
+        id: target.id,
+        label: getGameDevelopmentTargetLabel([target.id, target.name, target.alias].filter(Boolean).join(' / ')),
+      })),
   ];
 
   const pendingStatus = (() => {
@@ -1572,6 +1580,7 @@ function renderGameDevelopmentPhonePage(state: AppState) {
     return `生成失败：${pending.failureReason}`;
   })();
   const terminal = game.projectStatus === 'completed' || game.projectStatus === 'deadline_reached';
+  const projectProgress = Math.max(0, Math.min(100, Number(game.project.progress) || 0));
 
   return `
     <section class="phone-route-page phone-app-page phone-app-page--game-development" data-phone-route-view="app:game-development">
@@ -1582,6 +1591,10 @@ function renderGameDevelopmentPhonePage(state: AppState) {
           <strong>${escapeHtml(game.project.title)}</strong>
           <p>${escapeHtml(game.project.genre)} · ${escapeHtml(game.project.theme)} · ${escapeHtml(game.project.platform)}<br />开发档案：${escapeHtml(variantLabel)}</p>
           <div><em>剩余 ${game.project.weeksLeft} 周</em><em>预算 ${game.project.budget}</em></div>
+          <div class="phone-game-project-progress">
+            <span>项目总进度</span><strong>${projectProgress}%</strong>
+            <i><b style="width:${projectProgress}%"></b></i>
+          </div>
         </section>
 
         <section class="phone-game-metrics">
@@ -1625,31 +1638,22 @@ function renderGameDevelopmentPhonePage(state: AppState) {
               ${targetOptions.map(target => `<option value="${escapeHtml(target.id)}" ${visibleTargetId === target.id || (!visibleTargetId && !target.id) ? 'selected' : ''}>${escapeHtml(target.label)}</option>`).join('')}
             </select>
           </label>
-          <label>
-            本回合想发生什么
-            <textarea data-field="game-turn-intent" maxlength="240" ${visibleActionId && !locked && !terminal ? '' : 'disabled'}>${escapeHtml(visibleIntent)}</textarea>
-          </label>
+          <button class="phone-game-review-button" type="button" data-action="game-submit-turn" ${visibleActionId && !locked && !terminal ? '' : 'disabled'}>
+            ${locked ? '回合处理中' : '提交到记录框'}
+          </button>
         </section>
 
         <section class="phone-game-summary">
           <div class="${visibleActionId ? 'is-planned' : ''}"><span>当前行动</span><strong>${escapeHtml(GAME_DEVELOPMENT_ACTIONS.find(item => item.id === visibleActionId)?.label ?? '待选择')}</strong></div>
           ${pendingStatus ? `<div class="${pending?.status === 'failed' ? '' : 'is-planned'}"><span>回合状态</span><strong>${escapeHtml(pendingStatus)}</strong></div>` : ''}
           ${terminal ? `<div class="is-planned"><span>项目结果</span><strong>${game.projectStatus === 'completed' ? '项目完成' : '期限已到'}</strong></div>` : ''}
-          ${
-            pending?.status === 'failed'
-              ? `
+          ${pending?.status === 'failed'
+            ? `
             <button type="button" data-action="game-retry-turn">
               ${pending.failurePhase === 'accepted_commit' ? '重试结算（不重新生成）' : '重试同一回合'}
             </button>
           `
-              : !terminal
-                ? `
-            <button type="button" data-action="game-submit-turn" ${visibleActionId && !locked ? '' : 'disabled'}>
-              ${locked ? '回合处理中' : game.activePhase === 'workday' ? '开始本周工作' : '开始周末安排'}
-            </button>
-          `
-                : ''
-          }
+            : ''}
         </section>
 
         ${
@@ -2074,6 +2078,10 @@ function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
 }
 
 export function renderPhone(state: AppState, renderers: PhoneRenderers) {
+  if (!state.phoneOpen) {
+    return '<div class="phone-modal" aria-hidden="true"></div>';
+  }
+
   const selectedCharacter = getPhoneCharacterTheme(state.phoneCharacterId);
   const isGenerating = state.generating || state.phoneMessages.generating;
   const frameStyle = renderResponsivePhoneFrameStyle();
@@ -2086,7 +2094,7 @@ export function renderPhone(state: AppState, renderers: PhoneRenderers) {
           phoneMessages: renderedPhoneMessages,
         };
   return `
-    <div class="phone-modal ${state.phoneOpen ? 'is-open' : ''} ${isGenerating ? 'generating' : ''}" aria-hidden="${state.phoneOpen ? 'false' : 'true'}">
+    <div class="phone-modal is-open ${isGenerating ? 'generating' : ''}" aria-hidden="false">
       <button class="phone-backdrop" data-action="close-phone" aria-label="关闭手帐"></button>
       <section class="phone-shell" style="${frameStyle}">
         <div class="phone-notch"></div>
@@ -2115,7 +2123,7 @@ export function renderPhone(state: AppState, renderers: PhoneRenderers) {
           </div>
         </div>
       </section>
-      ${state.phoneOpen ? renderCalendarEventPopup(renderedState) : ''}
+      ${renderCalendarEventPopup(renderedState)}
     </div>
   `;
 }

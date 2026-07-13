@@ -186,6 +186,8 @@ type FrozenGameDevelopmentTurnFields = {
   readonly routeFamily: PlotRouteFamilyId;
   readonly routeVariant: PlotRouteVariantId;
   readonly routeEnteredAt: string;
+  /** v2+ frozen turns carry the exact calendar anchor; omitted only by legacy v1 turns. */
+  readonly calendarWeekStart?: string;
   readonly week: number;
   readonly selectedTargetId: string | null;
   readonly intent: string;

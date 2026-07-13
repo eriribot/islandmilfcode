@@ -132,7 +132,8 @@ button {
   position: relative;
   min-height: calc(100vh - 40px);
   padding: 36px 48px 64px 56px;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: visible;
   border-radius: 6px 18px 18px 6px;
   background:
     radial-gradient(circle, var(--dot-color) var(--dot-size), transparent var(--dot-size)) 12px 12px / var(--dot-gap)
@@ -1696,12 +1697,226 @@ button {
   color: var(--ink-soft);
 }
 
+.composer-game-choice {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 10px;
+  margin: 0 0 12px;
+  border: 1px solid rgba(72, 107, 110, 0.2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, rgba(72, 107, 110, 0.08), rgba(194, 138, 88, 0.08));
+}
+
+.composer-game-choice header {
+  grid-column: 1 / -1;
+}
+
+.composer-game-choice header,
+.composer-game-choice > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.composer-game-choice span {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+}
+
+.composer-game-choice strong {
+  color: var(--ink-dark);
+  font-size: 0.88rem;
+}
+
+@media (max-width: 700px) {
+  .composer-game-choice {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-game-choice header {
+    grid-column: auto;
+  }
+}
+
+.composer-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.composer-editor-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  background: rgba(35, 31, 22, 0.5);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.composer-editor-overlay__panel {
+  position: relative;
+  width: min(920px, calc(100vw - 36px));
+  height: min(760px, calc(100dvh - 36px));
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(72, 107, 110, 0.28);
+  border-radius: 18px;
+  padding: 18px;
+  background: rgba(250, 250, 238, 0.98);
+  box-shadow: 0 28px 70px rgba(35, 31, 22, 0.32);
+}
+
+.composer-editor-overlay__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.composer-editor-overlay__header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.composer-editor-overlay__header span {
+  color: var(--ink-faint);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.composer-editor-overlay__header strong {
+  color: var(--ink-dark);
+  font-size: 1rem;
+}
+
+.composer-editor-overlay__close {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  color: var(--ink-soft);
+  background: rgba(72, 107, 110, 0.1);
+  font-size: 1.35rem;
+  cursor: pointer;
+}
+
+.composer-editor-overlay__textarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  resize: none;
+  box-sizing: border-box;
+  border: 1px solid rgba(72, 107, 110, 0.26);
+  border-radius: 13px;
+  outline: none;
+  padding: 18px;
+  color: var(--ink-dark);
+  background: rgba(255, 255, 255, 0.7);
+  font-family: 'Klee One', serif;
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
+.composer-editor-overlay__textarea:focus {
+  border-color: rgba(72, 107, 110, 0.55);
+  box-shadow: 0 0 0 3px rgba(72, 107, 110, 0.1);
+}
+
+.composer-editor-overlay__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.composer-editor-overlay__footer > span {
+  margin-right: auto;
+  color: var(--ink-faint);
+  font-size: 0.8rem;
+}
+
+.composer-editor-overlay__return,
+.composer-editor-overlay__submit {
+  min-height: 42px;
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 18px;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.composer-editor-overlay__return {
+  color: var(--ink-dark);
+  background: rgba(72, 107, 110, 0.1);
+}
+
+.composer-editor-overlay__submit {
+  color: #fff;
+  background: #5d733a;
+}
+
+.composer-editor-overlay__submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@media (max-width: 700px) {
+  .composer-editor-overlay {
+    padding: 8px;
+  }
+
+  .composer-editor-overlay__panel {
+    width: calc(100vw - 16px);
+    height: calc(100dvh - 16px);
+    border-radius: 14px;
+    padding: 12px;
+  }
+
+  .composer-editor-overlay__header strong {
+    font-size: 0.88rem;
+  }
+
+  .composer-editor-overlay__textarea {
+    padding: 13px;
+    font-size: 16px;
+    line-height: 1.7;
+  }
+
+  .composer-editor-overlay__footer {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .composer-editor-overlay__footer > span {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+}
+
 .composer-input {
   position: relative;
   width: 100%;
-  min-height: 56px;
-  max-height: 140px;
+  min-height: 64px;
+  height: auto;
+  max-height: none;
   resize: vertical;
+  box-sizing: border-box;
+  overflow-y: hidden;
   outline: none;
   border: 0;
   padding: 0;
@@ -1727,8 +1942,16 @@ button {
   margin-top: 8px;
 }
 
+.composer-tool-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-right: auto;
+}
+
 .composer-top-btn,
-.composer-floor-actions {
+.composer-floor-actions,
+.composer-editor-open {
   width: 36px;
   height: 36px;
   border: 1px solid rgba(106, 74, 158, 0.18);
@@ -1751,8 +1974,15 @@ button {
     transform 0.15s ease;
 }
 
-.composer-floor-actions {
-  margin-right: auto;
+.composer-editor-open {
+  font-family: inherit;
+  font-size: 1.12rem;
+  font-weight: 800;
+}
+
+.composer-editor-open:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .composer-top-btn__icon {
@@ -1765,7 +1995,8 @@ button {
 }
 
 .composer-top-btn:hover,
-.composer-floor-actions:hover {
+.composer-floor-actions:hover,
+.composer-editor-open:hover:not(:disabled) {
   border-color: rgba(106, 74, 158, 0.34);
   background: rgba(247, 239, 255, 0.96);
   transform: translateY(-1px);
@@ -2987,6 +3218,12 @@ button {
 
   .paper-workspace {
     padding: 12px 10px 24px 28px;
+  }
+
+  .composer-input {
+    min-height: 88px;
+    max-height: none;
+    resize: none;
   }
 
   .islandmilfcode-scene {

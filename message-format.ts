@@ -295,6 +295,15 @@ export function extractCompleteTaggedReply(raw: string, tagName: string) {
   return closedBody == null ? '' : dedupeAdjacentReply(stripMetaSubtags(closedBody));
 }
 
+export function extractCompleteVisibleReply(raw: string) {
+  const source = stripHtmlCommentBlocks(stripImageGenerationTags(stripCharacterDataImportText(String(raw ?? ''))));
+  for (const tagName of [PRIMARY_VISIBLE_TAG, ...FALLBACK_VISIBLE_TAGS]) {
+    const visible = extractCompleteTaggedReply(source, tagName);
+    if (visible) return visible;
+  }
+  return '';
+}
+
 export function extractTucaoBlocks(text: string, { streaming = false }: { streaming?: boolean } = {}) {
   const raw = String(text ?? '');
   if (!raw) return [];
@@ -1829,7 +1838,14 @@ function buildStateDeltaInstruction(statusData: StatusData): string {
 export function buildProgressPrompt(
   statusData: StatusData,
   turnMessages: UiMessage[],
-  options?: { includePhoneMessages?: boolean },
+  options?: {
+    includePhoneMessages?: boolean;
+    gameDevelopmentTimeRange?: {
+      readonly startDate: string;
+      readonly endDate: string;
+      readonly completionTime: string;
+    };
+  },
 ): Array<{ role: 'system' | 'user'; content: string }> {
   const inventoryList =
     Object.entries(statusData.player.inventory)
@@ -1844,6 +1860,9 @@ export function buildProgressPrompt(
     recentUserMessage && detectTimeAdvanceIntent(getPromptMessageText(recentUserMessage))
       ? '玩家最近输入提到推进时间。以正文实际描写为准：只有当对话正文确实跨过了一个时段或日期时或玩家提到今天,明天加时间段这里需要思考具时间，才输出完整 `时间:YYYY-MM-DD HH:mm` 字段；正文没有真正推进时间时，整行省略，禁止凭玩家输入里的时间词自行补齐一个新时间。'
       : '';
+  const gameDevelopmentTimeNote = options?.gameDevelopmentTimeRange
+    ? `本轮游戏开发从当前楼层日期出发，计划时期为 ${options.gameDevelopmentTimeRange.startDate} 至 ${options.gameDevelopmentTimeRange.endDate}。玩家输入是正文规划，主正文是该规划的实际演出；请以玩家输入与最新主正文共同判断实际推进到哪一天。若正文已经完成整个阶段，输出 时间:${options.gameDevelopmentTimeRange.endDate} ${options.gameDevelopmentTimeRange.completionTime}；若只演到中途，按正文实际末日输出；所有时间仍须经过单调时间闸，禁止回退。`
+    : '';
 
   const formatted = turnMessages
     .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -1903,6 +1922,7 @@ export function buildProgressPrompt(
         '  泽村小百合若正文明确发生亲密行为，只输出具体次数字段.泽村小百合:+N，例如 性交次数.泽村小百合:+1；系统会根据计数自动派生“背德关系已成立（已发生关系）”。',
         '  不要输出“背德.角色名”“关系.角色名:背德”这类未定义字段；背德状态由小百合的亲密计数派生。',
         timeIntentNote ? `\n时间推进提醒：${timeIntentNote}` : '',
+        gameDevelopmentTimeNote ? `\n游戏开发时间范围：${gameDevelopmentTimeNote}` : '',
         '',
         '请用 <progress> 标签输出变化的字段，每行一个 key:value。如果没有任何变化，输出空的 <progress></progress>。',
         '可用字段：',

@@ -182,7 +182,7 @@ export function updateGameDevelopmentDraft(
   let selectedTargetId =
     patch.selectedTargetId !== undefined ? normalizeTargetId(patch.selectedTargetId) : current.selectedTargetId;
   if (!actionId || (selectedTargetId && !allowedTargets.has(selectedTargetId))) selectedTargetId = null;
-  const intent = patch.intent !== undefined ? String(patch.intent).slice(0, 240) : current.intent;
+  const intent = patch.intent !== undefined ? String(patch.intent) : current.intent;
 
   if (actionId === current.actionId && selectedTargetId === current.selectedTargetId && intent === current.intent) {
     return accepted(state);
@@ -256,11 +256,23 @@ export function applyGameDevelopmentSettlement(
 }
 
 export function getInitialGameDevelopmentCalendarWeekStart(routeEnteredAt: string): string {
-  const enteredDate = parseIsoDate(routeEnteredAt);
-  const day = enteredDate.getUTCDay();
-  const daysUntilMonday = day === 1 ? 0 : (8 - day) % 7;
-  enteredDate.setUTCDate(enteredDate.getUTCDate() + daysUntilMonday);
-  return formatIsoDate(enteredDate);
+  return getGameDevelopmentCalendarWeekStartForPhase(routeEnteredAt, 'workday');
+}
+
+export function getGameDevelopmentCalendarWeekStartForPhase(
+  currentTime: string,
+  phase: GameDevelopmentTurnPhase,
+): string {
+  const date = parseIsoDate(currentTime);
+  const day = date.getUTCDay();
+  if (phase === 'workday') {
+    const daysUntilMonday = day === 1 ? 0 : (8 - day) % 7;
+    date.setUTCDate(date.getUTCDate() + daysUntilMonday);
+  } else {
+    const daysSinceMonday = (day + 6) % 7;
+    date.setUTCDate(date.getUTCDate() - daysSinceMonday);
+  }
+  return formatIsoDate(date);
 }
 
 export function addGameDevelopmentCalendarWeeks(calendarWeekStart: string, weeks: number): string {
@@ -288,18 +300,25 @@ export function getGameDevelopmentPhaseCalendarRange(
   return { start: formatIsoDate(start), end: formatIsoDate(end) };
 }
 
+export function parseGameDevelopmentDateTimestamp(value: string): number | null {
+  const datePart = String(value ?? '').match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  if (!datePart) return null;
+  const [year, month, day] = datePart.split('-').map(Number);
+  const timestamp = Date.UTC(year, month - 1, day);
+  const parsed = new Date(timestamp);
+  if (formatIsoDate(parsed) !== datePart) return null;
+  return timestamp;
+}
+
 function normalizeTargetId(value: string | null): string | null {
   const normalized = String(value ?? '').trim();
   return normalized || null;
 }
 
 function parseIsoDate(value: string): Date {
-  const datePart = String(value ?? '').match(/\d{4}-\d{2}-\d{2}/)?.[0];
-  if (!datePart) throw new Error(`无效的游戏开发日期：${value}`);
-  const [year, month, day] = datePart.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  if (formatIsoDate(date) !== datePart) throw new Error(`无效的游戏开发日期：${value}`);
-  return date;
+  const timestamp = parseGameDevelopmentDateTimestamp(value);
+  if (timestamp === null) throw new Error(`无效的游戏开发日期：${value}`);
+  return new Date(timestamp);
 }
 
 function formatIsoDate(date: Date): string {

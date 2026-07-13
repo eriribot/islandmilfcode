@@ -3,7 +3,7 @@ import {
   buildPhoneProgressPrompt,
   buildProgressPrompt,
   buildPrompt,
-  extractCompleteTaggedReply,
+  extractCompleteVisibleReply,
   extractPhoneChatReply,
   extractTaggedReply,
   getReaderMessages,
@@ -95,6 +95,8 @@ import {
 } from '../plugins/image-generation';
 import { buildDeepSeekEvidenceContext, collectDeepSeekWebLookupEvidence } from '../plugins/deepseek-web-lookup';
 import { saveImageDataUrlAsAsset } from '../state/image-assets';
+import { restorePendingGameDevelopmentTurnForRollback } from '../game-development/state';
+import type { GameDevelopmentTurnTimeRange } from '../game-development/orchestration';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
@@ -120,6 +122,7 @@ export type SubmitMessageOptions = {
   keepDraft?: boolean;
   clearDraftOnSuccess?: boolean;
   gameDevelopmentContext?: string;
+  gameDevelopmentTimeRange?: GameDevelopmentTurnTimeRange;
   requireCompleteMainAssistant?: boolean;
   reuseLatestUserMessage?: boolean;
   onMainAssistantAccepted?: (receipt: MainAssistantAcceptedReceipt) => void | Promise<void>;
@@ -1349,6 +1352,17 @@ function commitSae078GraduationCeremonyTrigger(ctx: ActionContext, eligibleAtPro
   return true;
 }
 
+function createSubmissionRollbackSnapshot(
+  state: ActionContext['state'],
+  gameDevelopmentContext?: string,
+) {
+  const snapshot = createRollbackSnapshot(state);
+  if (gameDevelopmentContext && snapshot.gameDevelopment?.pendingTurn) {
+    snapshot.gameDevelopment = restorePendingGameDevelopmentTurnForRollback(snapshot.gameDevelopment);
+  }
+  return snapshot;
+}
+
 export async function submitMessage(ctx: ActionContext, options: SubmitMessageOptions = {}) {
   const { state, win } = ctx;
   const userInput = (options.text ?? state.draft).trim();
@@ -1423,7 +1437,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       role: 'user',
       speaker: 'User',
       text: userInput,
-      statusSnapshot: createRollbackSnapshot(state),
+      statusSnapshot: createSubmissionRollbackSnapshot(state, options.gameDevelopmentContext),
     });
   }
   const removeNewStrictUserMessage = () => {
@@ -1442,6 +1456,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
     });
   }
   const eventBeforeGeneration = getLatestRecentEvent(ctx)?.key ?? null;
+  let strictMainRequestStarted = false;
 
   applyLocalWorldHintsFromUserInput(ctx, cleanUserInput);
 
@@ -1451,7 +1466,25 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
   let scenePresence: ScenePresence | null = null;
   if (hasTavernGenerate) {
     const preflightHistory = state.uiMessages.slice(0, -1);
-    scenePresence = await detectScenePresence(ctx, preflightHistory, cleanUserInput);
+    try {
+      scenePresence = await detectScenePresence(ctx, preflightHistory, cleanUserInput, options.gameDevelopmentContext);
+    } catch (error) {
+      recordGenerationDebug(ctx, 'submit:preflight-failed', {
+        requestGenerationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (requiresCompleteMainAssistant) {
+        removeNewStrictUserMessage();
+        state.generating = false;
+        state.currentGenerationId = '';
+        state.finalizedGenerationId = '';
+        state.draft = userInput;
+        ctx.persistConversation();
+        ctx.render();
+        throw error;
+      }
+      scenePresence = null;
+    }
     if (isGenerationRunCancelled(ctx, generationToken)) {
       recordGenerationDebug(ctx, 'submit:cancelled-after-preflight', { requestGenerationId });
       if (requiresCompleteMainAssistant) {
@@ -1573,6 +1606,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       requestGenerationId,
       generator: generator === win.generateRaw ? 'generateRaw' : 'generate',
     });
+    strictMainRequestStarted = true;
     const result = await generator?.(
       generator === win.generateRaw
         ? {
@@ -1628,17 +1662,15 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       recordGenerationDebug(ctx, 'submit:cancelled-after-generate-returned', { requestGenerationId });
       if (requiresCompleteMainAssistant) {
         removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-        removeNewStrictUserMessage();
+        if (!strictMainRequestStarted) removeNewStrictUserMessage();
         throw new Error('游戏开发正文请求在主生成返回前被取消。');
       }
       return;
     }
-    const completeSceneText = requiresCompleteMainAssistant
-      ? extractCompleteTaggedReply(rawResult, 'content').trim()
-      : '';
+    const completeSceneText = requiresCompleteMainAssistant ? extractCompleteVisibleReply(rawResult).trim() : '';
     if (requiresCompleteMainAssistant && !completeSceneText) {
       removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-      throw new Error('主正文未返回完整且非空的 <content>...</content>。');
+      throw new Error('主正文未返回完整且非空的可见正文标签。支持 <content>、<正文>、<context>、<story_scene>。');
     }
 
     finalizeStreamingText(ctx, rawResult, requestGenerationId);
@@ -1651,7 +1683,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       (!selectedMainAssistant || selectedMainAssistant.sceneText !== completeSceneText)
     ) {
       removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-      throw new Error('主正文最终楼层与完整 <content> 返回值不一致。');
+      throw new Error('主正文最终楼层与完整可见正文标签不一致。');
     }
     routeReviewEligible = Boolean(selectedMainAssistant);
     if (routeReviewEligible) {
@@ -1689,7 +1721,6 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         });
       }
     }
-
     if (snapshotAssistantMessage) {
       ctx.persistConversation();
     }
@@ -1706,7 +1737,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
     if (isGenerationRunCancelled(ctx, generationToken) || error instanceof SecondaryTaskCancelledError) {
       if (requiresCompleteMainAssistant) {
         removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-        removeNewStrictUserMessage();
+        if (!strictMainRequestStarted) removeNewStrictUserMessage();
         state.currentGenerationId = '';
         state.finalizedGenerationId = '';
         state.generating = false;
@@ -1725,7 +1756,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
     });
     if (requiresCompleteMainAssistant) {
       removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-      removeNewStrictUserMessage();
+      if (!strictMainRequestStarted) removeNewStrictUserMessage();
       state.currentGenerationId = '';
       state.finalizedGenerationId = '';
       state.draft = userInput;
@@ -1804,6 +1835,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         `progress-after-text-${crypto.randomUUID()}`,
         buildProgressPrompt(state.statusData, getLatestCompletedTurnMessages(state.uiMessages), {
           includePhoneMessages: !phoneDirective,
+          gameDevelopmentTimeRange: options.gameDevelopmentTimeRange,
         }),
         null,
         {
@@ -2254,14 +2286,27 @@ async function generateSilentAnalysis(
   generationId: string,
   prompts: RawPrompt[],
   kind: Extract<SecondaryTaskKind, 'phone-directive-detect' | 'scene-presence' | 'phone-scene-extract'>,
+  options: { requireConfiguredSecondaryApi?: boolean } = {},
 ): Promise<string> {
-  return runSecondaryTask({
-    win: ctx.win,
-    kind,
-    generationId,
-    prompts,
-    apiConfig: ctx.summaryApiConfig,
-  }).catch(() => '');
+  if (options.requireConfiguredSecondaryApi && !ctx.summaryApiConfig) {
+    throw new Error('游戏开发规划未执行：请先在总结设置中启用并保存副 API 配置。');
+  }
+  try {
+    return await runSecondaryTask({
+      win: ctx.win,
+      kind,
+      generationId,
+      prompts,
+      apiConfig: ctx.summaryApiConfig,
+    });
+  } catch (error) {
+    if (options.requireConfiguredSecondaryApi) {
+      throw new Error(
+        `游戏开发规划副 API 失败：${error instanceof Error ? error.message : String(error || '未知错误')}`,
+      );
+    }
+    return '';
+  }
 }
 
 function countCompletedSummaryFloors(messages: UiMessage[]): number {
@@ -2605,7 +2650,12 @@ function buildSceneSummaryContextLines(ctx: ActionContext): string[] {
   return lines;
 }
 
-function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[], userInput: string): RawPrompt[] {
+function buildScenePresencePrompts(
+  ctx: ActionContext,
+  promptHistory: UiMessage[],
+  userInput: string,
+  gameDevelopmentContext?: string,
+): RawPrompt[] {
   const cleanUserInput = sanitizePromptInputText(userInput);
   const recentVisible = promptHistory
     .filter(message => !message.streaming && (message.role === 'user' || message.role === 'assistant'))
@@ -2649,6 +2699,7 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
   });
   const establishedRelationshipFacts = buildEstablishedRelationshipFactLines(ctx);
   const sceneSummaryContext = buildSceneSummaryContextLines(ctx);
+  const gameTurnContext = String(gameDevelopmentContext ?? '').trim();
 
   const systemPrompt = [
     '你是夏野雾姬，出自《狗与剪刀的正确用法》：冷峻、毒舌、才华锋利的天才小说家，也是会把粗劣桥段一眼剖开的文学少女。',
@@ -2656,6 +2707,14 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     '原作不是铁轨，只是旧稿、人物底色与主题母本；User 的行动、记忆、关系和选择都是新大纲里的有效变量。',
     '请以秋山忍改稿的眼光阅读它：保留角色最香的骨头，删掉廉价回轨，指出下一页应该顺着哪条新因果继续写。',
     '你只在页边留下干净的判定，不替作者续写下一段，不说角色台词，不把审稿时的思路写出来。',
+    ...(gameTurnContext
+      ? [
+          '',
+          '本轮游戏开发约束（与主正文 API 读取的是同一份隐藏上下文）：',
+          gameTurnContext,
+          '- 把行动、对象、阶段和玩家正文一起纳入下一页规划；这些约束只用于规划，不得当成玩家说出口的文字。',
+        ]
+      : []),
     '',
     '角色名单：',
     targets || '无',
@@ -2700,6 +2759,12 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
     '- time 必须是完整 `YYYY-MM-DD HH:mm`（HH:mm 按剧情合理给，缺信息给该时段的代表时刻）。',
     '- confidence：目标日期/时段非常明确取 "high"；含糊、需要猜测、多日期无法确定目标时取 "low"。只有 high 会被系统采纳。',
     '- 没有任何明确时间推进时，省略 timeProposal 或给 null。',
+    ...(gameTurnContext
+      ? [
+          '- 游戏开发例外：隐藏上下文里的 date_range_start 是本楼层必须进入的阶段开始日。若它晚于当前世界时间，即使玩家正文规划没有重复日期，也要输出该开始日的 high timeProposal；只推进到开始日，禁止提前推进到 date_range_end。',
+          '- date_range_end 只交给主正文演出和生成后的变量更新判断；preflight 不得在正文生成前直接跳到阶段末日。',
+        ]
+      : []),
     '',
     '页边判断（蝴蝶效应）：',
     '- 不要把“气氛变了”误写成“剧情变了”。只有玩家这一笔真的拨动因果线，才让 rippleLevel 高于 none。',
@@ -2760,6 +2825,7 @@ function buildScenePresencePrompts(ctx: ActionContext, promptHistory: UiMessage[
         recentVisible || '（无）',
         '',
         `玩家当前输入：${cleanUserInput || '（无）'}`,
+        ...(gameTurnContext ? ['', '游戏开发选择已由上方隐藏上下文给出，不要要求玩家在正文里重复选择。'] : []),
         '',
         '请输出 JSON，格式如下（无时间推进时省略 timeProposal 或置 null）：',
         '{"present":["角色id"],"focus":["角色id"],"absent":["角色id"],"uncertain":["角色id"],"evidence":{"角色id":"一句话依据"},"timeProposal":{"time":"YYYY-MM-DD HH:mm","confidence":"high|low","source":"explicit_player_transition|narrative_transition|none","reason":"一句话依据"},"plotImpact":{"shiftLevel":"none|minor_shift|branch_pressure|major_divergence|route_override","currentEventShould":"continue|continue_with_adjustment|pause|delay|skip|branch|override","causalTrace":["玩家输入造成的直接变化","该变化会影响的角色即时反应","下一页必须承认的剧情偏转"],"butterflyEffects":{"rippleLevel":"none|faint|clear|major","shortTermEffects":["本轮或下一轮必须体现的具体涟漪"],"midTermEffects":["当前事件结束前可能出现的后续影响"],"routeDamage":"none|light|medium|heavy"},"mainApiGuidance":"一句话页边批注"},"appearanceGuards":[{"id":"角色id","mustFollow":["已知外貌锚点或 unknown"],"mustNotInvent":["不得脑补项"],"sourcePolicy":"only_worldbook_card_or_recent_text"}],"recallPlan":{"currentWritingNeed":["镜头连续性|人物骨头|关系变化|剧情压力|主题母本|新变量影响|外貌硬设定|其他"],"userVariableImpact":[{"type":"additive|pressure_solver|pressure_creator|role_replacer|trigger_rewriter|trauma_contact|relationship_mutator|theme_carrier|route_seed|route_breaker","target":"被影响的角色、事件、压力、主题或关系","evidence":"一句话证据","importance":"low|medium|high"}],"summaryRecall":[{"sourceLevel":"global|major|minor","queryHint":"摘要召回关键词","content":"从摘要中抽取的应注入正文的记忆点","reason":"为什么本轮必须注入","useInNextPage":"正文下一页怎样使用它"}],"mustRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"摘要召回关键词","reason":"为什么漏掉它会让主 API 写错","priority":1}],"niceToRecall":[{"type":"fact|event|relation|task|secret|appearance|route|worldbook|trauma|theme","queryHint":"可选摘要线索","reason":"为什么它有帮助但不是必须"}],"mustSuppress":[{"queryHint":"本轮不该召回或不该强化的旧稿惯性、过期记忆、原作桥段","reason":"它会怎样污染当前新大纲"}],"mainApiGuidance":"一句话说明下一页应该顺着哪条新因果写","kirihimeVerdict":"夏野雾姬式短评：这轮召回真正要保护什么"},"webLookupPlan":[{"intent":"fact_check|appearance|canon_timeline|detail","query":"核心实体在前 + 待核验属性的短搜索词；无需联网时输出空数组","reason":"要校准的具体外部事实与本地资料不足原因"}]}',
@@ -3012,17 +3078,19 @@ async function detectScenePresence(
   ctx: ActionContext,
   promptHistory: UiMessage[],
   userInput: string,
+  gameDevelopmentContext?: string,
 ): Promise<ScenePresence> {
   // 中文注释：镜头判定只服务本轮 prompt 注入，不写入存档；失败时保守地不注入任何角色强规则。
-  if (!ctx.state.statusData.targets.length) {
+  if (!ctx.state.statusData.targets.length && !gameDevelopmentContext) {
     return { presentIds: [], focusIds: [], absentIds: [], uncertainIds: [], evidence: {} };
   }
   const generationId = `scene-presence-${crypto.randomUUID()}`;
   const rawResult = await generateSilentAnalysis(
     ctx,
     generationId,
-    buildScenePresencePrompts(ctx, promptHistory, userInput),
+    buildScenePresencePrompts(ctx, promptHistory, userInput, gameDevelopmentContext),
     'scene-presence',
+    { requireConfiguredSecondaryApi: Boolean(gameDevelopmentContext) },
   );
   const committed = commitScenePresenceAnalysis(ctx, rawResult);
   const { presence } = committed;

@@ -6,8 +6,11 @@ import {
   applyGameDevelopmentSettlement,
   calculateGameDevelopmentSettlement,
   emptyGameDevelopmentDraft,
+  getGameDevelopmentCalendarWeekStartForPhase,
+  getGameDevelopmentPhaseCalendarRange,
   getInitialGameDevelopmentCalendarWeekStart,
   isGameDevelopmentVariantForFamily,
+  parseGameDevelopmentDateTimestamp,
   resolveGameDevelopmentRouteProfile,
   validateGameDevelopmentDraft,
   type GameDevelopmentRuleResult,
@@ -97,13 +100,16 @@ export function readGameDevelopmentState(
   receipt: PlotRouteChoiceReceipt,
   resolution: PlotRouteResolution,
   currentTime = new Date().toISOString(),
+  options?: { readonly recoverInterruptedTurn?: boolean },
 ): GameDevelopmentState {
   const initial = createInitialGameDevelopmentState(receipt, resolution);
   const raw = readStoredGameDevelopmentValue(db);
   if (!raw) return initial;
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (isMatchingV3State(parsed, initial)) return normalizeLoadedGameDevelopmentState(parsed);
+    if (isMatchingV3State(parsed, initial)) {
+      return options?.recoverInterruptedTurn ? normalizeLoadedGameDevelopmentState(parsed, currentTime) : parsed;
+    }
     const legacy = parsed as LegacyGameDevelopmentState;
     if (!legacyStateMatchesReceipt(legacy, receipt, initial.routeConfirmationId)) return initial;
     return migrateLegacyGameDevelopmentState(legacy, initial, currentTime);
@@ -126,12 +132,14 @@ export function commitGameDevelopmentState(db: IslandMemoryDB, state: GameDevelo
 export function createGameDevelopmentProject(
   state: GameDevelopmentState,
   details: Pick<GameDevelopmentProject, 'title' | 'genre' | 'theme' | 'platform'>,
+  startedAt = state.routeEnteredAt,
 ): GameDevelopmentRuleResult<GameDevelopmentState> {
   if (state.projectStatus !== 'not_created') return rejected('项目已经建立。');
   const title = details.title.trim();
   if (!title) return rejected('请先填写游戏名。');
   return accepted({
     ...state,
+    calendarWeekStart: getGameDevelopmentCalendarWeekStartForPhase(startedAt, 'workday'),
     projectStatus: 'active',
     project: {
       ...state.project,
@@ -163,6 +171,7 @@ export function prepareGameDevelopmentTurn(
     routeFamily: state.routeFamily,
     routeVariant: state.routeVariant,
     routeEnteredAt: state.routeEnteredAt,
+    calendarWeekStart: state.calendarWeekStart,
     week: state.week,
     phase: validation.value.phase,
     actionId: validation.value.actionId,
@@ -398,6 +407,24 @@ export function rollbackGameDevelopmentTurn(
   } as GameDevelopmentState;
 }
 
+export function restorePendingGameDevelopmentTurnForRollback(state: GameDevelopmentState): GameDevelopmentState {
+  const pending = state.pendingTurn;
+  if (!pending) return state;
+  const snapshot = pending.preTurnSnapshot;
+  return {
+    ...state,
+    project: snapshot.project,
+    projectStatus: snapshot.projectStatus,
+    week: snapshot.week,
+    calendarWeekStart: snapshot.calendarWeekStart,
+    activePhase: snapshot.activePhase,
+    draft: snapshot.draft,
+    pendingTurn: null,
+    turnLedger: state.turnLedger.slice(0, snapshot.completedTurnCount),
+    migration: snapshot.migration,
+  } as GameDevelopmentState;
+}
+
 export function getLastCompletedGameDevelopmentTurn(state: GameDevelopmentState): CompletedGameDevelopmentTurn | null {
   return state.turnLedger[state.turnLedger.length - 1] ?? null;
 }
@@ -444,20 +471,35 @@ function captureGameDevelopmentRollbackSnapshot(
   } as GameDevelopmentRollbackSnapshot;
 }
 
-function normalizeLoadedGameDevelopmentState(state: GameDevelopmentState): GameDevelopmentState {
-  if (state.pendingTurn?.status !== 'generating') return state;
-  return {
-    ...state,
-    pendingTurn: {
-      ...state.pendingTurn,
-      status: 'prepared',
-      generationAttemptId: null,
-      failurePhase: null,
-      assistantReceipt: null,
-      failureReason: null,
-      completedAt: null,
-    },
-  } as GameDevelopmentState;
+function normalizeLoadedGameDevelopmentState(state: GameDevelopmentState, currentTime: string): GameDevelopmentState {
+  const pending = state.pendingTurn;
+  let normalized = state;
+  if (pending) {
+    if (
+      pending.status === 'commit_pending' ||
+      (pending.status === 'failed' && pending.failurePhase === 'accepted_commit')
+    ) {
+      return state;
+    }
+
+    // 老存档可能在 prepared/generating/生成失败时关闭页面；这些状态没有已接受正文，
+    // 加载后应恢复提交前选择，不能永久显示“回合处理中”。
+    normalized = restorePendingGameDevelopmentTurnForRollback(state);
+  }
+
+  if (normalized.projectStatus !== 'active' || normalized.pendingTurn) return normalized;
+  const currentTimestamp = parseGameDevelopmentDateTimestamp(currentTime);
+  if (currentTimestamp === null) return normalized;
+  const currentRange = getGameDevelopmentPhaseCalendarRange(normalized, normalized.activePhase);
+  const rangeEndTimestamp = parseGameDevelopmentDateTimestamp(currentRange.end);
+  if (rangeEndTimestamp === null || currentTimestamp <= rangeEndTimestamp) return normalized;
+
+  // 旧项目可能在路线确认后很久才真正建立，导致项目仍显示三月、世界已经进入四月。
+  // 当前阶段已经完全落后于世界时间时，把这一阶段重锚到当前/下一可用周，禁止正文倒叙推进。
+  const calendarWeekStart = getGameDevelopmentCalendarWeekStartForPhase(currentTime, normalized.activePhase);
+  return calendarWeekStart === normalized.calendarWeekStart
+    ? normalized
+    : ({ ...normalized, calendarWeekStart } as GameDevelopmentState);
 }
 
 function migrateLegacyGameDevelopmentState(

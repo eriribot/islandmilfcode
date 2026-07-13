@@ -7,8 +7,9 @@ import type {
   GameDevelopmentTurnPhase,
   PreparedGameDevelopmentTurn,
 } from './types';
+import { getGameDevelopmentPhaseCalendarRange } from './rules';
 
-export const GAME_DEVELOPMENT_PROMPT_VERSION = 'game-development-turn.v1';
+export const GAME_DEVELOPMENT_PROMPT_VERSION = 'game-development-turn.v2';
 
 export type GameDevelopmentFrozenPayload = {
   readonly actionInstanceId: GameDevelopmentActionInstanceId;
@@ -16,6 +17,7 @@ export type GameDevelopmentFrozenPayload = {
   readonly routeFamily: string;
   readonly routeVariant: string;
   readonly routeEnteredAt: string;
+  readonly calendarWeekStart?: string;
   readonly week: number;
   readonly phase: GameDevelopmentTurnPhase;
   readonly actionId: GameDevelopmentActionId;
@@ -35,6 +37,20 @@ export function buildGameDevelopmentNarrativeContext(
   payload: GameDevelopmentFrozenPayload & { readonly frozenPayloadFingerprint: string },
   project: GameDevelopmentProject,
 ): string {
+  const dateRange =
+    payload.promptVersion === 'game-development-turn.v2' && payload.calendarWeekStart
+      ? getGameDevelopmentPhaseCalendarRange(
+          {
+            calendarWeekStart: payload.calendarWeekStart,
+            routeEnteredAt: payload.routeEnteredAt,
+            week: payload.week,
+          },
+          payload.phase,
+        )
+      : null;
+  const visibleDateLabel = dateRange
+    ? `${formatChineseDate(dateRange.start)}—${formatChineseDate(dateRange.end)}`
+    : '';
   return [
     '[GAME_DEVELOPMENT_TURN]',
     `action_instance_id=${payload.actionInstanceId}`,
@@ -42,6 +58,13 @@ export function buildGameDevelopmentNarrativeContext(
     `route_family=${payload.routeFamily}`,
     `route_variant=${payload.routeVariant}`,
     `route_entered_at=${payload.routeEnteredAt}`,
+    ...(dateRange
+      ? [
+          `date_range_start=${dateRange.start}`,
+          `date_range_end=${dateRange.end}`,
+          `visible_date_label=${visibleDateLabel}`,
+        ]
+      : []),
     `week=${payload.week}`,
     `phase=${payload.phase}`,
     `action_id=${payload.actionId}`,
@@ -56,6 +79,12 @@ export function buildGameDevelopmentNarrativeContext(
     payload.phase === 'workday'
       ? 'phase_boundary=只演出本周工作日开发，不提前演出周末安排。'
       : 'phase_boundary=只演出本周周末休息或约会，不追加第二次开发结算。',
+    ...(dateRange
+      ? [
+          `date_contract=本回合计划覆盖 ${visibleDateLabel}；主正文必须把这段计划落实为实际剧情时期。`,
+          `visible_date_contract=可见正文第一行必须单独写“时间：${visibleDateLabel}”，正文叙事必须覆盖这一时间段；不得只写周几、某天或省略日期。`,
+        ]
+      : []),
     'channel_boundary=规划、调试文本、数值表和结算说明不得进入 Galgame 可见正文。',
     '[/GAME_DEVELOPMENT_TURN]',
   ].join('\n');
@@ -124,6 +153,7 @@ function frozenPayloadFromTurn(turn: PreparedGameDevelopmentTurn): GameDevelopme
     routeFamily: turn.routeFamily,
     routeVariant: turn.routeVariant,
     routeEnteredAt: turn.routeEnteredAt,
+    ...(turn.calendarWeekStart ? { calendarWeekStart: turn.calendarWeekStart } : {}),
     week: turn.week,
     phase: turn.phase,
     actionId: turn.actionId,
@@ -134,6 +164,11 @@ function frozenPayloadFromTurn(turn: PreparedGameDevelopmentTurn): GameDevelopme
     settlement: turn.settlement,
     promptVersion: turn.promptVersion,
   };
+}
+
+function formatChineseDate(value: string): string {
+  const [year, month, day] = value.split('-');
+  return `${year}年${month}月${day}日`;
 }
 
 function singleLine(value: string): string {
