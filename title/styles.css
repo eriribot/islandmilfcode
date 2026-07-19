@@ -566,7 +566,7 @@
   width: min(640px, calc(100vw - 32px));
   max-height: min(calc(100svh - 48px), 620px);
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid rgba(230, 214, 205, 0.78);
   border-radius: 18px;
@@ -685,6 +685,31 @@
   color: #b0a08a;
   font-family: 'Klee One', serif;
   font-size: 0.86rem;
+  text-align: center;
+}
+
+.gal-loadsave__recovery {
+  display: grid;
+  gap: 6px;
+  margin: 0 18px 18px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(220, 210, 195, 0.56);
+}
+
+.gal-loadsave__recovery button {
+  min-height: 38px;
+  border: 1px solid rgba(184, 92, 110, 0.24);
+  border-radius: 10px;
+  color: #9b5064;
+  background: rgba(255, 247, 249, 0.88);
+  font: 700 0.86rem/1.2 'Klee One', serif;
+  cursor: pointer;
+}
+
+.gal-loadsave__recovery small {
+  color: #a39280;
+  font-size: 0.72rem;
+  line-height: 1.45;
   text-align: center;
 }
 

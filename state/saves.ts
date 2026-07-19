@@ -109,6 +109,11 @@ function normalizePersistedIllustration(illustration: NonNullable<PersistedMessa
 
 function collectPayloadImageAssetIds(payload: Partial<SavePayload> | null | undefined) {
   const ids = new Set<string>();
+  const playerProfile = payload?.gameState?.runtimeFlags?.playerProfile;
+  if (playerProfile && typeof playerProfile === 'object') {
+    const avatarAssetId = (playerProfile as Partial<PlayerProfile>).avatarAssetId;
+    if (avatarAssetId) ids.add(String(avatarAssetId));
+  }
   for (const message of payload?.chatLog ?? []) {
     for (const illustration of message.illustrations ?? []) {
       if (illustration.assetId) ids.add(String(illustration.assetId));
@@ -205,6 +210,7 @@ export function normalizePlayerProfile(input: unknown): PlayerProfile {
     name: fullName,
     familyName,
     givenName,
+    avatarAssetId: raw.avatarAssetId ? String(raw.avatarAssetId) : undefined,
     personality: String(raw.personality ?? ''),
     appearance: String(raw.appearance ?? ''),
     className: raw.className ? String(raw.className) : '2年A班',

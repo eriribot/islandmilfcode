@@ -69,6 +69,10 @@ export function renderLoadSaveModal() {
         `
             : '<p class="gal-loadsave__empty">暂无可读取的存档</p>'
         }
+        <div class="gal-loadsave__recovery">
+          <button type="button" data-action="restore-tavern-backup">从本机 user/files 恢复</button>
+          <small>需启用酒馆助手存档桥；清除浏览器缓存后仍可重建存档。</small>
+        </div>
       </section>
     </div>
   `;

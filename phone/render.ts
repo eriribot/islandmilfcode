@@ -36,8 +36,10 @@ import type {
 } from '../types';
 import { formatDate, formatTime } from '../variables/normalize';
 import { renderCharacterArchivePanel } from './archive';
+import { getPhoneTargetName, renderPhoneTargetAvatar } from './avatars';
 import { getPhoneHomePageItems } from './home-pagination';
 import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
+import { getPhoneRelationshipPairCount, renderPhoneRelationships } from './relationships';
 import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './types';
 import { isPlayerPhonePseudoTarget } from './types';
 
@@ -329,6 +331,7 @@ function renderPhoneHome(state: AppState) {
   const inventoryCount = getPhoneInventoryCount(state);
   const studioMeta = getV07StudioHomeMeta(state);
   const gameDevelopmentMeta = getGameDevelopmentHomeMeta(state);
+  const relationshipPairCount = getPhoneRelationshipPairCount(state);
   const apps: Array<{
     route: PhoneRoute;
     icon: string;
@@ -358,6 +361,12 @@ function renderPhoneHome(state: AppState) {
       iconType: 'image',
       label: '档案',
       meta: selectedCharacter.label,
+    },
+    {
+      route: 'app:relationships',
+      icon: '💕',
+      label: '关系',
+      meta: relationshipPairCount ? `${relationshipPairCount} 组关系` : '暂无关系',
     },
     {
       route: 'app:status',
@@ -933,39 +942,6 @@ function renderCalendarPhonePage(state: AppState) {
   `;
 }
 
-function getTargetName(target: TargetStatus) {
-  return target.name || target.alias || '角色';
-}
-
-function getTargetAvatarUrl(target: TargetStatus) {
-  const avatarUrl = target.meta?.avatarUrl;
-  const normalized = typeof avatarUrl === 'string' && avatarUrl.trim() ? avatarUrl.trim() : '';
-  if (normalized === 'https://eriribot.github.io/islandmilfcode/picresource/izumi_film.jpg') {
-    return 'https://eriribot.github.io/islandmilfcode/picresource/izumi_phone.jpg';
-  }
-  if (normalized) return normalized;
-  const haystack = [target.id, target.name, target.alias, target.meta?.worldbookEntryName]
-    .map(value => String(value ?? '').toLowerCase())
-    .join('\n');
-  if (/西宫硝子|西宮硝子|西宫|西宮|硝子|shoko|shouko|nishimiya/.test(haystack)) {
-    return 'https://eriribot.github.io/islandmilfcode/picresource/shoko_phone.jpg';
-  }
-  return '';
-}
-
-function renderTargetAvatar(target: TargetStatus) {
-  const avatarUrl = getTargetAvatarUrl(target);
-  const targetName = getTargetName(target);
-  if (avatarUrl) {
-    return `
-      <span class="phone-chat-avatar phone-chat-avatar--image">
-        <img src="${escapeHtml(avatarUrl)}" alt="${escapeHtml(targetName)}" loading="lazy" decoding="async" />
-      </span>
-    `;
-  }
-  return `<span class="phone-chat-avatar">${escapeHtml(targetName.slice(0, 1))}</span>`;
-}
-
 function getThreadPreview(thread: PhoneChatThread) {
   const last = thread.messages[thread.messages.length - 1];
   return last?.text?.trim() || '还没有消息。';
@@ -977,9 +953,9 @@ function renderPhoneThreadRow(target: TargetStatus, thread: PhoneChatThread) {
   const timestamp = last?.timestamp || '';
   return `
     <button class="phone-chat-row" data-action="open-phone-thread" data-target-id="${escapeHtml(target.id)}">
-      ${renderTargetAvatar(target)}
+      ${renderPhoneTargetAvatar(target)}
       <span class="phone-chat-copy">
-        <strong>${escapeHtml(getTargetName(target))}</strong>
+        <strong>${escapeHtml(getPhoneTargetName(target))}</strong>
         <small>${escapeHtml(getThreadPreview(thread))}</small>
       </span>
       <span class="phone-chat-meta">
@@ -993,9 +969,9 @@ function renderPhoneThreadRow(target: TargetStatus, thread: PhoneChatThread) {
 function renderPhoneContactRow(target: TargetStatus, hasThread: boolean) {
   return `
     <button class="phone-contact-row" data-action="open-phone-thread" data-target-id="${escapeHtml(target.id)}">
-      ${renderTargetAvatar(target)}
+      ${renderPhoneTargetAvatar(target)}
       <span class="phone-chat-copy">
-        <strong>${escapeHtml(getTargetName(target))}</strong>
+        <strong>${escapeHtml(getPhoneTargetName(target))}</strong>
         <small>${escapeHtml(target.stage)} · 好感 ${target.affinity} · 执念 ${target.obsession}</small>
       </span>
       <span class="phone-contact-state">${hasThread ? '继续' : '发消息'}</span>
@@ -1060,7 +1036,7 @@ function renderPhoneChatPage(state: AppState) {
 
   return `
     <section class="phone-route-page phone-app-page phone-app-page--chat" data-phone-route-view="app:chat">
-      ${renderPhoneAppHeader(state, getTargetName(target), `${target.stage} · 好感 ${target.affinity} · 执念 ${target.obsession}`)}
+      ${renderPhoneAppHeader(state, getPhoneTargetName(target), `${target.stage} · 好感 ${target.affinity} · 执念 ${target.obsession}`)}
       <div class="phone-chat-log">
         ${
           messages.length
@@ -1702,7 +1678,7 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
           <div class="settings-actions">
             <button class="settings-action" data-action="manual-save">
               <strong>手动保存</strong>
-              <span>写入当前记录、状态与摘要。</span>
+              <span>写入当前记录；启用酒馆助手存档桥后同时同步到酒馆本机数据目录。</span>
             </button>
             <button class="settings-action" data-action="return-to-title">
               <strong>返回标题</strong>
@@ -1711,6 +1687,14 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
             <button class="settings-action" data-action="export-save" ${state.activeSaveId ? '' : 'disabled'}>
               <strong>导出当前存档</strong>
               <span>下载当前进度的 JSON 备份，含记录、记忆库与摘要。</span>
+            </button>
+            <button class="settings-action" data-action="backup-save-to-tavern" ${state.activeSaveId ? '' : 'disabled'}>
+              <strong>立即备份到本机</strong>
+              <span>存档与消息汇总为一个文件，头像和正文图片写入分类目录。</span>
+            </button>
+            <button class="settings-action" data-action="restore-tavern-backup">
+              <strong>从本机备份恢复</strong>
+              <span>读取 SillyTavern 持久备份并重新装入头像与正文图片。</span>
             </button>
             <button class="settings-action" data-action="import-saves">
               <strong>导入存档备份</strong>
@@ -2065,6 +2049,10 @@ function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:calendar') return renderCalendarPhonePage(state);
   if (state.phoneRoute === 'app:summary') return renderSummaryPhonePage(state, renderers);
   if (state.phoneRoute === 'app:archive') return renderArchivePhonePage(state);
+  if (state.phoneRoute === 'app:relationships') {
+    const count = getPhoneRelationshipPairCount(state);
+    return renderPhoneRelationships(state, renderPhoneAppHeader(state, '关系图谱', count ? `${count} 组已识别关系` : '读取当前存档词条'));
+  }
   if (state.phoneRoute === 'app:status') return renderStatusPhonePage(state, renderers);
   if (state.phoneRoute === 'app:inventory') return renderInventoryPhonePage(state.statusData, state, renderers);
   if (state.phoneRoute === 'app:memory') return renderMemoryPhonePage(state);

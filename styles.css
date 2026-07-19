@@ -2225,6 +2225,56 @@ button {
   gap: 10px;
 }
 
+.player-profile-avatar {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  box-shadow: 0 4px 12px rgba(78, 61, 88, 0.16);
+}
+
+.player-avatar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid var(--paper-line);
+}
+
+.player-avatar-controls button {
+  flex: 1 1 112px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid rgba(107, 78, 158, 0.2);
+  border-radius: 10px;
+  color: var(--ink-assistant);
+  background: rgba(107, 78, 158, 0.07);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.player-avatar-controls .player-avatar-controls__primary {
+  color: #fff;
+  border-color: rgba(107, 78, 158, 0.72);
+  background: linear-gradient(135deg, #8a69ad, #684988);
+}
+
+.player-avatar-controls button:focus-visible {
+  outline: 2px solid rgba(107, 78, 158, 0.58);
+  outline-offset: 2px;
+}
+
+.player-avatar-controls > span {
+  flex: 1 0 100%;
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
 .meter-head {
   margin: 12px 0 6px;
   display: flex;

@@ -11,6 +11,7 @@ import { splitTextByImageGenerationAnchors } from './plugins/image-generation';
 import { isPaperWorkspaceFullscreen, renderPaperFullscreenButton } from './plugins/fullscreen';
 import { getCachedImageAssetObjectUrl } from './state/image-assets';
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
+import { renderPhoneAvatar } from './phone/avatars';
 import type { SummaryStore } from './summary/types';
 import type {
   AppState,
@@ -1589,6 +1590,10 @@ export function renderStatusPanel(state: AppState): string {
   const playerGivenName = playerProfile.givenName;
   const playerPersonality = playerProfile.personality || '待补充';
   const playerAppearance = playerProfile.appearance || '待补充';
+  const playerAvatar = renderPhoneAvatar(
+    { name: playerName, avatarAssetId: playerProfile.avatarAssetId },
+    'player-profile-avatar',
+  );
   const profileEditing = state.playerProfileEditing || false;
   const currentMainEventId = statusData.world.currentMainEventId;
   const currentMainEventStatus = statusData.world.mainEvents[currentMainEventId];
@@ -1659,11 +1664,19 @@ export function renderStatusPanel(state: AppState): string {
       <div class="panel-scroll" data-scroll-region="status">
         <div class="hero-card">
           <div class="hero-row">
-            <div class="avatar-badge">${escapeHtml(playerName)}</div>
+            ${playerAvatar}
             <div>
               <div class="hero-name">${escapeHtml(playerName)}</div>
               <div class="hero-sub">${escapeHtml(playerClass)} · ${escapeHtml(playerGender)}</div>
             </div>
+          </div>
+          <div class="player-avatar-controls" aria-label="玩家头像设置">
+            <button type="button" class="player-avatar-controls__primary" data-action="choose-player-avatar">
+              ${playerProfile.avatarAssetId ? '更换头像' : '选择头像'}
+            </button>
+            ${playerProfile.avatarAssetId ? '<button type="button" data-action="remove-player-avatar">恢复姓名首字</button>' : ''}
+            <span>保存在当前存档，用于手机消息与关系图；支持 Android 相册选择。</span>
+            <input type="file" data-field="player-avatar-file" accept="image/*" hidden />
           </div>
         </div>
 

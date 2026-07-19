@@ -5,6 +5,7 @@ export type PhoneRoute =
   | 'app:calendar'
   | 'app:summary'
   | 'app:archive'
+  | 'app:relationships'
   | 'app:status'
   | 'app:inventory'
   | 'app:memory'

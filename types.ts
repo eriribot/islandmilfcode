@@ -52,6 +52,7 @@ export type PlayerProfile = {
   name: string;
   familyName: string;
   givenName: string;
+  avatarAssetId?: string;
   gender?: string;
   personality: string;
   appearance: string;

@@ -26,6 +26,7 @@ export type TitleCallbacks = {
   }) => void;
   deleteSave: (saveId: string) => void;
   exportSave: (saveId: string) => void;
+  restoreTavernBackup: () => void;
   render: () => void;
 };
 
@@ -131,6 +132,10 @@ export function bindTitleHomeEvents(root: HTMLElement | null, cb: TitleCallbacks
       cb.deleteSave(saveId);
       cb.render();
     });
+  });
+
+  root?.querySelector<HTMLButtonElement>('[data-action="restore-tavern-backup"]')?.addEventListener('click', () => {
+    cb.restoreTavernBackup();
   });
 }
 

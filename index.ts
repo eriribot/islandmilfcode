@@ -32,7 +32,9 @@ import {
   invalidateReaderMessagesCache,
 } from './message-format';
 import { bindFloatingPhoneEvents, loadFloatingPhonePosition, syncFloatingPhoneAfterResize } from './phone/floating';
+import { bindPhoneAvatarFallbacks } from './phone/avatars';
 import { clampPhoneHomePageToCount } from './phone/home-pagination';
+import { bindPhoneRelationshipEvents } from './phone/relationships';
 import {
   closePhoneRoute,
   getRouteForTab,
@@ -96,7 +98,14 @@ import {
   setActiveRunId,
   setActiveSaveId,
   writeAutosave,
+  type SingleSaveBackupPayload,
 } from './state/saves';
+import {
+  isTavernFileBackupAvailable,
+  listTavernFileBackups,
+  readTavernFileBackup,
+  writeTavernFileBackup,
+} from './state/tavern-file-backup';
 import { flushSaveStore, getSaveStoreDiagnostics, initSaveStore } from './state/save-store';
 import {
   flushImageAssetStore,
@@ -310,7 +319,11 @@ const eventStops: Array<() => void> = [];
 let worldbookRefreshRetryTimer: number | null = null;
 let worldbookRefreshRetryToken = 0;
 const AUTOSAVE_DEBOUNCE_MS = 400;
+const TAVERN_FILE_BACKUP_DEBOUNCE_MS = 12_000;
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+let tavernFileBackupTimer: ReturnType<typeof setTimeout> | null = null;
+let tavernFileBackupInFlight = false;
+let queuedTavernFileBackupSaveId: string | null = null;
 
 function readDeepSeekModeEnabledPreference() {
   try {
@@ -514,6 +527,7 @@ function writeCurrentAutosave() {
   if (meta) {
     state.activeSaveId = meta.saveId;
     setActiveSaveId(meta.saveId);
+    scheduleTavernFileBackup(meta.saveId);
   }
 }
 
@@ -566,6 +580,12 @@ async function persistManualSave() {
   setActiveSaveId(meta.saveId);
   // 用户主动存档：等 IndexedDB 落盘完成，避免下一秒刷新就丢。
   await Promise.all([flushImageAssetStore(), flushSaveStore()]);
+  try {
+    await persistSaveToTavernFiles(meta.saveId);
+  } catch (error) {
+    console.warn('[saves] browser save succeeded but tavern file backup failed:', error);
+    window.alert(`浏览器存档已保存，但本机文件备份失败：${(error as Error).message}`);
+  }
 }
 
 async function downloadSaveBackup(saveId: string) {
@@ -590,26 +610,144 @@ async function downloadSaveBackup(saveId: string) {
   }
 }
 
-function savePlayerProfileFromStatusPanel() {
-  const getProfileFieldValue = (field: string) =>
+async function createCurrentSingleSaveBackup(saveId: string): Promise<SingleSaveBackupPayload> {
+  await Promise.all([flushImageAssetStore(), flushSaveStore()]);
+  const json = (await exportSaveAsJsonPartsWithAssets(saveId)).join('');
+  return JSON.parse(json) as SingleSaveBackupPayload;
+}
+
+async function persistSaveToTavernFiles(saveId: string) {
+  if (!isTavernFileBackupAvailable()) {
+    throw new Error('酒馆助手本机存档桥当前不可用，请确认脚本已导入并启用。');
+  }
+  let resolvedSaveId = saveId;
+  if (state.activeRunId && state.activeSaveId === saveId && autosaveTimer) {
+    flushPendingAutosave();
+    resolvedSaveId = state.activeSaveId ?? saveId;
+  }
+  return writeTavernFileBackup(await createCurrentSingleSaveBackup(resolvedSaveId));
+}
+
+function scheduleTavernFileBackup(saveId: string) {
+  if (!isTavernFileBackupAvailable()) return;
+  queuedTavernFileBackupSaveId = saveId;
+  if (tavernFileBackupTimer) clearTimeout(tavernFileBackupTimer);
+  tavernFileBackupTimer = setTimeout(() => {
+    tavernFileBackupTimer = null;
+    const queuedSaveId = queuedTavernFileBackupSaveId;
+    if (!queuedSaveId) return;
+    if (tavernFileBackupInFlight) {
+      scheduleTavernFileBackup(queuedSaveId);
+      return;
+    }
+    queuedTavernFileBackupSaveId = null;
+    tavernFileBackupInFlight = true;
+    void persistSaveToTavernFiles(queuedSaveId)
+      .catch(error => console.warn('[saves] automatic tavern file backup failed:', error))
+      .finally(() => {
+        tavernFileBackupInFlight = false;
+        if (queuedTavernFileBackupSaveId) scheduleTavernFileBackup(queuedTavernFileBackupSaveId);
+      });
+  }, TAVERN_FILE_BACKUP_DEBOUNCE_MS);
+}
+
+function formatTavernBackupTime(value: number): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '时间未知';
+  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+async function restoreSaveFromTavernFiles() {
+  if (!isTavernFileBackupAvailable()) {
+    window.alert('酒馆助手本机存档桥当前不可用，请确认脚本已导入并启用；也可以使用 JSON 导入。');
+    return;
+  }
+  try {
+    const backups = await listTavernFileBackups();
+    if (!backups.length) {
+      window.alert('SillyTavern 本机数据目录中还没有可恢复的备份。');
+      return;
+    }
+    const choices = backups
+      .map((item, index) => `${index + 1}. ${item.playerName} · ${item.label} · ${formatTavernBackupTime(item.updatedAt)}`)
+      .join('\n');
+    const rawChoice = window.prompt(`输入要恢复的序号：\n\n${choices}`, '1');
+    if (rawChoice === null) return;
+    const selected = backups[Number(rawChoice) - 1];
+    if (!selected) {
+      window.alert('序号无效，没有恢复任何存档。');
+      return;
+    }
+    const backup = await readTavernFileBackup(selected.saveId);
+    const result = importAllSavesFromJson(JSON.stringify(backup));
+    await Promise.all([flushImageAssetStore(), flushSaveStore()]);
+    window.alert(`已从 SillyTavern 本机数据目录恢复 ${result.imported} 个存档，即将刷新页面。`);
+    location.reload();
+  } catch (error) {
+    window.alert(`恢复本机备份失败：${(error as Error).message}`);
+  }
+}
+
+function applyPlayerProfileDraftFromStatusPanel() {
+  if (!state.playerProfileEditing) return;
+  const familyNameField = root?.querySelector<HTMLInputElement>('[data-profile-field="familyName"]');
+  if (!familyNameField) return;
+  const getValue = (field: string) =>
     root?.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[data-profile-field="${field}"]`)?.value ?? '';
-
-  const familyName = getProfileFieldValue('familyName');
-  const givenName = getProfileFieldValue('givenName');
-  const personality = getProfileFieldValue('personality');
-  const appearance = getProfileFieldValue('appearance');
-
-  const trimmedFamilyName = familyName.trim();
-  const trimmedGivenName = givenName.trim();
-
+  const familyName = familyNameField.value.trim();
+  const givenName = getValue('givenName').trim();
   state.playerProfile = {
     ...state.playerProfile,
-    familyName: trimmedFamilyName,
-    givenName: trimmedGivenName,
-    name: trimmedFamilyName + trimmedGivenName,
-    personality: personality.trim(),
-    appearance: appearance.trim(),
+    familyName,
+    givenName,
+    name: familyName + givenName,
+    personality: getValue('personality').trim(),
+    appearance: getValue('appearance').trim(),
   };
+}
+
+function readImageFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error ?? new Error('读取头像图片失败。'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function getSupportedAvatarMimeType(file: File): string {
+  const normalizedMimeType = file.type.toLowerCase();
+  if (['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'].includes(normalizedMimeType)) {
+    return normalizedMimeType === 'image/jpg' ? 'image/jpeg' : normalizedMimeType;
+  }
+  const extension = file.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';
+  return ({
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+    gif: 'image/gif',
+  } as Record<string, string>)[extension] ?? '';
+}
+
+async function setPlayerAvatarFromFile(file: File) {
+  const mimeType = getSupportedAvatarMimeType(file);
+  if (!mimeType) throw new Error('请选择 PNG、JPG、WebP 或 GIF 图片。');
+  if (file.size > 8 * 1024 * 1024) throw new Error('头像图片不能超过 8 MB。');
+  applyPlayerProfileDraftFromStatusPanel();
+  const rawDataUrl = await readImageFileAsDataUrl(file);
+  const imageDataUrl = /^data:image\//i.test(rawDataUrl)
+    ? rawDataUrl
+    : rawDataUrl.replace(/^data:[^;,]*/i, `data:${mimeType}`);
+  const assetId = await saveImageDataUrlAsAsset(imageDataUrl, { prompt: '玩家聊天头像' });
+  state.playerProfile.avatarAssetId = assetId;
+  syncRuntimeProfile();
+  persistToSave();
+  render();
+}
+
+function savePlayerProfileFromStatusPanel() {
+  applyPlayerProfileDraftFromStatusPanel();
   state.playerProfileEditing = false;
   persistToSave();
   render();
@@ -2588,6 +2726,8 @@ function bindPhoneHomePaginationEvents() {
 function bindEvents() {
   bindQuickReplyDelegation();
   bindPhoneHomePaginationEvents();
+  bindPhoneAvatarFallbacks(root);
+  bindPhoneRelationshipEvents(root, render);
   bindComposerEditor({
     root,
     getDraft: () => state.draft,
@@ -3265,6 +3405,25 @@ function bindEvents() {
     }
     downloadSaveBackup(state.activeSaveId);
   });
+  root?.querySelector<HTMLButtonElement>('[data-action="backup-save-to-tavern"]')?.addEventListener('click', async () => {
+    persistToSave();
+    if (!state.activeSaveId) {
+      window.alert('当前没有可备份的存档。');
+      return;
+    }
+    try {
+      const entry = await persistSaveToTavernFiles(state.activeSaveId);
+      const legacyLocations = [entry.stateFile, entry.messagesFile, entry.assetsFile].filter(Boolean).join('\n');
+      const storageLocation = entry.storagePath || legacyLocations || 'SillyTavern 本机数据目录';
+      const imageLocation = entry.imageFolders?.length ? `\n图片：${entry.imageFolders.join('、')}` : '';
+      window.alert(`本机备份完成：${storageLocation}${imageLocation}`);
+    } catch (error) {
+      window.alert(`本机备份失败：${(error as Error).message}`);
+    }
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="restore-tavern-backup"]')?.addEventListener('click', () => {
+    void restoreSaveFromTavernFiles();
+  });
   const importFileInput = root?.querySelector<HTMLInputElement>('[data-field="import-saves-file"]') ?? null;
   root?.querySelector<HTMLButtonElement>('[data-action="import-saves"]')?.addEventListener('click', () => {
     importFileInput?.click();
@@ -3301,6 +3460,28 @@ function bindEvents() {
     });
   root?.querySelector<HTMLButtonElement>('[data-action="edit-player-profile"]')?.addEventListener('click', () => {
     setPlayerProfileEditing(true);
+  });
+  const playerAvatarFileInput = root?.querySelector<HTMLInputElement>('[data-field="player-avatar-file"]') ?? null;
+  root?.querySelector<HTMLButtonElement>('[data-action="choose-player-avatar"]')?.addEventListener('click', () => {
+    playerAvatarFileInput?.click();
+  });
+  playerAvatarFileInput?.addEventListener('change', async () => {
+    const file = playerAvatarFileInput.files?.[0];
+    if (!file) return;
+    try {
+      await setPlayerAvatarFromFile(file);
+    } catch (error) {
+      window.alert(`头像保存失败：${(error as Error).message}`);
+    } finally {
+      playerAvatarFileInput.value = '';
+    }
+  });
+  root?.querySelector<HTMLButtonElement>('[data-action="remove-player-avatar"]')?.addEventListener('click', () => {
+    applyPlayerProfileDraftFromStatusPanel();
+    delete state.playerProfile.avatarAssetId;
+    syncRuntimeProfile();
+    persistToSave();
+    render();
   });
   root
     ?.querySelector<HTMLButtonElement>('[data-action="cancel-player-profile-edit"]')
@@ -3622,6 +3803,9 @@ const titleCallbacks: TitleCallbacks = {
   },
   exportSave: id => {
     downloadSaveBackup(id);
+  },
+  restoreTavernBackup: () => {
+    void restoreSaveFromTavernFiles();
   },
   render: () => render(),
 };

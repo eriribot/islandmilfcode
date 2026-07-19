@@ -3018,6 +3018,7 @@
 }
 
 .phone-chat-avatar {
+  position: relative;
   width: 42px;
   height: 42px;
   display: grid;
@@ -3030,10 +3031,19 @@
 }
 
 .phone-chat-avatar img {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: block;
   object-fit: cover;
+}
+
+.phone-target-avatar__fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
 }
 
 .phone-chat-copy {
@@ -4959,6 +4969,484 @@
 
 .phone-drawing-primary:active {
   transform: translateY(1px);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   存档角色关系网
+   ═══════════════════════════════════════════════════════════════ */
+
+.phone-app-page--relationships {
+  background:
+    radial-gradient(circle at 18% 6%, rgba(242, 194, 214, 0.2), transparent 28%),
+    linear-gradient(180deg, rgba(255, 252, 247, 0.97), rgba(246, 241, 235, 0.95));
+}
+
+.phone-relationship-scroll {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 10px 22px;
+  gap: 10px;
+}
+
+.phone-relationship-controls {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.phone-relationship-segments {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  flex: 1;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(78, 67, 76, 0.08);
+}
+
+.phone-relationship-segments button,
+.phone-relationship-player-toggle {
+  min-height: 28px;
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 8px;
+  color: #6e626b;
+  background: transparent;
+  font: 700 11px/1.1 "Zen Maru Gothic", sans-serif;
+  cursor: pointer;
+}
+
+.phone-relationship-segments button.is-active {
+  color: #493e47;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 1px 5px rgba(70, 52, 63, 0.12);
+}
+
+.phone-relationship-player-toggle {
+  flex: 0 0 auto;
+  border: 1px solid rgba(125, 109, 120, 0.18);
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.phone-relationship-player-toggle.is-active {
+  color: #fff;
+  border-color: #7e6a99;
+  background: #7e6a99;
+}
+
+.phone-relationship-contact-strip {
+  flex: 0 0 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: start;
+  gap: 8px 3px;
+  overflow: visible;
+  padding: 2px 1px 5px;
+}
+
+.phone-relationship-contact-strip > button {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  color: #746873;
+  background: transparent;
+  font: 700 9px/1.15 "Zen Maru Gothic", sans-serif;
+  cursor: pointer;
+}
+
+.phone-relationship-contact-strip > button > span:last-child {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  min-height: 21px;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.phone-relationship-strip-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  box-shadow: 0 2px 7px rgba(67, 52, 62, 0.13);
+}
+
+.phone-relationship-contact-strip > button.is-active .phone-relationship-strip-avatar {
+  border-color: #8e78a6;
+  box-shadow: 0 0 0 2px rgba(142, 120, 166, 0.15), 0 3px 8px rgba(67, 52, 62, 0.18);
+}
+
+.phone-relationship-contact-strip > button.is-active {
+  color: #514257;
+}
+
+.phone-relationship-legend {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: #887b84;
+  font-size: 9px;
+}
+
+.phone-relationship-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.phone-relationship-legend i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.phone-relationship-legend .is-positive { background: #d8799c; }
+.phone-relationship-legend .is-mixed { background: #9175b1; }
+.phone-relationship-legend .is-negative { background: #cf715f; }
+.phone-relationship-legend .is-neutral { background: #99a0a7; }
+
+.phone-relationship-graph {
+  position: relative;
+  min-height: 292px;
+  overflow: hidden;
+  border: 1px solid rgba(133, 110, 128, 0.14);
+  border-radius: 18px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0.52)),
+    radial-gradient(circle at 50% 48%, rgba(154, 128, 177, 0.16), transparent 43%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.phone-relationship-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.phone-relationship-line {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-dasharray: 4 3;
+  opacity: 0.76;
+}
+
+.phone-relationship-line--positive { stroke: #d8799c; }
+.phone-relationship-line--negative { stroke: #cf715f; }
+.phone-relationship-line--neutral { stroke: #99a0a7; }
+.phone-relationship-line--mixed { stroke: #9175b1; }
+
+#phone-relationship-arrow-positive path { fill: #d8799c; }
+#phone-relationship-arrow-negative path { fill: #cf715f; }
+#phone-relationship-arrow-neutral path { fill: #99a0a7; }
+#phone-relationship-arrow-mixed path { fill: #9175b1; }
+
+.phone-relationship-node {
+  position: absolute;
+  z-index: 2;
+  left: var(--relationship-x);
+  top: var(--relationship-y);
+  width: 66px;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  transform: translate(-50%, -50%);
+  border: 0;
+  padding: 0;
+  color: #5e515a;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.phone-relationship-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.96);
+  box-shadow: 0 3px 10px rgba(75, 57, 69, 0.2);
+}
+
+.phone-relationship-node.is-focus {
+  z-index: 4;
+  font-weight: 900;
+}
+
+.phone-relationship-node.is-focus .phone-relationship-avatar {
+  width: 58px;
+  height: 58px;
+  border: 3px solid #8e78a6;
+  box-shadow: 0 0 0 5px rgba(142, 120, 166, 0.12), 0 5px 15px rgba(75, 57, 69, 0.24);
+}
+
+.phone-relationship-node__name {
+  max-width: 66px;
+  overflow: hidden;
+  padding: 1px 4px;
+  border-radius: 7px;
+  background: rgba(255, 252, 248, 0.82);
+  font-size: 9px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-relationship-edge-hit {
+  position: absolute;
+  z-index: 3;
+  left: var(--relationship-x);
+  top: var(--relationship-y);
+  width: 24px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: rgba(255, 252, 248, 0.94);
+  font: 900 11px/1 sans-serif;
+  box-shadow: 0 2px 6px rgba(72, 55, 66, 0.13);
+  cursor: pointer;
+}
+
+.phone-relationship-edge-hit--positive { color: #c95e88; }
+.phone-relationship-edge-hit--negative { color: #bd5d4c; }
+.phone-relationship-edge-hit--neutral { color: #7d858c; }
+.phone-relationship-edge-hit--mixed { color: #8063a2; }
+
+.phone-relationship-more {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  color: #8a7b85;
+  font-size: 8px;
+}
+
+.phone-relationship-graph--empty {
+  overflow: visible;
+}
+
+.phone-relationship-graph--empty p {
+  position: absolute;
+  right: 16px;
+  bottom: 18px;
+  left: 16px;
+  margin: 0;
+  color: #92858e;
+  font-size: 10px;
+  text-align: center;
+}
+
+.phone-relationship-section-title {
+  color: #695a64;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.phone-relationship-details,
+.phone-relationship-list {
+  display: grid;
+  gap: 8px;
+}
+
+.phone-relationship-details {
+  padding: 10px;
+  border: 1px solid rgba(133, 110, 128, 0.13);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.phone-relationship-dialogue {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.phone-relationship-dialogue--right {
+  flex-direction: row-reverse;
+}
+
+.phone-relationship-dialogue__avatar {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  margin-top: 2px;
+}
+
+.phone-relationship-bubble {
+  position: relative;
+  width: min(82%, 245px);
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 13px;
+  color: #584b53;
+  background: rgba(255, 252, 247, 0.96);
+  box-shadow: 0 2px 8px rgba(71, 53, 65, 0.1);
+}
+
+.phone-relationship-dialogue--left .phone-relationship-bubble {
+  border-bottom-left-radius: 3px;
+}
+
+.phone-relationship-dialogue--right .phone-relationship-bubble {
+  border-bottom-right-radius: 3px;
+  background: rgba(234, 227, 241, 0.96);
+}
+
+.phone-relationship-bubble__title {
+  overflow: hidden;
+  color: #82727d;
+  font-size: 9px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-relationship-record {
+  display: grid;
+  gap: 3px;
+}
+
+.phone-relationship-record + .phone-relationship-record {
+  padding-top: 6px;
+  border-top: 1px dashed rgba(113, 91, 105, 0.16);
+}
+
+.phone-relationship-record__head,
+.phone-relationship-record__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.phone-relationship-record__head strong {
+  min-width: 0;
+  font-size: 12px;
+}
+
+.phone-relationship-source {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 2px 5px;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.phone-relationship-source--current {
+  color: #936079;
+  background: rgba(216, 121, 156, 0.13);
+}
+
+.phone-relationship-source--original {
+  color: #6d6080;
+  background: rgba(145, 117, 177, 0.13);
+}
+
+.phone-relationship-record__meta {
+  color: #786b74;
+  font-size: 9px;
+}
+
+.phone-relationship-record p {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.phone-relationship-record time {
+  color: #978b93;
+  font-size: 8px;
+}
+
+.phone-relationship-one-way,
+.phone-relationship-detail-empty,
+.phone-relationship-list-empty,
+.phone-relationship-empty {
+  border-radius: 10px;
+  padding: 8px;
+  color: #8b7d86;
+  background: rgba(103, 88, 98, 0.06);
+  font-size: 9px;
+  text-align: center;
+}
+
+.phone-relationship-list-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(128, 108, 121, 0.13);
+  border-left: 3px solid #99a0a7;
+  border-radius: 12px;
+  padding: 7px 8px;
+  color: #5e515a;
+  background: rgba(255, 255, 255, 0.68);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.phone-relationship-list-row--positive { border-left-color: #d8799c; }
+.phone-relationship-list-row--negative { border-left-color: #cf715f; }
+.phone-relationship-list-row--mixed { border-left-color: #9175b1; }
+
+.phone-relationship-list-row.is-active {
+  border-color: rgba(126, 106, 153, 0.36);
+  box-shadow: 0 2px 8px rgba(81, 62, 76, 0.1);
+}
+
+.phone-relationship-list-row__people {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: #8d7d88;
+  font-size: 9px;
+}
+
+.phone-relationship-list-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 10px;
+}
+
+.phone-relationship-list-row__copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.phone-relationship-list-row__copy strong,
+.phone-relationship-list-row__copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-relationship-list-row__copy strong {
+  font-size: 10px;
+}
+
+.phone-relationship-list-row__copy small {
+  color: #8a7d85;
+  font-size: 9px;
 }
 
 /* ═══════════════════════════════════════════════════════════════

@@ -1,4 +1,3 @@
-import { listSaves } from '../state/saves';
 import { renderLoadSaveModal } from './loadsave';
 // 复用统一的 escapeHtml：用运行时构造的实体，避免发布时被 HTML 解码破坏（见 ../html.ts）。
 import { escapeHtml } from '../html';
@@ -141,9 +140,7 @@ type TitleHomeOptions = {
 };
 
 export function renderTitleHome(options: TitleHomeOptions = {}) {
-  const saves = listSaves();
   const showSaves = options.showSaves === true;
-  const hasSaves = saves.length > 0;
 
   return `
     <div class="gal-title">
@@ -216,9 +213,8 @@ export function renderTitleHome(options: TitleHomeOptions = {}) {
           <button
             class="gal-btn gal-btn--load"
             data-action="show-saves"
-            ${hasSaves ? '' : 'disabled'}
-            aria-disabled="${hasSaves ? 'false' : 'true'}"
-            title="${hasSaves ? '读取已有存档' : '暂无可读取的存档'}"
+            aria-disabled="false"
+            title="读取浏览器存档或从本机备份恢复"
           >
             读取存档
           </button>

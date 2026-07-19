@@ -199,7 +199,11 @@ export function hydrateImageAssetElements(root: ParentNode, floorKey: string) {
         })
         .catch(error => {
           img.dataset.imageAssetError = error instanceof Error ? error.message : String(error);
-          img.classList.add('is-error');
+          if (img.hasAttribute('data-phone-avatar-image')) {
+            img.remove();
+          } else {
+            img.classList.add('is-error');
+          }
         })
         .finally(() => {
           delete img.dataset.imageAssetLoading;
