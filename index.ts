@@ -3913,8 +3913,10 @@ window.addEventListener('resize', () => {
     x: clamp(tucao.x, 8, Math.max(8, window.innerWidth - 260)),
     y: clamp(tucao.y, 8, Math.max(8, window.innerHeight - 44)),
   });
-  // 全屏模式下，安卓虚拟键盘弹出/收起会触发 resize；若此时重渲会替换掉焦点输入框，导致键盘被关闭。
-  if (isPaperWorkspaceFullscreen(state) && isEditableTarget(document.activeElement)) {
+  const activeElement = document.activeElement;
+  const isFocusedComposer = activeElement instanceof Element && activeElement.matches('.composer-input');
+  // 自动增高会让同层宿主触发 resize；此时重渲会替换正在输入的 textarea 并丢失焦点。
+  if (isEditableTarget(activeElement) && (isPaperWorkspaceFullscreen(state) || isFocusedComposer)) {
     return;
   }
   scheduleRender(); // 使用防抖渲染，避免 resize 时卡顿
