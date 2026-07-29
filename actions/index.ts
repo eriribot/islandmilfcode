@@ -161,41 +161,39 @@ function getPhoneContactTargets(ctx: Pick<ActionContext, 'state'>) {
 // 不放进 state（属于一次性流转数据，不需要存档），也不放进 ctx 类型（避免侵入）。流程顺序执行无竞态。
 let lastProgressPhoneMessages: ScenePhoneMessage[] | null = null;
 
-const GENERATION_CANCEL_TOKEN_KEY = 'generationCancelToken';
-const PHONE_CANCEL_TOKEN_KEY = 'phoneCancelToken';
 const PENDING_PHONE_TARGET_KEY = 'pendingPhoneTargetId';
 const PENDING_PHONE_MESSAGE_KEY = 'pendingPhoneMessageId';
 const PENDING_PHONE_DRAFT_KEY = 'pendingPhoneDraft';
 const PENDING_PHONE_RESTORE_DRAFT_KEY = 'pendingPhoneRestoreDraft';
 
-function getGenerationCancelToken(ctx: Pick<ActionContext, 'state'>): number {
-  return Number(ctx.state.runtimeFlags?.[GENERATION_CANCEL_TOKEN_KEY] ?? 0) || 0;
-}
-
-function getPhoneCancelToken(ctx: Pick<ActionContext, 'state'>): number {
-  return Number(ctx.state.runtimeFlags?.[PHONE_CANCEL_TOKEN_KEY] ?? 0) || 0;
-}
+// These epochs live outside persisted state on purpose. A save switch replaces
+// runtimeFlags wholesale; cancellation must still remain visible to promises
+// that were started by the previously opened save.
+let generationRunEpoch = 0;
+let phoneRunEpoch = 0;
+// Unlike generationRunEpoch, this changes only when navigation or timeline
+// surgery invalidates work that may legitimately outlive one text generation
+// (for example the throttled background image queue).
+let asyncActionInvalidationEpoch = 0;
 
 function beginGenerationRun(ctx: Pick<ActionContext, 'state'>): number {
-  const token = getGenerationCancelToken(ctx) + 1;
-  ctx.state.runtimeFlags[GENERATION_CANCEL_TOKEN_KEY] = token;
-  ctx.state.runtimeFlags.generationCancelRequested = false;
-  return token;
+  delete ctx.state.runtimeFlags.generationCancelRequested;
+  generationRunEpoch += 1;
+  return generationRunEpoch;
 }
 
 function beginPhoneRun(ctx: Pick<ActionContext, 'state'>): number {
-  const token = getPhoneCancelToken(ctx) + 1;
-  ctx.state.runtimeFlags[PHONE_CANCEL_TOKEN_KEY] = token;
-  ctx.state.runtimeFlags.phoneCancelRequested = false;
-  return token;
+  delete ctx.state.runtimeFlags.phoneCancelRequested;
+  phoneRunEpoch += 1;
+  return phoneRunEpoch;
 }
 
-function isGenerationRunCancelled(ctx: Pick<ActionContext, 'state'>, token: number): boolean {
-  return Boolean(ctx.state.runtimeFlags?.generationCancelRequested) || getGenerationCancelToken(ctx) !== token;
+function isGenerationRunCancelled(_ctx: Pick<ActionContext, 'state'>, token: number): boolean {
+  return generationRunEpoch !== token;
 }
 
-function isPhoneRunCancelled(ctx: Pick<ActionContext, 'state'>, token: number): boolean {
-  return Boolean(ctx.state.runtimeFlags?.phoneCancelRequested) || getPhoneCancelToken(ctx) !== token;
+function isPhoneRunCancelled(_ctx: Pick<ActionContext, 'state'>, token: number): boolean {
+  return phoneRunEpoch !== token;
 }
 
 function setPendingPhoneSend(
@@ -215,12 +213,31 @@ function clearPendingPhoneSend(ctx: Pick<ActionContext, 'state'>) {
   delete ctx.state.runtimeFlags[PENDING_PHONE_RESTORE_DRAFT_KEY];
 }
 
+function rollbackPendingPhoneSend(ctx: Pick<ActionContext, 'state' | 'memoryDB'>) {
+  const { state } = ctx;
+  const pendingTargetId = String(state.runtimeFlags[PENDING_PHONE_TARGET_KEY] ?? '');
+  const pendingMessageId = String(state.runtimeFlags[PENDING_PHONE_MESSAGE_KEY] ?? '');
+  const pendingDraft = String(state.runtimeFlags[PENDING_PHONE_DRAFT_KEY] ?? '');
+  const shouldRestoreDraft = Boolean(state.runtimeFlags[PENDING_PHONE_RESTORE_DRAFT_KEY]);
+  const pendingThread = pendingTargetId ? state.phoneMessages.threads[pendingTargetId] : null;
+  if (pendingThread && pendingMessageId) {
+    pendingThread.messages = pendingThread.messages.filter(message => message.id !== pendingMessageId);
+    pendingThread.updatedAt = Date.now();
+    expirePhoneMessageIndex(ctx.memoryDB, pendingMessageId);
+  }
+  if (shouldRestoreDraft && pendingDraft) state.phoneMessages.draft = pendingDraft;
+  clearPendingPhoneSend(ctx);
+}
+
 export function cancelCurrentGeneration(ctx: ActionContext) {
   const { state } = ctx;
   if (!state.generating && !state.currentGenerationId && !state.phoneMessages.generating) return;
 
-  state.runtimeFlags[GENERATION_CANCEL_TOKEN_KEY] = getGenerationCancelToken(ctx) + 1;
-  state.runtimeFlags.generationCancelRequested = true;
+  generationRunEpoch += 1;
+  phoneRunEpoch += 1;
+  delete state.runtimeFlags.generationCancelRequested;
+  delete state.runtimeFlags.phoneCancelRequested;
+  rollbackPendingPhoneSend(ctx);
   state.generating = false;
   state.phoneMessages.generating = false;
   state.currentGenerationId = '';
@@ -238,29 +255,41 @@ export function cancelPhoneMessageGeneration(ctx: ActionContext) {
   const { state } = ctx;
   if (!state.phoneMessages.generating) return;
 
-  const pendingTargetId = String(state.runtimeFlags[PENDING_PHONE_TARGET_KEY] ?? '');
-  const pendingMessageId = String(state.runtimeFlags[PENDING_PHONE_MESSAGE_KEY] ?? '');
-  const pendingDraft = String(state.runtimeFlags[PENDING_PHONE_DRAFT_KEY] ?? '');
-  const shouldRestoreDraft = Boolean(state.runtimeFlags[PENDING_PHONE_RESTORE_DRAFT_KEY]);
-  const pendingThread = pendingTargetId ? state.phoneMessages.threads[pendingTargetId] : null;
-  if (pendingThread && pendingMessageId) {
-    pendingThread.messages = pendingThread.messages.filter(message => message.id !== pendingMessageId);
-    pendingThread.updatedAt = Date.now();
-    expirePhoneMessageIndex(ctx.memoryDB, pendingMessageId);
-  }
-  if (shouldRestoreDraft && pendingDraft) {
-    state.phoneMessages.draft = pendingDraft;
-  }
-
-  state.runtimeFlags[PHONE_CANCEL_TOKEN_KEY] = getPhoneCancelToken(ctx) + 1;
-  state.runtimeFlags.phoneCancelRequested = true;
-  clearPendingPhoneSend(ctx);
+  phoneRunEpoch += 1;
+  delete state.runtimeFlags.phoneCancelRequested;
+  rollbackPendingPhoneSend(ctx);
   state.phoneMessages.generating = false;
   clearBackgroundTask(state, 'progress');
   lastProgressPhoneMessages = null;
   ctx.persistConversation();
   ctx.render();
   recordGenerationDebug(ctx, 'phone:cancel-requested');
+}
+
+/**
+ * Unconditionally invalidates all generation work before navigation or
+ * timeline surgery. Unlike the player-facing cancel buttons this also covers
+ * post-turn progress/summary promises, where the visible generating flag has
+ * already been cleared.
+ */
+export function invalidateAsyncActions(ctx: ActionContext) {
+  const { state } = ctx;
+  generationRunEpoch += 1;
+  phoneRunEpoch += 1;
+  asyncActionInvalidationEpoch += 1;
+  delete state.runtimeFlags.generationCancelRequested;
+  delete state.runtimeFlags.phoneCancelRequested;
+  rollbackPendingPhoneSend(ctx);
+  state.generating = false;
+  state.phoneMessages.generating = false;
+  state.currentGenerationId = '';
+  state.finalizedGenerationId = '';
+  lastProgressPhoneMessages = null;
+  clearBackgroundTask(state, 'progress');
+  clearBackgroundTask(state, 'plot-review');
+  clearBackgroundTask(state, 'summary');
+  discardStreamingMessage(ctx);
+  recordGenerationDebug(ctx, 'async-actions:invalidated');
 }
 
 type RawPrompt = {
@@ -692,12 +721,19 @@ async function attachIllustrationToMessage(
   prompt?: string,
   anchorIndex?: number,
   rerollContext?: ImageRerollContext,
+  isCurrent: () => boolean = () => true,
 ) {
-  const message = ctx.state.uiMessages.find(item => item.id === messageId);
-  if (!message || message.role !== 'assistant' || !imageData.trim()) return false;
+  if (!isCurrent() || !imageData.trim()) return false;
+  const beforeWrite = ctx.state.uiMessages.find(item => item.id === messageId);
+  if (!beforeWrite || beforeWrite.role !== 'assistant') return false;
 
-  const illustrations = message.illustrations ?? [];
   const assetId = await saveImageDataUrlAsAsset(imageData, { prompt });
+  if (!isCurrent()) return false;
+  // The save can be re-hydrated while the Blob is being persisted. Never keep
+  // and mutate a message object captured before that await.
+  const message = ctx.state.uiMessages.find(item => item.id === messageId);
+  if (!message || message.role !== 'assistant') return false;
+  const illustrations = message.illustrations ?? [];
   if (illustrations.some(illustration => illustration.assetId === assetId)) return false;
   message.illustrations = [
     ...illustrations,
@@ -717,6 +753,14 @@ async function attachIllustrationToMessage(
 function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
   if (!ctx.state.drawingSettings.enabled) return;
   if (!isImageGenerationPluginAvailable(ctx.win)) return;
+  const taskEpoch = asyncActionInvalidationEpoch;
+  const taskRunId = ctx.state.activeRunId;
+  const taskSaveId = ctx.state.activeSaveId;
+  const isCurrentTask = () =>
+    taskEpoch === asyncActionInvalidationEpoch
+    && ctx.state.activeRunId === taskRunId
+    && ctx.state.activeSaveId === taskSaveId;
+  if (!isCurrentTask()) return;
   const cleanUserInput = sanitizePromptInputText(userInput);
   const latest = ctx.state.uiMessages[ctx.state.uiMessages.length - 1];
   if (!latest || latest.role !== 'assistant') return;
@@ -724,6 +768,8 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
   const rawText = String(latest.rawText || latest.text || '');
   const sceneText = getVisibleMessageText(latest).trim();
   const historyContext = buildDrawingHistoryContext(ctx, userInput);
+  const drawingSettings = JSON.parse(JSON.stringify(ctx.state.drawingSettings)) as typeof ctx.state.drawingSettings;
+  const summaryApiConfig = ctx.summaryApiConfig;
   const metadata = {
     generationContext: historyContext || cleanUserInput,
     generationWorldBook: [
@@ -745,11 +791,13 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
 
   void emitCharacterDataImportFromResponse(ctx.win, rawText, metadata)
     .then(result => {
+      if (!isCurrentTask()) return;
       if (result.blockCount > 0) {
         recordGenerationDebug(ctx, 'character-data-import:emit', result);
       }
     })
     .catch(error => {
+      if (!isCurrentTask()) return;
       console.warn('[character-data-import] emit failed:', error);
       recordGenerationDebug(ctx, 'character-data-import:error', {
         error: error instanceof Error ? error.message : String(error),
@@ -772,8 +820,10 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
     let lastError = '';
 
     for (const [index, prompt] of imagePrompts.entries()) {
+      if (!isCurrentTask()) return;
       if (prompt.prompt) continue;
       if (index > 0) {
+        if (!isCurrentTask()) return;
         ctx.showNotification({
           kind: 'message',
           title: `等待发送生图 ${index + 1}/${imagePrompts.length}`,
@@ -783,16 +833,19 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
         });
         ctx.render();
         await sleep(IMAGE_GENERATION_REQUEST_INTERVAL_MS);
+        if (!isCurrentTask()) return;
       }
 
-      const result = await requestImageGeneration(ctx.win, prompt.prompt, ctx.state.drawingSettings, prompt.change, {
+      if (!isCurrentTask()) return;
+      const result = await requestImageGeneration(ctx.win, prompt.prompt, drawingSettings, prompt.change, {
         sceneText,
         rawText,
         generationContext: metadata.generationContext,
         generationWorldBook: metadata.generationWorldBook,
         userInput: cleanUserInput,
-        summaryApiConfig: ctx.summaryApiConfig,
+        summaryApiConfig,
       });
+      if (!isCurrentTask()) return;
 
       recordGenerationDebug(ctx, 'image-generation:request', {
         index: index + 1,
@@ -819,7 +872,7 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
           prompt.anchorIndex,
           {
             prompt: result.prompt ?? prompt.prompt,
-            negativePrompt: ctx.state.drawingSettings.negativePrompt?.trim() || '',
+            negativePrompt: drawingSettings.negativePrompt?.trim() || '',
             change: prompt.change,
             sceneText,
             rawText,
@@ -827,10 +880,13 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
             generationWorldBook: metadata.generationWorldBook,
             userInput: cleanUserInput,
           },
+          isCurrentTask,
         );
+        if (!isCurrentTask()) return;
         if (attached) attachedCount += 1;
       }
 
+      if (!isCurrentTask()) return;
       ctx.showNotification({
         kind: 'message',
         title:
@@ -847,6 +903,7 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
     }
 
     if (imagePrompts.length > 1) {
+      if (!isCurrentTask()) return;
       ctx.showNotification({
         kind: 'message',
         title: failedCount ? '部分生图失败' : '多张生图已处理',
@@ -863,6 +920,7 @@ function queueDrawingPluginTasks(ctx: ActionContext, userInput: string) {
       ctx.render();
     }
   })().catch(error => {
+    if (!isCurrentTask()) return;
     console.warn('[image-generation] emit failed:', error);
     recordGenerationDebug(ctx, 'image-generation:error', {
       error: error instanceof Error ? error.message : String(error),
@@ -1316,7 +1374,11 @@ function applyFullProgressUpdate(
   );
 }
 
-async function simulateGeneration(ctx: ActionContext, userInput: string) {
+async function simulateGeneration(
+  ctx: ActionContext,
+  userInput: string,
+  isCancelled: () => boolean = () => false,
+) {
   const { state } = ctx;
   const lines = [
     userInput,
@@ -1326,12 +1388,16 @@ async function simulateGeneration(ctx: ActionContext, userInput: string) {
 
   let built = '';
   for (const line of lines) {
+    if (isCancelled()) return false;
     built = built ? `${built}\n${line}` : line;
     updateStreamingText(ctx, `<content>${built}</content>`);
     await new Promise(resolve => window.setTimeout(resolve, 240));
+    if (isCancelled()) return false;
   }
 
+  if (isCancelled()) return false;
   finalizeStreamingText(ctx, `<content>${built}</content>`);
+  return true;
 }
 
 function commitSae078GraduationCeremonyTrigger(ctx: ActionContext, eligibleAtPromptBuild: boolean): boolean {
@@ -1365,6 +1431,11 @@ function createSubmissionRollbackSnapshot(
 
 export async function submitMessage(ctx: ActionContext, options: SubmitMessageOptions = {}) {
   const { state, win } = ctx;
+  const submissionRunId = state.activeRunId;
+  const submissionSaveId = state.activeSaveId;
+  const submissionInvalidationEpoch = asyncActionInvalidationEpoch;
+  const isSameSubmissionIdentity = () =>
+    state.activeRunId === submissionRunId && state.activeSaveId === submissionSaveId;
   const userInput = (options.text ?? state.draft).trim();
   if (!userInput) return;
   if (state.generating) {
@@ -1383,6 +1454,16 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
   state.currentGenerationId = crypto.randomUUID();
   const generationToken = beginGenerationRun(ctx);
   let requestGenerationId = state.currentGenerationId;
+  const canMutateSubmissionState = () => {
+    if (!isSameSubmissionIdentity() || submissionInvalidationEpoch !== asyncActionInvalidationEpoch) return false;
+    if (state.currentGenerationId && state.currentGenerationId !== requestGenerationId) return false;
+    if (state.finalizedGenerationId && state.finalizedGenerationId !== requestGenerationId) return false;
+    return true;
+  };
+  const recordSubmissionDebug = (event: string, detail: Record<string, unknown> = {}) => {
+    if (!canMutateSubmissionState()) return;
+    recordGenerationDebug(ctx, event, detail);
+  };
   state.finalizedGenerationId = '';
   state.focusedMessagePage = 0;
   const hasTavernGenerate = typeof win.generate === 'function' || typeof win.generateRaw === 'function';
@@ -1392,7 +1473,11 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
   let phoneDirective: PhoneDirective | null = null;
   let phoneDirectiveSource: string | null = null;
   if (hasTavernGenerate && hasExplicitPhoneSendIntent(cleanUserInput)) {
-    phoneDirective = await detectPhoneDirectiveWithLlm(ctx, cleanUserInput).catch(error => {
+    phoneDirective = await detectPhoneDirectiveWithLlm(
+      ctx,
+      cleanUserInput,
+      () => isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity(),
+    ).catch(error => {
       console.warn('[phone-directive] detector failed:', error);
       return null;
     });
@@ -1406,17 +1491,19 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       phoneDirectiveSource = 'fallback-parser';
     }
   }
-  if (isGenerationRunCancelled(ctx, generationToken)) {
-    recordGenerationDebug(ctx, 'submit:cancelled-before-push', { requestGenerationId });
+  if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
+    recordSubmissionDebug('submit:cancelled-before-push', { requestGenerationId });
     if (requiresCompleteMainAssistant) {
-      state.generating = false;
-      state.currentGenerationId = '';
-      state.finalizedGenerationId = '';
+      if (canMutateSubmissionState()) {
+        state.generating = false;
+        state.currentGenerationId = '';
+        state.finalizedGenerationId = '';
+      }
       throw new Error('游戏开发正文请求在创建楼层前被取消。');
     }
     return;
   }
-  recordGenerationDebug(ctx, 'submit:start', {
+  recordSubmissionDebug('submit:start', {
     userInputLength: userInput.length,
     keepDraft: Boolean(options.keepDraft),
     phoneDirectiveTargetId: phoneDirective?.target.id ?? null,
@@ -1426,12 +1513,17 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
   ctx.closeReaderContextMenu(false);
 
   const latestBeforeSubmit = state.uiMessages[state.uiMessages.length - 1];
-  const reusableUserMessage =
-    options.reuseLatestUserMessage &&
-    latestBeforeSubmit?.role === 'user' &&
-    latestBeforeSubmit.text.trim() === userInput;
-  const submittedUserMessageId = reusableUserMessage ? latestBeforeSubmit.id : crypto.randomUUID();
-  if (!reusableUserMessage) {
+  // A trailing user message is an unfinished floor (rollback, cancelled
+  // generation, or a previous failed attempt). Reuse it automatically so the
+  // normal Send button cannot duplicate the same user turn. If the player
+  // edits the restored draft, update that unfinished floor in place.
+  const reusableUserMessage = latestBeforeSubmit?.role === 'user' ? latestBeforeSubmit : null;
+  const submittedUserMessageId = reusableUserMessage?.id ?? crypto.randomUUID();
+  if (reusableUserMessage) {
+    state.uiMessages = state.uiMessages.map(message => message.id === reusableUserMessage.id
+      ? { ...message, text: userInput, rawText: userInput }
+      : message);
+  } else {
     pushMessage(state, {
       id: submittedUserMessageId,
       role: 'user',
@@ -1449,7 +1541,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
   ctx.render();
 
   if (phoneDirective) {
-    recordGenerationDebug(ctx, 'submit:phone-directive-detected', {
+    recordSubmissionDebug('submit:phone-directive-detected', {
       targetId: phoneDirective.target.id,
       textLength: phoneDirective.text.length,
       source: phoneDirectiveSource,
@@ -1467,45 +1559,64 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
   if (hasTavernGenerate) {
     const preflightHistory = state.uiMessages.slice(0, -1);
     try {
-      scenePresence = await detectScenePresence(ctx, preflightHistory, cleanUserInput, options.gameDevelopmentContext);
+      scenePresence = await detectScenePresence(
+        ctx,
+        preflightHistory,
+        cleanUserInput,
+        options.gameDevelopmentContext,
+        () => isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity(),
+      );
     } catch (error) {
-      recordGenerationDebug(ctx, 'submit:preflight-failed', {
+      recordSubmissionDebug('submit:preflight-failed', {
         requestGenerationId,
         error: error instanceof Error ? error.message : String(error),
       });
       if (requiresCompleteMainAssistant) {
-        removeNewStrictUserMessage();
-        state.generating = false;
-        state.currentGenerationId = '';
-        state.finalizedGenerationId = '';
-        state.draft = userInput;
-        ctx.persistConversation();
-        ctx.render();
-        throw error;
+        if (canMutateSubmissionState()) {
+          removeNewStrictUserMessage();
+          state.generating = false;
+          state.currentGenerationId = '';
+          state.finalizedGenerationId = '';
+          state.draft = userInput;
+          ctx.persistConversation();
+          ctx.render();
+          throw error;
+        }
+        throw new Error('游戏开发正文请求在生成前被取消。');
       }
       scenePresence = null;
     }
-    if (isGenerationRunCancelled(ctx, generationToken)) {
-      recordGenerationDebug(ctx, 'submit:cancelled-after-preflight', { requestGenerationId });
+    if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
+      recordSubmissionDebug('submit:cancelled-after-preflight', { requestGenerationId });
       if (requiresCompleteMainAssistant) {
-        removeNewStrictUserMessage();
-        state.generating = false;
-        state.currentGenerationId = '';
-        state.finalizedGenerationId = '';
-        ctx.persistConversation();
+        if (canMutateSubmissionState()) {
+          removeNewStrictUserMessage();
+          state.generating = false;
+          state.currentGenerationId = '';
+          state.finalizedGenerationId = '';
+          ctx.persistConversation();
+        }
         throw new Error('游戏开发正文请求在生成前被取消。');
       }
       return;
     }
-    scenePresence = await enrichScenePresenceWithDeepSeekEvidence(ctx, scenePresence, preflightHistory, cleanUserInput);
-    if (isGenerationRunCancelled(ctx, generationToken)) {
-      recordGenerationDebug(ctx, 'submit:cancelled-after-deepseek-web', { requestGenerationId });
+    scenePresence = await enrichScenePresenceWithDeepSeekEvidence(
+      ctx,
+      scenePresence,
+      preflightHistory,
+      cleanUserInput,
+      () => isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity(),
+    );
+    if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
+      recordSubmissionDebug('submit:cancelled-after-deepseek-web', { requestGenerationId });
       if (requiresCompleteMainAssistant) {
-        removeNewStrictUserMessage();
-        state.generating = false;
-        state.currentGenerationId = '';
-        state.finalizedGenerationId = '';
-        ctx.persistConversation();
+        if (canMutateSubmissionState()) {
+          removeNewStrictUserMessage();
+          state.generating = false;
+          state.currentGenerationId = '';
+          state.finalizedGenerationId = '';
+          ctx.persistConversation();
+        }
         throw new Error('游戏开发正文请求在生成前被取消。');
       }
       return;
@@ -1527,7 +1638,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
   // 避免出现"日期已到但事件不触发"的问题。
   if (syncMainEvents(state.statusData, state.plotLibrary)) {
     ctx.adapter.save(state.statusData);
-    recordGenerationDebug(ctx, 'submit:pre-sync-main-events', {
+    recordSubmissionDebug('submit:pre-sync-main-events', {
       currentMainEventId: state.statusData.world.currentMainEventId,
     });
   }
@@ -1557,9 +1668,13 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       ctx.render();
       throw error;
     }
-    await simulateGeneration(ctx, cleanUserInput || userInput);
-    if (isGenerationRunCancelled(ctx, generationToken)) {
-      recordGenerationDebug(ctx, 'submit:cancelled-after-simulate', { requestGenerationId });
+    await simulateGeneration(
+      ctx,
+      cleanUserInput || userInput,
+      () => isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity(),
+    );
+    if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
+      recordSubmissionDebug('submit:cancelled-after-simulate', { requestGenerationId });
       return;
     }
     commitSae078GraduationCeremonyTrigger(ctx, sae078CeremonyEligibleAtPromptBuild);
@@ -1602,7 +1717,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       generation_id: requestGenerationId,
     };
 
-    recordGenerationDebug(ctx, 'submit:before-generate', {
+    recordSubmissionDebug('submit:before-generate', {
       requestGenerationId,
       generator: generator === win.generateRaw ? 'generateRaw' : 'generate',
     });
@@ -1654,15 +1769,17 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
     );
 
     const rawResult = String(result ?? '');
-    recordGenerationDebug(ctx, 'submit:generate-returned', {
+    recordSubmissionDebug('submit:generate-returned', {
       requestGenerationId,
       resultLength: rawResult.length,
     });
-    if (isGenerationRunCancelled(ctx, generationToken)) {
-      recordGenerationDebug(ctx, 'submit:cancelled-after-generate-returned', { requestGenerationId });
+    if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
+      recordSubmissionDebug('submit:cancelled-after-generate-returned', { requestGenerationId });
       if (requiresCompleteMainAssistant) {
-        removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-        if (!strictMainRequestStarted) removeNewStrictUserMessage();
+        if (canMutateSubmissionState()) {
+          removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
+          if (!strictMainRequestStarted) removeNewStrictUserMessage();
+        }
         throw new Error('游戏开发正文请求在主生成返回前被取消。');
       }
       return;
@@ -1714,12 +1831,15 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       } catch (error) {
         mainAssistantCallbackFailed = true;
         mainAssistantCallbackError = error;
-        recordGenerationDebug(ctx, 'submit:main-assistant-callback-failed', {
+        recordSubmissionDebug('submit:main-assistant-callback-failed', {
           requestGenerationId,
           assistantMessageId: receipt.assistantMessageId,
           error: error instanceof Error ? error.message : String(error),
         });
       }
+    }
+    if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
+      throw new SecondaryTaskCancelledError('main-assistant-accepted', requestGenerationId);
     }
     if (snapshotAssistantMessage) {
       ctx.persistConversation();
@@ -1731,68 +1851,44 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
     }
     generationSucceeded = true;
     state.generating = false;
-    recordGenerationDebug(ctx, 'submit:main-success-before-phone', { requestGenerationId });
+    recordSubmissionDebug('submit:main-success-before-phone', { requestGenerationId });
     // 手机消息/主动手机 与 变量更新 的顺序依赖统一在 finally 处理（progress → phone → summary）。
   } catch (error) {
-    if (isGenerationRunCancelled(ctx, generationToken) || error instanceof SecondaryTaskCancelledError) {
+    const cancelled =
+      isGenerationRunCancelled(ctx, generationToken)
+      || !isSameSubmissionIdentity()
+      || error instanceof SecondaryTaskCancelledError;
+    if (cancelled) {
+      if (requiresCompleteMainAssistant) {
+        if (canMutateSubmissionState()) {
+          removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
+          if (!strictMainRequestStarted) removeNewStrictUserMessage();
+          state.currentGenerationId = '';
+          state.finalizedGenerationId = '';
+          state.generating = false;
+          ctx.persistConversation();
+        }
+        strictMainAssistantFailed = true;
+        strictMainAssistantError = error;
+      }
+      recordSubmissionDebug('submit:catch-cancelled', {
+        requestGenerationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (!requiresCompleteMainAssistant) return;
+    } else {
+      recordSubmissionDebug('submit:catch', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       if (requiresCompleteMainAssistant) {
         removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
         if (!strictMainRequestStarted) removeNewStrictUserMessage();
         state.currentGenerationId = '';
         state.finalizedGenerationId = '';
+        state.draft = userInput;
         state.generating = false;
         strictMainAssistantFailed = true;
         strictMainAssistantError = error;
-        ctx.persistConversation();
-      }
-      recordGenerationDebug(ctx, 'submit:catch-cancelled', {
-        requestGenerationId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      if (!requiresCompleteMainAssistant) return;
-    }
-    recordGenerationDebug(ctx, 'submit:catch', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    if (requiresCompleteMainAssistant) {
-      removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-      if (!strictMainRequestStarted) removeNewStrictUserMessage();
-      state.currentGenerationId = '';
-      state.finalizedGenerationId = '';
-      state.draft = userInput;
-      state.generating = false;
-      strictMainAssistantFailed = true;
-      strictMainAssistantError = error;
-      ctx.persistConversation();
-      ctx.showNotification({
-        kind: 'status',
-        title: '生成失败',
-        preview: error instanceof Error ? error.message : String(error),
-        targetTab: 'summary',
-        timestamp: formatTime(state.statusData.world.currentTime),
-      });
-    } else {
-      const currentStreamingMessage = state.uiMessages[state.uiMessages.length - 1];
-      const hasStreamingText = hasVisibleStreamingText(currentStreamingMessage);
-      const removedStreamingMessage = discardStreamingMessage(ctx);
-      state.currentGenerationId = '';
-      if (hasStreamingText && !removedStreamingMessage) {
-        // 流式正文已经写入时，把它当作成功楼层处理；不要再回填草稿或弹失败。
-        const lastMsg = state.uiMessages[state.uiMessages.length - 1];
-        if (lastMsg && lastMsg.role === 'assistant') {
-          lastMsg.statusSnapshot = createRollbackSnapshot(state);
-          ctx.persistConversation();
-        }
-        queueDrawingPluginTasks(ctx, userInput);
-        if (options.clearDraftOnSuccess) {
-          state.draft = '';
-        }
-        generationSucceeded = true;
-        state.generating = false;
-        recordGenerationDebug(ctx, 'submit:catch-preserved-as-success');
-        // 变量更新 + 手机消息统一在 finally 处理（progress → phone → summary）。
-      } else {
-        state.draft = userInput;
         ctx.persistConversation();
         ctx.showNotification({
           kind: 'status',
@@ -1801,19 +1897,55 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
           targetTab: 'summary',
           timestamp: formatTime(state.statusData.world.currentTime),
         });
+      } else {
+        const currentStreamingMessage = state.uiMessages[state.uiMessages.length - 1];
+        const hasStreamingText = hasVisibleStreamingText(currentStreamingMessage);
+        const removedStreamingMessage = discardStreamingMessage(ctx);
+        state.currentGenerationId = '';
+        if (hasStreamingText && !removedStreamingMessage) {
+          // 流式正文已经写入时，把它当作成功楼层处理；不要再回填草稿或弹失败。
+          const lastMsg = state.uiMessages[state.uiMessages.length - 1];
+          if (lastMsg && lastMsg.role === 'assistant') {
+            lastMsg.statusSnapshot = createRollbackSnapshot(state);
+            ctx.persistConversation();
+          }
+          queueDrawingPluginTasks(ctx, userInput);
+          if (options.clearDraftOnSuccess) {
+            state.draft = '';
+          }
+          generationSucceeded = true;
+          state.generating = false;
+          recordSubmissionDebug('submit:catch-preserved-as-success');
+          // 变量更新 + 手机消息统一在 finally 处理（progress → phone → summary）。
+        } else {
+          state.draft = userInput;
+          ctx.persistConversation();
+          ctx.showNotification({
+            kind: 'status',
+            title: '生成失败',
+            preview: error instanceof Error ? error.message : String(error),
+            targetTab: 'summary',
+            timestamp: formatTime(state.statusData.world.currentTime),
+          });
+        }
       }
     }
   } finally {
-    if (drawingEnabledAtSubmit && !state.drawingSettings.enabled) {
+    if (
+      drawingEnabledAtSubmit
+      && !isGenerationRunCancelled(ctx, generationToken)
+      && canMutateSubmissionState()
+      && !state.drawingSettings.enabled
+    ) {
       state.drawingSettings.enabled = true;
-      recordGenerationDebug(ctx, 'drawing:restore-enabled-after-generation');
+      recordSubmissionDebug('drawing:restore-enabled-after-generation');
       ctx.persistConversation();
     }
-    if (getGenerationCancelToken(ctx) === generationToken) {
+    if (!isGenerationRunCancelled(ctx, generationToken) && canMutateSubmissionState()) {
       state.generating = false;
+      recordSubmissionDebug('submit:finally-before-render', { generationSucceeded });
+      ctx.render();
     }
-    recordGenerationDebug(ctx, 'submit:finally-before-render', { generationSucceeded });
-    ctx.render();
 
     // 正文结束后统一顺序执行：① 变量更新(含手机消息提取) → ② 消费手机消息 → ③ 总结历史。
     // 顺序是关键：合并版 progress 必须先于 maybeQueueProactivePhoneMessage 跑，才能填好
@@ -1825,7 +1957,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       !isGenerationRunCancelled(ctx, generationToken) &&
       (typeof win.generateRaw === 'function' || typeof win.generate === 'function')
     ) {
-      recordGenerationDebug(ctx, 'submit:summary-start');
+      recordSubmissionDebug('submit:summary-start');
       lastProgressPhoneMessages = null;
 
       // ① 变量更新：配/不配副 API 都走同一条合并 progress（无副 API 时 runSecondaryTask 回落主 API）。
@@ -1848,7 +1980,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         },
       );
       if (isGenerationRunCancelled(ctx, generationToken)) {
-        recordGenerationDebug(ctx, 'submit:cancelled-after-progress', { requestGenerationId });
+        recordSubmissionDebug('submit:cancelled-after-progress', { requestGenerationId });
         return;
       }
 
@@ -1867,7 +1999,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         );
       }
       if (isGenerationRunCancelled(ctx, generationToken)) {
-        recordGenerationDebug(ctx, 'submit:cancelled-after-phone', { requestGenerationId });
+        recordSubmissionDebug('submit:cancelled-after-phone', { requestGenerationId });
         return;
       }
 
@@ -1892,8 +2024,11 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         summaryStore: ctx.summaryStore,
         summaryApiConfig: ctx.summaryApiConfig,
         uiMessages: state.uiMessages,
-        onTaskUpdated: () => ctx.render(),
+        onTaskUpdated: () => {
+          if (!isGenerationRunCancelled(ctx, generationToken)) ctx.render();
+        },
         onStoreUpdated: () => {
+          if (isGenerationRunCancelled(ctx, generationToken)) return;
           ctx.onSummaryStoreUpdated();
           ctx.render();
         },
@@ -1912,13 +2047,28 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
           /* 摘要错误在内部处理 */
         });
       }
-      recordGenerationDebug(ctx, 'submit:summary-finished');
+      if (isGenerationRunCancelled(ctx, generationToken)) return;
+      recordSubmissionDebug('submit:summary-finished');
     }
-    if (drawingEnabledAtSubmit && !state.drawingSettings.enabled) {
+    if (
+      drawingEnabledAtSubmit
+      && !isGenerationRunCancelled(ctx, generationToken)
+      && !state.drawingSettings.enabled
+    ) {
       state.drawingSettings.enabled = true;
-      recordGenerationDebug(ctx, 'drawing:restore-enabled-after-post-turn');
+      recordSubmissionDebug('drawing:restore-enabled-after-post-turn');
       ctx.persistConversation();
       ctx.render();
+    }
+    if (generationSucceeded && !isGenerationRunCancelled(ctx, generationToken)) {
+      const completedAssistant = [...state.uiMessages].reverse().find(message => message.role === 'assistant');
+      if (completedAssistant) {
+        // This is the authoritative after-turn snapshot: progress, phone and
+        // summary work above have all settled. Earlier snapshots remain useful
+        // for crash recovery but must not define completed-floor rollback.
+        completedAssistant.statusSnapshot = createRollbackSnapshot(state);
+        ctx.persistConversation();
+      }
     }
   }
   if (mainAssistantCallbackFailed) {
@@ -3079,6 +3229,7 @@ async function detectScenePresence(
   promptHistory: UiMessage[],
   userInput: string,
   gameDevelopmentContext?: string,
+  isCancelled: () => boolean = () => false,
 ): Promise<ScenePresence> {
   // 中文注释：镜头判定只服务本轮 prompt 注入，不写入存档；失败时保守地不注入任何角色强规则。
   if (!ctx.state.statusData.targets.length && !gameDevelopmentContext) {
@@ -3092,6 +3243,7 @@ async function detectScenePresence(
     'scene-presence',
     { requireConfiguredSecondaryApi: Boolean(gameDevelopmentContext) },
   );
+  if (isCancelled()) throw new SecondaryTaskCancelledError('scene-presence', generationId);
   const committed = commitScenePresenceAnalysis(ctx, rawResult);
   const { presence } = committed;
   recordGenerationDebug(ctx, 'scene-presence:detected', {
@@ -3110,6 +3262,7 @@ async function enrichScenePresenceWithDeepSeekEvidence(
   presence: ScenePresence,
   promptHistory: UiMessage[],
   userInput: string,
+  isCancelled: () => boolean = () => false,
 ): Promise<ScenePresence> {
   const settings =
     ctx.state.deepSeekModeEnabled && typeof ctx.state.runtimeFlags.deepSeekWebLookup === 'object'
@@ -3130,11 +3283,13 @@ async function enrichScenePresenceWithDeepSeekEvidence(
     userInput,
     recentText,
   }).catch(error => {
+    if (isCancelled()) return null;
     recordGenerationDebug(ctx, 'deepseek-web:failed', {
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
   });
+  if (isCancelled()) return presence;
 
   if (!result || !result.enabled || (!result.evidencePacks.length && !result.context.trim())) {
     recordGenerationDebug(ctx, 'deepseek-web:skipped', {
@@ -3395,7 +3550,12 @@ export async function retryBackgroundProgressUpdate(ctx: ActionContext) {
   );
 }
 
-async function detectPhoneDirectiveWithLlm(ctx: ActionContext, userInput: string): Promise<PhoneDirective | null> {
+async function detectPhoneDirectiveWithLlm(
+  ctx: ActionContext,
+  userInput: string,
+  isCancelled: () => boolean = () => false,
+): Promise<PhoneDirective | null> {
+  if (isCancelled()) return null;
   if (!ctx.state.statusData.targets.length) {
     debugPhoneFlow(ctx, 'directive-llm:skip-no-targets');
     return null;
@@ -3405,6 +3565,7 @@ async function detectPhoneDirectiveWithLlm(ctx: ActionContext, userInput: string
   const generationId = `phone-directive-detect-${crypto.randomUUID()}`;
   debugPhoneFlow(ctx, 'directive-llm:start', { generationId, inputLength: userInput.length });
   const rawResult = await generateSilentAnalysis(ctx, generationId, prompts, 'phone-directive-detect');
+  if (isCancelled()) return null;
 
   const committed = commitPhoneDirectiveAnalysis(ctx, rawResult, userInput);
   const { directive } = committed;
@@ -3966,8 +4127,8 @@ async function sendPhoneMessageFromDirective(
     if (!isPhoneRunCancelled(ctx, phoneToken)) {
       state.phoneMessages.generating = false;
       clearPendingPhoneSend(ctx);
+      ctx.render();
     }
-    ctx.render();
   }
 }
 
@@ -4104,10 +4265,11 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
     clearPendingPhoneSend(ctx);
     ctx.persistConversation();
   } catch (error) {
+    if (isPhoneRunCancelled(ctx, phoneToken)) return;
     thread.messages = thread.messages.filter(message => message.id !== userMessage.id);
     thread.updatedAt = Date.now();
     state.phoneMessages.draft = userInput;
-    if (!(error instanceof SecondaryTaskCancelledError) && !isPhoneRunCancelled(ctx, phoneToken)) {
+    if (!(error instanceof SecondaryTaskCancelledError)) {
       ctx.showNotification({
         kind: 'status',
         title: '消息发送失败',
@@ -4120,8 +4282,8 @@ export async function submitPhoneMessage(ctx: ActionContext, targetId: string) {
     if (!isPhoneRunCancelled(ctx, phoneToken)) {
       state.phoneMessages.generating = false;
       clearPendingPhoneSend(ctx);
+      ctx.render();
     }
-    ctx.render();
   }
 }
 

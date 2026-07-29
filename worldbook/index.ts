@@ -1,6 +1,7 @@
 import type { CharacterCard, CharacterCardLibrary, PlotEventCard, PlotEventSchedule, PlotLibrary, StatusData, TargetStatus, TavernWindow, VolumeWritingProtocol, WorldbookEntry } from '../types';
 import { affinityStage, defaultTarget, obsessionStage } from '../variables/normalize';
 import { buildEducationProfileFromText } from '../school-calendar/education-profile';
+import { hashArchiveValue } from '../state/archive-hash';
 
 const TARGET_KIND = 'islandmilfcode.target';
 const PLOT_KIND = 'islandmilfcode.plot_event';
@@ -52,16 +53,16 @@ function uniqueNames(names: Array<string | null | undefined>) {
   return Array.from(new Set(names.map(name => String(name ?? '').trim()).filter(Boolean)));
 }
 
-function getCurrentCharacterWorldbookNames(win: TavernWindow) {
+export function getCurrentCharacterWorldbookBinding(win: TavernWindow) {
   if (typeof win.getCharWorldbookNames !== 'function') {
-    return [];
+    return { available: false, names: [] as string[], error: 'getCharWorldbookNames unavailable' };
   }
 
   try {
     const bound = win.getCharWorldbookNames('current');
-    return uniqueNames([bound?.primary, ...(bound?.additional ?? [])]);
-  } catch {
-    return [];
+    return { available: true, names: uniqueNames([bound?.primary, ...(bound?.additional ?? [])]), error: '' };
+  } catch (error) {
+    return { available: false, names: [] as string[], error: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -785,28 +786,59 @@ function createCharacterCardLibrary(cards: CharacterCard[]): CharacterCardLibrar
   };
 }
 
-export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
+export type CharacterWorldbookLoadStatus =
+  | 'success'
+  | 'legitimate-empty'
+  | 'api-unavailable'
+  | 'partial-failure'
+  | 'total-failure';
+
+export type CharacterWorldbookLoadResult = {
+  status: CharacterWorldbookLoadStatus;
+  binding: { characterKey: string; worldbookNames: string[]; worldbookSetHash: string };
+  errors: Array<{ worldbookName?: string; message: string }>;
   targets: TargetStatus[];
   plotLibrary: PlotLibrary;
   characterCardLibrary: CharacterCardLibrary;
-}> {
-  if (typeof win.getWorldbook !== 'function') {
+};
+
+export async function loadCharacterWorldbookData(win: TavernWindow): Promise<CharacterWorldbookLoadResult> {
+  const binding = getCurrentCharacterWorldbookBinding(win);
+  const worldbookSetHash = (await hashArchiveValue(binding.names)).hash;
+  const bindingInfo = { characterKey: 'current', worldbookNames: binding.names, worldbookSetHash };
+  if (typeof win.getWorldbook !== 'function' || !binding.available) {
     return {
+      status: 'api-unavailable',
+      binding: bindingInfo,
+      errors: [{ message: binding.error || 'getWorldbook unavailable' }],
       targets: [],
       plotLibrary: createPlotLibrary([]),
       characterCardLibrary: createEmptyCharacterCardLibrary(),
     };
   }
 
-  const names = getCurrentCharacterWorldbookNames(win);
+  const names = binding.names;
+  if (names.length === 0) {
+    return {
+      status: 'legitimate-empty',
+      binding: bindingInfo,
+      errors: [],
+      targets: [],
+      plotLibrary: createPlotLibrary([]),
+      characterCardLibrary: createEmptyCharacterCardLibrary(),
+    };
+  }
   const targets: TargetStatus[] = [];
   const plotEvents: PlotEventCard[] = [];
   const plotProtocols: Array<{ volumeId: string; protocol: VolumeWritingProtocol }> = [];
   const characterCards: CharacterCard[] = [];
+  const errors: CharacterWorldbookLoadResult['errors'] = [];
+  let successfulBooks = 0;
 
   for (const name of names) {
     try {
       const entries = await win.getWorldbook(name);
+      successfulBooks += 1;
       for (const entry of entries) {
         const target = parseTargetEntry(entry);
         if (target) {
@@ -820,8 +852,8 @@ export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
         plotEvents.push(...plotResult.events);
         plotProtocols.push(...plotResult.protocols);
       }
-    } catch {
-      // 某个绑定世界书读取失败时，跳过它，不影响其他世界书。
+    } catch (error) {
+      errors.push({ worldbookName: name, message: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -829,10 +861,21 @@ export async function loadCharacterWorldbookData(win: TavernWindow): Promise<{
   for (const target of targets) {
     byId.set(target.id, target);
   }
-  return {
+  const data = {
     targets: Array.from(byId.values()),
     plotLibrary: createPlotLibrary(plotEvents, plotProtocols),
     characterCardLibrary: createCharacterCardLibrary(characterCards),
+  };
+  const hasData = data.targets.length > 0 || plotEvents.length > 0 || characterCards.length > 0;
+  return {
+    status: errors.length === 0
+      ? (hasData ? 'success' : 'legitimate-empty')
+      : successfulBooks > 0
+        ? 'partial-failure'
+        : 'total-failure',
+    binding: bindingInfo,
+    errors,
+    ...data,
   };
 }
 

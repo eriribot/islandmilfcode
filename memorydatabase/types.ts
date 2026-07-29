@@ -1,5 +1,7 @@
-/** 数据库 schema 版本号，非兼容变更时递增 */
-export const MEMORY_DB_VERSION = 1;
+import { MEMORY_DB_SCHEMA_VERSION } from '../version';
+
+/** 数据库 schema 版本号，非兼容变更时递增。 */
+export const MEMORY_DB_VERSION = MEMORY_DB_SCHEMA_VERSION;
 
 // ── 写入来源标识 ──
 

@@ -31,6 +31,8 @@ export type SaveMeta = {
   preview?: string;
   messageCount: number;
   version: string | number;
+  /** Monotonic browser commit revision; absent on legacy records. */
+  browserRevision?: number;
   characterName?: string;
   personality?: string;
   appearance?: string;
@@ -86,6 +88,8 @@ export type SavePayload = {
   memoryDB?: IslandMemoryDB;
   messageSnapshots?: MessageSnapshot[];
   version: string | number;
+  /** Monotonic browser commit revision; absent on legacy records. */
+  browserRevision?: number;
 };
 
 export type MessageSnapshot = {
@@ -104,6 +108,9 @@ export type PersistedMessage = {
   illustrations?: MessageIllustration[];
   statusSnapshot?: RollbackSnapshot;
 };
+
+export type PersistedUserMessage = PersistedMessage & { role: 'user' };
+export type PersistedAssistantMessage = PersistedMessage & { role: 'assistant' };
 
 export type MessageIllustration = {
   id: string;
@@ -163,6 +170,89 @@ export type RollbackSnapshot = {
   phoneMessages?: PhoneMessageStore;
   summaryStore?: SummaryStore;
   memoryDB?: IslandMemoryDB;
+};
+
+export type FloorSnapshotFieldSource =
+  | 'message-snapshot'
+  | 'previous-floor-after'
+  | 'same-floor-before'
+  | 'same-floor-after-fallback'
+  | 'legacy-floor-derived'
+  | 'save-current-fallback'
+  | 'defaulted';
+
+/**
+ * 手机正文继续由独立记录保存；楼层快照只冻结恢复所需的有界游标，
+ * 避免每层复制完整 PhoneMessageStore 导致 O(N²) 存档。
+ */
+export type FloorPhoneThreadCursor = {
+  lastMessageId: string | null;
+  messageCount: number;
+  unread: number;
+};
+
+export type FloorPhoneStateSnapshot = {
+  activeThreadId: string | null;
+  draft: string;
+  threads: Record<string, FloorPhoneThreadCursor>;
+};
+
+/** 当前明确允许跟随楼层恢复的运行时字段；未知 runtimeFlags 不得混入。 */
+export type FloorRuntimeSnapshot = {
+  gameDevelopment?: GameDevelopmentState | null;
+};
+
+export type FloorStateSnapshotProvenance = {
+  statusData: FloorSnapshotFieldSource;
+  playerProfile: FloorSnapshotFieldSource;
+  phoneState: FloorSnapshotFieldSource;
+  drawingSettings: FloorSnapshotFieldSource;
+  runtime: FloorSnapshotFieldSource;
+};
+
+export type FloorStateSnapshot = {
+  statusData: StatusData;
+  playerProfile: PlayerProfile;
+  phoneState: FloorPhoneStateSnapshot;
+  drawingSettings: DrawingSettings;
+  runtime: FloorRuntimeSnapshot;
+  provenance: FloorStateSnapshotProvenance;
+};
+
+export type StoredGenerationContext = {
+  kind: 'reader' | 'opening';
+  promptFloorRange: [number, number] | null;
+  summaryBoundary: number;
+  memoryBoundary: number;
+  worldbookSetHash?: string;
+  routeContextId?: string;
+};
+
+export type FloorRecordProvenance = {
+  origin: 'v3-native' | 'legacy-v2';
+  sourceSchemaVersion: string | number | null;
+  sourceMessageIndexes: number[];
+  sourceMessageIds: string[];
+  syntheticUserMessage: boolean;
+  /** 只承接旧源未知字段；业务代码不得把它当作新的自由扩展入口。 */
+  legacyExtras?: Record<string, unknown>;
+};
+
+export type FloorRecord = {
+  saveId: string;
+  /** 从 0 开始的稳定业务楼层，不随内存窗口或分页变化。 */
+  floorIndex: number;
+  userMessage: PersistedUserMessage;
+  assistantMessage?: PersistedAssistantMessage;
+  beforeTurnState: FloorStateSnapshot;
+  afterTurnState?: FloorStateSnapshot;
+  generationContext?: StoredGenerationContext;
+  /** 摘要与 MemoryDB 都使用“已覆盖楼层数”的 exclusive boundary。 */
+  summaryBoundary: number;
+  memoryBoundary: number;
+  imageAssetIds: string[];
+  revision: number;
+  provenance: FloorRecordProvenance;
 };
 
 export type PhoneProactiveState = {
@@ -428,6 +518,7 @@ export type ReaderContextMenuState = {
   readerIndex: number;
   sourceUserText: string;
   canDeleteMessage: boolean;
+  canRollbackCompleted: boolean;
 };
 
 export type ReaderEditingState = {

@@ -1,0 +1,170 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: IslandMilfCode <noreply@local>
+Date: Wed, 29 Jul 2026 16:00:00 +0800
+Subject: [PATCH] support an optional user-files upload directory
+
+Keep the existing flat /api/files/upload contract working while allowing the
+archive bridge to place its JSON files in one strictly validated subdirectory.
+The directory is created lazily before writing and the returned public path
+includes it.
+---
+ src-tauri/src/presentation/commands/file_commands.rs | 97 +++++++++++++++++++-
+ src/tauri/main/routes/resource-routes.js             |  6 ++
+ 2 files changed, 101 insertions(+), 2 deletions(-)
+
+diff --git a/src/tauri/main/routes/resource-routes.js b/src/tauri/main/routes/resource-routes.js
+--- a/src/tauri/main/routes/resource-routes.js
++++ b/src/tauri/main/routes/resource-routes.js
+@@ -52,6 +52,11 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
+     router.post('/api/files/upload', async ({ body }) => {
+         const name = String(body?.name || '').trim();
+         const data = String(body?.data || '').trim();
++        const rawDirectory = body?.directory;
++        if (rawDirectory != null && typeof rawDirectory !== 'string') {
++            return jsonResponse({ error: 'Invalid upload directory' }, 400);
++        }
++        const directory = rawDirectory?.trim() || '';
+ 
+         if (!name) {
+             return jsonResponse({ error: 'No upload name specified' }, 400);
+@@ -64,6 +69,7 @@ export function registerResourceRoutes(router, context, { jsonResponse, textResp
+         const uploaded = await context.safeInvoke('upload_user_file', {
+             name,
+             data_base64: data,
++            ...(directory ? { directory } : {}),
+         });
+         return jsonResponse(uploaded || {});
+     });
+diff --git a/src-tauri/src/presentation/commands/file_commands.rs b/src-tauri/src/presentation/commands/file_commands.rs
+--- a/src-tauri/src/presentation/commands/file_commands.rs
++++ b/src-tauri/src/presentation/commands/file_commands.rs
+@@ -177,6 +177,47 @@ fn validate_upload_name(raw: &str) -> Result<String, CommandError> {
+     Ok(name)
+ }
+ 
++fn validate_upload_directory(raw: Option<&str>) -> Result<Option<String>, CommandError> {
++    let Some(raw) = raw else {
++        return Ok(None);
++    };
++    let directory = raw.trim();
++    if directory.is_empty() {
++        return Ok(None);
++    }
++
++    // The bridge gets one namespace below user/files. Keeping this deliberately
++    // single-level prevents traversal and avoids turning the upload route into a
++    // general-purpose filesystem API.
++    if directory.len() > 96
++        || directory.starts_with('.')
++        || directory.contains('/')
++        || directory.contains('\\')
++        || !directory
++            .chars()
++            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
++    {
++        return Err(CommandError::BadRequest(
++            "Invalid upload directory; use one ASCII directory name containing only letters, numbers, '_' or '-'"
++                .to_string(),
++        ));
++    }
++
++    let uppercase = directory.to_ascii_uppercase();
++    if matches!(
++        uppercase.as_str(),
++        "CON" | "PRN" | "AUX" | "NUL"
++            | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9"
++            | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
++    ) {
++        return Err(CommandError::BadRequest(
++            "Invalid upload directory; Windows reserved device names are not allowed".to_string(),
++        ));
++    }
++
++    Ok(Some(directory.to_string()))
++}
++
+ fn normalize_user_file_reference(raw: &str) -> Result<PathBuf, CommandError> {
+     let mut value = String::from(raw).trim().to_string();
+     if value.is_empty() {
+@@ -237,11 +266,13 @@ pub async fn sanitize_filename(file_name: String) -> Result<String, CommandError
+ pub async fn upload_user_file(
+     name: String,
+     data_base64: String,
++    directory: Option<String>,
+     app_state: State<'_, Arc<AppState>>,
+ ) -> Result<UserFileUploadResult, CommandError> {
+     log_command(format!("upload_user_file {}", name));
+ 
+     let validated_name = validate_upload_name(&name)?;
++    let validated_directory = validate_upload_directory(directory.as_deref())?;
+     let bytes = BASE64_STANDARD
+         .decode(data_base64.as_bytes())
+         .map_err(|error| {
+@@ -249,13 +292,63 @@ pub async fn upload_user_file(
+         })?;
+ 
+     let files_dir = get_default_user_files_directory(&app_state).await?;
+-    let target_path = resolve_target_path(&files_dir, Path::new(&validated_name))?;
++    let relative_path = match validated_directory {
++        Some(directory) => PathBuf::from(directory).join(&validated_name),
++        None => PathBuf::from(&validated_name),
++    };
++    let target_path = resolve_target_path(&files_dir, &relative_path)?;
++    let parent = target_path.parent().ok_or_else(|| {
++        CommandError::InternalServerError("Failed to resolve upload directory".to_string())
++    })?;
++    fs::create_dir_all(parent).await.map_err(|error| {
++        CommandError::InternalServerError(format!("Failed to create upload directory: {}", error))
++    })?;
++
++    let canonical_files_dir = fs::canonicalize(&files_dir).await.map_err(|error| {
++        CommandError::InternalServerError(format!(
++            "Failed to resolve files directory: {}",
++            error
++        ))
++    })?;
++    let canonical_parent = fs::canonicalize(parent).await.map_err(|error| {
++        CommandError::InternalServerError(format!(
++            "Failed to resolve upload directory: {}",
++            error
++        ))
++    })?;
++    if canonical_parent != canonical_files_dir
++        && !canonical_parent.starts_with(&canonical_files_dir)
++    {
++        return Err(CommandError::BadRequest(
++            "Upload directory escapes user files".to_string(),
++        ));
++    }
++
++    let target_path = canonical_parent.join(&validated_name);
++    match fs::symlink_metadata(&target_path).await {
++        Ok(metadata) if metadata.file_type().is_symlink() => {
++            return Err(CommandError::BadRequest(
++                "Upload target cannot be a symbolic link".to_string(),
++            ));
++        }
++        Ok(_) => {}
++        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
++        Err(error) => {
++            return Err(CommandError::InternalServerError(format!(
++                "Failed to inspect upload target: {}",
++                error
++            )));
++        }
++    }
+ 
+     fs::write(&target_path, &bytes).await.map_err(|error| {
+         CommandError::InternalServerError(format!("Failed to save file: {}", error))
+     })?;
+ 
+     Ok(UserFileUploadResult {
+-        path: format!("/user/files/{}", validated_name),
++        path: format!(
++            "/user/files/{}",
++            relative_path.to_string_lossy().replace('\\', "/")
++        ),
+     })
+ }
+-- 
+2.50.1.windows.1

@@ -32,13 +32,18 @@ import {
   normalizePlayerBackgroundLabels,
 } from '../player-backgrounds';
 import {
-  deletePayloadSync,
+  commitOpaqueSaveSnapshotSync,
+  commitSaveSnapshotSync,
+  deleteSaveSnapshotSync,
   listPayloadsSync,
+  loadPayloadById,
   readPayloadSync,
   readSaveIndexSync,
+  writeOpaquePayloadSync,
   writePayloadSync,
   writeSaveIndexSync,
 } from './save-store';
+import { listArchiveSavesSync } from './archive-repository';
 import {
   exportImageAssetsForIds,
   flushImageAssetStore,
@@ -47,7 +52,12 @@ import {
   restoreImageAssetFromBackup,
   type ImageAssetBackupRecord,
 } from './image-assets';
-import { ISLANDMILFCODE_VERSION, SAVE_SCHEMA_VERSION } from '../version';
+import {
+  ISLANDMILFCODE_VERSION,
+  SAVE_SCHEMA_VERSION,
+  canUseLegacyAggregateSaveCodec,
+  classifySavePayloadSchema,
+} from '../version';
 
 const SAVE_INDEX_STORAGE_KEY = 'islandmilfcode:save-index:v2';
 const SAVE_PAYLOAD_STORAGE_PREFIX = 'islandmilfcode:save-payload:v2:';
@@ -71,11 +81,12 @@ function isOlderSaveVersion(version: unknown): boolean {
 function normalizeImageRerollContext(context?: ImageRerollContext): ImageRerollContext | undefined {
   if (!context || typeof context !== 'object') return undefined;
   const normalized: ImageRerollContext = {};
-  const assignString = (key: keyof ImageRerollContext) => {
+  const assignString = (key: keyof ImageRerollContext, preserveEmpty = false) => {
     const value = context[key];
-    if (typeof value === 'string' && value.trim()) normalized[key] = value;
+    if (typeof value === 'string' && (preserveEmpty || value.trim())) normalized[key] = value;
   };
   assignString('prompt');
+  assignString('negativePrompt', true);
   assignString('change');
   assignString('sceneText');
   assignString('rawText');
@@ -109,12 +120,14 @@ function normalizePersistedIllustration(illustration: NonNullable<PersistedMessa
 
 function collectPayloadImageAssetIds(payload: Partial<SavePayload> | null | undefined) {
   const ids = new Set<string>();
-  const playerProfile = payload?.gameState?.runtimeFlags?.playerProfile;
+  const gameState = payload?.gameState && typeof payload.gameState === 'object' ? payload.gameState : undefined;
+  const playerProfile = gameState?.runtimeFlags?.playerProfile;
   if (playerProfile && typeof playerProfile === 'object') {
     const avatarAssetId = (playerProfile as Partial<PlayerProfile>).avatarAssetId;
     if (avatarAssetId) ids.add(String(avatarAssetId));
   }
-  for (const message of payload?.chatLog ?? []) {
+  const chatLog = Array.isArray(payload?.chatLog) ? payload.chatLog : [];
+  for (const message of chatLog) {
     for (const illustration of message.illustrations ?? []) {
       if (illustration.assetId) ids.add(String(illustration.assetId));
     }
@@ -145,9 +158,11 @@ const PROFILE_DEFAULTS = {
 };
 
 function applyProfileDefaults<T extends Record<string, unknown>>(profile: T): T {
+  const currentRole = profile[PROFILE_KEYS.role];
   return {
     ...profile,
-    [PROFILE_KEYS.role]: PROFILE_DEFAULTS.role,
+    [PROFILE_KEYS.role]:
+      typeof currentRole === 'string' && currentRole.trim() ? currentRole : PROFILE_DEFAULTS.role,
   };
 }
 
@@ -211,6 +226,7 @@ export function normalizePlayerProfile(input: unknown): PlayerProfile {
     familyName,
     givenName,
     avatarAssetId: raw.avatarAssetId ? String(raw.avatarAssetId) : undefined,
+    gender: raw.gender ? String(raw.gender) : undefined,
     personality: String(raw.personality ?? ''),
     appearance: String(raw.appearance ?? ''),
     className: raw.className ? String(raw.className) : '2年A班',
@@ -293,6 +309,22 @@ function hasOwn(input: object, key: PropertyKey): boolean {
 
 function getPayloadStorageKey(saveId: string) {
   return `${SAVE_PAYLOAD_STORAGE_PREFIX}${saveId}`;
+}
+
+type RawSavePayload = Record<string, unknown> & Partial<SavePayload>;
+
+function readRawPayload(saveId: string): RawSavePayload | null {
+  const payload = readPayloadSync(saveId);
+  return payload && typeof payload === 'object' ? (payload as RawSavePayload) : null;
+}
+
+function warnLegacyCodecBlocked(saveId: string, payload: RawSavePayload): void {
+  console.warn('[saves] aggregate codec refused a non-legacy payload', {
+    saveId,
+    version: payload.version,
+    schemaVersion: payload.saveDataSchemaVersion ?? payload.schemaVersion,
+    relation: classifySavePayloadSchema(payload),
+  });
 }
 
 function safeReadJson<T>(key: string, fallback: T): T {
@@ -423,7 +455,10 @@ function normalizeGameState(gameState: Partial<GameState> | undefined, fallbackR
   const runtimeFlags = gameState?.runtimeFlags ? cloneJson(gameState.runtimeFlags) : undefined;
   if (runtimeFlags && typeof runtimeFlags === 'object') {
     runtimeFlags.playerProfile = normalizePlayerProfile((runtimeFlags as Record<string, unknown>).playerProfile);
-    runtimeFlags.phoneMessages = normalizePhoneMessageStore((runtimeFlags as Record<string, unknown>).phoneMessages);
+    runtimeFlags.phoneMessages = {
+      ...normalizePhoneMessageStore((runtimeFlags as Record<string, unknown>).phoneMessages),
+      generating: false,
+    };
     runtimeFlags.cardVersion = ISLANDMILFCODE_VERSION;
     runtimeFlags.saveSchemaVersion = SAVE_VERSION;
     delete (runtimeFlags as Record<string, unknown>).deepSeekMode;
@@ -674,13 +709,14 @@ function createMetaFromPayload(
 }
 
 function migrateLegacySavesIfNeeded(): void {
-  const existingIndex = safeReadJson<SaveIndexRecord>(SAVE_INDEX_STORAGE_KEY, {});
+  const existingIndex = readSaveIndexSync() as unknown as SaveIndexRecord;
   const legacy = safeReadJson<Record<string, LegacySaveSlot>>(LEGACY_SAVES_STORAGE_KEY, {});
   if (!Object.keys(legacy).length) return;
 
   const nextIndex = { ...existingIndex };
+  const migrationCommits: Promise<void>[] = [];
   for (const legacySave of Object.values(legacy)) {
-    if (!legacySave?.id || nextIndex[legacySave.id]) continue;
+    if (!legacySave?.id || (nextIndex[legacySave.id] && readRawPayload(legacySave.id))) continue;
     const runId = crypto.randomUUID();
     const statusData = normalizeStatusData(legacySave.statusData ?? defaultStatusData);
     const playerProfile = normalizePlayerProfile({
@@ -706,7 +742,6 @@ function migrateLegacySavesIfNeeded(): void {
       summaryStore: cloneJson(legacySave.summaryStore ?? createDefaultSummaryStore()),
       version: SAVE_VERSION,
     };
-    writePayload(payload);
     nextIndex[legacySave.id] = {
       ...createMetaFromPayload(payload, {
         kind: legacySave.id.startsWith('autosave_') ? 'autosave' : 'manual',
@@ -715,10 +750,17 @@ function migrateLegacySavesIfNeeded(): void {
       }),
       updatedAt: Number(legacySave.updatedAt || legacySave.createdAt || Date.now()),
     };
+    migrationCommits.push(commitPayloadAndIndex(payload, nextIndex));
   }
 
-  writeSaveIndex(nextIndex);
-  safeRemove(LEGACY_SAVES_STORAGE_KEY);
+  if (migrationCommits.length === 0) {
+    safeRemove(LEGACY_SAVES_STORAGE_KEY);
+  } else {
+    void Promise.all(migrationCommits).then(
+      () => safeRemove(LEGACY_SAVES_STORAGE_KEY),
+      error => console.warn('[saves] legacy v1 source retained because migration did not commit:', error),
+    );
+  }
 }
 
 function readSaveIndex(): SaveIndexRecord {
@@ -726,7 +768,16 @@ function readSaveIndex(): SaveIndexRecord {
   const rawIndex = readSaveIndexSync() as unknown as SaveIndexRecord;
   const normalizedIndex: SaveIndexRecord = {};
   let changed = false;
+  let containsProtectedSchema = false;
   for (const [saveId, meta] of Object.entries(rawIndex)) {
+    const rawPayload = readRawPayload(saveId);
+    if (rawPayload && !canUseLegacyAggregateSaveCodec(rawPayload)) {
+      // v3/future/unknown payload metadata is listable but must not enter the legacy
+      // hydrate/normalize/write-back path.
+      containsProtectedSchema = true;
+      normalizedIndex[saveId] = meta;
+      continue;
+    }
     let nextMeta = normalizeSaveMeta(meta);
     if (shouldHydrateMetaFromPayload(meta)) {
       const payload = readPayload(saveId);
@@ -738,13 +789,16 @@ function readSaveIndex(): SaveIndexRecord {
             createdAt: nextMeta.createdAt,
           }),
           updatedAt: nextMeta.updatedAt,
+          browserRevision: nextMeta.browserRevision ?? payload.browserRevision,
         };
       }
     }
     if (JSON.stringify(meta) !== JSON.stringify(nextMeta)) changed = true;
     normalizedIndex[saveId] = nextMeta;
   }
-  if (changed) writeSaveIndex(normalizedIndex);
+  // 只要索引里含有受保护 schema，本次读取就保持完全无写副作用；
+  // 等 v3 index codec 接管后再做版本内迁移。
+  if (changed && !containsProtectedSchema) writeSaveIndex(normalizedIndex);
   return normalizedIndex;
 }
 
@@ -771,8 +825,20 @@ function writeSaveIndex(index: SaveIndexRecord): void {
   writeSaveIndexSync(index as unknown as Record<string, unknown>);
 }
 
-function writePayload(payload: SavePayload): void {
-  writePayloadSync(payload.saveId, payload as unknown as Record<string, unknown>);
+function commitPayloadAndIndex(payload: SavePayload, index: SaveIndexRecord): Promise<void> {
+  const existing = readRawPayload(payload.saveId);
+  if (existing && !canUseLegacyAggregateSaveCodec(existing)) {
+    warnLegacyCodecBlocked(payload.saveId, existing);
+    throw new Error('该存档使用当前聚合存档 codec 不支持的 schema，已阻止降级覆盖。');
+  }
+  const receipt = commitSaveSnapshotSync(
+    payload.saveId,
+    payload as unknown as Record<string, unknown>,
+    index as unknown as Record<string, unknown>,
+  );
+  payload.browserRevision = receipt.browserRevision;
+  if (index[payload.saveId]) index[payload.saveId].browserRevision = receipt.browserRevision;
+  return receipt.committed;
 }
 
 function getRawPayloadRunId(payload: unknown): string {
@@ -782,8 +848,12 @@ function getRawPayloadRunId(payload: unknown): string {
 }
 
 function readPayload(saveId: string): SavePayload | null {
-  const payload = readPayloadSync(saveId) as unknown as SavePayload | null;
+  const payload = readRawPayload(saveId) as SavePayload | null;
   if (!payload || typeof payload !== 'object') return null;
+  if (!canUseLegacyAggregateSaveCodec(payload)) {
+    warnLegacyCodecBlocked(saveId, payload);
+    return null;
+  }
 
   const runId = String(payload.runId || payload.gameState?.runId || '');
   if (!runId) return null;
@@ -882,6 +952,7 @@ function readPayload(saveId: string): SavePayload | null {
     memoryDB,
     messageSnapshots: Array.isArray(payload.messageSnapshots) ? cloneJson(payload.messageSnapshots) : undefined,
     version: SAVE_VERSION,
+    browserRevision: payload.browserRevision,
   };
 }
 
@@ -997,7 +1068,12 @@ function ensureMeta(saveId: string): SaveMeta | null {
 }
 
 export function listSaves(): SaveMeta[] {
-  return Object.values(readSaveIndex()).sort((a, b) => b.updatedAt - a.updatedAt);
+  const merged = new Map<string, SaveMeta>();
+  Object.values(readSaveIndex()).forEach(meta => merged.set(meta.saveId, meta));
+  // A published v3 meta is authoritative for display, but keeping the legacy
+  // index entry underneath preserves instant fallback if a migration fails.
+  listArchiveSavesSync().forEach(meta => merged.set(meta.saveId, meta));
+  return [...merged.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export function listSavesByRunId(runId: string): SaveMeta[] {
@@ -1037,8 +1113,7 @@ export function createSave(opts: {
 
   const index = readSaveIndex();
   index[saveId] = meta;
-  writePayload(payload);
-  writeSaveIndex(index);
+  commitPayloadAndIndex(payload, index);
   setActiveRunId(runId);
   setActiveSaveId(saveId);
   return meta;
@@ -1068,9 +1143,7 @@ export function createManualSave(input: {
     label: input.label,
   });
   index[saveId] = meta;
-  writePayload(payload);
-  writeSaveIndex(index);
-  setActiveSaveId(saveId);
+  commitPayloadAndIndex(payload, index);
   return meta;
 }
 
@@ -1119,8 +1192,7 @@ export function writeSave(
     ...existing,
     ...nextMeta,
   };
-  writePayload(payload);
-  writeSaveIndex(index);
+  commitPayloadAndIndex(payload, index);
   return index[saveId];
 }
 
@@ -1144,8 +1216,7 @@ export function writeAutosave(
 export function deleteSave(saveId: string): void {
   const index = readSaveIndex();
   delete index[saveId];
-  writeSaveIndex(index);
-  deletePayloadSync(saveId);
+  deleteSaveSnapshotSync(saveId, index as unknown as Record<string, unknown>);
   if (getActiveSaveId() === saveId) {
     clearActiveSaveId();
   }
@@ -1251,6 +1322,65 @@ function appendSavePayloadJson(parts: string[], payload: SavePayload): void {
   parts.push('}');
 }
 
+export async function loadSaveAsync(saveId: string): Promise<{ meta: SaveMeta; payload: SavePayload } | null> {
+  await loadPayloadById(saveId);
+  return loadSave(saveId);
+}
+
+export async function isStoredSaveReadOnly(saveId: string): Promise<boolean> {
+  await loadPayloadById(saveId);
+  const payload = readRawPayload(saveId);
+  return Boolean(payload && !canUseLegacyAggregateSaveCodec(payload));
+}
+
+function getPayloadForExport(saveId: string): RawSavePayload | null {
+  const rawPayload = readRawPayload(saveId);
+  if (!rawPayload) return null;
+  if (!canUseLegacyAggregateSaveCodec(rawPayload)) return rawPayload;
+  return (readPayload(saveId) as RawSavePayload | null) ?? rawPayload;
+}
+
+function appendExportPayloadJson(parts: string[], payload: RawSavePayload): void {
+  if (canUseLegacyAggregateSaveCodec(payload)) {
+    appendSavePayloadJson(parts, payload as SavePayload);
+    return;
+  }
+  parts.push(JSON.stringify(payload));
+}
+
+function getMetaForExport(saveId: string, payload: RawSavePayload): SaveMeta {
+  if (canUseLegacyAggregateSaveCodec(payload)) {
+    const meta = ensureMeta(saveId);
+    if (meta) return meta;
+  }
+
+  const rawIndex = readSaveIndexSync() as unknown as SaveIndexRecord;
+  const storedMeta = rawIndex[saveId];
+  if (storedMeta) return cloneJson(storedMeta);
+
+  const runId = String(payload.runId || '').trim();
+  const now = Date.now();
+  return {
+    saveId,
+    runId,
+    kind: saveId.startsWith('autosave_') ? 'autosave' : 'manual',
+    label: '只读存档',
+    createdAt: now,
+    updatedAt: now,
+    messageIndex: 0,
+    playerProfile: {
+      name: '',
+      familyName: '',
+      givenName: '',
+      personality: '',
+      appearance: '',
+    },
+    activeTarget: null,
+    messageCount: Array.isArray(payload.chatLog) ? payload.chatLog.length : 0,
+    version: (payload.version as string | number | undefined) ?? '',
+  };
+}
+
 function appendEntryPrefix(parts: string[], key: string, hasPreviousEntry: boolean): boolean {
   if (hasPreviousEntry) parts.push(',');
   parts.push(JSON.stringify(key), ':');
@@ -1272,10 +1402,10 @@ export function exportAllSavesAsJsonParts(): string[] {
   parts.push(JSON.stringify(cloneJson(index)));
 
   for (const saveId of Object.keys(index)) {
-    const payload = readPayload(saveId);
+    const payload = getPayloadForExport(saveId);
     if (!payload) continue;
     hasEntry = appendEntryPrefix(parts, getPayloadStorageKey(saveId), hasEntry);
-    appendSavePayloadJson(parts, payload);
+    appendExportPayloadJson(parts, payload);
   }
 
   for (const key of [ACTIVE_RUN_ID_STORAGE_KEY, ACTIVE_SAVE_ID_STORAGE_KEY]) {
@@ -1294,8 +1424,8 @@ export async function exportAllSavesAsJsonPartsWithAssets(): Promise<string[]> {
   const index = readSaveIndex();
   const ids = new Set<string>();
   for (const saveId of Object.keys(index)) {
-    const payload = readPayload(saveId);
-    collectPayloadImageAssetIds(payload).forEach(id => ids.add(id));
+    const payload = getPayloadForExport(saveId);
+    collectPayloadImageAssetIds(payload as Partial<SavePayload> | null).forEach(id => ids.add(id));
   }
   const imageAssets = await exportImageAssetsForIds(ids);
   if (!imageAssets.length) return parts;
@@ -1308,30 +1438,30 @@ export function exportAllSavesAsJson(): string {
 }
 
 export function exportSaveAsJsonParts(saveId: string): string[] {
-  const meta = ensureMeta(saveId);
-  const payload = readPayload(saveId);
-  if (!meta || !payload) {
+  const payload = getPayloadForExport(saveId);
+  if (!payload) {
     throw new Error('Current save does not exist, so it cannot be exported.');
   }
+  const meta = getMetaForExport(saveId, payload);
 
   const parts: string[] = ['{'];
   let hasField = false;
-  hasField = appendJsonField(parts, 'version', SAVE_VERSION, hasField);
+  hasField = appendJsonField(parts, 'version', payload.version ?? SAVE_VERSION, hasField);
   hasField = appendJsonField(parts, 'exportedAt', new Date().toISOString(), hasField);
   hasField = appendJsonField(parts, 'kind', 'single-save', hasField);
   hasField = appendJsonField(parts, 'saveId', saveId, hasField);
   hasField = appendJsonField(parts, 'meta', cloneJson(meta), hasField);
   if (hasField) parts.push(',');
   parts.push(JSON.stringify('payload'), ':');
-  appendSavePayloadJson(parts, payload);
+  appendExportPayloadJson(parts, payload);
   parts.push('}');
   return parts;
 }
 
 export async function exportSaveAsJsonPartsWithAssets(saveId: string): Promise<string[]> {
   const parts = exportSaveAsJsonParts(saveId);
-  const payload = readPayload(saveId);
-  const imageAssets = await exportImageAssetsForIds(collectPayloadImageAssetIds(payload));
+  const payload = getPayloadForExport(saveId);
+  const imageAssets = await exportImageAssetsForIds(collectPayloadImageAssetIds(payload as Partial<SavePayload> | null));
   if (!imageAssets.length) return parts;
   const text = parts.join('');
   return [text.slice(0, -1), ',', JSON.stringify('imageAssets'), ':', JSON.stringify(imageAssets), '}'];
@@ -1357,6 +1487,54 @@ function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): {
   const runId = String(rawPayload?.runId || rawPayload?.gameState?.runId || rawMeta?.runId || '').trim();
   if (!saveId || !runId || !rawPayload) {
     throw new Error('备份文件格式不正确：缺少单个存档数据。');
+  }
+
+  if (!canUseLegacyAggregateSaveCodec(rawPayload)) {
+    const now = Date.now();
+    const fallbackProfile: PlayerProfile = {
+      name: '',
+      familyName: '',
+      givenName: '',
+      personality: '',
+      appearance: '',
+    };
+    const meta: SaveMeta = {
+      saveId,
+      runId,
+      kind: rawMeta?.kind === 'autosave' || rawMeta?.kind === 'manual' ? rawMeta.kind : 'manual',
+      label: rawMeta?.label ? String(rawMeta.label) : '只读导入存档',
+      createdAt: Number(rawMeta?.createdAt ?? now) || now,
+      updatedAt: Number(rawMeta?.updatedAt ?? now) || now,
+      messageIndex: Math.max(0, Number(rawMeta?.messageIndex ?? 0) || 0),
+      playerProfile:
+        rawMeta?.playerProfile && typeof rawMeta.playerProfile === 'object'
+          ? cloneJson(rawMeta.playerProfile)
+          : fallbackProfile,
+      activeTarget: rawMeta?.activeTarget && typeof rawMeta.activeTarget === 'object' ? cloneJson(rawMeta.activeTarget) : null,
+      messageCount: Math.max(
+        0,
+        Number(rawMeta?.messageCount ?? (Array.isArray(rawPayload.chatLog) ? rawPayload.chatLog.length : 0)) || 0,
+      ),
+      version: rawMeta?.version ?? rawPayload.version ?? '',
+      ...(rawMeta?.location ? { location: String(rawMeta.location) } : {}),
+      ...(rawMeta?.gameTime ? { gameTime: String(rawMeta.gameTime) } : {}),
+      ...(rawMeta?.preview ? { preview: String(rawMeta.preview) } : {}),
+    };
+    const index = readSaveIndex();
+    index[saveId] = meta;
+    const receipt = commitOpaqueSaveSnapshotSync(
+      saveId,
+      cloneJson(rawPayload) as Record<string, unknown>,
+      index as unknown as Record<string, unknown>,
+    );
+    meta.browserRevision = receipt.browserRevision;
+    console.info('[saves] imported protected schema without normalization', {
+      saveId,
+      version: rawPayload.version,
+      schemaVersion: rawPayload.saveDataSchemaVersion ?? rawPayload.schemaVersion,
+      relation: classifySavePayloadSchema(rawPayload),
+    });
+    return { imported: 1, skipped: 0, saveId };
   }
 
   const payload: SavePayload = {
@@ -1385,8 +1563,7 @@ function importSingleSaveBackup(parsed: Partial<SingleSaveBackupPayload>): {
 
   const index = readSaveIndex();
   index[saveId] = meta;
-  writePayload(payload);
-  writeSaveIndex(index);
+  commitPayloadAndIndex(payload, index);
   // 导入后自动切换到该存档，确保刷新后加载的是导入的存档而非旧的。
   setActiveSaveId(saveId);
   setActiveRunId(runId);
@@ -1440,7 +1617,8 @@ export function importAllSavesFromJson(json: string): { imported: number; skippe
         const payloadData = (
           typeof value === 'object' && value !== null ? value : JSON.parse(value as string)
         ) as Record<string, unknown>;
-        writePayloadSync(saveId, payloadData);
+        if (canUseLegacyAggregateSaveCodec(payloadData)) writePayloadSync(saveId, payloadData);
+        else writeOpaquePayloadSync(saveId, payloadData);
         imported += 1;
       } else {
         // 其它 islandmilfcode: 前缀的小 key（如 active-run-id 等）仍写 localStorage

@@ -5,6 +5,7 @@ import type { FloatingPhonePosition } from '../phone/types';
 import type {
   AppState,
   DrawingSettings,
+  FloorStateSnapshot,
   ImageRerollContext,
   PersistedMessage,
   PhoneMessageStore,
@@ -69,9 +70,11 @@ const serializedMessageCache = new WeakMap<
 >();
 
 function applyProfileDefaults<T extends Record<string, unknown>>(profile: T): T {
+  const currentRole = profile[PROFILE_KEYS.role];
   return {
     ...profile,
-    [PROFILE_KEYS.role]: PROFILE_DEFAULTS.role,
+    [PROFILE_KEYS.role]:
+      typeof currentRole === 'string' && currentRole.trim() ? currentRole : PROFILE_DEFAULTS.role,
   };
 }
 
@@ -123,7 +126,7 @@ function readGameDevelopmentSnapshot(db: IslandMemoryDB): GameDevelopmentState |
   }
 }
 
-function restoreGameDevelopmentSnapshot(db: IslandMemoryDB, snapshot: GameDevelopmentState | null): void {
+export function restoreGameDevelopmentSnapshot(db: IslandMemoryDB, snapshot: GameDevelopmentState | null): void {
   if (snapshot) {
     upsertAttribute(db, {
       targetId: GAME_DEVELOPMENT_TARGET_ID,
@@ -979,7 +982,13 @@ export function getSourceUserTextForReaderIndex(state: AppState, index: number) 
   return getRollbackTargetForReaderIndex(state, index)?.sourceUserText ?? '';
 }
 
-export async function rollbackConversation(state: AppState, readerIndex: number, win?: TavernWindow) {
+export async function rollbackConversation(
+  state: AppState,
+  readerIndex: number,
+  win?: TavernWindow,
+  isCurrent: () => boolean = () => true,
+) {
+  if (!isCurrent()) return null;
   const target = getRollbackTargetForReaderIndex(state, readerIndex);
   if (!target) return null;
   const previousSummaryStore = cloneJson(state.summaryStore);
@@ -987,7 +996,9 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   const rollbackSummaryFloorIndex = countSummaryFloorsBeforeUiIndex(state, target.sourceUserIndex);
 
   const removedMessageIds = state.uiMessages
-    .slice(target.sourceUserIndex)
+    // v3 rollback-to-input keeps the selected user message. Only its old
+    // assistant response and future timeline are removed.
+    .slice(target.sourceUserIndex + 1)
     .map(message => message.tavernMessageId)
     .filter((messageId): messageId is number => typeof messageId === 'number');
 
@@ -999,6 +1010,8 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
     }
   }
 
+  if (!isCurrent()) return null;
+
   // 优先恢复源用户消息自身的快照，再回退到更早的消息快照。
   for (let i = target.sourceUserIndex; i >= 0; i--) {
     const msg = state.uiMessages[i];
@@ -1009,10 +1022,10 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
     }
   }
 
-  state.uiMessages = state.uiMessages.slice(0, Math.max(1, target.sourceUserIndex));
+  state.uiMessages = state.uiMessages.slice(0, Math.max(1, target.sourceUserIndex + 1));
   state.focusedMessageIndex = Math.max(getReaderMessages(state.uiMessages).length - 1, 0);
   state.focusedMessagePage = 0;
-  prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
+  prunePhoneMessagesAfterFloor(state, target.sourceReaderIndex - 1);
   pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackSummaryFloorIndex, {
     mergePrevious: false,
   });
@@ -1032,41 +1045,132 @@ export async function rollbackConversation(state: AppState, readerIndex: number,
   return target;
 }
 
-export async function deleteReaderMessage(state: AppState, readerIndex: number, win?: TavernWindow) {
+export async function deleteReaderMessage(
+  state: AppState,
+  readerIndex: number,
+  win?: TavernWindow,
+  isCurrent: () => boolean = () => true,
+) {
+  if (!isCurrent()) return false;
   const targetMessage = getReaderMessageByIndex(state, readerIndex);
   if (!targetMessage) return false;
-  const previousSummaryStore = cloneJson(state.summaryStore);
-  const previousMemoryDB = cloneJson(state.memoryDB);
 
   const targetUiIndex = state.uiMessages.findIndex(message => message.id === targetMessage.id);
   if (targetUiIndex < 0) return false;
-  const deletedSummaryFloorIndex = countSummaryFloorsBeforeUiIndex(state, targetUiIndex);
 
-  if (typeof targetMessage.tavernMessageId === 'number' && typeof win?.deleteChatMessages === 'function') {
+  const deletedTavernMessageId = typeof targetMessage.tavernMessageId === 'number'
+    ? targetMessage.tavernMessageId
+    : null;
+  let hostMessageDeleted = false;
+  if (deletedTavernMessageId !== null && typeof win?.deleteChatMessages === 'function') {
     try {
-      await win.deleteChatMessages([targetMessage.tavernMessageId], { refresh: 'all' });
+      await win.deleteChatMessages([deletedTavernMessageId], { refresh: 'all' });
+      hostMessageDeleted = true;
     } catch {
       // 不在 Tavern 内或删除失败时直接忽略。
     }
   }
 
-  for (let i = targetUiIndex - 1; i >= 0; i -= 1) {
-    const msg = state.uiMessages[i];
-    if (msg?.statusSnapshot) {
-      const snapshot = normalizeRollbackSnapshot(msg.statusSnapshot);
-      restoreRollbackSnapshot(state, snapshot);
-      break;
-    }
+  if (!isCurrent()) return false;
+  // “删除该楼层”是文本外科操作：只移除玩家点中的 reader
+  // 卡片并保留之后的正文与当前权威状态。因果回滚由另外两个明确的
+  // “回到用户输入/回到完成楼层”动作负责，不能在这里混合两套语义。
+  state.uiMessages = state.uiMessages
+    .filter(message => message.id !== targetMessage.id)
+    .map(message => {
+      if (
+        hostMessageDeleted
+        && deletedTavernMessageId !== null
+        && typeof message.tavernMessageId === 'number'
+        && message.tavernMessageId > deletedTavernMessageId
+      ) {
+        return { ...message, tavernMessageId: message.tavernMessageId - 1 };
+      }
+      return message;
+    });
+  syncFocusedMessage(state);
+
+  return true;
+}
+
+/** Restore the bounded authoritative state carried by a v3 floor. */
+export function restoreFloorStateSnapshot(state: AppState, snapshot: FloorStateSnapshot) {
+  const rollback: RollbackSnapshot = {
+    statusData: cloneJson(snapshot.statusData),
+    playerProfile: cloneJson(snapshot.playerProfile),
+    drawingSettings: cloneJson(snapshot.drawingSettings),
+  };
+  if (hasOwn(snapshot.runtime, 'gameDevelopment')) {
+    rollback.gameDevelopment = cloneJson(snapshot.runtime.gameDevelopment);
+  }
+  restoreRollbackSnapshot(state, rollback);
+  if (snapshot.provenance.statusData !== 'defaulted' && snapshot.provenance.statusData !== 'save-current-fallback') {
+    // An explicit floor snapshot is allowed to restore a legitimate zero
+    // affinity. The corruption guard remains active only for inferred legacy
+    // fallbacks where zero may mean "field was missing".
+    state.statusData = normalizeStatusData(cloneJson(snapshot.statusData));
   }
 
-  state.uiMessages = state.uiMessages.filter(message => message.id !== targetMessage.id);
-  syncFocusedMessage(state);
+  const threads: PhoneMessageStore['threads'] = {};
+  for (const [targetId, thread] of Object.entries(state.phoneMessages.threads)) {
+    const boundary = snapshot.phoneState.threads[targetId];
+    if (!boundary) continue;
+    const messages = thread.messages.slice(0, Math.max(0, boundary.messageCount));
+    threads[targetId] = {
+      ...thread,
+      messages,
+      unread: Math.min(Math.max(0, boundary.unread), messages.length),
+    };
+  }
+  const activeThreadId = snapshot.phoneState.activeThreadId;
+  state.phoneMessages = {
+    activeThreadId: activeThreadId && threads[activeThreadId] ? activeThreadId : null,
+    draft: snapshot.phoneState.draft,
+    generating: false,
+    threads,
+  };
+}
+
+/** Keep the selected completed assistant floor, remove only its future. */
+export async function rollbackAfterCompletedReaderMessage(
+  state: AppState,
+  readerIndex: number,
+  win?: TavernWindow,
+  isCurrent: () => boolean = () => true,
+) {
+  if (!isCurrent()) return false;
+  const targetMessage = getReaderMessageByIndex(state, readerIndex);
+  if (!targetMessage || targetMessage.role !== 'assistant') return false;
+  const targetUiIndex = state.uiMessages.findIndex(message => message.id === targetMessage.id);
+  if (targetUiIndex < 0) return false;
+  const previousSummaryStore = cloneJson(state.summaryStore);
+  const previousMemoryDB = cloneJson(state.memoryDB);
+  const keptSummaryFloorCount = countSummaryFloorsBeforeUiIndex(state, targetUiIndex + 1);
+  const removedMessageIds = state.uiMessages
+    .slice(targetUiIndex + 1)
+    .map(message => message.tavernMessageId)
+    .filter((messageId): messageId is number => typeof messageId === 'number');
+  if (removedMessageIds.length && typeof win?.deleteChatMessages === 'function') {
+    try {
+      await win.deleteChatMessages(removedMessageIds, { refresh: 'all' });
+    } catch (error) {
+      console.warn('[reader] host future deletion deferred:', error);
+    }
+  }
+  if (!isCurrent()) return false;
+  if (targetMessage.statusSnapshot) {
+    restoreRollbackSnapshot(state, normalizeRollbackSnapshot(targetMessage.statusSnapshot));
+  } else {
+    console.warn('[reader] completed floor has no exact after snapshot; keeping current variables as best effort');
+  }
+  state.uiMessages = state.uiMessages.slice(0, targetUiIndex + 1);
+  state.focusedMessageIndex = Math.max(0, getReaderMessages(state.uiMessages).length - 1);
+  state.focusedMessagePage = 0;
   prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
-  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, deletedSummaryFloorIndex, {
+  pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, keptSummaryFloorCount, {
     mergePrevious: false,
   });
-  // 中文注释：删除较早楼层会使其后的路线确认失去因果基础，即使确认时的消息文本仍留在列表中也必须清除。
-  clearPlotRouteChoiceAfterFloor(state.memoryDB, 'v07', readerIndex);
+  clearPlotRouteChoiceAfterFloor(state.memoryDB, 'v07', readerIndex + 1);
   reconcilePlotRouteChoiceAfterTimelineChange(state.memoryDB, 'v07', {
     currentTime: state.statusData.world.currentTime,
     currentMainEventId: state.statusData.world.currentMainEventId,
@@ -1076,7 +1180,6 @@ export async function deleteReaderMessage(state: AppState, readerIndex: number, 
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
   state.notification = null;
-
   return true;
 }
 

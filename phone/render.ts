@@ -932,10 +932,14 @@ export function getCalendarOpenEventId(): string | null {
 function renderCalendarPhonePage(state: AppState) {
   const gd = parseGameDate(state.statusData.world.currentTime);
   const subtitle = `${gd.year}年${gd.month + 1}月${gd.day}日`;
+  const cacheNotice = typeof state.runtimeFlags.worldbookCacheNotice === 'string'
+    ? `<div class="phone-calendar-cache-notice">${escapeHtml(state.runtimeFlags.worldbookCacheNotice)}</div>`
+    : '';
   return `
     <section class="phone-route-page phone-app-page phone-app-page--calendar" data-phone-route-view="app:calendar">
       ${renderPhoneAppHeader(state, '日历', subtitle)}
       <div class="phone-page-scroll phone-calendar-scroll">
+        ${cacheNotice}
         ${renderCalendarGrid(state, calendarMonthOffset)}
       </div>
     </section>

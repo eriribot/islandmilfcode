@@ -58,7 +58,11 @@ function buildOpeningPresetInput(state: AppState, ctx: Pick<OpeningActionContext
   return `${openingContract}\n\n${basePrompt}`;
 }
 
-async function simulateOpeningGeneration(ctx: OpeningActionContext, generationId: string) {
+async function simulateOpeningGeneration(
+  ctx: OpeningActionContext,
+  generationId: string,
+  isCurrentOpening: () => boolean,
+) {
   const { state } = ctx;
   const profile = state.playerProfile;
   const name = profile.name || [profile.familyName, profile.givenName].filter(Boolean).join('') || '你';
@@ -73,11 +77,13 @@ async function simulateOpeningGeneration(ctx: OpeningActionContext, generationId
 
   let built = '';
   for (const line of lines) {
+    if (!isCurrentOpening()) return false;
     built = built ? `${built}\n${line}` : line;
     updateStreamingText(ctx, `<content>${built}</content>`);
     await new Promise(resolve => window.setTimeout(resolve, 180));
-    if (!state.generating || state.currentGenerationId !== generationId) return false;
+    if (!isCurrentOpening()) return false;
   }
+  if (!isCurrentOpening()) return false;
   finalizeStreamingText(ctx, `<content>${built}</content>`, generationId);
   return true;
 }
@@ -91,6 +97,19 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
   state.finalizedGenerationId = '';
   state.focusedMessagePage = 0;
   const generationId = state.currentGenerationId;
+  const openingRunId = state.activeRunId;
+  const openingSaveId = state.activeSaveId;
+  let ownsOpeningState = true;
+  const isSameRunIdentity = () =>
+    state.activeRunId === openingRunId && state.activeSaveId === openingSaveId;
+  const isCurrentOpening = () =>
+    isSameRunIdentity()
+    && (state.currentGenerationId === generationId || state.finalizedGenerationId === generationId);
+  const abandonIfStale = () => {
+    if (isCurrentOpening()) return false;
+    ownsOpeningState = false;
+    return true;
+  };
   const hasPresetGenerate = typeof win.generate === 'function';
   const hasRawGenerate = typeof win.generateRaw === 'function';
 
@@ -105,16 +124,15 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
   });
 
   try {
-    if (!hasPresetGenerate && hasRawGenerate) {
-      throw new Error('AI 开场需要走酒馆预设 generate 接口；当前环境只有 generateRaw，已阻止裸 prompt 生成。');
-    }
-
     ensureStreamingMessage(ctx);
     ctx.render();
 
     if (!hasPresetGenerate) {
-      const simulated = await simulateOpeningGeneration(ctx, generationId);
-      if (!simulated) return false;
+      const simulated = await simulateOpeningGeneration(ctx, generationId, isCurrentOpening);
+      if (!simulated || abandonIfStale()) {
+        ownsOpeningState = false;
+        return false;
+      }
     } else {
       const userInput = buildOpeningPresetInput(state, ctx);
       // Opening generation must enter Tavern's preset stack; never use generateRaw/ordered_prompts here.
@@ -125,11 +143,11 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
         user_input: userInput,
       });
 
+      if (abandonIfStale()) return false;
       recordGenerationDebug(ctx, 'opening:generate-returned', {
         generationId,
         resultLength: String(result ?? '').length,
       });
-      if (state.currentGenerationId !== generationId) return false;
       finalizeStreamingText(ctx, String(result ?? ''), generationId);
     }
 
@@ -142,6 +160,7 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
     recordGenerationDebug(ctx, 'opening:success', { generationId });
     return true;
   } catch (error) {
+    if (abandonIfStale()) return false;
     recordGenerationDebug(ctx, 'opening:catch', {
       generationId,
       error: error instanceof Error ? error.message : String(error),
@@ -173,10 +192,17 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
     });
     return false;
   } finally {
-    if (state.currentGenerationId === generationId) {
-      state.currentGenerationId = '';
+    const canFinalizeOpeningState =
+      ownsOpeningState
+      && isSameRunIdentity()
+      && (!state.currentGenerationId || state.currentGenerationId === generationId)
+      && (!state.finalizedGenerationId || state.finalizedGenerationId === generationId);
+    if (canFinalizeOpeningState) {
+      if (state.currentGenerationId === generationId) {
+        state.currentGenerationId = '';
+      }
+      state.generating = false;
+      ctx.render();
     }
-    state.generating = false;
-    ctx.render();
   }
 }

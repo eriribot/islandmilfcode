@@ -756,6 +756,15 @@ function renderReaderContextMenu(menu: ReaderContextMenuState | null, generating
       >
         ${generating ? '生成中…' : '重新生成该楼层'}
       </button>
+      ${menu.canRollbackCompleted ? `
+        <button
+          class="reader-context-menu__action"
+          data-action="reader-rollback-completed"
+          ${generating ? 'disabled' : ''}
+        >
+          保留本层，移除后续
+        </button>
+      ` : ''}
     `
     : `
       <button

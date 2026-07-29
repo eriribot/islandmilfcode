@@ -17,6 +17,7 @@ import './title/styles.css';
 import {
   cancelCurrentGeneration,
   cancelPhoneMessageGeneration,
+  invalidateAsyncActions,
   retryBackgroundProgressUpdate,
   submitMessage,
   submitPhoneMessage,
@@ -25,6 +26,7 @@ import {
 import { generateOpeningScene } from './actions/opening';
 import { clearBackgroundTask } from './background-tasks';
 import { setupStreamingHooks } from './actions/streaming';
+import { setupHostLifecycle } from './actions/host-lifecycle';
 import {
   extractContextReply,
   getReaderMessages,
@@ -88,11 +90,13 @@ import {
   createManualSave,
   createSave,
   deleteSave,
+  exportSaveAsJsonParts,
   exportSaveAsJsonPartsWithAssets,
   getAutosaveBranchSaveId,
   importAllSavesFromJson,
+  isStoredSaveReadOnly,
   listSaves,
-  loadSave,
+  loadSaveAsync,
   normalizePlayerProfile,
   recoverMissingSaveIndexFromPayloads,
   setActiveRunId,
@@ -101,16 +105,46 @@ import {
   type SingleSaveBackupPayload,
 } from './state/saves';
 import {
-  isTavernFileBackupAvailable,
+  deleteTavernArchiveSave,
+  installArchiveBridgeSync,
   listTavernFileBackups,
+  persistArchiveSaveToTavernFiles,
+  readTavernArchiveBackup,
   readTavernFileBackup,
+  restoreTavernArchiveImages,
   writeTavernFileBackup,
 } from './state/tavern-file-backup';
 import { flushSaveStore, getSaveStoreDiagnostics, initSaveStore } from './state/save-store';
 import {
+  commitRuntimeArchive,
+  deleteArchiveFloorMessage,
+  deserializeArchiveFloorMessages,
+  deleteArchiveSave,
+  exportPortableArchive,
+  exportReadonlyFutureArchive,
+  flushArchiveRepository,
+  forkArchiveSave,
+  getArchiveFloor,
+  getArchiveFloorWindow,
+  getArchiveDiagnostics,
+  getArchiveMetaSync,
+  hasArchiveSaveSync,
+  hydrateArchiveMessages,
+  importPortableArchive,
+  initArchiveRepository,
+  migrateLegacySaveToArchive,
+  openArchiveSave,
+  replaceArchiveFloorMessage,
+  truncateArchiveAfterFloor,
+  truncateArchiveFromAssistant,
+  type PortableArchiveBackup,
+} from './state/archive-repository';
+import {
+  exportImageAssetsForIds,
   flushImageAssetStore,
   hydrateImageAssetElements,
   initImageAssetStore,
+  restoreImageAssetFromBackup,
   saveImageDataUrlAsAsset,
 } from './state/image-assets';
 import {
@@ -122,13 +156,16 @@ import {
   getReaderMessageByIndex,
   getSourceUserTextForReaderIndex,
   replaceConversationMessages,
+  restoreFloorStateSnapshot,
   rollbackConversation,
+  rollbackAfterCompletedReaderMessage,
   serializeMessages,
   normalizePhoneMessageStore,
   syncFocusedMessage,
 } from './state/store';
 import {
   buildFactAnchorFromStatus,
+  createDefaultSummaryStore,
   loadSummaryApiConfig,
   rerollSummaryEntry,
   repairSummaryStore,
@@ -136,6 +173,8 @@ import {
   runSummary,
   saveSummaryApiConfig,
 } from './summary';
+import { createDefaultMemoryDB } from './memorydatabase/defaults';
+import { normalizeMemoryDB } from './memorydatabase/normalize';
 import type { SummaryApiConfig } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
@@ -158,9 +197,18 @@ import type { MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } 
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { protectTargetAffinityReset } from './variables/runtime-guard';
 import { clamp, formatTime, syncMainEvents } from './variables/normalize';
+import { normalizeStatusData } from './variables/legacy';
 import { syncSchoolCalendarState } from './school-calendar';
-import { loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
-import { ISLANDMILFCODE_VERSION, SAVE_SCHEMA_VERSION } from './version';
+import { getCurrentCharacterWorldbookBinding, loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
+import type { CharacterWorldbookLoadStatus } from './worldbook';
+import {
+  cacheMatchesWorldbookBinding,
+  mergePartialWorldbookData,
+  markRecentWorldbookCacheStale,
+  readRecentWorldbookCache,
+  writeWorldbookSuccessCache,
+} from './state/worldbook-cache';
+import { ISLANDMILFCODE_VERSION, SAVE_DATA_SCHEMA_VERSION } from './version';
 import {
   createMemoryDraft,
   createMemoryPatchFromDraft,
@@ -205,15 +253,21 @@ const root = document.querySelector<HTMLDivElement>('#app');
 
 const READER_CONTEXT_MENU_GAP = 12;
 const READER_CONTEXT_MENU_WIDTH = 240;
-const READER_CONTEXT_MENU_HEIGHT = 176;
+const READER_CONTEXT_MENU_HEIGHT = 220;
 const STATUS_CACHE_KEY_PREFIX = 'islandmilfcode:status-cache:v2:';
 const DRAWING_ENABLED_KEY_PREFIX = 'islandmilfcode:drawing-enabled:v1:';
 const DEEPSEEK_MODE_ENABLED_KEY = 'islandmilfcode-ui:deepseek-mode-enabled:v1';
 
 let flipDirection: 'forward' | 'backward' | '' = '';
+let worldbookRefreshSequence = 0;
 let phoneBgmAudio: HTMLAudioElement | null = null;
 let phoneBgmResolvedUrl = '';
 let restoringSave = false;
+let restoringSaveOwner = 0;
+let saveLoadSequence = 0;
+let readerMutationSequence = 0;
+const imageRerollSequenceByKey = new Map<string, number>();
+let playerAvatarSequence = 0;
 let quickReplyDelegationBound = false;
 let calendarEventDelegationBound = false;
 let v07DdlAutoOpened = false;
@@ -318,12 +372,9 @@ const state = createInitialState(loadFloatingPhonePosition());
 const eventStops: Array<() => void> = [];
 let worldbookRefreshRetryTimer: number | null = null;
 let worldbookRefreshRetryToken = 0;
+let lastWorldbookRefreshStatus: CharacterWorldbookLoadStatus | 'cached' = 'cached';
 const AUTOSAVE_DEBOUNCE_MS = 400;
-const TAVERN_FILE_BACKUP_DEBOUNCE_MS = 12_000;
 let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
-let tavernFileBackupTimer: ReturnType<typeof setTimeout> | null = null;
-let tavernFileBackupInFlight = false;
-let queuedTavernFileBackupSaveId: string | null = null;
 
 function readDeepSeekModeEnabledPreference() {
   try {
@@ -508,27 +559,84 @@ function buildGameState(statusData: StatusData = state.statusData): GameState {
   };
 }
 
+function captureRuntimeSaveState() {
+  // Capture the current run's object references before entering the archive
+  // queue. Loading another save replaces these roots, so a delayed commit can
+  // never serialize the newly opened run under the old saveId.
+  return {
+    statusData: JSON.parse(JSON.stringify(state.statusData)) as typeof state.statusData,
+    playerProfile: JSON.parse(JSON.stringify(state.playerProfile)) as typeof state.playerProfile,
+    phoneMessages: JSON.parse(JSON.stringify(state.phoneMessages)) as typeof state.phoneMessages,
+    drawingSettings: JSON.parse(JSON.stringify(state.drawingSettings)) as typeof state.drawingSettings,
+    summaryStore: JSON.parse(JSON.stringify(state.summaryStore)) as typeof state.summaryStore,
+    memoryDB: JSON.parse(JSON.stringify(state.memoryDB)) as typeof state.memoryDB,
+    // Message arrays are replaced on append/truncate. Holding this run-local
+    // array avoids serializing the entire history just to enter the queue;
+    // commitRuntimeArchive serializes only the current tail chunk.
+    uiMessages: state.uiMessages,
+  };
+}
+
 function writeCurrentAutosave() {
   if (!state.activeRunId || restoringSave) return;
+  const runId = state.activeRunId;
   const saveId = getAutosaveBranchSaveId({
     activeSaveId: state.activeSaveId,
-    runId: state.activeRunId,
+    runId,
   });
-  const meta = writeAutosave(
-    {
-      runId: state.activeRunId,
-      gameState: buildGameState(),
-      chatLog: serializeMessages(state.uiMessages),
-      summaryStore: state.summaryStore,
-      memoryDB: state.memoryDB,
-    },
-    saveId,
-  );
-  if (meta) {
-    state.activeSaveId = meta.saveId;
-    setActiveSaveId(meta.saveId);
-    scheduleTavernFileBackup(meta.saveId);
-  }
+  const sourceSaveId = state.activeSaveId;
+  const loadToken = saveLoadSequence;
+  const canPromoteAutosave = () => saveLoadSequence === loadToken
+    && state.activeRunId === runId
+    && (state.activeSaveId === sourceSaveId || state.activeSaveId === saveId);
+  const gameState = buildGameState();
+  const runtimeState = captureRuntimeSaveState();
+  const existingMeta = getArchiveMetaSync(saveId) ?? listSaves().find(item => item.saveId === saveId);
+  const operation = (async () => {
+    try {
+      if (
+        sourceSaveId &&
+        sourceSaveId !== saveId &&
+        hasArchiveSaveSync(sourceSaveId) &&
+        !hasArchiveSaveSync(saveId)
+      ) {
+        await forkArchiveSave({ sourceSaveId, saveId, label: 'Autosave' });
+      }
+      await commitRuntimeArchive({
+        saveId,
+        runId,
+        kind: 'autosave',
+        label: 'Autosave',
+        gameState,
+        state: runtimeState,
+        existingMeta,
+      });
+      if (canPromoteAutosave()) {
+        state.activeSaveId = saveId;
+        setActiveSaveId(saveId);
+      }
+    } catch (error) {
+      // Browser-primary archive errors never stop play. The aggregate writer
+      // remains an emergency fallback for the current session.
+      console.warn('[archive] autosave failed; using legacy fallback:', error);
+      const meta = writeAutosave(
+        {
+          runId,
+          gameState,
+          chatLog: serializeMessages(runtimeState.uiMessages),
+          summaryStore: runtimeState.summaryStore,
+          memoryDB: runtimeState.memoryDB,
+        },
+        saveId,
+      );
+      if (meta && canPromoteAutosave()) {
+        state.activeSaveId = meta.saveId;
+        setActiveSaveId(meta.saveId);
+      }
+    }
+  })();
+  void operation.catch(error => console.warn('[archive] autosave fallback failed; gameplay continues:', error));
+  return operation;
 }
 
 function persistToSave() {
@@ -536,7 +644,7 @@ function persistToSave() {
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
     autosaveTimer = null;
-    writeCurrentAutosave();
+    void writeCurrentAutosave();
   }, AUTOSAVE_DEBOUNCE_MS);
 }
 
@@ -545,13 +653,18 @@ function flushPendingAutosave() {
     clearTimeout(autosaveTimer);
     autosaveTimer = null;
   }
-  writeCurrentAutosave();
+  return writeCurrentAutosave();
 }
 
 async function persistToSaveImmediately() {
   if (!state.activeRunId || restoringSave) return;
-  flushPendingAutosave();
-  await flushSaveStore();
+  await flushPendingAutosave();
+  const auxiliaryFlushes = await Promise.allSettled([flushArchiveRepository(), flushSaveStore()]);
+  auxiliaryFlushes.forEach(result => {
+    if (result.status === 'rejected') {
+      console.warn('[archive] auxiliary immediate-save flush deferred; gameplay continues:', result.reason);
+    }
+  });
 }
 
 const gameDevelopmentController: GameDevelopmentController = createGameDevelopmentController({
@@ -567,88 +680,158 @@ const gameDevelopmentController: GameDevelopmentController = createGameDevelopme
 
 async function persistManualSave() {
   if (!state.activeRunId) return;
-  flushPendingAutosave();
-  const meta = createManualSave({
-    runId: state.activeRunId,
-    label: '手动存档',
-    gameState: buildGameState(),
-    chatLog: serializeMessages(state.uiMessages),
-    summaryStore: state.summaryStore,
-    memoryDB: state.memoryDB,
+  const requestLoadToken = saveLoadSequence;
+  const requestedRunId = state.activeRunId;
+  await Promise.resolve(flushPendingAutosave()).catch(error => {
+    console.warn('[archive] pre-fork autosave deferred; manual save will use the newest available root:', error);
   });
-  state.activeSaveId = meta.saveId;
-  setActiveSaveId(meta.saveId);
-  // 用户主动存档：等 IndexedDB 落盘完成，避免下一秒刷新就丢。
-  await Promise.all([flushImageAssetStore(), flushSaveStore()]);
+  if (requestLoadToken !== saveLoadSequence || state.activeRunId !== requestedRunId) return;
+  const runId = state.activeRunId;
+  if (!runId) return;
+  const sourceSaveId = state.activeSaveId;
+  const gameState = buildGameState();
+  const runtimeState = captureRuntimeSaveState();
+  let manualSaveId = '';
   try {
-    await persistSaveToTavernFiles(meta.saveId);
+    const forked = sourceSaveId ? await forkArchiveSave({ sourceSaveId, label: 'Manual save' }) : null;
+    if (!forked) throw new Error('No active v3 root to fork');
+    manualSaveId = forked.saveId;
   } catch (error) {
-    console.warn('[saves] browser save succeeded but tavern file backup failed:', error);
-    window.alert(`浏览器存档已保存，但本机文件备份失败：${(error as Error).message}`);
+    console.warn('[archive] manual fork unavailable; using legacy manual save:', error);
+    const legacyMeta = createManualSave({
+      runId,
+      label: 'Manual save',
+      gameState,
+      chatLog: serializeMessages(runtimeState.uiMessages),
+      summaryStore: runtimeState.summaryStore,
+      memoryDB: runtimeState.memoryDB,
+    });
+    manualSaveId = legacyMeta.saveId;
+  }
+  const auxiliaryFlushes = await Promise.allSettled([
+    flushImageAssetStore(),
+    flushArchiveRepository(),
+    flushSaveStore(),
+  ]);
+  auxiliaryFlushes.forEach(result => {
+    if (result.status === 'rejected') {
+      console.warn('[archive] manual-save auxiliary flush deferred; the created save remains available:', result.reason);
+    }
+  });
+  if (state.activeRunId === runId && state.activeSaveId === sourceSaveId) {
+    state.activeSaveId = manualSaveId;
+    setActiveSaveId(manualSaveId);
+  }
+}
+
+async function exportLegacySavePartsPlayerFirst(saveId: string) {
+  try {
+    return await exportSaveAsJsonPartsWithAssets(saveId);
+  } catch (error) {
+    console.warn('[archive] legacy image attachment export failed; exporting playable core save:', error);
+    return exportSaveAsJsonParts(saveId);
   }
 }
 
 async function downloadSaveBackup(saveId: string) {
-  if (state.activeRunId && state.activeSaveId === saveId) {
-    flushPendingAutosave();
-  }
-  // 导出前确保已入队的写入全部落盘，再去读。
-  await Promise.all([flushImageAssetStore(), flushSaveStore()]);
   try {
-    const blob = new Blob(await exportSaveAsJsonPartsWithAssets(saveId), { type: 'application/json;charset=utf-8' });
+    const requestedLoadToken = saveLoadSequence;
+    const requestedRunId = state.activeSaveId === saveId ? state.activeRunId : '';
+    let resolvedSaveId = saveId;
+    if (state.activeRunId && state.activeSaveId === saveId) {
+      await Promise.resolve(flushPendingAutosave()).catch(error => {
+        console.warn('[archive] export is using the newest readable checkpoint after autosave delay:', error);
+      });
+      // Flushing a manual slot can promote the live branch to its autosave.
+      // Export the branch the player is actually playing after that promotion.
+      if (requestedLoadToken === saveLoadSequence && state.activeRunId === requestedRunId) {
+        resolvedSaveId = state.activeSaveId ?? saveId;
+      }
+    }
+    await flushArchiveRepository().catch(error => {
+      console.warn('[archive] pending archive flush did not settle before export; reading newest available root:', error);
+    });
+    const auxiliaryFlushes = await Promise.allSettled([flushImageAssetStore(), flushSaveStore()]);
+    let imagesIncomplete = auxiliaryFlushes[0]?.status === 'rejected';
+    auxiliaryFlushes.forEach(result => {
+      if (result.status === 'rejected') {
+        console.warn('[archive] auxiliary export flush failed; exporting readable core data:', result.reason);
+      }
+    });
+    let blob: Blob;
+    let archiveWarnings: string[] = [];
+    let exportedFutureReadonly = false;
+    if (hasArchiveSaveSync(resolvedSaveId)) {
+      const archive = await exportPortableArchive(resolvedSaveId).catch(async error => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/newer archive schema|read-only in this build|metadata uses a newer/i.test(message)) throw error;
+        return exportReadonlyFutureArchive(resolvedSaveId);
+      });
+      const assetIds = new Set<string>();
+      if (archive.kind === 'archive-v3') {
+        if (archive.meta.playerProfile.avatarAssetId) assetIds.add(archive.meta.playerProfile.avatarAssetId);
+        archive.floors.forEach(floor => floor.imageAssetIds.forEach(id => assetIds.add(id)));
+      } else {
+        exportedFutureReadonly = true;
+        archive.referencedImageAssetIds.forEach(id => assetIds.add(id));
+        archiveWarnings = archive.warnings;
+      }
+      const imageAssets = await exportImageAssetsForIds(assetIds).catch(error => {
+        imagesIncomplete = true;
+        console.warn('[archive] image export degraded to core save:', error);
+        return [];
+      });
+      if (imageAssets.length < assetIds.size) imagesIncomplete = true;
+      blob = new Blob([JSON.stringify({ ...archive, imageAssets })], { type: 'application/json;charset=utf-8' });
+    } else {
+      blob = new Blob(await exportLegacySavePartsPlayerFirst(resolvedSaveId), { type: 'application/json;charset=utf-8' });
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `islandmilfcode-save-${saveId}-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `islandmilfcode-save-${resolvedSaveId}-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     // setTimeout 让浏览器有机会真正触发下载之后再回收 URL。
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const exportNotices: string[] = [];
+    if (exportedFutureReadonly) exportNotices.push('未来版存档已导出为只读救援包，当前版本不会打开或写回它。');
+    if (archiveWarnings.length) exportNotices.push(archiveWarnings.join('；'));
+    if (imagesIncomplete) exportNotices.push('部分图片仍在写入、缺失或读取失败，图片附件可能不完整。');
+    if (exportNotices.length) {
+      window.alert(exportNotices.join('\n'));
+    }
   } catch (error) {
-    window.alert(`导出失败：${(error as Error).message}`);
+    window.alert(`导出失败：${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 async function createCurrentSingleSaveBackup(saveId: string): Promise<SingleSaveBackupPayload> {
-  await Promise.all([flushImageAssetStore(), flushSaveStore()]);
-  const json = (await exportSaveAsJsonPartsWithAssets(saveId)).join('');
+  const flushes = await Promise.allSettled([flushImageAssetStore(), flushSaveStore()]);
+  flushes.forEach(item => {
+    if (item.status === 'rejected') console.warn('[archive] legacy local-backup flush deferred:', item.reason);
+  });
+  const json = (await exportLegacySavePartsPlayerFirst(saveId)).join('');
   return JSON.parse(json) as SingleSaveBackupPayload;
 }
 
 async function persistSaveToTavernFiles(saveId: string) {
-  if (!isTavernFileBackupAvailable()) {
-    throw new Error('酒馆助手本机存档桥当前不可用，请确认脚本已导入并启用。');
-  }
+  const requestedLoadToken = saveLoadSequence;
+  const requestedRunId = state.activeSaveId === saveId ? state.activeRunId : '';
   let resolvedSaveId = saveId;
   if (state.activeRunId && state.activeSaveId === saveId && autosaveTimer) {
-    flushPendingAutosave();
-    resolvedSaveId = state.activeSaveId ?? saveId;
+    await Promise.resolve(flushPendingAutosave()).catch(error => {
+      console.warn('[archive] local backup is using the newest readable checkpoint after autosave delay:', error);
+    });
+    if (requestedLoadToken === saveLoadSequence && state.activeRunId === requestedRunId) {
+      resolvedSaveId = state.activeSaveId ?? saveId;
+    }
+  }
+  if (hasArchiveSaveSync(resolvedSaveId)) {
+    return persistArchiveSaveToTavernFiles(resolvedSaveId);
   }
   return writeTavernFileBackup(await createCurrentSingleSaveBackup(resolvedSaveId));
-}
-
-function scheduleTavernFileBackup(saveId: string) {
-  if (!isTavernFileBackupAvailable()) return;
-  queuedTavernFileBackupSaveId = saveId;
-  if (tavernFileBackupTimer) clearTimeout(tavernFileBackupTimer);
-  tavernFileBackupTimer = setTimeout(() => {
-    tavernFileBackupTimer = null;
-    const queuedSaveId = queuedTavernFileBackupSaveId;
-    if (!queuedSaveId) return;
-    if (tavernFileBackupInFlight) {
-      scheduleTavernFileBackup(queuedSaveId);
-      return;
-    }
-    queuedTavernFileBackupSaveId = null;
-    tavernFileBackupInFlight = true;
-    void persistSaveToTavernFiles(queuedSaveId)
-      .catch(error => console.warn('[saves] automatic tavern file backup failed:', error))
-      .finally(() => {
-        tavernFileBackupInFlight = false;
-        if (queuedTavernFileBackupSaveId) scheduleTavernFileBackup(queuedTavernFileBackupSaveId);
-      });
-  }, TAVERN_FILE_BACKUP_DEBOUNCE_MS);
 }
 
 function formatTavernBackupTime(value: number): string {
@@ -658,10 +841,6 @@ function formatTavernBackupTime(value: number): string {
 }
 
 async function restoreSaveFromTavernFiles() {
-  if (!isTavernFileBackupAvailable()) {
-    window.alert('酒馆助手本机存档桥当前不可用，请确认脚本已导入并启用；也可以使用 JSON 导入。');
-    return;
-  }
   try {
     const backups = await listTavernFileBackups();
     if (!backups.length) {
@@ -678,10 +857,32 @@ async function restoreSaveFromTavernFiles() {
       window.alert('序号无效，没有恢复任何存档。');
       return;
     }
-    const backup = await readTavernFileBackup(selected.saveId);
-    const result = importAllSavesFromJson(JSON.stringify(backup));
-    await Promise.all([flushImageAssetStore(), flushSaveStore()]);
-    window.alert(`已从 SillyTavern 本机数据目录恢复 ${result.imported} 个存档，即将刷新页面。`);
+    let recoveryDetail = '';
+    const result = selected.storage === 'archive-v3'
+      ? await (async () => {
+          const backup = await readTavernArchiveBackup(selected.saveId);
+          if (!backup) throw new Error('本机 v3 root 不存在');
+          if (backup.degradedRecovery) {
+            recoveryDetail = ' 当前 root 不可读，已从上一个可玩版本恢复。';
+          }
+          await restoreTavernArchiveImages(backup);
+          await importPortableArchive(backup);
+          return { imported: 1, skipped: 0 };
+        })()
+      : importAllSavesFromJson(JSON.stringify(await readTavernFileBackup(
+          selected.saveId,
+          selected.storage === 'legacy-v1' ? 'legacy-v1' : 'bundle-v2',
+        )));
+    const flushes = await Promise.allSettled([flushImageAssetStore(), flushArchiveRepository(), flushSaveStore()]);
+    const deferred = flushes.filter(item => item.status === 'rejected').length;
+    flushes.forEach(item => {
+      if (item.status === 'rejected') console.warn('[archive] restored backup auxiliary flush deferred:', item.reason);
+    });
+    window.alert(
+      `已从 SillyTavern 本机数据目录恢复 ${result.imported} 个存档。${recoveryDetail}`
+      + (deferred ? ' 部分附件仍在后台落盘，正文存档已保留。' : '')
+      + ' 即将刷新页面。',
+    );
     location.reload();
   } catch (error) {
     window.alert(`恢复本机备份失败：${(error as Error).message}`);
@@ -731,15 +932,25 @@ function getSupportedAvatarMimeType(file: File): string {
 }
 
 async function setPlayerAvatarFromFile(file: File) {
+  const avatarToken = ++playerAvatarSequence;
+  const loadToken = saveLoadSequence;
+  const saveId = state.activeSaveId;
+  const runId = state.activeRunId;
+  const isCurrent = () => avatarToken === playerAvatarSequence
+    && loadToken === saveLoadSequence
+    && state.activeSaveId === saveId
+    && state.activeRunId === runId;
   const mimeType = getSupportedAvatarMimeType(file);
   if (!mimeType) throw new Error('请选择 PNG、JPG、WebP 或 GIF 图片。');
   if (file.size > 8 * 1024 * 1024) throw new Error('头像图片不能超过 8 MB。');
   applyPlayerProfileDraftFromStatusPanel();
   const rawDataUrl = await readImageFileAsDataUrl(file);
+  if (!isCurrent()) return;
   const imageDataUrl = /^data:image\//i.test(rawDataUrl)
     ? rawDataUrl
     : rawDataUrl.replace(/^data:[^;,]*/i, `data:${mimeType}`);
   const assetId = await saveImageDataUrlAsAsset(imageDataUrl, { prompt: '玩家聊天头像' });
+  if (!isCurrent()) return;
   state.playerProfile.avatarAssetId = assetId;
   syncRuntimeProfile();
   persistToSave();
@@ -770,24 +981,72 @@ function rebuildRuntimeAfterRestore() {
   state.focusedMessagePage = 0;
 }
 
+async function hydrateRecentWorldbookCache(isCurrent: () => boolean = () => true) {
+  const binding = getCurrentCharacterWorldbookBinding(win);
+  const cached = await readRecentWorldbookCache('current').catch(() => null);
+  if (!isCurrent()) return false;
+  if (!cached) return false;
+  if (!cacheMatchesWorldbookBinding(cached, binding)) return false;
+  state.plotLibrary = cached.data.plotLibrary;
+  state.characterCardLibrary = cached.data.characterCardLibrary;
+  if (cached.data.targets.length) {
+    state.statusData = mergeWorldbookTargets(state.statusData, cached.data.targets);
+  }
+  lastWorldbookRefreshStatus = 'cached';
+  return true;
+}
+
 async function refreshCharacterWorldbookTargets() {
-  const { targets, plotLibrary, characterCardLibrary } = await loadCharacterWorldbookData(win);
-  const previousPlotEventCount = Object.keys(state.plotLibrary.events).length;
-  const previousCardCount = Object.keys(state.characterCardLibrary.cards).length;
-  const nextPlotEventCount = Object.keys(plotLibrary.events).length;
-  const nextCardCount = Object.keys(characterCardLibrary.cards).length;
-  const keepPreviousPlotLibrary = previousPlotEventCount > 0 && nextPlotEventCount === 0;
-  const keepPreviousCharacterCards = previousCardCount > 0 && nextCardCount === 0;
-  if (keepPreviousPlotLibrary) {
-    console.warn('[worldbook] plot events reload returned empty; keeping previous plot library');
+  const requestId = ++worldbookRefreshSequence;
+  const runId = state.activeRunId;
+  const hostBinding = getCurrentCharacterWorldbookBinding(win);
+  const previousNotice = typeof state.runtimeFlags.worldbookCacheNotice === 'string'
+    ? state.runtimeFlags.worldbookCacheNotice
+    : '';
+  const result = await loadCharacterWorldbookData(win);
+  const cached = await readRecentWorldbookCache(result.binding.characterKey).catch(() => null);
+  if (requestId !== worldbookRefreshSequence || state.activeRunId !== runId) return;
+  const matchingCached = cached && cacheMatchesWorldbookBinding(cached, hostBinding) ? cached : null;
+  lastWorldbookRefreshStatus = result.status;
+  const fresh = {
+    targets: result.targets,
+    plotLibrary: result.plotLibrary,
+    characterCardLibrary: result.characterCardLibrary,
+  };
+  const data = result.status === 'success' || result.status === 'legitimate-empty'
+    ? fresh
+    : result.status === 'partial-failure'
+      ? mergePartialWorldbookData(fresh, matchingCached?.data ?? null)
+      : matchingCached?.data ?? {
+          targets: [],
+          plotLibrary: state.plotLibrary,
+          characterCardLibrary: state.characterCardLibrary,
+        };
+  if (result.status === 'success' || result.status === 'legitimate-empty') {
+    delete state.runtimeFlags.worldbookCacheNotice;
+    void writeWorldbookSuccessCache(result).catch(error => console.warn('[worldbook] cache write failed:', error));
   } else {
-    state.plotLibrary = plotLibrary;
+    const detail = result.errors.map(item => item.worldbookName ? `${item.worldbookName}: ${item.message}` : item.message).join('; ');
+    state.runtimeFlags.worldbookCacheNotice = matchingCached
+      ? `世界书刷新失败，日历和角色目录正在使用最近一次成功缓存。${detail ? ` ${detail}` : ''}`
+      : `世界书刷新失败，保留当前目录。${detail ? ` ${detail}` : ''}`;
+    console.warn('[worldbook] non-blocking refresh fallback:', result.status, detail);
   }
-  if (keepPreviousCharacterCards) {
-    console.warn('[worldbook] character cards reload returned empty; keeping previous character card library');
-  } else {
-    state.characterCardLibrary = characterCardLibrary;
-  }
+  const { targets, plotLibrary, characterCardLibrary } = data;
+  const previousPlotSignature = JSON.stringify({
+    events: state.plotLibrary.events,
+    sourceEntryNames: state.plotLibrary.sourceEntryNames,
+    writingProtocols: state.plotLibrary.writingProtocols,
+  });
+  const previousCardSignature = JSON.stringify(state.characterCardLibrary.cards);
+  const nextPlotSignature = JSON.stringify({
+    events: plotLibrary.events,
+    sourceEntryNames: plotLibrary.sourceEntryNames,
+    writingProtocols: plotLibrary.writingProtocols,
+  });
+  const nextCardSignature = JSON.stringify(characterCardLibrary.cards);
+  state.plotLibrary = plotLibrary;
+  state.characterCardLibrary = characterCardLibrary;
 
   const previous = JSON.stringify(state.statusData.targets);
   if (targets.length) {
@@ -799,11 +1058,15 @@ async function refreshCharacterWorldbookTargets() {
     statusData: state.statusData,
   });
   const targetsChanged = JSON.stringify(state.statusData.targets) !== previous;
-  const plotChanged = !keepPreviousPlotLibrary && nextPlotEventCount !== previousPlotEventCount;
-  const cardsChanged = !keepPreviousCharacterCards && nextCardCount !== previousCardCount;
-  if (!targetsChanged && !plotChanged && !cardsChanged && !schoolCalendarChanged) return;
+  const plotChanged = nextPlotSignature !== previousPlotSignature;
+  const cardsChanged = nextCardSignature !== previousCardSignature;
+  const nextNotice = typeof state.runtimeFlags.worldbookCacheNotice === 'string'
+    ? state.runtimeFlags.worldbookCacheNotice
+    : '';
+  const noticeChanged = nextNotice !== previousNotice;
+  if (!targetsChanged && !plotChanged && !cardsChanged && !schoolCalendarChanged && !noticeChanged) return;
 
-  guardedAdapterSave(state.statusData);
+  if (targetsChanged || schoolCalendarChanged) guardedAdapterSave(state.statusData);
   render();
 }
 
@@ -1006,7 +1269,7 @@ function clearWorldbookRefreshRetry() {
 function scheduleWorldbookRefreshRetry(runId: string | null, attempt = 1) {
   const retryDelays = [800, 1600, 3000, 5000, 8000];
   if (!runId || attempt > retryDelays.length) return;
-  if (Object.keys(state.plotLibrary.events).length > 0) return;
+  if (lastWorldbookRefreshStatus === 'success' || lastWorldbookRefreshStatus === 'legitimate-empty') return;
 
   const token = worldbookRefreshRetryToken;
   worldbookRefreshRetryTimer = window.setTimeout(
@@ -1019,7 +1282,7 @@ function scheduleWorldbookRefreshRetry(runId: string | null, attempt = 1) {
         })
         .finally(() => {
           if (token !== worldbookRefreshRetryToken || state.activeRunId !== runId) return;
-          if (Object.keys(state.plotLibrary.events).length === 0) {
+          if (lastWorldbookRefreshStatus !== 'success' && lastWorldbookRefreshStatus !== 'legitimate-empty') {
             scheduleWorldbookRefreshRetry(runId, attempt + 1);
           }
         });
@@ -1057,78 +1320,221 @@ function getMemoryDBTableCounts(memoryDB: IslandMemoryDB) {
   return counts;
 }
 
-function enterSave(saveId: string, options: { openingMode?: OpeningMode } = {}) {
-  const save = loadSave(saveId);
-  if (!save) return;
-  const shouldGenerateOpening = options.openingMode === 'ai' && save.payload.chatLog.length === 0;
-  const enteringRunId = save.payload.runId;
+async function enterSave(saveId: string, options: { openingMode?: OpeningMode } = {}) {
+  const loadToken = ++saveLoadSequence;
+  imageRerollSequenceByKey.clear();
+  let archive = null as Awaited<ReturnType<typeof openArchiveSave>>;
+  try {
+    archive = await openArchiveSave(saveId);
+  } catch (error) {
+    if (loadToken !== saveLoadSequence) return;
+    const message = error instanceof Error ? error.message : String(error);
+    if (/newer archive schema|read-only in this build/i.test(message)) {
+      window.alert('这个存档来自更高版本。当前版本不会打开或覆盖它；你仍可从存档列表导出只读救援包。');
+      return;
+    }
+    console.warn('[archive] v3 root could not be opened; trying retained legacy data:', error);
+  }
+  if (loadToken !== saveLoadSequence) return;
+  let legacy = null as Awaited<ReturnType<typeof loadSaveAsync>>;
+  if (!archive) {
+    legacy = await loadSaveAsync(saveId);
+    if (loadToken !== saveLoadSequence) return;
+    if (legacy) {
+      try {
+        await migrateLegacySaveToArchive(legacy.meta, legacy.payload);
+        if (loadToken !== saveLoadSequence) return;
+        archive = await openArchiveSave(saveId);
+        if (loadToken !== saveLoadSequence) return;
+      } catch (error) {
+        // A failed migration falls straight back to the still-retained v2
+        // source. It is a storage warning, never a title-screen dead end.
+        console.warn('[archive] on-demand migration failed; opening legacy save:', error);
+      }
+    }
+  }
+  if (!archive && !legacy) {
+    if (await isStoredSaveReadOnly(saveId).catch(() => false)) {
+      if (loadToken !== saveLoadSequence) return;
+      window.alert('这个存档使用当前版本不认识的数据结构，已按原样保留；可以导出备份，但不会进入或覆盖。');
+    }
+    return;
+  }
+
+  let loadedMessages = legacy ? deserializeMessages(legacy.payload.chatLog) : [];
+  let recoveryNotice = archive?.meta.health === 'degraded'
+    ? archive.meta.migrationWarnings?.slice(-1)[0] ?? '当前 root 不可读，已回退到上一个可玩版本。'
+    : '';
+  if (archive) {
+    try {
+      loadedMessages = await hydrateArchiveMessages(saveId);
+    } catch (error) {
+      if (loadToken !== saveLoadSequence) return;
+      console.warn('[archive] full timeline hydrate failed; trying playable recovery sources:', error);
+      legacy = legacy ?? await loadSaveAsync(saveId);
+      if (loadToken !== saveLoadSequence) return;
+      if (legacy) {
+        archive = null;
+        loadedMessages = deserializeMessages(legacy.payload.chatLog);
+        recoveryNotice = 'v3 楼层不完整，已改用保留的旧版存档继续游戏。';
+      } else {
+        const recent = await getArchiveFloorWindow(
+          saveId,
+          Math.max(0, archive.root.currentFloor),
+          6,
+        ).catch(() => ({ startFloor: 0, endFloor: 0, floors: [] }));
+        if (loadToken !== saveLoadSequence) return;
+        loadedMessages = deserializeArchiveFloorMessages(recent.floors);
+        recoveryNotice = recent.floors.length
+          ? '部分楼层读取失败，已载入最近可读楼层；你可以继续游戏并立即导出备份。'
+          : '历史楼层暂时不可读，已载入角色状态；你可以继续游戏并立即导出备份。';
+      }
+    }
+  }
+  if (loadToken !== saveLoadSequence || (!archive && !legacy)) return;
+
+  const gameState = archive?.state.gameState ?? legacy!.payload.gameState;
+  const meta = archive?.meta ?? legacy!.meta;
+  const summaryStore = archive
+    ? archive.summary?.summaryStore ?? createDefaultSummaryStore()
+    : legacy?.payload.summaryStore ?? createDefaultSummaryStore();
+  const memoryDB = normalizeMemoryDB(
+    archive ? archive.memory?.memoryDB : legacy?.payload.memoryDB,
+    gameState.runId,
+  ) ?? createDefaultMemoryDB(gameState.runId);
+  const shouldGenerateOpening = options.openingMode === 'ai'
+    && (archive ? archive.root.floorCount === 0 : loadedMessages.length === 0);
+  const enteringRunId = gameState.runId;
+  if (loadToken !== saveLoadSequence) return;
+  if (state.activeRunId && state.activeSaveId !== saveId) {
+    void Promise.resolve(flushPendingAutosave()).catch(error => {
+      console.warn('[archive] previous save flush deferred during navigation:', error);
+    });
+  }
+  invalidateAsyncActions(ctx);
   restoringSave = true;
+  restoringSaveOwner = loadToken;
   clearWorldbookRefreshRetry();
-  state.activeRunId = save.payload.runId;
+  worldbookRefreshSequence += 1;
+  state.activeRunId = gameState.runId;
   state.activeSaveId = saveId;
   state.openingGenerationError = null;
-  setActiveRunId(save.payload.runId);
+  setActiveRunId(gameState.runId);
   setActiveSaveId(saveId);
   state.creatingCharacter = false;
   state.showingSaveList = false;
-  const msgs = deserializeMessages(save.payload.chatLog);
-  replaceConversationMessages(state, msgs);
-  state.statusData = save.payload.gameState.statusData;
+  replaceConversationMessages(state, loadedMessages);
+  state.statusData = normalizeStatusData(gameState.statusData);
   state.playerProfile = normalizePlayerProfile(
-    (save.payload.gameState.runtimeFlags?.playerProfile as typeof state.playerProfile | undefined) ?? {
-      name: save.meta.playerProfile?.name ?? save.meta.characterName ?? '',
-      personality: save.meta.playerProfile?.personality ?? save.meta.personality ?? '',
-      appearance: save.meta.playerProfile?.appearance ?? save.meta.appearance ?? '',
-      className: save.meta.playerProfile?.className ?? '2年A班',
+    (gameState.runtimeFlags?.playerProfile as typeof state.playerProfile | undefined) ?? {
+      name: meta.playerProfile?.name ?? meta.characterName ?? '',
+      personality: meta.playerProfile?.personality ?? meta.personality ?? '',
+      appearance: meta.playerProfile?.appearance ?? meta.appearance ?? '',
+      className: meta.playerProfile?.className ?? '2年A班',
     },
   );
   state.runtimeFlags = stripGlobalRuntimeFlags(
-    JSON.parse(JSON.stringify(save.payload.gameState.runtimeFlags ?? {})) as Record<string, unknown>,
+    JSON.parse(JSON.stringify(gameState.runtimeFlags ?? {})) as Record<string, unknown>,
   );
+  if (recoveryNotice) state.runtimeFlags.saveRecoveryNotice = recoveryNotice;
   state.drawingSettings = normalizeDrawingSettings(state.runtimeFlags.drawingSettings);
   commitDrawingSettingsToRuntimeFlags();
   applyDrawingEnabledPreference();
-  state.summaryStore = save.payload.summaryStore;
-  if (save.payload.memoryDB) {
-    state.memoryDB = save.payload.memoryDB;
+  state.summaryStore = summaryStore;
+  state.memoryDB = memoryDB;
+  try {
+    console.info('[saves:enter]', {
+      saveId,
+      runId: gameState.runId,
+      chatLogCount: loadedMessages.length,
+      archiveRevision: archive?.root.revision ?? null,
+      indexStats: getIndexStats(state.memoryDB),
+      tableCounts: getMemoryDBTableCounts(state.memoryDB),
+    });
+  } catch (error) {
+    console.warn('[saves:enter] diagnostic counters unavailable; restore continues:', error);
   }
-  console.info('[saves:enter]', {
-    saveId,
-    runId: save.payload.runId,
-    chatLogCount: save.payload.chatLog.length,
-    indexStats: getIndexStats(state.memoryDB),
-    tableCounts: getMemoryDBTableCounts(state.memoryDB),
-  });
   state.phoneMessages = normalizePhoneMessageStore(state.runtimeFlags.phoneMessages);
+  // Worldbook catalogs are derived from the currently bound character, never
+  // from the previously opened save. A matching cache may hydrate them below.
+  state.plotLibrary = { events: {}, sourceEntryNames: [], loadedAt: 0 };
+  state.characterCardLibrary = { cards: {}, loadedAt: 0 };
   cacheStatusData(state.statusData);
-  guardedAdapterSave(state.statusData);
+  try {
+    guardedAdapterSave(state.statusData);
+  } catch (error) {
+    console.warn('[save-restore] host variable mirror failed; browser save remains playable:', error);
+  }
   rebuildRuntimeAfterRestore();
+  await hydrateRecentWorldbookCache(() => loadToken === saveLoadSequence).catch(error => {
+    console.warn('[worldbook] cached catalog hydrate skipped:', error);
+    return false;
+  });
+  if (loadToken !== saveLoadSequence) {
+    if (restoringSaveOwner === loadToken) {
+      restoringSave = false;
+      restoringSaveOwner = 0;
+    }
+    return;
+  }
+  restoringSave = false;
+  restoringSaveOwner = 0;
+  if (recoveryNotice) {
+    state.notification = {
+      kind: 'status',
+      title: '存档已降级恢复',
+      preview: recoveryNotice,
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    };
+  }
   render();
+  let openingStarted = false;
+  const startOpeningIfNeeded = () => {
+    if (
+      openingStarted ||
+      !shouldGenerateOpening ||
+      loadToken !== saveLoadSequence ||
+      state.activeRunId !== enteringRunId ||
+      state.activeSaveId !== saveId ||
+      getReaderMessages(state.uiMessages).length !== 0 ||
+      state.generating
+    ) {
+      return;
+    }
+    openingStarted = true;
+    void generateOpeningScene(ctx);
+  };
+  // A host World Info API can occasionally never settle. Cached/current data
+  // is sufficient to let the player start; a late refresh may still update the
+  // catalog without holding autosave or the opening scene hostage.
+  const openingFallbackTimer = window.setTimeout(startOpeningIfNeeded, 5000);
   void refreshCharacterWorldbookTargets()
     .catch(error => {
       console.warn('[save-restore] refreshCharacterWorldbookTargets failed:', error);
     })
     .finally(() => {
-      restoringSave = false;
-      if (
-        shouldGenerateOpening &&
-        state.activeRunId === enteringRunId &&
-        getReaderMessages(state.uiMessages).length === 0 &&
-        !state.generating
-      ) {
-        void generateOpeningScene(ctx);
-      }
-      if (Object.keys(state.plotLibrary.events).length === 0) {
-        scheduleWorldbookRefreshRetry(state.activeRunId);
+      window.clearTimeout(openingFallbackTimer);
+      if (loadToken !== saveLoadSequence || state.activeSaveId !== saveId) return;
+      startOpeningIfNeeded();
+      if (lastWorldbookRefreshStatus !== 'success' && lastWorldbookRefreshStatus !== 'legitimate-empty') {
+        scheduleWorldbookRefreshRetry(enteringRunId);
       }
     });
 }
 
 function returnToTitle() {
+  saveLoadSequence += 1;
+  imageRerollSequenceByKey.clear();
+  worldbookRefreshSequence += 1;
+  if (restoringSaveOwner) restoringSaveOwner = 0;
+  restoringSave = false;
   clearWorldbookRefreshRetry();
-  if (state.activeRunId) {
-    persistToSave();
-  }
+  invalidateAsyncActions(ctx);
+  // Capture and enqueue the current run before clearing its identity. A plain
+  // debounced persist would fire after activeRunId becomes null and silently
+  // drop the player's final title-screen transition save.
+  const finalSave = state.activeRunId ? flushPendingAutosave() : undefined;
   state.activeRunId = null;
   state.activeSaveId = null;
   state.openingGenerationError = null;
@@ -1137,6 +1543,9 @@ function returnToTitle() {
   state.creatingCharacter = false;
   state.showingSaveList = false;
   render();
+  void Promise.resolve(finalSave)
+    .then(() => Promise.all([flushArchiveRepository(), flushSaveStore()]))
+    .catch(error => console.warn('[archive] final save before title deferred:', error));
 }
 
 // ── UI actions (thin wrappers that stay in index.ts) ──
@@ -1157,6 +1566,7 @@ function openReaderContextMenu(readerIndex: number, clientX: number, clientY: nu
     readerIndex: resolvedReaderIndex,
     sourceUserText: getSourceUserTextForReaderIndex(state, resolvedReaderIndex),
     canDeleteMessage: Boolean(message),
+    canRollbackCompleted: message.role === 'assistant',
     x: clamp(clientX, READER_CONTEXT_MENU_GAP, maxX),
     y: clamp(clientY, READER_CONTEXT_MENU_GAP, maxY),
   };
@@ -1192,6 +1602,8 @@ function cancelReaderEditor() {
 async function saveReaderEditor() {
   const editing = state.readerEditing;
   if (!editing) return;
+  invalidateAsyncActions(ctx);
+  readerMutationSequence += 1;
   const textarea = root?.querySelector<HTMLTextAreaElement>('[data-field="reader-edit-draft"]');
   const nextText = textarea?.value ?? editing.draft;
 
@@ -1203,22 +1615,39 @@ async function saveReaderEditor() {
     return;
   }
 
-  message.rawText = nextText;
-  message.text = message.role === 'assistant' ? extractContextReply(nextText) || nextText : nextText;
+  const updatedMessage = {
+    ...message,
+    rawText: nextText,
+    text: message.role === 'assistant' ? extractContextReply(nextText) || nextText : nextText,
+  };
+  state.uiMessages = state.uiMessages.map(item => item.id === message.id ? updatedMessage : item);
   invalidateReaderMessagesCache();
+  state.readerEditing = null;
+  const saveId = state.activeSaveId;
+  const persisted = serializeMessages([updatedMessage])[0];
+  const archiveGameState = buildGameState();
+  const archiveRuntimeState = captureRuntimeSaveState();
+  ctx.persistConversation();
+  render();
 
   // 同步回酒馆楼层，防止刷新后又被酒馆侧的原文覆盖。
-  if (typeof message.tavernMessageId === 'number' && typeof win.setChatMessages === 'function') {
+  if (typeof updatedMessage.tavernMessageId === 'number' && typeof win.setChatMessages === 'function') {
     try {
-      await win.setChatMessages([{ message_id: message.tavernMessageId, message: nextText }], { refresh: 'none' });
+      await win.setChatMessages([{ message_id: updatedMessage.tavernMessageId, message: nextText }], { refresh: 'none' });
     } catch (error) {
       console.warn('[reader-edit] setChatMessages failed:', error);
     }
   }
 
-  state.readerEditing = null;
-  ctx.persistConversation();
-  render();
+  if (saveId && persisted && hasArchiveSaveSync(saveId)) {
+    await replaceArchiveFloorMessage({
+      saveId,
+      messageId: updatedMessage.id,
+      message: persisted,
+      gameState: archiveGameState,
+      runtimeState: archiveRuntimeState,
+    }).catch(error => console.warn('[archive] edited floor commit deferred:', error));
+  }
 }
 
 function focusComposer(placeCursorAtEnd = true) {
@@ -1316,8 +1745,67 @@ function jumpMessage(index: number) {
   flipDirection = '';
 }
 
+function resolveArchiveFloorIndex(readerIndex: number): number | null {
+  const target = getReaderMessageByIndex(state, readerIndex);
+  if (!target) return null;
+  let nextFloorIndex = 0;
+  let pendingUser = false;
+  for (const message of state.uiMessages) {
+    if (message.role === 'system') continue;
+    if (message.role === 'user') {
+      if (pendingUser) nextFloorIndex += 1;
+      pendingUser = true;
+      if (message.id === target.id) return nextFloorIndex;
+      continue;
+    }
+    const currentFloorIndex = nextFloorIndex;
+    if (message.id === target.id) return currentFloorIndex;
+    nextFloorIndex += 1;
+    pendingUser = false;
+  }
+  return null;
+}
+
+async function rollbackReaderInputWithArchive(readerIndex: number) {
+  invalidateAsyncActions(ctx);
+  const mutationToken = ++readerMutationSequence;
+  const loadToken = saveLoadSequence;
+  const saveId = state.activeSaveId;
+  const isCurrent = () => mutationToken === readerMutationSequence
+    && loadToken === saveLoadSequence
+    && state.activeSaveId === saveId;
+  const floorIndex = saveId && hasArchiveSaveSync(saveId) ? resolveArchiveFloorIndex(readerIndex) : null;
+  const floor = saveId && floorIndex !== null
+    ? await getArchiveFloor(saveId, floorIndex).catch(() => null)
+    : null;
+  if (!isCurrent()) return null;
+  const target = await rollbackConversation(state, readerIndex, win, isCurrent);
+  if (!target) return null;
+  if (!isCurrent()) return null;
+  if (floor) {
+    try {
+      restoreFloorStateSnapshot(state, floor.beforeTurnState);
+    } catch (error) {
+      console.warn('[archive] exact input snapshot was invalid; keeping local rollback state:', error);
+    }
+  }
+  if (saveId && floorIndex !== null && hasArchiveSaveSync(saveId)) {
+    await truncateArchiveFromAssistant({
+      saveId,
+      floorIndex,
+      gameState: buildGameState(),
+      runtimeState: captureRuntimeSaveState(),
+    }).catch(error => {
+      // Keep the already-restored in-memory timeline playable. The regular
+      // autosave below will retry the browser commit or use its legacy fallback.
+      console.warn('[archive] input rollback commit deferred:', error);
+    });
+  }
+  return isCurrent() ? target : null;
+}
+
 async function rollbackToReaderInput(readerIndex: number) {
-  const target = await rollbackConversation(state, readerIndex, win);
+  const target = await rollbackReaderInputWithArchive(readerIndex);
   if (!target?.sourceUserText) return;
   state.draft = target.sourceUserText;
   gameDevelopmentController.restoreEditorAfterRollback(target.sourceUserText);
@@ -1335,6 +1823,44 @@ function isV07RouteChoiceBlockingMainText(): boolean {
     mainEvents: state.statusData.world.mainEvents,
     hasChoice: Boolean(readActivePlotRouteChoice(state.memoryDB, 'v07')),
   });
+}
+
+async function rollbackAfterReaderFloor(readerIndex: number) {
+  invalidateAsyncActions(ctx);
+  const mutationToken = ++readerMutationSequence;
+  const loadToken = saveLoadSequence;
+  const saveId = state.activeSaveId;
+  const isCurrent = () => mutationToken === readerMutationSequence
+    && loadToken === saveLoadSequence
+    && state.activeSaveId === saveId;
+  const floorIndex = saveId && hasArchiveSaveSync(saveId) ? resolveArchiveFloorIndex(readerIndex) : null;
+  const floor = saveId && floorIndex !== null
+    ? await getArchiveFloor(saveId, floorIndex).catch(() => null)
+    : null;
+  if (!isCurrent()) return;
+  const restored = await rollbackAfterCompletedReaderMessage(state, readerIndex, win, isCurrent);
+  if (!restored) return;
+  if (!isCurrent()) return;
+  if (floor?.afterTurnState) {
+    try {
+      restoreFloorStateSnapshot(state, floor.afterTurnState);
+    } catch (error) {
+      console.warn('[archive] exact completed-floor snapshot was invalid; keeping local rollback state:', error);
+    }
+  }
+  if (saveId && floorIndex !== null && hasArchiveSaveSync(saveId)) {
+    await truncateArchiveAfterFloor({
+      saveId,
+      floorIndex,
+      gameState: buildGameState(),
+      runtimeState: captureRuntimeSaveState(),
+    }).catch(error => console.warn('[archive] completed-floor rollback commit deferred:', error));
+  }
+  if (!isCurrent()) return;
+  guardedAdapterSave(state.statusData);
+  ctx.persistConversation();
+  ctx.closeReaderContextMenu(false);
+  render();
 }
 
 function growComposerInput(textarea: HTMLTextAreaElement) {
@@ -1355,7 +1881,9 @@ function syncComposerSubmitAvailability(textarea: HTMLTextAreaElement) {
   button.disabled = !textarea.value.trim();
 }
 
-async function submitMainMessage(options: { text?: string; keepDraft?: boolean; clearDraftOnSuccess?: boolean } = {}) {
+async function submitMainMessage(
+  options: { text?: string; keepDraft?: boolean; clearDraftOnSuccess?: boolean; reuseLatestUserMessage?: boolean } = {},
+) {
   const userInput = (options.text ?? state.draft).trim();
   if (await gameDevelopmentController.submitFromMainDraft(userInput)) return;
   if (isV07RouteChoiceBlockingMainText()) {
@@ -1376,8 +1904,7 @@ async function submitMainMessage(options: { text?: string; keepDraft?: boolean; 
 }
 
 async function rerunReaderMessage(readerIndex: number) {
-  if (state.generating) return;
-  const target = await rollbackConversation(state, readerIndex, win);
+  const target = await rollbackReaderInputWithArchive(readerIndex);
   if (!target?.sourceUserText) return;
   state.draft = target.sourceUserText;
   guardedAdapterSave(state.statusData);
@@ -1385,19 +1912,53 @@ async function rerunReaderMessage(readerIndex: number) {
   ctx.closeReaderContextMenu(false);
   render();
   if (await gameDevelopmentController.submitRestoredTurn(target.sourceUserText)) return;
-  await submitMainMessage({ text: target.sourceUserText, keepDraft: true, clearDraftOnSuccess: true });
+  await submitMainMessage({
+    text: target.sourceUserText,
+    keepDraft: true,
+    clearDraftOnSuccess: true,
+    reuseLatestUserMessage: true,
+  });
 }
 
 async function deleteReaderFloor(readerIndex: number) {
-  if (state.generating) return;
-  const deletedSourceText = getSourceUserTextForReaderIndex(state, readerIndex).trim();
-  const deleted = await deleteReaderMessage(state, readerIndex, win);
+  const targetMessage = getReaderMessageByIndex(state, readerIndex);
+  const targetMessageId = targetMessage?.id ?? '';
+  const mutationToken = ++readerMutationSequence;
+  const loadToken = saveLoadSequence;
+  const saveId = state.activeSaveId;
+  const runId = state.activeRunId;
+  const isCurrent = () => mutationToken === readerMutationSequence
+    && loadToken === saveLoadSequence
+    && state.activeSaveId === saveId
+    && state.activeRunId === runId;
+  // Deleting an old card is text surgery and must not cancel an unrelated
+  // generation. Only deleting the active streaming card invalidates its task.
+  if (targetMessage?.streaming) invalidateAsyncActions(ctx);
+  if (!isCurrent()) return;
+  const targetRemovedByInvalidation = Boolean(
+    targetMessage?.streaming
+    && targetMessageId
+    && !state.uiMessages.some(message => message.id === targetMessageId),
+  );
+  const currentReaderIndex = targetMessageId
+    ? getReaderMessages(state.uiMessages).findIndex(message => message.id === targetMessageId)
+    : readerIndex;
+  const deleted = targetRemovedByInvalidation
+    ? true
+    : currentReaderIndex >= 0 && await deleteReaderMessage(state, currentReaderIndex, win, isCurrent);
   if (!deleted) return;
-  if (deletedSourceText && state.draft.trim() === deletedSourceText) {
-    state.draft = '';
+  if (!isCurrent()) return;
+  if (saveId && targetMessageId && hasArchiveSaveSync(saveId)) {
+    await deleteArchiveFloorMessage({
+      saveId,
+      messageId: targetMessageId,
+      gameState: buildGameState(),
+      runtimeState: captureRuntimeSaveState(),
+    }).catch(error => {
+      console.warn('[archive] reader text deletion commit deferred:', error);
+    });
+    if (!isCurrent()) return;
   }
-  gameDevelopmentController.restoreEditorAfterRollback(state.draft);
-  guardedAdapterSave(state.statusData);
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
   render();
@@ -1841,6 +2402,12 @@ function addDrawingAnchor() {
 
 async function generateDrawingNow() {
   updateDrawingSettingsFromControls(false);
+  const loadToken = saveLoadSequence;
+  const saveId = state.activeSaveId;
+  const runId = state.activeRunId;
+  const isCurrent = () => loadToken === saveLoadSequence
+    && state.activeSaveId === saveId
+    && state.activeRunId === runId;
   if (!isImageGenerationPluginAvailable(win)) {
     showDrawingPluginMissingNotification();
     return;
@@ -1884,6 +2451,7 @@ async function generateDrawingNow() {
   const result = await requestImageGeneration(win, prompt, settings, '', {
     summaryApiConfig: state.summaryApiConfig,
   });
+  if (!isCurrent()) return;
   ctx.showNotification({
     kind: 'message',
     title: result.sent && !result.error ? '生图请求已发送' : '生图失败',
@@ -1901,6 +2469,12 @@ async function generateDrawingNow() {
 }
 
 async function generateReaderImage(messageId: string, anchorIndex: number) {
+  const loadToken = saveLoadSequence;
+  const saveId = state.activeSaveId;
+  const runId = state.activeRunId;
+  const isCurrent = () => loadToken === saveLoadSequence
+    && state.activeSaveId === saveId
+    && state.activeRunId === runId;
   const message = state.uiMessages.find(item => item.id === messageId);
   if (!message || message.role !== 'assistant') return;
   if (!isImageGenerationPluginAvailable(win)) {
@@ -1926,27 +2500,49 @@ async function generateReaderImage(messageId: string, anchorIndex: number) {
     rawText,
     summaryApiConfig: state.summaryApiConfig,
   });
+  if (!isCurrent()) return;
 
   if (result.imageData && !result.error) {
-    const illustrations = message.illustrations ?? [];
     const assetId = await saveImageDataUrlAsAsset(result.imageData, { prompt: result.prompt ?? imagePrompt.prompt });
+    if (!isCurrent()) return;
+    const liveMessage = state.uiMessages.find(item => item.id === messageId);
+    if (!liveMessage || liveMessage.role !== 'assistant' || (liveMessage.rawText || liveMessage.text) !== rawText) return;
+    const illustrations = liveMessage.illustrations ?? [];
     if (!illustrations.some(illustration => illustration.assetId === assetId)) {
-      message.illustrations = [
-        ...illustrations,
-        {
-          id: crypto.randomUUID(),
-          assetId,
-          prompt: result.prompt ?? imagePrompt.prompt,
-          anchorIndex,
-          rerollContext: {
+      const updatedMessage = {
+        ...liveMessage,
+        illustrations: [
+          ...illustrations,
+          {
+            id: crypto.randomUUID(),
+            assetId,
             prompt: result.prompt ?? imagePrompt.prompt,
-            change: imagePrompt.change,
-            sceneText,
-            rawText,
+            anchorIndex,
+            rerollContext: {
+              prompt: result.prompt ?? imagePrompt.prompt,
+              change: imagePrompt.change,
+              sceneText,
+              rawText,
+            },
+            createdAt: Date.now(),
           },
-          createdAt: Date.now(),
-        },
-      ];
+        ],
+      };
+      state.uiMessages = state.uiMessages.map(item => item.id === messageId ? updatedMessage : item);
+      const archiveGameState = buildGameState();
+      const archiveRuntimeState = captureRuntimeSaveState();
+      if (saveId && hasArchiveSaveSync(saveId)) {
+        const persisted = serializeMessages([updatedMessage])[0];
+        if (persisted) {
+          void replaceArchiveFloorMessage({
+            saveId,
+            messageId: updatedMessage.id,
+            message: persisted,
+            gameState: archiveGameState,
+            runtimeState: archiveRuntimeState,
+          }).catch(error => console.warn('[archive] reader image attachment commit deferred:', error));
+        }
+      }
       persistToSave();
     }
   }
@@ -2033,10 +2629,21 @@ async function rerollReaderImage(
   editedPrompt?: string,
   editedNegativePrompt?: string,
 ) {
+  const loadToken = saveLoadSequence;
+  const saveId = state.activeSaveId;
+  const runId = state.activeRunId;
+  const rerollKey = `${saveId ?? ''}\u0000${messageId}\u0000${illustrationId}`;
+  const rerollToken = (imageRerollSequenceByKey.get(rerollKey) ?? 0) + 1;
+  imageRerollSequenceByKey.set(rerollKey, rerollToken);
+  const isCurrent = () => rerollToken === imageRerollSequenceByKey.get(rerollKey)
+    && loadToken === saveLoadSequence
+    && state.activeSaveId === saveId
+    && state.activeRunId === runId;
   const message = state.uiMessages.find(item => item.id === messageId);
   if (!message || message.role !== 'assistant') return;
   const illustration = message.illustrations?.find(item => item.id === illustrationId);
   if (!illustration) return;
+  const messageTextAtStart = message.rawText || message.text;
   if (!isImageGenerationPluginAvailable(win)) {
     showDrawingPluginMissingNotification();
     return;
@@ -2077,30 +2684,60 @@ async function rerollReaderImage(
     userInput: illustration.rerollContext?.userInput,
     summaryApiConfig: state.summaryApiConfig,
   });
+  if (!isCurrent()) return;
 
   if (result.imageData && !result.error) {
     const assetId = await saveImageDataUrlAsAsset(result.imageData, { prompt: result.prompt ?? prompt });
-    message.illustrations = (message.illustrations ?? []).map(item =>
-      item.id === illustrationId
-        ? {
-            ...item,
-            assetId,
-            imageData: undefined,
-            prompt: result.prompt ?? prompt,
-            rerollContext: {
+    if (!isCurrent()) return;
+    const currentMessage = state.uiMessages.find(item => item.id === messageId);
+    if (
+      !currentMessage
+      || currentMessage.role !== 'assistant'
+      || (currentMessage.rawText || currentMessage.text) !== messageTextAtStart
+    ) return;
+    const currentIllustration = currentMessage.illustrations?.find(item => item.id === illustrationId);
+    if (!currentIllustration) return;
+    const updatedMessage = {
+      ...currentMessage,
+      illustrations: (currentMessage.illustrations ?? []).map(item =>
+        item.id === illustrationId
+          ? {
+              ...item,
+              assetId,
+              imageData: undefined,
               prompt: result.prompt ?? prompt,
-              negativePrompt,
-              change,
-              sceneText,
-              rawText,
-              generationContext: illustration.rerollContext?.generationContext,
-              generationWorldBook: illustration.rerollContext?.generationWorldBook,
-              userInput: illustration.rerollContext?.userInput,
-            },
-            createdAt: Date.now(),
-          }
-        : item,
-    );
+              rerollContext: {
+                prompt: result.prompt ?? prompt,
+                negativePrompt,
+                change,
+                sceneText,
+                rawText,
+                generationContext: currentIllustration.rerollContext?.generationContext,
+                generationWorldBook: currentIllustration.rerollContext?.generationWorldBook,
+                userInput: currentIllustration.rerollContext?.userInput,
+              },
+              createdAt: Date.now(),
+            }
+          : item,
+      ),
+    };
+    state.uiMessages = state.uiMessages.map(item => item.id === messageId ? updatedMessage : item);
+    const archiveGameState = buildGameState();
+    const archiveRuntimeState = captureRuntimeSaveState();
+    if (saveId && hasArchiveSaveSync(saveId)) {
+      const persisted = serializeMessages([updatedMessage])[0];
+      if (persisted) {
+        // Image reroll is an isolated assistant replacement. It never restores
+        // variables or truncates later text floors.
+        void replaceArchiveFloorMessage({
+          saveId,
+          messageId: updatedMessage.id,
+          message: persisted,
+          gameState: archiveGameState,
+          runtimeState: archiveRuntimeState,
+        }).catch(error => console.warn('[archive] image replacement commit deferred:', error));
+      }
+    }
     persistToSave();
   }
 
@@ -3405,6 +4042,10 @@ function bindEvents() {
     }
     downloadSaveBackup(state.activeSaveId);
   });
+  root?.querySelector<HTMLButtonElement>('[data-action="reader-rollback-completed"]')?.addEventListener('click', () => {
+    if (!state.readerContextMenu) return;
+    void rollbackAfterReaderFloor(state.readerContextMenu.readerIndex);
+  });
   root?.querySelector<HTMLButtonElement>('[data-action="backup-save-to-tavern"]')?.addEventListener('click', async () => {
     persistToSave();
     if (!state.activeSaveId) {
@@ -3431,17 +4072,31 @@ function bindEvents() {
   importFileInput?.addEventListener('change', async () => {
     const file = importFileInput.files?.[0];
     if (!file) return;
-    const ok = window.confirm('导入会覆盖当前 localStorage 里同名存档键，确认继续？');
+    const ok = window.confirm('导入会更新浏览器中同名的存档，确认继续？');
     if (!ok) {
       importFileInput.value = '';
       return;
     }
     try {
       const text = new TextDecoder('utf-8').decode(await file.arrayBuffer());
-      const result = importAllSavesFromJson(text);
-      // 等待 IndexedDB 写入全部落盘后再刷新，否则异步写入可能丢失。
-      await Promise.all([flushImageAssetStore(), flushSaveStore()]);
-      window.alert(`导入完成：成功 ${result.imported} 条，跳过 ${result.skipped} 条。即将刷新页面。`);
+      const parsed = JSON.parse(text) as PortableArchiveBackup & { imageAssets?: Parameters<typeof restoreImageAssetFromBackup>[0][] };
+      const result = parsed?.kind === 'archive-v3'
+        ? await (async () => {
+            await importPortableArchive(parsed);
+            await Promise.allSettled((parsed.imageAssets ?? []).map(asset => restoreImageAssetFromBackup(asset)));
+            return { imported: 1, skipped: 0 };
+          })()
+        : importAllSavesFromJson(text);
+      const flushes = await Promise.allSettled([flushImageAssetStore(), flushArchiveRepository(), flushSaveStore()]);
+      const deferred = flushes.filter(item => item.status === 'rejected').length;
+      flushes.forEach(item => {
+        if (item.status === 'rejected') console.warn('[archive] imported save auxiliary flush deferred:', item.reason);
+      });
+      window.alert(
+        `导入完成：成功 ${result.imported} 条，跳过 ${result.skipped} 条。`
+        + (deferred ? '部分附件仍在后台落盘；正文存档已保留。' : '')
+        + '即将刷新页面。',
+      );
       location.reload();
     } catch (error) {
       window.alert(`导入失败：${(error as Error).message}`);
@@ -3477,6 +4132,7 @@ function bindEvents() {
     }
   });
   root?.querySelector<HTMLButtonElement>('[data-action="remove-player-avatar"]')?.addEventListener('click', () => {
+    playerAvatarSequence += 1;
     applyPlayerProfileDraftFromStatusPanel();
     delete state.playerProfile.avatarAssetId;
     syncRuntimeProfile();
@@ -3789,10 +4445,28 @@ const titleCallbacks: TitleCallbacks = {
     writeDeepSeekModeEnabledPreference(state.deepSeekModeEnabled);
     const openingMode = opts.openingMode ?? 'manual';
     const save = createSave(opts);
-    enterSave(save.saveId, { openingMode });
+    void enterSave(save.saveId, { openingMode });
   },
   deleteSave: id => {
+    saveLoadSequence += 1;
+    readerMutationSequence += 1;
+    if (state.activeSaveId === id) invalidateAsyncActions(ctx);
+    const localDelete = deleteTavernArchiveSave(id);
     deleteSave(id);
+    void deleteArchiveSave(id).catch(error => console.warn('[archive] delete pointer failed:', error));
+    void localDelete.then(result => {
+      console.info('[archive-bridge] 本机删除成功', {
+        saveId: id,
+        deleted: result.deleted === true,
+        alreadyMissing: result.alreadyMissing === true,
+        gc: result.gc ?? { status: 'none' },
+      });
+    }).catch(error => {
+      console.warn('[archive-bridge] 本机删除失败，浏览器存档已删除', {
+        saveId: id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     if (state.activeSaveId === id) {
       clearWorldbookRefreshRetry();
       state.activeRunId = null;
@@ -3989,23 +4663,44 @@ window.addEventListener('keydown', event => {
 async function init() {
   // 必须在任何同步存档读写（render 之前）完成；内部会一次性把 localStorage 旧数据迁到 IndexedDB。
   await initSaveStore();
+  await initArchiveRepository();
   const saveRecovery = recoverMissingSaveIndexFromPayloads();
   const saveCount = listSaves().length;
+  const saveStoreDiagnostics = getSaveStoreDiagnostics();
   console.info('[islandmilfcode:init]', {
     cardVersion: ISLANDMILFCODE_VERSION,
-    saveSchemaVersion: SAVE_SCHEMA_VERSION,
+    saveSchemaVersion: SAVE_DATA_SCHEMA_VERSION,
     saveCount,
     payloadCount: saveRecovery.totalPayloads,
     recoveredMissingIndex: saveRecovery.recovered,
-    store: getSaveStoreDiagnostics(),
+    store: saveStoreDiagnostics,
+    archive: getArchiveDiagnostics(),
   });
   if (saveRecovery.recovered > 0) {
     state.runtimeFlags.saveRecoveryNotice = `已从本地缓存恢复 ${saveRecovery.recovered} 个存档`;
+  } else if (saveStoreDiagnostics.degraded) {
+    state.runtimeFlags.saveRecoveryNotice = `浏览器存档暂不可用，当前为内存降级模式：${saveStoreDiagnostics.initError || 'IndexedDB 初始化失败'}`;
+  } else if (saveStoreDiagnostics.legacyMigrationPending) {
+    state.runtimeFlags.saveRecoveryNotice = '旧浏览器存档尚未全部验证，旧数据已保留并将在下次启动重试';
   }
   await initImageAssetStore();
   adapter = await createVariableAdapter(win);
   state.summaryApiConfig = loadSummaryApiConfig();
   setupStreamingHooks(ctx, eventStops);
+  eventStops.push(installArchiveBridgeSync());
+  eventStops.push(setupHostLifecycle(win, {
+    getActiveSaveId: () => state.activeSaveId,
+    getBrowserRevision: () => state.activeSaveId ? getArchiveMetaSync(state.activeSaveId)?.browserRevision ?? 0 : 0,
+    getPlotEventCount: () => Object.keys(state.plotLibrary.events).length,
+    getMainEventCount: () => Object.keys(state.statusData.world.mainEvents).length,
+    onWorldInfoUpdated: async () => {
+      await markRecentWorldbookCacheStale('current').catch(() => undefined);
+      if (state.activeRunId) await refreshCharacterWorldbookTargets();
+    },
+    onChatChanged: async () => {
+      if (state.activeRunId) await refreshCharacterWorldbookTargets();
+    },
+  }));
   setActiveRunId(null);
   clearActiveSaveId();
   // 页面切到后台 / 关闭前尝试 flush 未落盘的写入。IndexedDB 写本身很快（毫秒级），通常都能完成。
@@ -4014,7 +4709,7 @@ async function init() {
       if (document.visibilityState === 'hidden') {
         syncDrawingSettingsFromMountedControls();
         flushPendingAutosave();
-        Promise.all([flushImageAssetStore(), flushSaveStore()]).catch(err =>
+        Promise.all([flushImageAssetStore(), flushArchiveRepository(), flushSaveStore()]).catch(err =>
           console.warn('[init] flush on hidden failed:', err),
         );
       }

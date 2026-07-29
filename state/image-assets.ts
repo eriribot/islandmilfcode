@@ -1,4 +1,11 @@
 import { IDB_STORE_IMAGE_ASSETS, idbDelete, idbGet, idbGetAll, idbPut } from './idb';
+import {
+  clearPendingImageAsset,
+  getPendingImageAssetIds,
+  listReferencedImageAssetIds,
+  markImageGcCandidate,
+  registerPendingImageAsset,
+} from './image-references';
 
 export type ImageAssetRecord = {
   id: string;
@@ -20,10 +27,13 @@ export type ImageAssetBackupRecord = {
 
 const MAX_OBJECT_URL_CACHE_BYTES = 128 * 1024 * 1024;
 const MAX_OBJECT_URL_CACHE_FLOORS = 5;
+const MAX_BLOB_CACHE_BYTES = 64 * 1024 * 1024;
 const MAX_HYDRATE_CONCURRENCY = 2;
 
 const assetMap = new Map<string, ImageAssetRecord>();
+const assetAccess = new Map<string, { lastAccessed: number; byteLength: number }>();
 const pendingWrites = new Set<Promise<unknown>>();
+const pendingWriteByAssetId = new Map<string, Promise<void>>();
 const objectUrlCache = new Map<string, { url: string; byteLength: number; lastAccessed: number; floorKey: string }>();
 
 let initialized = false;
@@ -31,8 +41,27 @@ let initPromise: Promise<void> | null = null;
 
 function trackWrite(promise: Promise<unknown>) {
   pendingWrites.add(promise);
-  promise.finally(() => pendingWrites.delete(promise));
+  void promise.then(
+    () => pendingWrites.delete(promise),
+    () => pendingWrites.delete(promise),
+  );
   return promise;
+}
+
+function touchAsset(record: ImageAssetRecord) {
+  assetMap.set(record.id, record);
+  assetAccess.set(record.id, {
+    lastAccessed: Date.now(),
+    byteLength: record.byteLength || record.blob?.size || 0,
+  });
+  let totalBytes = [...assetAccess.values()].reduce((sum, entry) => sum + entry.byteLength, 0);
+  while (totalBytes > MAX_BLOB_CACHE_BYTES && assetAccess.size > 1) {
+    const oldest = [...assetAccess.entries()].sort((a, b) => a[1].lastAccessed - b[1].lastAccessed)[0];
+    if (!oldest) break;
+    assetAccess.delete(oldest[0]);
+    assetMap.delete(oldest[0]);
+    totalBytes -= oldest[1].byteLength;
+  }
 }
 
 function createAssetId() {
@@ -76,20 +105,17 @@ export function isInlineImageDataUrl(value: unknown): value is string {
 export async function initImageAssetStore() {
   if (initPromise) return initPromise;
   initPromise = (async () => {
-    const rows = await idbGetAll<ImageAssetRecord>(IDB_STORE_IMAGE_ASSETS);
+    // No startup Blob scan. Assets are exact-key loaded when their image is
+    // close to the viewport; this keeps a long illustrated run cheap to open.
     assetMap.clear();
-    for (const row of rows) {
-      if (row.value?.id && row.value?.blob instanceof Blob) {
-        assetMap.set(row.id, row.value);
-      }
-    }
+    assetAccess.clear();
     initialized = true;
   })();
   return initPromise;
 }
 
 export async function flushImageAssetStore() {
-  await Promise.allSettled([...pendingWrites]);
+  await Promise.all([...pendingWrites]);
 }
 
 export function persistInlineImageDataAsAssetSync(dataUrl: string, meta: { prompt?: string; id?: string } = {}) {
@@ -104,15 +130,32 @@ export function persistInlineImageDataAsAssetSync(dataUrl: string, meta: { promp
     createdAt: Date.now(),
     prompt: meta.prompt,
   };
-  assetMap.set(id, record);
-  trackWrite(idbPut(IDB_STORE_IMAGE_ASSETS, id, record));
+  const staleObjectUrl = objectUrlCache.get(id);
+  if (staleObjectUrl) URL.revokeObjectURL(staleObjectUrl.url);
+  objectUrlCache.delete(id);
+  touchAsset(record);
+  registerPendingImageAsset(id);
+  const committed = trackWrite(idbPut(IDB_STORE_IMAGE_ASSETS, id, record)) as Promise<void>;
+  pendingWriteByAssetId.set(id, committed);
+  void committed.then(
+    () => {
+      if (pendingWriteByAssetId.get(id) === committed) {
+        pendingWriteByAssetId.delete(id);
+        clearPendingImageAsset(id);
+      }
+    },
+    () => {
+      if (pendingWriteByAssetId.get(id) === committed) pendingWriteByAssetId.delete(id);
+      // Keep it pending so conservative GC cannot race a player retry.
+    },
+  );
   return id;
 }
 
 export async function saveImageDataUrlAsAsset(dataUrl: string, meta: { prompt?: string; id?: string } = {}) {
   const id = persistInlineImageDataAsAssetSync(dataUrl, meta);
   if (!id) throw new Error('Image generation did not return a data URL');
-  await flushImageAssetStore();
+  await pendingWriteByAssetId.get(id);
   return id;
 }
 
@@ -122,7 +165,9 @@ export async function restoreImageAssetFromBackup(record: ImageAssetBackupRecord
     id: record.id,
     prompt: record.prompt,
   });
-  return Boolean(id);
+  if (!id) return false;
+  await pendingWriteByAssetId.get(id);
+  return true;
 }
 
 export function getCachedImageAssetObjectUrl(assetId: string) {
@@ -156,7 +201,7 @@ export async function loadImageAssetObjectUrl(assetId: string, floorKey: string)
 
   const record = assetMap.get(assetId) ?? await idbGet<ImageAssetRecord>(IDB_STORE_IMAGE_ASSETS, assetId);
   if (!record?.blob) throw new Error(`Image asset not found: ${assetId}`);
-  assetMap.set(assetId, record);
+  touchAsset(record);
 
   const url = URL.createObjectURL(record.blob);
   objectUrlCache.set(assetId, {
@@ -174,10 +219,11 @@ export function hydrateImageAssetElements(root: ParentNode, floorKey: string) {
     .filter(img => !img.dataset.imageAssetLoaded && !img.dataset.imageAssetLoading);
   let cursor = 0;
   let active = 0;
+  const ready: HTMLImageElement[] = [];
 
   const pump = () => {
-    while (active < MAX_HYDRATE_CONCURRENCY && cursor < images.length) {
-      const img = images[cursor++];
+    while (active < MAX_HYDRATE_CONCURRENCY && cursor < ready.length) {
+      const img = ready[cursor++];
       const assetId = img.dataset.imageAssetId;
       if (!assetId) continue;
       const cached = getCachedImageAssetObjectUrl(assetId);
@@ -213,7 +259,24 @@ export function hydrateImageAssetElements(root: ParentNode, floorKey: string) {
     }
   };
 
-  pump();
+  if (typeof IntersectionObserver === 'undefined') {
+    ready.push(...images);
+    pump();
+    return;
+  }
+  const observer = new IntersectionObserver(
+    entries => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        observer.unobserve(entry.target);
+        ready.push(entry.target as HTMLImageElement);
+      }
+      pump();
+      if (cursor >= ready.length && ready.length >= images.length && active === 0) observer.disconnect();
+    },
+    { rootMargin: '800px 0px' },
+  );
+  images.forEach(image => observer.observe(image));
 }
 
 export async function exportImageAssetsForIds(assetIds: Iterable<string>): Promise<ImageAssetBackupRecord[]> {
@@ -222,7 +285,7 @@ export async function exportImageAssetsForIds(assetIds: Iterable<string>): Promi
   for (const id of ids) {
     const record = assetMap.get(id) ?? await idbGet<ImageAssetRecord>(IDB_STORE_IMAGE_ASSETS, id);
     if (!record?.blob) continue;
-    assetMap.set(id, record);
+    touchAsset(record);
     records.push({
       id,
       dataUrl: await blobToDataUrl(record.blob),
@@ -247,6 +310,31 @@ export async function deleteImageAssetsExcept(usedAssetIds: Iterable<string>) {
     deletes.push(idbDelete(IDB_STORE_IMAGE_ASSETS, id));
   }
   await Promise.allSettled(deletes);
+}
+
+/**
+ * Explicit inspection-only maintenance. A v3 save can still be recoverable
+ * through its previous root or a local backup that is not represented by the
+ * active browser-root index, so absence from the current reference set is not
+ * enough evidence to delete a player's image. We mark candidates for
+ * diagnostics but intentionally retain the bytes.
+ */
+export async function runConservativeImageAssetGc() {
+  const used = await listReferencedImageAssetIds();
+  getPendingImageAssetIds().forEach(id => used.add(id));
+  const rows = await idbGetAll<ImageAssetRecord>(IDB_STORE_IMAGE_ASSETS);
+  let marked = 0;
+  let eligible = 0;
+  for (const row of rows) {
+    if (used.has(row.id)) continue;
+    const shouldDelete = await markImageGcCandidate(row.id);
+    if (!shouldDelete) {
+      marked += 1;
+      continue;
+    }
+    eligible += 1;
+  }
+  return { scanned: rows.length, marked, eligible, deleted: 0 };
 }
 
 export function isImageAssetStoreInitialized() {

@@ -5497,3 +5497,13 @@
 }
 
 
+.phone-calendar-cache-notice {
+  margin: 10px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(185, 137, 69, 0.28);
+  border-radius: 10px;
+  background: rgba(255, 246, 223, 0.78);
+  color: #785b32;
+  font-size: 12px;
+  line-height: 1.45;
+}
