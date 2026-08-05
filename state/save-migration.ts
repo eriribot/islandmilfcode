@@ -1,6 +1,6 @@
+import type { GameDevelopmentState } from '../game-development/types';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import type { SummaryStore } from '../summary/types';
-import type { GameDevelopmentState } from '../game-development/types';
 import type {
   DrawingSettings,
   FloorPhoneStateSnapshot,
@@ -16,8 +16,9 @@ import type {
   PlayerProfile,
   StatusData,
 } from '../types';
-import { SAVE_DATA_SCHEMA_VERSION, canUseLegacyAggregateSaveCodec } from '../version';
 import { defaultStatusData } from '../variables/normalize';
+import { SAVE_DATA_SCHEMA_VERSION, canUseLegacyAggregateSaveCodec } from '../version';
+import { parseHostMessageLocator } from './host-timeline-adapter';
 import {
   cloneJsonValue,
   isRecord,
@@ -37,7 +38,16 @@ const PAYLOAD_KEYS = [
   'version',
 ] as const;
 const GAME_STATE_KEYS = ['runId', 'statusData', 'currentMessageIndex', 'worldState', 'runtimeFlags'] as const;
-const MESSAGE_KEYS = ['id', 'role', 'speaker', 'text', 'rawText', 'illustrations', 'statusSnapshot'] as const;
+const MESSAGE_KEYS = [
+  'id',
+  'role',
+  'speaker',
+  'text',
+  'rawText',
+  'illustrations',
+  'statusSnapshot',
+  'hostLocator',
+] as const;
 const SNAPSHOT_KEYS = [
   'statusData',
   'gameDevelopment',
@@ -213,7 +223,12 @@ function sanitizeGameDevelopmentSnapshot(value: unknown): GameDevelopmentState |
 }
 
 function decodeMessage(value: unknown, sourceIndex: number): DecodedLegacyMessage | null {
-  if (!isRecord(value) || (value.role !== 'user' && value.role !== 'assistant')) return null;
+  if (!isRecord(value)) return null;
+  const hostLocator = parseHostMessageLocator(value.hostLocator);
+  if (value.hostLocator !== undefined && !hostLocator) {
+    throw new Error(`旧存档第 ${sourceIndex + 1} 条消息的 host locator 无效。`);
+  }
+  if (value.role !== 'user' && value.role !== 'assistant') return null;
   const role = value.role;
   const rawSnapshot = value.statusSnapshot;
   const decodedSnapshot = decodeRollbackSnapshot(rawSnapshot);
@@ -227,6 +242,7 @@ function decodeMessage(value: unknown, sourceIndex: number): DecodedLegacyMessag
       text: String(value.text ?? ''),
       ...(typeof value.rawText === 'string' ? { rawText: value.rawText } : {}),
       ...(Array.isArray(value.illustrations) ? { illustrations: cloneJsonValue(value.illustrations) } : {}),
+      ...(hostLocator ? { hostLocator } : {}),
     },
     snapshot: decodedSnapshot,
     legacyExtras: splitLegacyExtras(value, MESSAGE_KEYS),
@@ -262,8 +278,7 @@ export function decodeLegacyAggregateSaveSource(input: unknown): LegacyAggregate
   return {
     saveId,
     runId,
-    version:
-      typeof input.version === 'string' || typeof input.version === 'number' ? input.version : null,
+    version: typeof input.version === 'string' || typeof input.version === 'number' ? input.version : null,
     gameState: cloneJsonValue(gameState) as Partial<GameState>,
     messages,
     ...(isRecord(input.summaryStore) ? { summaryStore: cloneJsonValue(input.summaryStore) as SummaryStore } : {}),
@@ -526,7 +541,9 @@ function collectImageAssetIds(...messages: Array<PersistedMessage | undefined>):
 }
 
 function hasFallback(snapshot: FloorStateSnapshot): boolean {
-  return Object.values(snapshot.provenance).some(source => source === 'save-current-fallback' || source === 'defaulted');
+  return Object.values(snapshot.provenance).some(
+    source => source === 'save-current-fallback' || source === 'defaulted',
+  );
 }
 
 export function buildLegacyV2ToV3MigrationPlan(input: unknown): LegacyV2ToV3MigrationPlan {
@@ -609,21 +626,6 @@ export function buildLegacyV2ToV3MigrationPlan(input: unknown): LegacyV2ToV3Migr
         detail: 'beforeTurnState 有字段只能从当前存档或默认值补齐，不能当作已验证的历史权威状态。',
       });
     }
-    if (afterTurnState && hasFallback(afterTurnState)) {
-      issues.push({
-        severity: 'warning',
-        code: 'after-state-fallback',
-        floorIndex,
-        sourceMessageIndex: group.assistant?.sourceIndex,
-        detail: 'afterTurnState 有字段只能从当前存档或默认值补齐，回滚前必须由迁移验收确认。',
-      });
-    }
-    issues.push({
-      severity: 'warning',
-      code: 'generation-context-unavailable',
-      floorIndex,
-      detail: 'v2 未保存正文生成上下文；该层迁移后不能宣称可精确复现旧 prompt。',
-    });
 
     const sourceMessages = [group.syntheticUserMessage ? undefined : group.user, group.assistant].filter(
       (item): item is DecodedLegacyMessage => Boolean(item),
@@ -683,9 +685,7 @@ export function buildLegacyV2ToV3MigrationPlan(input: unknown): LegacyV2ToV3Migr
       phoneMessages,
       drawingSettings: cloneJsonValue(fallbackDrawingSettings),
       runtime: currentRuntime,
-      ...(isRecord(source.gameState.worldState)
-        ? { worldState: cloneJsonValue(source.gameState.worldState) }
-        : {}),
+      ...(isRecord(source.gameState.worldState) ? { worldState: cloneJsonValue(source.gameState.worldState) } : {}),
     },
     ...(source.summaryStore ? { summaryStore: cloneJsonValue(source.summaryStore) } : {}),
     ...(source.memoryDB ? { memoryDB: cloneJsonValue(source.memoryDB) } : {}),

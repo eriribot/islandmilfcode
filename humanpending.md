@@ -183,3 +183,44 @@ docs/v07-graduation-once-human-review-form-v0.1.md
 - 玩家按实际选择的高一、高二或高三基准班级与 `schoolYearCount` 连续推进；分别在 2015、2014、2013 年到达毕业日时转为毕业身份，且不依赖 `SAE_07-8`。
 
 AI 按用户要求未运行自动测试、构建或真实正文生成，不能自行把本项标记为通过。
+
+## HP-007：真实宿主楼层方案已撤销
+
+状态：resolved-rejected
+
+用户明确要求所有正文只在宿主 `#0` 的游戏 iframe 内渲染。真实 hidden host user/assistant、locator 对账和 host-first 编辑/删除/回滚不再接入生产流程；已有意外 `#1/#2` 不自动删除。host-message 链当前合同是“不得产生副作用”，不是“隐藏后允许写入”。
+
+## HP-008：最近 16 层懒加载待实战验收
+
+状态：waiting-for-human-review
+
+本轮已把 v3 存档的普通打开改为最近 16 层窗口，Reader 到边界时再读取相邻 16 层，并通过小型对象缓存复用打开阶段已经读取的 state、index 和 chunk。提示词和摘要继续使用各自的滑动窗口；没有改变 prompt 语义、摘要算法、shujuku/ACU 或数据库时机。正文恢复和渲染保持在 `#0` iframe 内，不创建 hidden host floor。
+
+### 必须实战验收
+
+- 100、1000、3000 层存档的真实打开耗时与内存：**not run**。
+- Reader 在前后边界自动切换相邻 16 层，且全局楼层编号连续：**not run**。
+- 在旧窗口触发保存后，未加载的冷历史仍完整存在：**not run**。
+- 在旧窗口发送正文时先回到最新 16 层，再提交新回合：**not run**。
+- TT/ST `#0` iframe、插件/数据库副作用与 UI 恢复实战：**not run**。
+
+当前只证明源码已静态接线，不能把高楼层性能或真实宿主链标记为通过。操作说明见：
+
+```text
+docs/16-floor-lazy-loading-operation-guide-v0.1.md
+```
+
+## HP-009：刷新恢复与摘要完整性待真人验收
+
+状态：waiting-for-human-review
+
+已执行证据：`user/files` 当前 v3 root 含 122 层、243 条正文消息、8 个连续 chunk；摘要块为 0 条小总结、1 条大总结、1 份全局摘要、292 条关键事实。webpack 开发与正式构建均通过，桥接导入 JSON 与 JS 内容一致。
+
+真人验收步骤：
+
+1. 导入最新 `savesolt/导入到酒馆中/IslandMilfCode本机存档桥.json`，并使用最新构建的游戏页面。
+2. 从 `user/files` 恢复当前 v3 存档，确认 Reader 最新 16 层可见，向前翻页能继续读取旧正文。
+3. 打开摘要页，确认大总结和全局摘要仍在；小总结为 0 是当前存档的真实状态，不应被当成损坏。
+4. 刷新一次并发送一轮新正文，确认酒馆外层不新增 `#1/#2`，正文只出现在 `#0` iframe。
+
+真实 SillyTavern 刷新与发送：**not run**。完成以上四项前，不把运行时修复标记为正式通过。

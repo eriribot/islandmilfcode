@@ -25,6 +25,7 @@ import type {
   ArchiveJournalRecord,
   ArchiveCompatibilityBlock,
   ArchiveMemoryBlock,
+  ArchiveMessageWindow,
   ArchiveMigrationJournal,
   ArchiveObjectKind,
   ArchiveObjectReference,
@@ -51,6 +52,7 @@ import {
 import { buildLegacyV2ToV3MigrationPlan, type LegacyMigrationIssue } from './save-migration';
 import { deserializeMessages, restoreGameDevelopmentSnapshot, serializeMessages } from './store';
 import { readImageAssetReferences, replaceImageAssetReferences } from './image-references';
+import { isMessageWindowAtHead } from './message-window';
 
 const FLOOR_CHUNK_SIZE = 16;
 const INDEX_PAGE_CHUNK_COUNT = 128;
@@ -58,7 +60,7 @@ const FLOOR_CACHE_LIMIT = 24;
 
 type RuntimeArchiveState = Pick<
   AppState,
-  'statusData' | 'playerProfile' | 'phoneMessages' | 'drawingSettings' | 'summaryStore' | 'memoryDB' | 'uiMessages'
+  'statusData' | 'playerProfile' | 'phoneMessages' | 'drawingSettings' | 'summaryStore' | 'memoryDB' | 'uiMessages' | 'messageWindow'
 >;
 
 export type ArchiveCheckpointInput = {
@@ -76,6 +78,7 @@ export type ArchiveCommitReceipt = {
   revision: number;
   rootHash: string;
   floorCount: number;
+  messageCount: number;
   committed: true;
 };
 
@@ -251,6 +254,19 @@ function countPersistableMessages(messages: UiMessage[]) {
     if (message.role === 'user' || message.role === 'assistant') total += 1;
   }
   return total;
+}
+
+function getRuntimeGlobalMessageCount(state: RuntimeArchiveState) {
+  return state.messageWindow.startMessage + countPersistableMessages(state.uiMessages);
+}
+
+function getRuntimeMessageSlice(state: RuntimeArchiveState, globalStartOrdinal: number) {
+  const localStart = Math.max(0, Math.floor(globalStartOrdinal) - state.messageWindow.startMessage);
+  const current = getPersistedMessageSlice(state.uiMessages, localStart);
+  return {
+    messages: current.messages,
+    globalTotal: state.messageWindow.startMessage + current.total,
+  };
 }
 
 function getEntryMessageCount(entry: ArchiveFloorIndexEntry): number {
@@ -501,21 +517,6 @@ async function putHashed(
   return hashed.hash;
 }
 
-async function readIndexEntries(root: ArchiveRoot): Promise<ArchiveFloorIndexEntry[]> {
-  const pages = await Promise.all(Object.entries(root.floorIndexPageHashes).map(async ([pageNoText, hash]) => {
-    const pageNo = Number(pageNoText);
-    const page = await backend.getObject<ArchiveFloorIndexPage>('floor-index', hash);
-    if (!page || !Array.isArray(page.entries)) {
-      throw new Error(`Archive floor index page is missing or invalid: page ${pageNoText}, ${hash}`);
-    }
-    return { pageNo, page };
-  }));
-  return pages
-    .sort((a, b) => a.pageNo - b.pageNo)
-    .flatMap(item => item.page.entries)
-    .sort((a, b) => a.chunkNo - b.chunkNo);
-}
-
 async function writeFloorLayout(
   floors: FloorRecord[],
   references: ArchiveObjectReference[],
@@ -592,7 +593,7 @@ async function writeTailFloorLayout(input: {
   if (!Number.isFinite(rootMessageCount) || rootMessageCount < 0) {
     throw new Error('Archive root has an invalid source message count');
   }
-  if (countPersistableMessages(input.state.uiMessages) < rootMessageCount) {
+  if (getRuntimeGlobalMessageCount(input.state) < rootMessageCount) {
     // This is a recovery window, not an intentional deletion. Explicit
     // rollback/delete operations republish floors through their own paths.
     throw new Error('Runtime archive history is incomplete; preserving the previous complete archive root');
@@ -626,8 +627,8 @@ async function writeTailFloorLayout(input: {
 
   const lastEntryMessageCount = getEntryMessageCount(lastEntry);
   const prefixMessageCount = Math.max(0, Number(input.root.messageCount) - lastEntryMessageCount);
-  const current = getPersistedMessageSlice(input.state.uiMessages, prefixMessageCount);
-  if (current.total < rootMessageCount) {
+  const current = getRuntimeMessageSlice(input.state, prefixMessageCount);
+  if (current.globalTotal < rootMessageCount) {
     // The runtime only holds a recovery window, not the complete archive.
     // A normal autosave must never reinterpret that partial window as an
     // intentional deletion and publish it over the last complete root.
@@ -644,6 +645,9 @@ async function writeTailFloorLayout(input: {
     // A deletion or structural edit before the tail shifts message identities.
     // Tail-only rewriting would retain the stale prefix, so rebuild exactly in
     // this exceptional path. Normal append/autosave remains tail-bounded.
+    if (input.state.messageWindow.startMessage > 0) {
+      throw new Error('Runtime archive tail no longer matches the persisted head; preserving cold history');
+    }
     const messages = getPersistedMessages(input.state.uiMessages);
     const floors = messagesToFloors({
       saveId: input.saveId,
@@ -740,12 +744,14 @@ function createMeta(input: {
 }): ArchiveSaveMeta {
   const now = Date.now();
   const activeTarget = input.state.statusData.targets.find(target => target.id === input.state.statusData.activeTargetId);
-  let preview = '';
-  for (let index = input.state.uiMessages.length - 1; index >= 0; index -= 1) {
-    const message = input.state.uiMessages[index];
-    if (message?.role !== 'assistant') continue;
-    preview = message.text.slice(0, 180);
-    break;
+  let preview = input.existing?.preview ?? '';
+  if (isMessageWindowAtHead(input.state.messageWindow)) {
+    for (let index = input.state.uiMessages.length - 1; index >= 0; index -= 1) {
+      const message = input.state.uiMessages[index];
+      if (message?.role !== 'assistant') continue;
+      preview = message.text.slice(0, 180);
+      break;
+    }
   }
   return {
     saveId: input.saveId,
@@ -852,7 +858,14 @@ async function publish(input: {
     updatedAt: now,
   };
   await backend.commitRoot(input.saveId, rootHash, root, meta, journal);
-  await replaceImageAssetReferences(`save:${input.saveId}`, collectRuntimeImageAssetIds(input.state)).catch(error => {
+  const runtimeImageAssetIds = collectRuntimeImageAssetIds(input.state);
+  const imageAssetIds = input.state.messageWindow.startMessage > 0
+    ? [
+        ...await readImageAssetReferences(`save:${input.saveId}`).catch(() => []),
+        ...runtimeImageAssetIds,
+      ]
+    : runtimeImageAssetIds;
+  await replaceImageAssetReferences(`save:${input.saveId}`, imageAssetIds).catch(error => {
     console.warn('[archive] image reference update deferred:', error);
   });
   metaCache.set(input.saveId, meta);
@@ -862,6 +875,7 @@ async function publish(input: {
     revision: input.revision,
     rootHash,
     floorCount: input.floorCount,
+    messageCount: input.messageCount,
     committed: true,
   };
   for (const listener of listeners) {
@@ -890,7 +904,7 @@ export function initArchiveRepository(): Promise<void> {
       });
       initialized = true;
       lastError = '';
-    } catch (error) {
+  } catch (error) {
       initialized = true;
       lastError = error instanceof Error ? error.message : String(error);
       console.warn('[archive] metadata init failed; legacy play remains available:', error);
@@ -950,15 +964,22 @@ export function commitRuntimeArchive(input: ArchiveCheckpointInput): Promise<Arc
     if (previous) assertNoFutureArchiveSchema(previous.root, 'Existing save');
     const revision = nextRevision(previous?.root.revision ?? (Number(input.existingMeta?.browserRevision) || 0));
     const references: ArchiveObjectReference[] = [];
-    const layout = previous
-      ? await writeTailFloorLayout({
+    const runtimeWindowIsHead = !previous || isMessageWindowAtHead(input.state.messageWindow);
+    const layout = previous && !runtimeWindowIsHead
+      ? {
+          pageHashes: { ...previous.root.floorIndexPageHashes },
+          floorCount: previous.root.floorCount,
+          messageCount: previous.root.messageCount,
+        }
+      : previous
+        ? await writeTailFloorLayout({
           saveId: input.saveId,
           root: previous.root,
           revision,
           state: input.state,
           references,
         })
-      : await (async () => {
+        : await (async () => {
           const messages = getPersistedMessages(input.state.uiMessages);
           const floors = messagesToFloors({
             saveId: input.saveId,
@@ -1011,6 +1032,7 @@ export function migrateLegacySaveToArchive(
         revision: existing.root.revision,
         rootHash: existing.rootHash,
         floorCount: existing.root.floorCount,
+        messageCount: existing.root.messageCount,
         committed: true,
       };
     }
@@ -1075,6 +1097,14 @@ export function migrateLegacySaveToArchive(
       },
       memoryDB: migratedMemoryDB,
       uiMessages: deserializeArchiveFloorMessages(migratedFloors),
+      messageWindow: {
+        startFloor: 0,
+        endFloorExclusive: migratedFloors.length,
+        startMessage: 0,
+        endMessageExclusive: layout.messageCount,
+        totalFloorCount: migratedFloors.length,
+        totalMessageCount: layout.messageCount,
+      },
     };
     const gameState: GameState = {
       runId: plan.runId,
@@ -1146,7 +1176,14 @@ function createEmptyMemoryDB(runId: string): IslandMemoryDB {
   };
 }
 
-export async function openArchiveSave(saveId: string): Promise<ArchiveSaveSnapshot | null> {
+export async function openArchiveSave(
+  saveId: string,
+  options: {
+    loadMessageWindow?: boolean;
+    messageWindowStartFloor?: number;
+    messageWindowEndFloorExclusive?: number;
+  } = {},
+): Promise<ArchiveSaveSnapshot | null> {
   const pointer = await backend.getRoot(saveId);
   if (!pointer) return null;
   assertNoFutureArchiveSchema(pointer.root, 'Save');
@@ -1163,6 +1200,12 @@ export async function openArchiveSave(saveId: string): Promise<ArchiveSaveSnapsh
       ? backend.getObject<ArchiveMemoryBlock>('memory', pointer.root.memoryHash).catch(() => null)
       : null,
   ]);
+  if (pointer.root.summaryHash && !summary) {
+    throw new Error('Archive summary block is missing; preserving the existing root');
+  }
+  if (pointer.root.memoryHash && !memory) {
+    throw new Error('Archive memory block is missing; preserving the existing root');
+  }
   const resolvedMeta: ArchiveSaveMeta = pointer.rootHash === meta.rootHash
     ? meta
     : {
@@ -1179,18 +1222,78 @@ export async function openArchiveSave(saveId: string): Promise<ArchiveSaveSnapsh
           '浏览器当前 root 不可读，已回退到上一个可玩版本',
         ],
       };
+  const messageWindow = options.loadMessageWindow
+    ? await readArchiveMessageWindow(
+        saveId,
+        pointer.root,
+        options.messageWindowStartFloor,
+        options.messageWindowEndFloorExclusive,
+      )
+    : undefined;
   return {
     meta: resolvedMeta,
     root: pointer.root,
     state,
     ...(summary ? { summary } : {}),
     ...(memory ? { memory } : {}),
+    ...(messageWindow ? { messageWindow } : {}),
   };
+}
+
+function validateArchiveFloorChunk(
+  saveId: string,
+  root: ArchiveRoot,
+  entry: ArchiveFloorIndexEntry,
+  chunk: ArchiveFloorChunk | null,
+) {
+  if (
+    !chunk
+    || Number(chunk.chunkNo) !== Number(entry.chunkNo)
+    || Number(chunk.startFloor) !== Number(entry.startFloor)
+    || Number(chunk.endFloorExclusive) !== Number(entry.endFloorExclusive)
+    || !Array.isArray(chunk.floors)
+    || chunk.floors.length !== entry.endFloorExclusive - entry.startFloor
+  ) {
+    throw new Error(`Archive floor chunk is missing or invalid: chunk ${entry.chunkNo}, ${entry.chunkHash}`);
+  }
+  const floors = chunk.floors.map((stored, offset) => {
+    const expectedFloor = entry.startFloor + offset;
+    if (!stored || Number(stored.floorIndex) !== expectedFloor || expectedFloor >= root.floorCount) {
+      throw new Error(`Archive floor chunk ${entry.chunkNo} has an invalid floor at offset ${offset}`);
+    }
+    return withSaveId(saveId, stored);
+  });
+  floors.forEach(cacheFloor);
+  return floors;
+}
+
+async function readArchiveChunk(
+  saveId: string,
+  root: ArchiveRoot,
+  chunkNo: number,
+): Promise<{ entry: ArchiveFloorIndexEntry; floors: FloorRecord[] }> {
+  const pageNo = Math.floor(chunkNo / root.indexPageChunkCount);
+  const pageHash = root.floorIndexPageHashes[String(pageNo)];
+  if (!pageHash) throw new Error(`Archive index page ${pageNo} is missing`);
+  const page = await backend.getObject<ArchiveFloorIndexPage>('floor-index', pageHash);
+  if (!page || Number(page.pageNo) !== pageNo || !Array.isArray(page.entries)) {
+    throw new Error(`Archive index page ${pageNo} is invalid`);
+  }
+  const entry = page.entries.find(candidate => Number(candidate.chunkNo) === chunkNo);
+  if (!entry) throw new Error(`Archive index entry for chunk ${chunkNo} is missing`);
+  const expectedStart = chunkNo * root.chunkSize;
+  const expectedEnd = Math.min(root.floorCount, expectedStart + root.chunkSize);
+  if (entry.startFloor !== expectedStart || entry.endFloorExclusive !== expectedEnd || !entry.chunkHash) {
+    throw new Error(`Archive index entry for chunk ${chunkNo} is invalid`);
+  }
+  const chunk = await backend.getObject<ArchiveFloorChunk>('floor-chunk', entry.chunkHash);
+  return { entry, floors: validateArchiveFloorChunk(saveId, root, entry, chunk) };
 }
 
 export async function getArchiveFloor(saveId: string, floorIndex: number): Promise<FloorRecord | null> {
   if (!Number.isFinite(floorIndex) || floorIndex < 0) return null;
-  const key = floorCacheKey(saveId, Math.floor(floorIndex));
+  const normalizedFloorIndex = Math.floor(floorIndex);
+  const key = floorCacheKey(saveId, normalizedFloorIndex);
   const cached = floorCache.get(key);
   if (cached) {
     cached.accessedAt = Date.now();
@@ -1198,20 +1301,177 @@ export async function getArchiveFloor(saveId: string, floorIndex: number): Promi
   }
   const pointer = await backend.getRoot(saveId);
   if (pointer) assertNoFutureArchiveSchema(pointer.root, 'Save');
-  if (!pointer || floorIndex >= pointer.root.floorCount) return null;
-  const chunkNo = Math.floor(floorIndex / pointer.root.chunkSize);
-  const pageNo = Math.floor(chunkNo / pointer.root.indexPageChunkCount);
-  const pageHash = pointer.root.floorIndexPageHashes[String(pageNo)];
-  if (!pageHash) return null;
-  const page = await backend.getObject<ArchiveFloorIndexPage>('floor-index', pageHash);
-  const entry = page?.entries.find(candidate => floorIndex >= candidate.startFloor && floorIndex < candidate.endFloorExclusive);
-  if (!entry) return null;
-  const chunk = await backend.getObject<ArchiveFloorChunk>('floor-chunk', entry.chunkHash);
-  const stored = chunk?.floors.find(candidate => candidate.floorIndex === floorIndex);
-  if (!stored) return null;
-  const floor = withSaveId(saveId, stored);
-  cacheFloor(floor);
-  return cloneJson(floor);
+  if (!pointer || normalizedFloorIndex >= pointer.root.floorCount) return null;
+  const chunkNo = Math.floor(normalizedFloorIndex / pointer.root.chunkSize);
+  const { floors } = await readArchiveChunk(saveId, pointer.root, chunkNo);
+  const floor = floors.find(candidate => candidate.floorIndex === normalizedFloorIndex);
+  return floor ? cloneJson(floor) : null;
+}
+
+async function readArchiveMessageWindow(
+  saveId: string,
+  root: ArchiveRoot,
+  requestedStartFloor?: number,
+  requestedEndFloorExclusive?: number,
+): Promise<ArchiveMessageWindow> {
+  if (!root.floorCount) {
+    return {
+      startFloor: 0,
+      endFloorExclusive: 0,
+      startMessage: 0,
+      endMessageExclusive: 0,
+      totalFloorCount: 0,
+      totalMessageCount: 0,
+      floors: [],
+    };
+  }
+  const startFloor = Math.max(0, Math.min(
+    Number.isFinite(requestedStartFloor)
+      ? Math.floor(requestedStartFloor!)
+      : root.floorCount - FLOOR_CHUNK_SIZE,
+    root.floorCount - 1,
+  ));
+  const endFloorExclusive = Math.max(
+    startFloor + 1,
+    Math.min(
+      root.floorCount,
+      Number.isFinite(requestedEndFloorExclusive)
+        ? Math.floor(requestedEndFloorExclusive!)
+        : startFloor + FLOOR_CHUNK_SIZE,
+    ),
+  );
+  const firstChunkNo = Math.floor(startFloor / root.chunkSize);
+  const lastChunkNo = Math.floor((endFloorExclusive - 1) / root.chunkSize);
+  const chunks = await Promise.all(
+    Array.from({ length: lastChunkNo - firstChunkNo + 1 }, (_, index) =>
+      readArchiveChunk(saveId, root, firstChunkNo + index)),
+  );
+  const floors = chunks
+    .flatMap(chunk => chunk.floors)
+    .filter(floor => floor.floorIndex >= startFloor && floor.floorIndex < endFloorExclusive);
+  if (floors.length !== endFloorExclusive - startFloor) {
+    throw new Error(`Archive reader window is incomplete: expected ${endFloorExclusive - startFloor}, received ${floors.length}`);
+  }
+
+  const pageNo = Math.floor(firstChunkNo / root.indexPageChunkCount);
+  let startMessage = 0;
+  const windowMessageCount = floors.reduce((sum, floor) => sum + getFloorSourceMessageCount(floor), 0);
+  if (endFloorExclusive >= root.floorCount) {
+    startMessage = root.messageCount - windowMessageCount;
+  } else {
+    const prefixPageNos = Object.keys(root.floorIndexPageHashes)
+      .map(Number)
+      .filter(candidate => Number.isInteger(candidate) && candidate < pageNo)
+      .sort((left, right) => left - right);
+    for (const prefixPageNo of prefixPageNos) {
+      const pageHash = root.floorIndexPageHashes[String(prefixPageNo)];
+      const page = await backend.getObject<ArchiveFloorIndexPage>('floor-index', pageHash);
+      if (!page || !Array.isArray(page.entries)) throw new Error(`Archive index page ${prefixPageNo} is invalid`);
+      startMessage += page.entries.reduce((sum, candidate) => sum + getEntryMessageCount(candidate), 0);
+    }
+    const currentPageHash = root.floorIndexPageHashes[String(pageNo)];
+    const currentPage = await backend.getObject<ArchiveFloorIndexPage>('floor-index', currentPageHash);
+    if (!currentPage || !Array.isArray(currentPage.entries)) throw new Error(`Archive index page ${pageNo} is invalid`);
+    startMessage += currentPage.entries
+      .filter(candidate => candidate.chunkNo < firstChunkNo)
+      .reduce((sum, candidate) => sum + getEntryMessageCount(candidate), 0);
+    startMessage += chunks[0].floors
+      .filter(floor => floor.floorIndex < startFloor)
+      .reduce((sum, floor) => sum + getFloorSourceMessageCount(floor), 0);
+  }
+  if (startMessage < 0 || startMessage + windowMessageCount > root.messageCount) {
+    throw new Error(`Archive message offsets are invalid for floor ${startFloor}`);
+  }
+  return {
+    startFloor,
+    endFloorExclusive,
+    startMessage,
+    endMessageExclusive: startMessage + windowMessageCount,
+    totalFloorCount: root.floorCount,
+    totalMessageCount: root.messageCount,
+    floors,
+  };
+}
+
+export async function getArchiveMessageWindow(
+  saveId: string,
+  startFloor?: number,
+  endFloorExclusive?: number,
+): Promise<ArchiveMessageWindow | null> {
+  const pointer = await backend.getRoot(saveId);
+  if (!pointer) return null;
+  assertNoFutureArchiveSchema(pointer.root, 'Save');
+  return readArchiveMessageWindow(saveId, pointer.root, startFloor, endFloorExclusive);
+}
+
+export async function getArchiveMessageRange(
+  saveId: string,
+  startMessage: number,
+  maxMessages = 5,
+): Promise<{ startMessage: number; totalMessageCount: number; messages: UiMessage[] }> {
+  const pointer = await backend.getRoot(saveId);
+  if (!pointer) return { startMessage: 0, totalMessageCount: 0, messages: [] };
+  assertNoFutureArchiveSchema(pointer.root, 'Save');
+  const safeStart = Math.max(0, Math.min(
+    Math.floor(Number(startMessage) || 0),
+    pointer.root.messageCount,
+  ));
+  const requestedCount = Math.max(0, Math.floor(Number(maxMessages) || 0));
+  const targetEnd = Math.min(pointer.root.messageCount, safeStart + requestedCount);
+  if (targetEnd <= safeStart) {
+    return { startMessage: safeStart, totalMessageCount: pointer.root.messageCount, messages: [] };
+  }
+
+  const selected: Array<{
+    entry: ArchiveFloorIndexEntry;
+    entryStartMessage: number;
+  }> = [];
+  let messageCursor = 0;
+  const pageNos = Object.keys(pointer.root.floorIndexPageHashes)
+    .map(Number)
+    .filter(pageNo => Number.isInteger(pageNo) && pageNo >= 0)
+    .sort((left, right) => left - right);
+  for (const pageNo of pageNos) {
+    const pageHash = pointer.root.floorIndexPageHashes[String(pageNo)];
+    const page = await backend.getObject<ArchiveFloorIndexPage>('floor-index', pageHash);
+    if (!page || !Array.isArray(page.entries)) throw new Error(`Archive index page ${pageNo} is invalid`);
+    const entries = [...page.entries].sort((left, right) => left.chunkNo - right.chunkNo);
+    for (const entry of entries) {
+      const entryStartMessage = messageCursor;
+      const entryEndMessage = entryStartMessage + getEntryMessageCount(entry);
+      if (entryEndMessage > safeStart && entryStartMessage < targetEnd) {
+        selected.push({ entry, entryStartMessage });
+      }
+      messageCursor = entryEndMessage;
+      if (messageCursor >= targetEnd) break;
+    }
+    if (messageCursor >= targetEnd) break;
+  }
+  if (messageCursor < targetEnd) {
+    throw new Error(`Archive message range is incomplete: expected through ${targetEnd}, reached ${messageCursor}`);
+  }
+
+  const selectedChunks = await Promise.all(
+    selected.map(item => readArchiveChunk(saveId, pointer.root, item.entry.chunkNo)),
+  );
+  const persisted: PersistedMessage[] = [];
+  selected.forEach((item, index) => {
+    const entryMessages = selectedChunks[index].floors.flatMap(getArchiveFloorPersistedMessages);
+    if (entryMessages.length !== getEntryMessageCount(item.entry)) {
+      throw new Error(`Archive index message count is invalid for chunk ${item.entry.chunkNo}`);
+    }
+    const localStart = Math.max(0, safeStart - item.entryStartMessage);
+    const localEnd = Math.min(entryMessages.length, targetEnd - item.entryStartMessage);
+    persisted.push(...entryMessages.slice(localStart, localEnd));
+  });
+  if (persisted.length !== targetEnd - safeStart) {
+    throw new Error(`Archive message range is incomplete: expected ${targetEnd - safeStart}, received ${persisted.length}`);
+  }
+  return {
+    startMessage: safeStart,
+    totalMessageCount: pointer.root.messageCount,
+    messages: deserializeMessages(persisted),
+  };
 }
 
 export async function getArchiveFloorWindow(saveId: string, centerFloor: number, radius = 2) {
@@ -1220,24 +1480,26 @@ export async function getArchiveFloorWindow(saveId: string, centerFloor: number,
   const maxFloor = Math.max(0, (pointer?.root.floorCount ?? centerFloor + 1) - 1);
   const start = Math.max(0, Math.floor(centerFloor) - Math.max(0, radius));
   const end = Math.min(maxFloor, Math.floor(centerFloor) + Math.max(0, radius));
-  const floors = await Promise.all(Array.from({ length: Math.max(0, end - start + 1) }, (_, index) => getArchiveFloor(saveId, start + index)));
-  return { startFloor: start, endFloor: end, floors: floors.filter((floor): floor is FloorRecord => Boolean(floor)) };
+  if (!pointer || end < start) return { startFloor: start, endFloor: end, floors: [] as FloorRecord[] };
+  const firstChunk = Math.floor(start / pointer.root.chunkSize);
+  const lastChunk = Math.floor(end / pointer.root.chunkSize);
+  const chunks = await Promise.all(
+    Array.from({ length: lastChunk - firstChunk + 1 }, (_, index) =>
+      readArchiveChunk(saveId, pointer.root, firstChunk + index)),
+  );
+  const floors = chunks.flatMap(chunk => chunk.floors).filter(floor => floor.floorIndex >= start && floor.floorIndex <= end);
+  return { startFloor: start, endFloor: end, floors };
 }
 
 export async function streamArchiveFloors(saveId: string): Promise<FloorRecord[]> {
   const pointer = await backend.getRoot(saveId);
   if (!pointer) return [];
   assertNoFutureArchiveSchema(pointer.root, 'Save');
-  const entries = await readIndexEntries(pointer.root);
-  const chunks = await Promise.all(entries.map(entry => backend.getObject<ArchiveFloorChunk>('floor-chunk', entry.chunkHash)));
-  const floors: FloorRecord[] = [];
-  chunks.forEach((chunk, index) => {
-    const entry = entries[index];
-    if (!chunk || !Array.isArray(chunk.floors)) {
-      throw new Error(`Archive floor chunk is missing or invalid: chunk ${entry.chunkNo}, ${entry.chunkHash}`);
-    }
-    floors.push(...chunk.floors.map(floor => withSaveId(saveId, floor)));
-  });
+  const chunkCount = Math.ceil(pointer.root.floorCount / pointer.root.chunkSize);
+  const chunks = await Promise.all(
+    Array.from({ length: chunkCount }, (_, chunkNo) => readArchiveChunk(saveId, pointer.root, chunkNo)),
+  );
+  const floors = chunks.flatMap(chunk => chunk.floors);
   floors.sort((left, right) => left.floorIndex - right.floorIndex);
   if (floors.length !== pointer.root.floorCount || floors.some((floor, index) => floor.floorIndex !== index)) {
     throw new Error(`Archive floor timeline is incomplete: expected ${pointer.root.floorCount}, received ${floors.length}`);
@@ -1302,6 +1564,14 @@ function runtimeStateFromSnapshot(snapshot: ArchiveSaveSnapshot, floors: FloorRe
     }),
     memoryDB: cloneJson(snapshot.memory?.memoryDB ?? createEmptyMemoryDB(snapshot.meta.runId)),
     uiMessages: deserializeArchiveFloorMessages(floors),
+    messageWindow: {
+      startFloor: 0,
+      endFloorExclusive: floors.length,
+      startMessage: 0,
+      endMessageExclusive: snapshot.root.messageCount,
+      totalFloorCount: floors.length,
+      totalMessageCount: snapshot.root.messageCount,
+    },
   };
 }
 
@@ -1574,7 +1844,14 @@ export function forkArchiveSave(input: {
     const sourceImageIds = await readImageAssetReferences(`save:${input.sourceSaveId}`).catch(() => []);
     await replaceImageAssetReferences(`save:${saveId}`, sourceImageIds).catch(() => undefined);
     metaCache.set(saveId, meta);
-    const receipt = { saveId, revision, rootHash, floorCount: root.floorCount, committed: true as const };
+    const receipt = {
+      saveId,
+      revision,
+      rootHash,
+      floorCount: root.floorCount,
+      messageCount: root.messageCount,
+      committed: true as const,
+    };
     listeners.forEach(listener => Promise.resolve(listener({ receipt, root, meta, journal })).catch(() => undefined));
     return receipt;
   });
@@ -1713,6 +1990,18 @@ export function importPortableArchive(input: PortableArchiveBackup): Promise<Arc
     if (!saveId) throw new Error('Archive saveId is missing');
     const runId = String(input.root?.runId || input.meta?.runId || input.state?.gameState?.runId || '').trim();
     if (!runId) throw new Error('Archive runId is missing');
+    if (input.root.summaryHash && !input.summary?.summaryStore) {
+      throw new Error('Imported v3 archive is missing its summary block');
+    }
+    if (input.root.memoryHash && !input.memory?.memoryDB) {
+      throw new Error('Imported v3 archive is missing its memory block');
+    }
+    if (
+      input.floors.length !== input.root.floorCount
+      || input.floors.some((floor, floorIndex) => Number(floor.floorIndex) !== floorIndex)
+    ) {
+      throw new Error(`Imported v3 archive floor timeline is incomplete: ${input.floors.length}/${input.root.floorCount}`);
+    }
     const previous = await backend.getRoot(saveId);
     if (previous) assertNoFutureArchiveSchema(previous.root, 'Existing save');
     const uiMessages = deserializeArchiveFloorMessages(input.floors);
@@ -1725,6 +2014,14 @@ export function importPortableArchive(input: PortableArchiveBackup): Promise<Arc
       summaryStore: cloneJson(input.summary?.summaryStore ?? { global: null, major: [], minor: [], keyFacts: [], lastSummarizedIndex: 0, consecutiveFailures: 0, autoPaused: false, lastError: null }),
       memoryDB: cloneJson(input.memory?.memoryDB ?? createEmptyMemoryDB(runId)),
       uiMessages,
+      messageWindow: {
+        startFloor: 0,
+        endFloorExclusive: input.floors.length,
+        startMessage: 0,
+        endMessageExclusive: input.root.messageCount,
+        totalFloorCount: input.floors.length,
+        totalMessageCount: input.root.messageCount,
+      },
     };
     runtimeState.memoryDB.runId = runId;
     const references: ArchiveObjectReference[] = [];

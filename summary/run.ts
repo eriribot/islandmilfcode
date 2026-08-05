@@ -28,6 +28,15 @@ export type SummaryContext = {
   summaryStore: SummaryStore;
   summaryApiConfig: SummaryApiConfig | null;
   uiMessages: UiMessage[];
+  /** Global completed-reader offset of uiMessages when only one archive window is resident. */
+  messageStartIndex?: number;
+  /** Global completed-reader count; defaults to the resident message count. */
+  totalMessageCount?: number;
+  /** Reads a bounded global message range when the summary cursor is outside the resident reader window. */
+  loadMessageRange?: (
+    startMessage: number,
+    maxMessages: number,
+  ) => Promise<{ startMessage: number; totalMessageCount: number; messages: UiMessage[] }>;
   onStoreUpdated: () => void;
   onTaskUpdated?: () => void;
   /** 当前结构化状态快照，用作摘要 prompt 的事实锚点。缺省时不注入。 */
@@ -182,8 +191,8 @@ function clearFailureState(store: SummaryStore): void {
 }
 
 /** 获取一个固定大小的小摘要块，避免游标落后时一次吞掉全部历史。 */
-function getNextMinorSummaryChunk(messages: UiMessage[], lastIndex: number): UiMessage[] {
-  return getSummaryMessages(messages).slice(lastIndex, lastIndex + MINOR_THRESHOLD);
+function getNextMinorSummaryChunk(messages: UiMessage[], localStartIndex: number): UiMessage[] {
+  return getSummaryMessages(messages).slice(localStartIndex, localStartIndex + MINOR_THRESHOLD);
 }
 
 /** 统计 Reader 可见且已完成的楼层总数（用作 lastSummarizedIndex 的基准）。 */
@@ -227,6 +236,24 @@ function formatMessagesAsText(messages: UiMessage[]): string {
     .join('\n\n');
 }
 
+async function readSummaryRange(
+  ctx: SummaryContext,
+  range: [number, number],
+): Promise<UiMessage[]> {
+  const messageStartIndex = Math.max(0, Math.floor(Number(ctx.messageStartIndex) || 0));
+  const resident = getSummaryMessages(ctx.uiMessages);
+  const localStart = range[0] - messageStartIndex;
+  const localEndExclusive = range[1] - messageStartIndex + 1;
+  if (localStart >= 0 && localEndExclusive <= resident.length) {
+    return resident.slice(localStart, localEndExclusive);
+  }
+  const expectedCount = Math.max(0, range[1] - range[0] + 1);
+  const loaded = await ctx.loadMessageRange?.(range[0], expectedCount);
+  if (!loaded || loaded.startMessage !== range[0]) return [];
+  const messages = getSummaryMessages(loaded.messages).slice(0, expectedCount);
+  return messages.length === expectedCount ? messages : [];
+}
+
 // ── 自动摘要：生成结束后触发 ──
 
 export async function runSummary(
@@ -234,7 +261,12 @@ export async function runSummary(
   mode: 'auto' | 'minor' | 'major' | 'global' = 'auto',
 ): Promise<SummaryRunResult> {
   const { win, summaryStore: store, summaryApiConfig, uiMessages } = ctx;
-  const summaryFloorCount = countSummaryFloors(uiMessages);
+  const messageStartIndex = Math.max(0, Math.floor(Number(ctx.messageStartIndex) || 0));
+  const residentSummaryFloorCount = countSummaryFloors(uiMessages);
+  const summaryFloorCount = Math.max(
+    messageStartIndex + residentSummaryFloorCount,
+    Math.floor(Number(ctx.totalMessageCount) || 0),
+  );
   const anchor = ctx.getFactAnchor?.() ?? null;
   const pinnedFacts = () => store.keyFacts.filter(f => !f.superseded);
   let taskStarted = false;
@@ -265,7 +297,22 @@ export async function runSummary(
   const runMinor = mode === 'minor' || (mode === 'auto' && shouldRunMinorSummary(store, summaryFloorCount));
   if (runMinor) {
     const startIndex = Math.max(0, Math.min(store.lastSummarizedIndex, summaryFloorCount));
-    const unsummarized = getNextMinorSummaryChunk(uiMessages, startIndex);
+    let unsummarized: UiMessage[];
+    if (startIndex >= summaryFloorCount) {
+      unsummarized = [];
+    } else if (
+      startIndex < messageStartIndex
+      || startIndex >= messageStartIndex + residentSummaryFloorCount
+    ) {
+      const loaded = await ctx.loadMessageRange?.(startIndex, MINOR_THRESHOLD);
+      if (!loaded || loaded.startMessage !== startIndex) {
+        throw new Error(`摘要楼层窗口 #${startIndex + 1} 暂时无法读取。`);
+      }
+      unsummarized = getNextMinorSummaryChunk(loaded.messages, 0);
+    } else {
+      const localStartIndex = startIndex - messageStartIndex;
+      unsummarized = getNextMinorSummaryChunk(uiMessages, localStartIndex);
+    }
     if (unsummarized.length > 0) {
       try {
         result.minorRan = true;
@@ -443,7 +490,7 @@ export async function rerollSummaryEntry(
   if (level === 'minor') {
     const entry = store.minor[entryIndex];
     if (!entry) return;
-    const selected = getSummaryMessages(uiMessages).slice(entry.range[0], entry.range[1] + 1);
+    const selected = await readSummaryRange(ctx, entry.range);
     if (!selected.length) return;
 
     try {
@@ -479,7 +526,7 @@ export async function rerollSummaryEntry(
     if (!entry) return;
     // 收集范围落在该大摘要内的小摘要来重建 prompt。
     // 如果没有可用小摘要，就直接使用原始消息。
-    const messagesInRange = getSummaryMessages(uiMessages).slice(entry.range[0], entry.range[1] + 1);
+    const messagesInRange = await readSummaryRange(ctx, entry.range);
     if (!messagesInRange.length) return;
 
     try {

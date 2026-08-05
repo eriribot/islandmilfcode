@@ -1,5 +1,4 @@
-import { buildPrompt } from '../message-format';
-import { resolvePlayerSchoolIdentity } from '../school-calendar';
+import { buildPrompt, extractCompleteVisibleReply } from '../message-format';
 import { createRollbackSnapshot } from '../state/store';
 import type { SummaryStore } from '../summary/types';
 import type { IslandMemoryDB } from '../memorydatabase/types';
@@ -11,7 +10,6 @@ import {
   finalizeStreamingText,
   recordGenerationDebug,
   type StreamingContext,
-  updateStreamingText,
 } from './streaming';
 
 type OpeningActionContext = StreamingContext & {
@@ -35,6 +33,7 @@ function buildOpeningPresetInput(state: AppState, ctx: Pick<OpeningActionContext
     suppressUserInputLine: true,
     memoryDB: ctx.memoryDB,
     drawingSettings: state.drawingSettings,
+    messageStartIndex: state.messageWindow.startMessage,
   });
 
   const openingContract = [
@@ -56,36 +55,6 @@ function buildOpeningPresetInput(state: AppState, ctx: Pick<OpeningActionContext
   ].join('\n');
 
   return `${openingContract}\n\n${basePrompt}`;
-}
-
-async function simulateOpeningGeneration(
-  ctx: OpeningActionContext,
-  generationId: string,
-  isCurrentOpening: () => boolean,
-) {
-  const { state } = ctx;
-  const profile = state.playerProfile;
-  const name = profile.name || [profile.familyName, profile.givenName].filter(Boolean).join('') || '你';
-  const schoolIdentity = resolvePlayerSchoolIdentity(profile, state.statusData.world.currentTime);
-  const className = schoolIdentity.className || schoolIdentity.label || profile.schoolIdentityLabel || profile.className || '新的班级';
-  const location = state.statusData.world.currentLocation || '校园';
-  const lines = [
-    `${location}的空气还带着清晨未散的凉意。`,
-    `${name}站在${className}的门前，指尖刚碰到门把手，教室里的谈话声便像被风拂开的书页一样涌了出来。`,
-    '有人抬头看向门口，短暂的安静给这一天留下了第一个可以接上的空白。',
-  ];
-
-  let built = '';
-  for (const line of lines) {
-    if (!isCurrentOpening()) return false;
-    built = built ? `${built}\n${line}` : line;
-    updateStreamingText(ctx, `<content>${built}</content>`);
-    await new Promise(resolve => window.setTimeout(resolve, 180));
-    if (!isCurrentOpening()) return false;
-  }
-  if (!isCurrentOpening()) return false;
-  finalizeStreamingText(ctx, `<content>${built}</content>`, generationId);
-  return true;
 }
 
 export async function generateOpeningScene(ctx: OpeningActionContext) {
@@ -124,63 +93,65 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
   });
 
   try {
-    ensureStreamingMessage(ctx);
+    const streamingMessage = ensureStreamingMessage(ctx);
+    const openingAssistantMessageId = streamingMessage.id;
     ctx.render();
 
     if (!hasPresetGenerate) {
-      const simulated = await simulateOpeningGeneration(ctx, generationId, isCurrentOpening);
-      if (!simulated || abandonIfStale()) {
-        ownsOpeningState = false;
-        return false;
-      }
-    } else {
-      const userInput = buildOpeningPresetInput(state, ctx);
-      // Opening generation must enter Tavern's preset stack; never use generateRaw/ordered_prompts here.
-      const result = await win.generate({
-        should_stream: true,
-        should_silence: true,
-        generation_id: generationId,
-        user_input: userInput,
-      });
-
-      if (abandonIfStale()) return false;
-      recordGenerationDebug(ctx, 'opening:generate-returned', {
-        generationId,
-        resultLength: String(result ?? '').length,
-      });
-      finalizeStreamingText(ctx, String(result ?? ''), generationId);
+      throw new Error('真实 AI 开场生成接口不可用。');
     }
+    const userInput = buildOpeningPresetInput(state, ctx);
+    // Opening generation must enter Tavern's preset stack; never use generateRaw/ordered_prompts here.
+    const generateOpening = win.generate;
+    const result = await generateOpening({
+      should_stream: true,
+      should_silence: true,
+      generation_id: generationId,
+      user_input: userInput,
+    });
 
-    const lastMsg = state.uiMessages[state.uiMessages.length - 1];
-    if (lastMsg?.role === 'assistant') {
-      lastMsg.statusSnapshot = createRollbackSnapshot(state);
-      ctx.persistConversation();
+    if (abandonIfStale()) return false;
+    recordGenerationDebug(ctx, 'opening:generate-returned', {
+      generationId,
+      resultLength: String(result ?? '').length,
+    });
+    const rawResult = String(result ?? '');
+
+    const completeSceneText = extractCompleteVisibleReply(rawResult).trim();
+    if (!completeSceneText) {
+      throw new Error('开场未返回完整且非空的可见正文标签。');
     }
+    state.currentGenerationId = generationId;
+    state.finalizedGenerationId = '';
+    finalizeStreamingText(ctx, rawResult, generationId, { deferCommit: true });
+    const provisionalAssistant = state.uiMessages.find(message => message.id === openingAssistantMessageId);
+    if (
+      !provisionalAssistant
+      || provisionalAssistant.role !== 'assistant'
+      || !provisionalAssistant.streaming
+      || provisionalAssistant.text.trim() !== completeSceneText
+    ) {
+      throw new Error('开场待提交楼层与完整可见正文标签不一致。');
+    }
+    finalizeStreamingText(ctx, rawResult, generationId);
+    provisionalAssistant.statusSnapshot = createRollbackSnapshot(state);
+    ctx.persistConversation();
     state.openingGenerationError = null;
-    recordGenerationDebug(ctx, 'opening:success', { generationId });
+    recordGenerationDebug(ctx, 'opening:success', {
+      generationId,
+      storage: 'iframe-v3-archive',
+    });
     return true;
   } catch (error) {
-    if (abandonIfStale()) return false;
+    if (!isSameRunIdentity()) {
+      ownsOpeningState = false;
+      return false;
+    }
     recordGenerationDebug(ctx, 'opening:catch', {
       generationId,
       error: error instanceof Error ? error.message : String(error),
     });
-    const currentStreamingMessage = state.uiMessages[state.uiMessages.length - 1];
-    // Avoid `&& current...`: the Tavern regex replacement path HTML-decodes `&curren` prefixes.
-    const hasStreamingText = Boolean(
-      currentStreamingMessage?.streaming ? currentStreamingMessage.text.trim() : '',
-    );
-    const removedStreamingMessage = discardStreamingMessage(ctx);
-    if (hasStreamingText && !removedStreamingMessage) {
-      const lastMsg = state.uiMessages[state.uiMessages.length - 1];
-      if (lastMsg?.role === 'assistant') {
-        lastMsg.statusSnapshot = createRollbackSnapshot(state);
-        ctx.persistConversation();
-      }
-      state.openingGenerationError = null;
-      recordGenerationDebug(ctx, 'opening:catch-preserved-as-success', { generationId });
-      return true;
-    }
+    discardStreamingMessage(ctx);
     state.openingGenerationError =
       (error instanceof Error ? error.message : String(error ?? '')).trim() || '开场生成失败，请重新试一次。';
     ctx.showNotification({

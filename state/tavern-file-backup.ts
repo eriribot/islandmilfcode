@@ -891,7 +891,14 @@ export async function persistArchiveSaveToTavernFiles(saveId: string): Promise<T
   } as ArchiveSaveMeta);
   const now = Date.now();
   const event: ArchiveCommitEvent = {
-    receipt: { saveId, revision: pointer.root.revision, rootHash: pointer.rootHash, floorCount: pointer.root.floorCount, committed: true },
+    receipt: {
+      saveId,
+      revision: pointer.root.revision,
+      rootHash: pointer.rootHash,
+      floorCount: pointer.root.floorCount,
+      messageCount: pointer.root.messageCount,
+      committed: true,
+    },
     root: pointer.root,
     meta,
     journal: {
@@ -998,6 +1005,12 @@ export async function readTavernArchiveBackup(saveId: string): Promise<(Portable
   const memory = isRecord(memoryValue) && isRecord(memoryValue.memoryDB)
     ? memoryValue as ArchiveMemoryBlock
     : null;
+  if (root.summaryHash && !summary) {
+    throw new Error('本机 v3 root 引用的摘要块不可读；已保留原存档，不会用空摘要覆盖');
+  }
+  if (root.memoryHash && !memory) {
+    throw new Error('本机 v3 root 引用的记忆块不可读；已保留原存档，不会用空记忆覆盖');
+  }
   const compatibilityValue = await getObject<ArchiveCompatibilityBlock>('compatibility', root.compatibilityHash).catch(() => null);
   const compatibility = isRecord(compatibilityValue) &&
     Array.isArray(compatibilityValue.excludedRuntimeFlagKeys) &&
@@ -1026,14 +1039,7 @@ export async function readTavernArchiveBackup(saveId: string): Promise<(Portable
   const timelineIncomplete = floors.length !== root.floorCount
     || floors.some((floor, index) => floor.floorIndex !== index);
   if (timelineIncomplete) {
-    meta = {
-      ...meta,
-      health: 'degraded',
-      migrationWarnings: [
-        ...(meta.migrationWarnings ?? []),
-        `本机楼层只恢复 ${floors.length}/${root.floorCount} 层，已按可读内容降级导入`,
-      ],
-    };
+    throw new Error(`本机 v3 楼层不完整：只读到 ${floors.length}/${root.floorCount} 层；已保留原存档`);
   }
   const assetIds = new Set(floors.flatMap(floor => Array.isArray(floor.imageAssetIds) ? floor.imageAssetIds : []));
   if (meta.playerProfile?.avatarAssetId) assetIds.add(meta.playerProfile.avatarAssetId);

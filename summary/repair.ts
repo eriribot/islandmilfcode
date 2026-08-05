@@ -65,9 +65,13 @@ function getContinuousCoveredIndex(store: SummaryStore): number {
  * 诊断摘要系统状态，识别问题
  */
 export function diagnoseSummaryStore(store: SummaryStore, uiMessages: UiMessage[]): SummaryDiagnostic {
-  const summaryMessages = getSummaryMessages(uiMessages);
-  const totalMessages = summaryMessages.length;
+  return diagnoseSummaryStoreWithCount(store, getSummaryMessages(uiMessages).length);
+}
 
+function diagnoseSummaryStoreWithCount(
+  store: SummaryStore,
+  totalMessages: number,
+): SummaryDiagnostic {
   const minorRanges = store.minor.map(m => m.range);
   const majorRanges = store.major.map(m => m.range);
 
@@ -175,15 +179,20 @@ export function repairSummaryStore(
     fixLastSummarizedIndex?: boolean;
     /** 是否清理重叠的总结（保留范围更大的） */
     removeOverlapping?: boolean;
+    /** Lazy reader window之外的全局可摘要楼层总数。 */
+    totalMessageCount?: number;
   } = {}
 ): {
   fixed: boolean;
   changes: string[];
   diagnostic: SummaryDiagnostic;
 } {
-  const summaryFloorCount = getSummaryMessages(uiMessages).length;
+  const summaryFloorCount = Math.max(
+    getSummaryMessages(uiMessages).length,
+    Math.floor(Number(options.totalMessageCount) || 0),
+  );
   const changes: string[] = [];
-  const diagnostic = diagnoseSummaryStore(store, uiMessages);
+  const diagnostic = diagnoseSummaryStoreWithCount(store, summaryFloorCount);
 
   // 1. 清理被大总结覆盖的小总结
   if (options.removeOrphanedMinors !== false && diagnostic.orphanedMinors.length > 0) {

@@ -10,6 +10,7 @@ import {
 import { splitTextByImageGenerationAnchors } from './plugins/image-generation';
 import { isPaperWorkspaceFullscreen, renderPaperFullscreenButton } from './plugins/fullscreen';
 import { getCachedImageAssetObjectUrl } from './state/image-assets';
+import { getGlobalSummaryMessageCount, toGlobalReaderIndex } from './state/message-window';
 import { renderFloatingPhone, renderPhone, type PhoneRenderers } from './phone/render';
 import { renderPhoneAvatar } from './phone/avatars';
 import type { SummaryStore } from './summary/types';
@@ -128,6 +129,9 @@ function getReaderModel(state: AppState) {
       previousMessage: null,
       nextMessage: null,
       total,
+      globalCurrentIndex: 0,
+      hasPrevious: false,
+      hasNext: false,
     };
   }
 
@@ -142,10 +146,13 @@ function getReaderModel(state: AppState) {
     previousMessage,
     nextMessage,
     total,
+    globalCurrentIndex: toGlobalReaderIndex(state, safeIndex),
+    hasPrevious: safeIndex > 0 || state.messageWindow.startFloor > 0,
+    hasNext: safeIndex < total - 1 || state.messageWindow.endFloorExclusive < state.messageWindow.totalFloorCount,
   };
 }
 
-function renderPreviewCard(message: UiMessage, index: number, side: 'before' | 'after') {
+function renderPreviewCard(message: UiMessage, index: number, globalIndex: number, side: 'before' | 'after') {
   const visibleText = getVisibleMessageText(message);
   if (!visibleText) return `<div class="reader-preview reader-preview--ghost"></div>`;
 
@@ -153,7 +160,7 @@ function renderPreviewCard(message: UiMessage, index: number, side: 'before' | '
 
   return `
     <button class="reader-preview reader-preview--${side}" data-action="jump-message" data-index="${index}" data-reader-id="${escapeHtml(message.id)}">
-      <span class="reader-preview__index">${String(index + 1).padStart(2, '0')}</span>
+      <span class="reader-preview__index">${String(globalIndex + 1).padStart(2, '0')}</span>
       <span class="reader-preview__text">${preview}</span>
     </button>
   `;
@@ -873,12 +880,12 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
 
   const topLane = `
     <div class="paper-reader__lane paper-reader__lane--top">
-      ${model.previousMessage ? renderPreviewCard(model.previousMessage, model.currentIndex - 1, 'before') : '<div class="reader-preview reader-preview--ghost"></div>'}
+      ${model.previousMessage ? renderPreviewCard(model.previousMessage, model.currentIndex - 1, model.globalCurrentIndex - 1, 'before') : '<div class="reader-preview reader-preview--ghost"></div>'}
     </div>
   `;
   const bottomLane = `
     <div class="paper-reader__lane paper-reader__lane--bottom">
-      ${model.nextMessage ? renderPreviewCard(model.nextMessage, model.currentIndex + 1, 'after') : '<div class="reader-preview reader-preview--ghost"></div>'}
+      ${model.nextMessage ? renderPreviewCard(model.nextMessage, model.currentIndex + 1, model.globalCurrentIndex + 1, 'after') : '<div class="reader-preview reader-preview--ghost"></div>'}
     </div>
   `;
 
@@ -896,12 +903,12 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
         >
           <div class="reader-card__chrome">
             <div class="reader-card__hint-group reader-card__hint-group--left">
-              ${renderReaderHint('prev', Boolean(model.previousMessage))}
+              ${renderReaderHint('prev', model.hasPrevious)}
             </div>
-            <span class="reader-card__index">${String(model.currentIndex + 1).padStart(2, '0')}</span>
+            <span class="reader-card__index">${String(model.globalCurrentIndex + 1).padStart(2, '0')}</span>
             <button class="reader-card__edit" data-action="reader-edit" data-reader-index="${model.currentIndex}" data-reader-id="${escapeHtml(message.id)}" title="编辑原文" aria-label="编辑原文">✎</button>
             <div class="reader-card__hint-group reader-card__hint-group--right">
-              ${renderReaderHint('next', Boolean(model.nextMessage))}
+              ${renderReaderHint('next', model.hasNext)}
             </div>
           </div>
           <div class="reader-card__body" tabindex="0">
@@ -927,9 +934,9 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
       >
         <div class="reader-card__chrome">
           <div class="reader-card__hint-group reader-card__hint-group--left">
-            ${renderReaderHint('prev', Boolean(model.previousMessage))}
+            ${renderReaderHint('prev', model.hasPrevious)}
           </div>
-          <span class="reader-card__index">${String(model.currentIndex + 1).padStart(2, '0')}</span>
+          <span class="reader-card__index">${String(model.globalCurrentIndex + 1).padStart(2, '0')}</span>
           ${message.streaming ? '<span class="reader-card__streaming">记录中…</span>' : ''}
           ${
             message.streaming
@@ -937,7 +944,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
               : `<button class="reader-card__edit" data-action="reader-edit" data-reader-index="${model.currentIndex}" data-reader-id="${escapeHtml(message.id)}" title="编辑原文" aria-label="编辑原文">✎</button>`
           }
           <div class="reader-card__hint-group reader-card__hint-group--right">
-            ${renderReaderHint('next', Boolean(model.nextMessage))}
+            ${renderReaderHint('next', model.hasNext)}
           </div>
         </div>
         <div class="reader-card__body" tabindex="0">
@@ -1264,13 +1271,18 @@ export function renderSummaryPanel(state: AppState) {
           </div>
         </div>
 
-        ${renderMemorySummarySection(store, state.summarizing, state.uiMessages)}
+        ${renderMemorySummarySection(store, state.summarizing, state.uiMessages, getGlobalSummaryMessageCount(state))}
       </div>
     </section>
   `;
 }
 
-function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, uiMessages: UiMessage[]): string {
+function renderMemorySummarySection(
+  store: SummaryStore,
+  summarizing: boolean,
+  uiMessages: UiMessage[],
+  totalSummaryFloorCount = getSummaryMessages(uiMessages).length,
+): string {
   let errorHtml = '';
   if (store.lastError) {
     errorHtml = `
@@ -1375,8 +1387,7 @@ function renderMemorySummarySection(store: SummaryStore, summarizing: boolean, u
   ).length;
   // lastSummarizedIndex 是已覆盖的 Reader 可见完成楼层数，直接等于 UI 上“已总结到 #N”的 N。
   const lastSummarizedUi = store.lastSummarizedIndex;
-  const summaryFloorCount = getSummaryMessages(uiMessages).length;
-  const pendingCount = Math.max(0, summaryFloorCount - store.lastSummarizedIndex);
+  const pendingCount = Math.max(0, totalSummaryFloorCount - store.lastSummarizedIndex);
   const minorThreshold = Math.max(1, Number(loadFullMemoryConfig().summaryTrigger.minorThreshold) || 5);
   const pendingMinorText =
     pendingCount >= minorThreshold

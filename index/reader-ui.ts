@@ -1,7 +1,8 @@
 import { getReaderMessages } from '../message-format';
 import type { AppState } from '../types';
+import { hasNextMessageWindow, hasPreviousMessageWindow } from '../state/message-window';
 
-type ReaderState = Pick<AppState, 'focusedMessageIndex' | 'uiMessages'>;
+type ReaderState = Pick<AppState, 'focusedMessageIndex' | 'messageWindow' | 'uiMessages'>;
 
 export type ReaderBodyScrollSnapshot = {
   readerIndex: number;
@@ -11,8 +12,10 @@ export type ReaderBodyScrollSnapshot = {
 
 export function canFlipReader(state: ReaderState, direction: 'prev' | 'next') {
   const readerMessages = getReaderMessages(state.uiMessages);
-  if (direction === 'prev') return state.focusedMessageIndex > 0;
-  return state.focusedMessageIndex < readerMessages.length - 1;
+  if (direction === 'prev') {
+    return state.focusedMessageIndex > 0 || hasPreviousMessageWindow(state.messageWindow);
+  }
+  return state.focusedMessageIndex < readerMessages.length - 1 || hasNextMessageWindow(state.messageWindow);
 }
 
 export function resetReaderCardTransform(reader: HTMLElement) {

@@ -125,11 +125,11 @@ import {
   flushArchiveRepository,
   forkArchiveSave,
   getArchiveFloor,
-  getArchiveFloorWindow,
+  getArchiveMessageWindow,
+  getArchiveMessageRange,
   getArchiveDiagnostics,
   getArchiveMetaSync,
   hasArchiveSaveSync,
-  hydrateArchiveMessages,
   importPortableArchive,
   initArchiveRepository,
   migrateLegacySaveToArchive,
@@ -164,6 +164,14 @@ import {
   syncFocusedMessage,
 } from './state/store';
 import {
+  createCompleteMessageWindow,
+  getGlobalReaderMessageCount,
+  getGlobalSummaryMessageCount,
+  isMessageWindowAtHead,
+  toGlobalReaderIndex,
+  updateMessageWindowAfterCommit,
+} from './state/message-window';
+import {
   buildFactAnchorFromStatus,
   createDefaultSummaryStore,
   loadSummaryApiConfig,
@@ -186,6 +194,7 @@ import type {
   StatusData,
   TabKey,
   TavernWindow,
+  UiMessage,
 } from './types';
 import {
   isPhoneArchiveGoldImpression,
@@ -196,6 +205,7 @@ import {
 import type { MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './phone/types';
 import { createVariableAdapter, type VariableAdapter } from './variables/adapter';
 import { protectTargetAffinityReset } from './variables/runtime-guard';
+import { HostTimelineAdapter } from './state/host-timeline-adapter';
 import { clamp, formatTime, syncMainEvents } from './variables/normalize';
 import { normalizeStatusData } from './variables/legacy';
 import { syncSchoolCalendarState } from './school-calendar';
@@ -247,8 +257,10 @@ import {
   syncPaperFullscreenHost,
   togglePaperWorkspaceFullscreen,
 } from './plugins/fullscreen';
+import { waitForHostTimelineWrites } from './actions/host-commit-guard';
 
 const win = window as TavernWindow;
+const hostTimeline = new HostTimelineAdapter(win);
 const root = document.querySelector<HTMLDivElement>('#app');
 
 const READER_CONTEXT_MENU_GAP = 12;
@@ -266,6 +278,7 @@ let restoringSave = false;
 let restoringSaveOwner = 0;
 let saveLoadSequence = 0;
 let readerMutationSequence = 0;
+let readerWindowLoadSequence = 0;
 const imageRerollSequenceByKey = new Map<string, number>();
 let playerAvatarSequence = 0;
 let quickReplyDelegationBound = false;
@@ -496,6 +509,7 @@ const ctx: ActionContext = {
   get adapter() {
     return guardedAdapter;
   },
+  hostTimeline,
   render: () => render(),
   showNotification: (n: NotificationState) => {
     state.notification = n;
@@ -509,6 +523,7 @@ const ctx: ActionContext = {
   persistConversation: () => {
     persistToSave();
   },
+  persistConversationImmediately: () => persistToSaveImmediately(),
   closeReaderContextMenu: (shouldRender: boolean) => {
     if (!state.readerContextMenu) return;
     state.readerContextMenu = null;
@@ -549,7 +564,7 @@ function buildGameState(statusData: StatusData = state.statusData): GameState {
   return {
     runId: state.activeRunId ?? crypto.randomUUID(),
     statusData: JSON.parse(JSON.stringify(statusData)),
-    currentMessageIndex: Math.max(getReaderMessages(state.uiMessages).length - 1, 0),
+    currentMessageIndex: Math.max(getGlobalReaderMessageCount(state) - 1, 0),
     runtimeFlags: {
       ...stripGlobalRuntimeFlags(JSON.parse(JSON.stringify(state.runtimeFlags)) as Record<string, unknown>),
       playerProfile: JSON.parse(JSON.stringify(state.playerProfile)),
@@ -574,11 +589,22 @@ function captureRuntimeSaveState() {
     // array avoids serializing the entire history just to enter the queue;
     // commitRuntimeArchive serializes only the current tail chunk.
     uiMessages: state.uiMessages,
+    messageWindow: { ...state.messageWindow },
   };
+}
+
+function hasIncompleteExchange(messages = state.uiMessages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || message.role === 'system') continue;
+    return message.streaming || message.role === 'user';
+  }
+  return false;
 }
 
 function writeCurrentAutosave() {
   if (!state.activeRunId || restoringSave) return;
+  if (hasIncompleteExchange()) return;
   const runId = state.activeRunId;
   const saveId = getAutosaveBranchSaveId({
     activeSaveId: state.activeSaveId,
@@ -602,7 +628,7 @@ function writeCurrentAutosave() {
       ) {
         await forkArchiveSave({ sourceSaveId, saveId, label: 'Autosave' });
       }
-      await commitRuntimeArchive({
+      const receipt = await commitRuntimeArchive({
         saveId,
         runId,
         kind: 'autosave',
@@ -611,14 +637,20 @@ function writeCurrentAutosave() {
         state: runtimeState,
         existingMeta,
       });
+      if (canPromoteAutosave()) updateMessageWindowAfterCommit(state, receipt);
+      delete state.runtimeFlags.hostTimelineHealth;
       if (canPromoteAutosave()) {
         state.activeSaveId = saveId;
         setActiveSaveId(saveId);
       }
     } catch (error) {
-      // Browser-primary archive errors never stop play. The aggregate writer
-      // remains an emergency fallback for the current session.
-      console.warn('[archive] autosave failed; using legacy fallback:', error);
+      console.warn('[archive] autosave failed:', error);
+      state.runtimeFlags.hostTimelineHealth = {
+        status: 'index-behind-host',
+        at: new Date().toISOString(),
+        detail: error instanceof Error ? error.message : String(error),
+      };
+      if (runtimeState.messageWindow.startMessage > 0) return;
       const meta = writeAutosave(
         {
           runId,
@@ -641,6 +673,7 @@ function writeCurrentAutosave() {
 
 function persistToSave() {
   if (!state.activeRunId || restoringSave) return;
+  if (hasIncompleteExchange()) return;
   if (autosaveTimer) clearTimeout(autosaveTimer);
   autosaveTimer = setTimeout(() => {
     autosaveTimer = null;
@@ -658,6 +691,7 @@ function flushPendingAutosave() {
 
 async function persistToSaveImmediately() {
   if (!state.activeRunId || restoringSave) return;
+  if (hasIncompleteExchange()) throw new Error('当前正文回合尚未完成，存档进度未推进。');
   await flushPendingAutosave();
   const auxiliaryFlushes = await Promise.allSettled([flushArchiveRepository(), flushSaveStore()]);
   auxiliaryFlushes.forEach(result => {
@@ -673,13 +707,22 @@ const gameDevelopmentController: GameDevelopmentController = createGameDevelopme
   render: () => render(),
   persist: () => persistToSave(),
   persistImmediately: () => persistToSaveImmediately(),
-  submitMainMessage: options => submitMessage(ctx, options),
+  submitMainMessage: async options => {
+    if (!(await ensureHeadMessageWindow())) {
+      throw new Error('最新楼层暂时无法读取，游戏开发回合没有发送。');
+    }
+    await submitMessage(ctx, options);
+  },
   notify: notification => ctx.showNotification(notification),
   focusComposer: () => focusComposer(),
 });
 
 async function persistManualSave() {
   if (!state.activeRunId) return;
+  if (hasIncompleteExchange()) {
+    window.alert('当前正文回合尚未完成，暂时不能创建手动存档。');
+    return;
+  }
   const requestLoadToken = saveLoadSequence;
   const requestedRunId = state.activeRunId;
   await Promise.resolve(flushPendingAutosave()).catch(error => {
@@ -697,6 +740,11 @@ async function persistManualSave() {
     if (!forked) throw new Error('No active v3 root to fork');
     manualSaveId = forked.saveId;
   } catch (error) {
+    if (runtimeState.messageWindow.startMessage > 0) {
+      console.warn('[archive] manual fork unavailable while reading cold history; preserving the complete source root:', error);
+      window.alert('当前正在查看旧楼层，完整手动存档暂时无法创建；原存档没有被改动。请回到最新楼层后重试。');
+      return;
+    }
     console.warn('[archive] manual fork unavailable; using legacy manual save:', error);
     const legacyMeta = createManualSave({
       runId,
@@ -1321,14 +1369,19 @@ function getMemoryDBTableCounts(memoryDB: IslandMemoryDB) {
 }
 
 async function enterSave(saveId: string, options: { openingMode?: OpeningMode } = {}) {
+  await waitForHostTimelineWrites();
   const loadToken = ++saveLoadSequence;
   imageRerollSequenceByKey.clear();
   let archive = null as Awaited<ReturnType<typeof openArchiveSave>>;
   try {
-    archive = await openArchiveSave(saveId);
+    archive = await openArchiveSave(saveId, { loadMessageWindow: true });
   } catch (error) {
     if (loadToken !== saveLoadSequence) return;
     const message = error instanceof Error ? error.message : String(error);
+    if (/host locator/i.test(message)) {
+      window.alert(`这个存档的 host locator 无法验证，已阻止进入。\n\n${message}`);
+      return;
+    }
     if (/newer archive schema|read-only in this build/i.test(message)) {
       window.alert('这个存档来自更高版本。当前版本不会打开或覆盖它；你仍可从存档列表导出只读救援包。');
       return;
@@ -1338,13 +1391,24 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
   if (loadToken !== saveLoadSequence) return;
   let legacy = null as Awaited<ReturnType<typeof loadSaveAsync>>;
   if (!archive) {
-    legacy = await loadSaveAsync(saveId);
+    try {
+      legacy = await loadSaveAsync(saveId);
+    } catch (error) {
+      if (loadToken !== saveLoadSequence) return;
+      const message = error instanceof Error ? error.message : String(error);
+      window.alert(
+        /host locator/i.test(message)
+          ? `这个存档的 host locator 无法验证，已阻止进入。\n\n${message}`
+          : `这个存档无法读取，已阻止进入。\n\n${message}`,
+      );
+      return;
+    }
     if (loadToken !== saveLoadSequence) return;
     if (legacy) {
       try {
         await migrateLegacySaveToArchive(legacy.meta, legacy.payload);
         if (loadToken !== saveLoadSequence) return;
-        archive = await openArchiveSave(saveId);
+        archive = await openArchiveSave(saveId, { loadMessageWindow: true });
         if (loadToken !== saveLoadSequence) return;
       } catch (error) {
         // A failed migration falls straight back to the still-retained v2
@@ -1361,31 +1425,63 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
     return;
   }
 
-  let loadedMessages = legacy ? deserializeMessages(legacy.payload.chatLog) : [];
+  let loadedMessages: UiMessage[] = [];
+  try {
+    loadedMessages = legacy ? deserializeMessages(legacy.payload.chatLog) : [];
+  } catch (error) {
+    if (loadToken !== saveLoadSequence) return;
+    window.alert(`这个存档的 host locator 无法验证，已阻止进入。\n\n${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
   let recoveryNotice = archive?.meta.health === 'degraded'
     ? archive.meta.migrationWarnings?.slice(-1)[0] ?? '当前 root 不可读，已回退到上一个可玩版本。'
     : '';
   if (archive) {
     try {
-      loadedMessages = await hydrateArchiveMessages(saveId);
+      if (!archive.messageWindow) throw new Error('Archive reader window is unavailable');
+      loadedMessages = deserializeArchiveFloorMessages(archive.messageWindow.floors);
     } catch (error) {
       if (loadToken !== saveLoadSequence) return;
-      console.warn('[archive] full timeline hydrate failed; trying playable recovery sources:', error);
-      legacy = legacy ?? await loadSaveAsync(saveId);
+      const message = error instanceof Error ? error.message : String(error);
+      if (/host locator/i.test(message)) {
+        window.alert(`这个存档的 host locator 无法验证，已阻止进入。\n\n${message}`);
+        return;
+      }
+      console.warn('[archive] head window hydrate failed; trying playable recovery sources:', error);
+      try {
+        legacy = legacy ?? await loadSaveAsync(saveId);
+      } catch (legacyError) {
+        if (loadToken !== saveLoadSequence) return;
+        const legacyMessage = legacyError instanceof Error ? legacyError.message : String(legacyError);
+        window.alert(
+          /host locator/i.test(legacyMessage)
+            ? `这个存档的 host locator 无法验证，已阻止进入。\n\n${legacyMessage}`
+            : `这个存档无法读取，已阻止进入。\n\n${legacyMessage}`,
+        );
+        return;
+      }
       if (loadToken !== saveLoadSequence) return;
       if (legacy) {
         archive = null;
-        loadedMessages = deserializeMessages(legacy.payload.chatLog);
+        try {
+          loadedMessages = deserializeMessages(legacy.payload.chatLog);
+        } catch (decodeError) {
+          if (loadToken !== saveLoadSequence) return;
+          window.alert(`这个存档的 host locator 无法验证，已阻止进入。\n\n${decodeError instanceof Error ? decodeError.message : String(decodeError)}`);
+          return;
+        }
         recoveryNotice = 'v3 楼层不完整，已改用保留的旧版存档继续游戏。';
       } else {
-        const recent = await getArchiveFloorWindow(
-          saveId,
-          Math.max(0, archive.root.currentFloor),
-          6,
-        ).catch(() => ({ startFloor: 0, endFloor: 0, floors: [] }));
+        const recent = await getArchiveMessageWindow(saveId).catch(() => null);
         if (loadToken !== saveLoadSequence) return;
-        loadedMessages = deserializeArchiveFloorMessages(recent.floors);
-        recoveryNotice = recent.floors.length
+        try {
+          loadedMessages = deserializeArchiveFloorMessages(recent?.floors ?? []);
+        } catch (decodeError) {
+          if (loadToken !== saveLoadSequence) return;
+          window.alert(`这个存档的 host locator 无法验证，已阻止进入。\n\n${decodeError instanceof Error ? decodeError.message : String(decodeError)}`);
+          return;
+        }
+        recoveryNotice = recent?.floors.length
           ? '部分楼层读取失败，已载入最近可读楼层；你可以继续游戏并立即导出备份。'
           : '历史楼层暂时不可读，已载入角色状态；你可以继续游戏并立即导出备份。';
       }
@@ -1423,7 +1519,11 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
   setActiveSaveId(saveId);
   state.creatingCharacter = false;
   state.showingSaveList = false;
-  replaceConversationMessages(state, loadedMessages);
+  replaceConversationMessages(
+    state,
+    loadedMessages,
+    archive?.messageWindow ?? createCompleteMessageWindow(loadedMessages),
+  );
   state.statusData = normalizeStatusData(gameState.statusData);
   state.playerProfile = normalizePlayerProfile(
     (gameState.runtimeFlags?.playerProfile as typeof state.playerProfile | undefined) ?? {
@@ -1436,6 +1536,7 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
   state.runtimeFlags = stripGlobalRuntimeFlags(
     JSON.parse(JSON.stringify(gameState.runtimeFlags ?? {})) as Record<string, unknown>,
   );
+  delete state.runtimeFlags.hostTimelineBranchId;
   if (recoveryNotice) state.runtimeFlags.saveRecoveryNotice = recoveryNotice;
   state.drawingSettings = normalizeDrawingSettings(state.runtimeFlags.drawingSettings);
   commitDrawingSettingsToRuntimeFlags();
@@ -1523,7 +1624,8 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
     });
 }
 
-function returnToTitle() {
+async function returnToTitle() {
+  await waitForHostTimelineWrites();
   saveLoadSequence += 1;
   imageRerollSequenceByKey.clear();
   worldbookRefreshSequence += 1;
@@ -1602,6 +1704,8 @@ function cancelReaderEditor() {
 async function saveReaderEditor() {
   const editing = state.readerEditing;
   if (!editing) return;
+  await waitForHostTimelineWrites();
+  if (state.readerEditing !== editing) return;
   invalidateAsyncActions(ctx);
   readerMutationSequence += 1;
   const textarea = root?.querySelector<HTMLTextAreaElement>('[data-field="reader-edit-draft"]');
@@ -1611,6 +1715,18 @@ async function saveReaderEditor() {
   const message = readerMessages[editing.readerIndex];
   if (!message) {
     state.readerEditing = null;
+    render();
+    return;
+  }
+
+  if (!nextText.trim()) {
+    state.notification = {
+      kind: 'status',
+      title: '无法保存空楼层',
+      preview: '正文不能为空。',
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    };
     render();
     return;
   }
@@ -1629,15 +1745,6 @@ async function saveReaderEditor() {
   const archiveRuntimeState = captureRuntimeSaveState();
   ctx.persistConversation();
   render();
-
-  // 同步回酒馆楼层，防止刷新后又被酒馆侧的原文覆盖。
-  if (typeof updatedMessage.tavernMessageId === 'number' && typeof win.setChatMessages === 'function') {
-    try {
-      await win.setChatMessages([{ message_id: updatedMessage.tavernMessageId, message: nextText }], { refresh: 'none' });
-    } catch (error) {
-      console.warn('[reader-edit] setChatMessages failed:', error);
-    }
-  }
 
   if (saveId && persisted && hasArchiveSaveSync(saveId)) {
     await replaceArchiveFloorMessage({
@@ -1723,9 +1830,96 @@ function bindQuickReplyDelegation() {
   );
 }
 
-function focusMessage(delta: number) {
+async function loadReaderMessageWindow(
+  startFloor: number,
+  endFloorExclusive: number,
+  focus: 'first' | 'last' | number,
+) {
+  const saveId = state.activeSaveId;
+  if (!saveId || !hasArchiveSaveSync(saveId)) return false;
+  const loadToken = saveLoadSequence;
+  const windowToken = ++readerWindowLoadSequence;
+  const next = await getArchiveMessageWindow(saveId, startFloor, endFloorExclusive).catch(error => {
+    console.warn('[archive] reader window load failed:', error);
+    return null;
+  });
+  if (
+    !next
+    || windowToken !== readerWindowLoadSequence
+    || loadToken !== saveLoadSequence
+    || state.activeSaveId !== saveId
+  ) {
+    return false;
+  }
+  const messages = deserializeArchiveFloorMessages(next.floors);
+  replaceConversationMessages(state, messages, next);
+  const count = getReaderMessages(state.uiMessages).length;
+  state.focusedMessageIndex = typeof focus === 'number'
+    ? Math.max(0, Math.min(Math.floor(focus), count - 1))
+    : focus === 'first'
+      ? 0
+      : Math.max(0, count - 1);
+  state.focusedMessagePage = 0;
+  return true;
+}
+
+async function reloadReaderWindowAfterArchiveMutation(
+  receipt: { floorCount: number },
+  options: { startFloor?: number; focus?: 'first' | 'last' | number } = {},
+) {
+  const floorCount = Math.max(0, Math.floor(Number(receipt.floorCount) || 0));
+  const requestedStart = options.startFloor ?? Math.max(0, floorCount - 16);
+  const startFloor = floorCount > 0
+    ? Math.max(0, Math.min(Math.floor(requestedStart), floorCount - 1))
+    : 0;
+  return loadReaderMessageWindow(
+    startFloor,
+    Math.min(floorCount, startFloor + 16),
+    options.focus ?? 'last',
+  );
+}
+
+async function ensureHeadMessageWindow() {
+  if (
+    isMessageWindowAtHead(state.messageWindow)
+    && state.messageWindow.endFloorExclusive - state.messageWindow.startFloor <= 16
+  ) {
+    return true;
+  }
+  return loadReaderMessageWindow(
+    Math.max(0, state.messageWindow.totalFloorCount - 16),
+    state.messageWindow.totalFloorCount,
+    'last',
+  );
+}
+
+async function focusMessage(delta: number) {
   const nextIndex = clampFocusedMessageIndex(state, state.focusedMessageIndex + delta);
-  if (nextIndex === state.focusedMessageIndex) return;
+  if (nextIndex === state.focusedMessageIndex) {
+    const windowStart = delta < 0
+      ? Math.max(0, state.messageWindow.startFloor - 16)
+      : state.messageWindow.endFloorExclusive;
+    const windowEnd = delta < 0
+      ? state.messageWindow.startFloor
+      : Math.min(state.messageWindow.totalFloorCount, windowStart + 16);
+    const loaded = await loadReaderMessageWindow(windowStart, windowEnd, delta < 0 ? 'last' : 'first');
+    if (!loaded) {
+      ctx.showNotification({
+        kind: 'status',
+        title: '这段旧楼层暂时读不到',
+        preview: '当前页面和存档没有改变，可以稍后再翻。',
+        targetTab: 'summary',
+        timestamp: formatTime(state.statusData.world.currentTime),
+      });
+      render();
+      return;
+    }
+    flipDirection = delta > 0 ? 'forward' : 'backward';
+    ctx.closeReaderContextMenu(false);
+    render();
+    flipDirection = '';
+    return;
+  }
   flipDirection = delta > 0 ? 'forward' : 'backward';
   ctx.closeReaderContextMenu(false);
   state.focusedMessageIndex = nextIndex;
@@ -1748,7 +1942,7 @@ function jumpMessage(index: number) {
 function resolveArchiveFloorIndex(readerIndex: number): number | null {
   const target = getReaderMessageByIndex(state, readerIndex);
   if (!target) return null;
-  let nextFloorIndex = 0;
+  let nextFloorIndex = state.messageWindow.startFloor;
   let pendingUser = false;
   for (const message of state.uiMessages) {
     if (message.role === 'system') continue;
@@ -1767,6 +1961,7 @@ function resolveArchiveFloorIndex(readerIndex: number): number | null {
 }
 
 async function rollbackReaderInputWithArchive(readerIndex: number) {
+  await waitForHostTimelineWrites();
   invalidateAsyncActions(ctx);
   const mutationToken = ++readerMutationSequence;
   const loadToken = saveLoadSequence;
@@ -1779,7 +1974,7 @@ async function rollbackReaderInputWithArchive(readerIndex: number) {
     ? await getArchiveFloor(saveId, floorIndex).catch(() => null)
     : null;
   if (!isCurrent()) return null;
-  const target = await rollbackConversation(state, readerIndex, win, isCurrent);
+  const target = await rollbackConversation(state, readerIndex, win, hostTimeline, isCurrent);
   if (!target) return null;
   if (!isCurrent()) return null;
   if (floor) {
@@ -1790,7 +1985,7 @@ async function rollbackReaderInputWithArchive(readerIndex: number) {
     }
   }
   if (saveId && floorIndex !== null && hasArchiveSaveSync(saveId)) {
-    await truncateArchiveFromAssistant({
+    const receipt = await truncateArchiveFromAssistant({
       saveId,
       floorIndex,
       gameState: buildGameState(),
@@ -1799,7 +1994,9 @@ async function rollbackReaderInputWithArchive(readerIndex: number) {
       // Keep the already-restored in-memory timeline playable. The regular
       // autosave below will retry the browser commit or use its legacy fallback.
       console.warn('[archive] input rollback commit deferred:', error);
+      return null;
     });
+    if (receipt && isCurrent()) await reloadReaderWindowAfterArchiveMutation(receipt);
   }
   return isCurrent() ? target : null;
 }
@@ -1826,6 +2023,7 @@ function isV07RouteChoiceBlockingMainText(): boolean {
 }
 
 async function rollbackAfterReaderFloor(readerIndex: number) {
+  await waitForHostTimelineWrites();
   invalidateAsyncActions(ctx);
   const mutationToken = ++readerMutationSequence;
   const loadToken = saveLoadSequence;
@@ -1838,7 +2036,7 @@ async function rollbackAfterReaderFloor(readerIndex: number) {
     ? await getArchiveFloor(saveId, floorIndex).catch(() => null)
     : null;
   if (!isCurrent()) return;
-  const restored = await rollbackAfterCompletedReaderMessage(state, readerIndex, win, isCurrent);
+  const restored = await rollbackAfterCompletedReaderMessage(state, readerIndex, win, hostTimeline, isCurrent);
   if (!restored) return;
   if (!isCurrent()) return;
   if (floor?.afterTurnState) {
@@ -1849,12 +2047,16 @@ async function rollbackAfterReaderFloor(readerIndex: number) {
     }
   }
   if (saveId && floorIndex !== null && hasArchiveSaveSync(saveId)) {
-    await truncateArchiveAfterFloor({
+    const receipt = await truncateArchiveAfterFloor({
       saveId,
       floorIndex,
       gameState: buildGameState(),
       runtimeState: captureRuntimeSaveState(),
-    }).catch(error => console.warn('[archive] completed-floor rollback commit deferred:', error));
+    }).catch(error => {
+      console.warn('[archive] completed-floor rollback commit deferred:', error);
+      return null;
+    });
+    if (receipt && isCurrent()) await reloadReaderWindowAfterArchiveMutation(receipt);
   }
   if (!isCurrent()) return;
   guardedAdapterSave(state.statusData);
@@ -1884,6 +2086,16 @@ function syncComposerSubmitAvailability(textarea: HTMLTextAreaElement) {
 async function submitMainMessage(
   options: { text?: string; keepDraft?: boolean; clearDraftOnSuccess?: boolean; reuseLatestUserMessage?: boolean } = {},
 ) {
+  if (!(await ensureHeadMessageWindow())) {
+    ctx.showNotification({
+      kind: 'status',
+      title: '最新楼层暂时无法读取',
+      preview: '没有发送新内容，旧历史也没有被覆盖。请稍后重试。',
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+    return;
+  }
   const userInput = (options.text ?? state.draft).trim();
   if (await gameDevelopmentController.submitFromMainDraft(userInput)) return;
   if (isV07RouteChoiceBlockingMainText()) {
@@ -1921,6 +2133,7 @@ async function rerunReaderMessage(readerIndex: number) {
 }
 
 async function deleteReaderFloor(readerIndex: number) {
+  await waitForHostTimelineWrites();
   const targetMessage = getReaderMessageByIndex(state, readerIndex);
   const targetMessageId = targetMessage?.id ?? '';
   const mutationToken = ++readerMutationSequence;
@@ -1945,19 +2158,28 @@ async function deleteReaderFloor(readerIndex: number) {
     : readerIndex;
   const deleted = targetRemovedByInvalidation
     ? true
-    : currentReaderIndex >= 0 && await deleteReaderMessage(state, currentReaderIndex, win, isCurrent);
+    : currentReaderIndex >= 0 && await deleteReaderMessage(state, currentReaderIndex, win, hostTimeline, isCurrent);
   if (!deleted) return;
   if (!isCurrent()) return;
   if (saveId && targetMessageId && hasArchiveSaveSync(saveId)) {
-    await deleteArchiveFloorMessage({
+    const previousWindowStart = state.messageWindow.startFloor;
+    const receipt = await deleteArchiveFloorMessage({
       saveId,
       messageId: targetMessageId,
       gameState: buildGameState(),
       runtimeState: captureRuntimeSaveState(),
     }).catch(error => {
       console.warn('[archive] reader text deletion commit deferred:', error);
+      return null;
     });
     if (!isCurrent()) return;
+    if (receipt) {
+      await reloadReaderWindowAfterArchiveMutation(receipt, {
+        startFloor: previousWindowStart,
+        focus: currentReaderIndex,
+      });
+      if (!isCurrent()) return;
+    }
   }
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
@@ -1989,7 +2211,7 @@ async function confirmV07RouteChoice(routeFamilyId: string) {
     currentMainEventId: state.statusData.world.currentMainEventId,
     mainEvents: state.statusData.world.mainEvents,
     // 中文注释：确认动作绑定当前时间线最后一个已完成楼层，不绑定玩家正在翻看的 focusedMessageIndex。
-    anchorFloorIndex: Math.max(0, getReaderMessages(state.uiMessages).length - 1),
+    anchorFloorIndex: Math.max(0, getGlobalReaderMessageCount(state) - 1),
   });
 
   if (confirmation.status === 'rejected') {
@@ -3041,12 +3263,14 @@ function bindReaderDragEvents() {
       if (scrolling) return;
       const THRESHOLD = 60;
       if (moved && Math.abs(dx) >= THRESHOLD) {
-        if (dx < 0 && canFlipReader(state, 'next')) {
-          focusMessage(1);
+      if (dx < 0 && canFlipReader(state, 'next')) {
+          resetReaderCardTransform(reader);
+          void focusMessage(1);
           return;
         }
-        if (dx > 0 && canFlipReader(state, 'prev')) {
-          focusMessage(-1);
+      if (dx > 0 && canFlipReader(state, 'prev')) {
+          resetReaderCardTransform(reader);
+          void focusMessage(-1);
           return;
         }
         resetReaderCardTransform(reader);
@@ -3479,7 +3703,7 @@ function bindEvents() {
     button.addEventListener('click', () => navigatePhoneBack());
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="focus-message"]').forEach(button => {
-    button.addEventListener('click', () => focusMessage(Number(button.dataset.direction ?? 0)));
+    button.addEventListener('click', () => void focusMessage(Number(button.dataset.direction ?? 0)));
   });
   root?.querySelectorAll<HTMLButtonElement>('[data-action="jump-message"]').forEach(button => {
     button.addEventListener('click', () => jumpMessage(Number(button.dataset.index ?? 0)));
@@ -4190,6 +4414,13 @@ function bindEvents() {
       summaryStore: state.summaryStore,
       summaryApiConfig: state.summaryApiConfig,
       uiMessages: state.uiMessages,
+      messageStartIndex: state.messageWindow.startMessage,
+      totalMessageCount: getGlobalSummaryMessageCount(state),
+      loadMessageRange: (startMessage: number, maxMessages: number) => {
+        const saveId = state.activeSaveId;
+        if (!saveId) return Promise.resolve({ startMessage, totalMessageCount: 0, messages: [] });
+        return getArchiveMessageRange(saveId, startMessage, maxMessages);
+      },
       onTaskUpdated: () => render(),
       onStoreUpdated: () => {
         persistToSave();
@@ -4205,6 +4436,7 @@ function bindEvents() {
           removeOrphanedMinors: false,
           fixLastSummarizedIndex: true,
           removeOverlapping: true,
+          totalMessageCount: getGlobalSummaryMessageCount(state),
         });
         if (repairResult.fixed) {
           persistToSave();
@@ -4244,7 +4476,7 @@ function bindEvents() {
   }
 
   function countPendingSummaryFloors() {
-    const total = getSummaryMessages(state.uiMessages).length;
+    const total = getGlobalSummaryMessageCount(state);
     return Math.max(0, total - state.summaryStore.lastSummarizedIndex);
   }
 
@@ -4284,6 +4516,8 @@ function bindEvents() {
           summaryStore: state.summaryStore,
           summaryApiConfig: state.summaryApiConfig,
           uiMessages: state.uiMessages,
+          messageStartIndex: state.messageWindow.startMessage,
+          totalMessageCount: getGlobalSummaryMessageCount(state),
           onTaskUpdated: () => render(),
           onStoreUpdated: () => {
             persistToSave();
@@ -4447,7 +4681,8 @@ const titleCallbacks: TitleCallbacks = {
     const save = createSave(opts);
     void enterSave(save.saveId, { openingMode });
   },
-  deleteSave: id => {
+  deleteSave: async id => {
+    if (state.activeSaveId === id) await waitForHostTimelineWrites();
     saveLoadSequence += 1;
     readerMutationSequence += 1;
     if (state.activeSaveId === id) invalidateAsyncActions(ctx);
@@ -4545,7 +4780,7 @@ function render() {
     bindCalendarEventDelegation();
     bindEvents();
     restoreReaderBodyScroll(root, readerBodyScroll);
-    hydrateImageAssetElements(root, `floor:${state.focusedMessageIndex}`);
+    hydrateImageAssetElements(root, `floor:${toGlobalReaderIndex(state, state.focusedMessageIndex)}`);
 
     // 状态页打开时挂载 P5 雷达图
     const radarEl = root.querySelector<HTMLElement>('#status-radar');
@@ -4651,10 +4886,10 @@ window.addEventListener('keydown', event => {
   if (keyTarget?.closest('.reader-card__body') && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) return;
   if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
     event.preventDefault();
-    focusMessage(-1);
+    void focusMessage(-1);
   } else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
     event.preventDefault();
-    focusMessage(1);
+    void focusMessage(1);
   }
 });
 

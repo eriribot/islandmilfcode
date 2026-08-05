@@ -3,6 +3,7 @@ import {
   buildPhoneProgressPrompt,
   buildProgressPrompt,
   buildPrompt,
+  HIDDEN_USER_GENDER_RULES,
   extractCompleteVisibleReply,
   extractPhoneChatReply,
   extractTaggedReply,
@@ -57,7 +58,6 @@ import {
   recordGenerationDebug,
   removeGenerationAssistantMessage,
   type StreamingContext,
-  updateStreamingText,
 } from './streaming';
 import { getCharacterRelationToTomoya } from '../relationship';
 import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
@@ -95,19 +95,50 @@ import {
 } from '../plugins/image-generation';
 import { buildDeepSeekEvidenceContext, collectDeepSeekWebLookupEvidence } from '../plugins/deepseek-web-lookup';
 import { saveImageDataUrlAsAsset } from '../state/image-assets';
+import { getArchiveMessageRange } from '../state/archive-repository';
 import { restorePendingGameDevelopmentTurnForRollback } from '../game-development/state';
 import type { GameDevelopmentTurnTimeRange } from '../game-development/orchestration';
+import {
+  isHostCommitGenerationProtected,
+  runHostTimelineWrite,
+  runProtectedHostTimelineWrite,
+} from './host-commit-guard';
+import {
+  createIslandHostMarker,
+  HostTimelineError,
+  type HostMessageLocator,
+  type HostTimelineAdapter,
+  type HostTimelineErrorCode,
+} from '../state/host-timeline-adapter';
+import {
+  getGlobalSummaryMessageCount,
+  toGlobalReaderIndex,
+} from '../state/message-window';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
+  hostTimeline: HostTimelineAdapter;
   clearNotification: (shouldRender: boolean) => void;
   closeReaderContextMenu: (shouldRender: boolean) => void;
   persistConversation: () => void;
+  persistConversationImmediately: () => Promise<void>;
   summaryStore: SummaryStore;
   summaryApiConfig: SummaryApiConfig | null;
   onSummaryStoreUpdated: () => void;
   readonly memoryDB: IslandMemoryDB;
 };
+
+const HOST_TIMELINE_ERROR_CODES: ReadonlySet<HostTimelineErrorCode> = new Set([
+  'capability-unavailable',
+  'invalid-marker',
+  'invalid-range',
+  'host-read-failed',
+  'host-write-failed',
+  'message-not-found',
+  'ambiguous-marker',
+  'readback-mismatch',
+  'delete-readback-failed',
+]);
 
 export type MainAssistantAcceptedReceipt = {
   readonly assistantMessageId: string;
@@ -232,6 +263,7 @@ function rollbackPendingPhoneSend(ctx: Pick<ActionContext, 'state' | 'memoryDB'>
 export function cancelCurrentGeneration(ctx: ActionContext) {
   const { state } = ctx;
   if (!state.generating && !state.currentGenerationId && !state.phoneMessages.generating) return;
+  const generationId = state.currentGenerationId;
 
   generationRunEpoch += 1;
   phoneRunEpoch += 1;
@@ -245,7 +277,13 @@ export function cancelCurrentGeneration(ctx: ActionContext) {
   clearBackgroundTask(state, 'progress');
   clearBackgroundTask(state, 'plot-review');
   clearBackgroundTask(state, 'summary');
-  discardStreamingMessage(ctx);
+  if (!isHostCommitGenerationProtected(generationId)) discardStreamingMessage(ctx);
+  for (let index = state.uiMessages.length - 1; index >= 0; index -= 1) {
+    const message = state.uiMessages[index];
+    if (!message || message.role === 'system' || message.streaming) continue;
+    if (message.role === 'user') state.draft = String(message.rawText || message.text || '');
+    break;
+  }
   ctx.persistConversation();
   ctx.render();
   recordGenerationDebug(ctx, 'submit:cancel-requested');
@@ -274,6 +312,7 @@ export function cancelPhoneMessageGeneration(ctx: ActionContext) {
  */
 export function invalidateAsyncActions(ctx: ActionContext) {
   const { state } = ctx;
+  const generationId = state.currentGenerationId;
   generationRunEpoch += 1;
   phoneRunEpoch += 1;
   asyncActionInvalidationEpoch += 1;
@@ -288,7 +327,7 @@ export function invalidateAsyncActions(ctx: ActionContext) {
   clearBackgroundTask(state, 'progress');
   clearBackgroundTask(state, 'plot-review');
   clearBackgroundTask(state, 'summary');
-  discardStreamingMessage(ctx);
+  if (!isHostCommitGenerationProtected(generationId)) discardStreamingMessage(ctx);
   recordGenerationDebug(ctx, 'async-actions:invalidated');
 }
 
@@ -953,18 +992,25 @@ function getSummaryFloorIndexForMessage(messages: UiMessage[], message: UiMessag
   return getSummaryMessages(messages).findIndex(item => item.id === message.id);
 }
 
-function getLatestCompletedTurnSummaryRange(messages: UiMessage[]): [number, number] | undefined {
+function getLatestCompletedTurnSummaryRange(
+  messages: UiMessage[],
+  startMessage = 0,
+): [number, number] | undefined {
   const turnMessages = getLatestCompletedTurnMessages(messages);
   const indices = turnMessages
     .map(message => getSummaryFloorIndexForMessage(messages, message))
     .filter(index => index >= 0);
   if (!indices.length) return undefined;
-  return [Math.min(...indices), Math.max(...indices)];
+  return [startMessage + Math.min(...indices), startMessage + Math.max(...indices)];
 }
 
-function getAssistantMessageSourceRange(messages: UiMessage[], message: UiMessage): [number, number] | undefined {
+function getAssistantMessageSourceRange(
+  messages: UiMessage[],
+  message: UiMessage,
+  startMessage = 0,
+): [number, number] | undefined {
   const index = getSummaryFloorIndexForMessage(messages, message);
-  return index >= 0 ? [index, index] : undefined;
+  return index >= 0 ? [startMessage + index, startMessage + index] : undefined;
 }
 
 function getAssistantVisibleSceneText(message: UiMessage): string {
@@ -1066,7 +1112,11 @@ async function runPostTurnPlotFlagReview(
         commitPlotFlagDeltas(review.deltas, {
           db: reviewMemoryDB,
           currentTime: reviewTime,
-          sourceRange: getAssistantMessageSourceRange(ctx.state.uiMessages, assistantMessage),
+          sourceRange: getAssistantMessageSourceRange(
+            ctx.state.uiMessages,
+            assistantMessage,
+            ctx.state.messageWindow.startMessage,
+          ),
         });
         ctx.persistConversation();
       }
@@ -1374,32 +1424,6 @@ function applyFullProgressUpdate(
   );
 }
 
-async function simulateGeneration(
-  ctx: ActionContext,
-  userInput: string,
-  isCancelled: () => boolean = () => false,
-) {
-  const { state } = ctx;
-  const lines = [
-    userInput,
-    `${state.statusData.world.currentLocation} has gone quiet for a moment.`,
-    'The scene reacts to what you just said and continues.',
-  ];
-
-  let built = '';
-  for (const line of lines) {
-    if (isCancelled()) return false;
-    built = built ? `${built}\n${line}` : line;
-    updateStreamingText(ctx, `<content>${built}</content>`);
-    await new Promise(resolve => window.setTimeout(resolve, 240));
-    if (isCancelled()) return false;
-  }
-
-  if (isCancelled()) return false;
-  finalizeStreamingText(ctx, `<content>${built}</content>`);
-  return true;
-}
-
 function commitSae078GraduationCeremonyTrigger(ctx: ActionContext, eligibleAtPromptBuild: boolean): boolean {
   if (!eligibleAtPromptBuild) return false;
   const counts = (ctx.state.statusData.world.eventTriggerCounts ??= {});
@@ -1427,6 +1451,58 @@ function createSubmissionRollbackSnapshot(
     snapshot.gameDevelopment = restorePendingGameDevelopmentTurnForRollback(snapshot.gameDevelopment);
   }
   return snapshot;
+}
+
+async function createOrUpdateHostUser(
+  ctx: ActionContext,
+  _input: string,
+  uiMessage: UiMessage,
+): Promise<HostMessageLocator> {
+  const runId = ctx.state.activeRunId;
+  if (!runId) {
+    throw new HostTimelineError('capability-unavailable', 'Cannot submit a host floor without an active run.');
+  }
+
+  return {
+    marker: createIslandHostMarker({
+      runId,
+      branchId: crypto.randomUUID(),
+      floorId: uiMessage.id,
+      parentFloorId: null,
+      exchangeId: uiMessage.id,
+      part: 'user',
+    }),
+    lastKnownMessageId: 0,
+  };
+}
+
+async function createOrReadHostAssistant(
+  _ctx: ActionContext,
+  userLocator: HostMessageLocator,
+  rawText: string,
+): Promise<{ locator: HostMessageLocator; rawText: string }> {
+  const marker = createIslandHostMarker({
+    runId: userLocator.marker.runId,
+    branchId: userLocator.marker.branchId,
+    floorId: userLocator.marker.floorId,
+    parentFloorId: userLocator.marker.parentFloorId,
+    exchangeId: userLocator.marker.exchangeId,
+    part: 'assistant',
+  });
+  return {
+    locator: { marker, lastKnownMessageId: 0 },
+    rawText,
+  };
+}
+
+function isHostTimelineError(error: unknown): error is HostTimelineError {
+  return error instanceof HostTimelineError || (
+    Boolean(error)
+    && typeof error === 'object'
+    && (error as { name?: unknown }).name === 'HostTimelineError'
+    && typeof (error as { message?: unknown }).message === 'string'
+    && HOST_TIMELINE_ERROR_CODES.has((error as { code?: HostTimelineErrorCode }).code as HostTimelineErrorCode)
+  );
 }
 
 export async function submitMessage(ctx: ActionContext, options: SubmitMessageOptions = {}) {
@@ -1518,6 +1594,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
   // normal Send button cannot duplicate the same user turn. If the player
   // edits the restored draft, update that unfinished floor in place.
   const reusableUserMessage = latestBeforeSubmit?.role === 'user' ? latestBeforeSubmit : null;
+  const reusableUserText = reusableUserMessage?.text;
   const submittedUserMessageId = reusableUserMessage?.id ?? crypto.randomUUID();
   if (reusableUserMessage) {
     state.uiMessages = state.uiMessages.map(message => message.id === reusableUserMessage.id
@@ -1532,11 +1609,46 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       statusSnapshot: createSubmissionRollbackSnapshot(state, options.gameDevelopmentContext),
     });
   }
-  const removeNewStrictUserMessage = () => {
-    if (reusableUserMessage) return;
-    state.uiMessages = state.uiMessages.filter(message => message.id !== submittedUserMessageId);
-    syncFocusedMessage(state, { keepLatest: true });
-  };
+  let hostUserLocator: HostMessageLocator | null = null;
+  try {
+    const currentUserMessage = state.uiMessages.find(message => message.id === submittedUserMessageId);
+    if (!currentUserMessage || currentUserMessage.role !== 'user') {
+      throw new HostTimelineError('readback-mismatch', '待提交的 user 正文已从当前窗口消失。');
+    }
+    hostUserLocator = await runHostTimelineWrite(() =>
+      createOrUpdateHostUser(ctx, userInput, currentUserMessage),
+    );
+    recordSubmissionDebug('host:user-committed', {
+      floorId: hostUserLocator.marker.floorId,
+      exchangeId: hostUserLocator.marker.exchangeId,
+      hostMessageId: hostUserLocator.lastKnownMessageId,
+    });
+  } catch (error) {
+    if (reusableUserMessage && reusableUserText !== undefined) {
+      state.uiMessages = state.uiMessages.map(message => message.id === submittedUserMessageId
+        ? { ...message, text: reusableUserText, rawText: reusableUserText }
+        : message);
+    }
+    // Keep the unfinished user turn in the iframe so the player can retry it.
+    state.draft = userInput;
+    state.generating = false;
+    state.currentGenerationId = '';
+    state.finalizedGenerationId = '';
+    const detail = error instanceof Error ? error.message : String(error);
+    ctx.showNotification({
+      kind: 'status',
+      title: '正文提交失败',
+      preview: detail,
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+    ctx.persistConversation();
+    ctx.render();
+    if (requiresCompleteMainAssistant) throw error;
+    return;
+  }
+  // Keep the save head on the previous completed exchange until the assistant
+  // has been committed to the iframe archive.
   ctx.persistConversation();
   ctx.render();
 
@@ -1548,7 +1660,35 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
     });
   }
   const eventBeforeGeneration = getLatestRecentEvent(ctx)?.key ?? null;
-  let strictMainRequestStarted = false;
+  let hostAssistantCommitted = false;
+  let hostAssistantReady = false;
+  let generationSucceeded = false;
+  let routeReviewAssistantMessageId = '';
+  let routeReviewEligible = false;
+  let mainAssistantCallbackFailed = false;
+  let mainAssistantCallbackError: unknown;
+  let strictMainAssistantFailed = false;
+  let strictMainAssistantError: unknown;
+  let postHostCommitError: unknown;
+
+  const leaveIncompleteHostExchange = (error: unknown, title = '生成失败') => {
+    if (routeReviewAssistantMessageId) {
+      removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
+    }
+    state.currentGenerationId = '';
+    state.finalizedGenerationId = '';
+    state.draft = userInput;
+    state.generating = false;
+    ctx.persistConversation();
+    ctx.showNotification({
+      kind: 'status',
+      title,
+      preview: error instanceof Error ? error.message : String(error),
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+    ctx.render();
+  };
 
   applyLocalWorldHintsFromUserInput(ctx, cleanUserInput);
 
@@ -1573,7 +1713,6 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       });
       if (requiresCompleteMainAssistant) {
         if (canMutateSubmissionState()) {
-          removeNewStrictUserMessage();
           state.generating = false;
           state.currentGenerationId = '';
           state.finalizedGenerationId = '';
@@ -1590,13 +1729,15 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       recordSubmissionDebug('submit:cancelled-after-preflight', { requestGenerationId });
       if (requiresCompleteMainAssistant) {
         if (canMutateSubmissionState()) {
-          removeNewStrictUserMessage();
           state.generating = false;
           state.currentGenerationId = '';
           state.finalizedGenerationId = '';
           ctx.persistConversation();
         }
         throw new Error('游戏开发正文请求在生成前被取消。');
+      }
+      if (canMutateSubmissionState()) {
+        leaveIncompleteHostExchange(new Error('主正文请求在生成前被取消。'));
       }
       return;
     }
@@ -1611,13 +1752,15 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       recordSubmissionDebug('submit:cancelled-after-deepseek-web', { requestGenerationId });
       if (requiresCompleteMainAssistant) {
         if (canMutateSubmissionState()) {
-          removeNewStrictUserMessage();
           state.generating = false;
           state.currentGenerationId = '';
           state.finalizedGenerationId = '';
           ctx.persistConversation();
         }
         throw new Error('游戏开发正文请求在生成前被取消。');
+      }
+      if (canMutateSubmissionState()) {
+        leaveIncompleteHostExchange(new Error('主正文请求在生成前被取消。'));
       }
       return;
     }
@@ -1651,55 +1794,12 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
   });
 
   if (!hasTavernGenerate) {
-    if (requiresCompleteMainAssistant) {
-      const error = new Error('真实主正文生成接口不可用，严格正文请求未执行。');
-      removeNewStrictUserMessage();
-      state.generating = false;
-      state.currentGenerationId = '';
-      state.finalizedGenerationId = '';
-      ctx.persistConversation();
-      ctx.showNotification({
-        kind: 'status',
-        title: '生成失败',
-        preview: error.message,
-        targetTab: 'summary',
-        timestamp: formatTime(state.statusData.world.currentTime),
-      });
-      ctx.render();
-      throw error;
-    }
-    await simulateGeneration(
-      ctx,
-      cleanUserInput || userInput,
-      () => isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity(),
-    );
-    if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
-      recordSubmissionDebug('submit:cancelled-after-simulate', { requestGenerationId });
-      return;
-    }
-    commitSae078GraduationCeremonyTrigger(ctx, sae078CeremonyEligibleAtPromptBuild);
-    if (options.clearDraftOnSuccess) {
-      state.draft = '';
-    }
-    state.generating = false;
-    if (phoneDirective) {
-      await sendPhoneMessageFromDirective(ctx, phoneDirective, () => isGenerationRunCancelled(ctx, generationToken));
-    } else {
-      await maybeQueueProactivePhoneMessage(ctx, eventBeforeGeneration, () =>
-        isGenerationRunCancelled(ctx, generationToken),
-      );
-    }
-    ctx.render();
+    const error = new Error('真实主正文生成接口不可用；已保留真实 user 楼层等待重试。');
+    leaveIncompleteHostExchange(error);
+    if (requiresCompleteMainAssistant) throw error;
     return;
   }
 
-  let generationSucceeded = false;
-  let routeReviewAssistantMessageId = '';
-  let routeReviewEligible = false;
-  let mainAssistantCallbackFailed = false;
-  let mainAssistantCallbackError: unknown;
-  let strictMainAssistantFailed = false;
-  let strictMainAssistantError: unknown;
   try {
     const streamingMessage = ensureStreamingMessage(ctx);
     routeReviewAssistantMessageId = streamingMessage.id;
@@ -1721,7 +1821,6 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       requestGenerationId,
       generator: generator === win.generateRaw ? 'generateRaw' : 'generate',
     });
-    strictMainRequestStarted = true;
     const result = await generator?.(
       generator === win.generateRaw
         ? {
@@ -1742,11 +1841,13 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
                   memoryDB: ctx.memoryDB,
                   drawingSettings: state.drawingSettings,
                   gameDevelopmentContext: options.gameDevelopmentContext,
+                  messageStartIndex: state.messageWindow.startMessage,
                 }),
               },
               {
                 role: 'user',
-                content: cleanUserInput,
+                // 隐藏性别硬规则只随 user 消息发给酒馆；uiMessages 里仍是原始输入，正文楼层不显示。
+                content: `${cleanUserInput}\n\n${HIDDEN_USER_GENDER_RULES}`,
               },
             ],
           }
@@ -1764,6 +1865,7 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
               memoryDB: ctx.memoryDB,
               drawingSettings: state.drawingSettings,
               gameDevelopmentContext: options.gameDevelopmentContext,
+              messageStartIndex: state.messageWindow.startMessage,
             }),
           },
     );
@@ -1778,71 +1880,115 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       if (requiresCompleteMainAssistant) {
         if (canMutateSubmissionState()) {
           removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-          if (!strictMainRequestStarted) removeNewStrictUserMessage();
         }
         throw new Error('游戏开发正文请求在主生成返回前被取消。');
       }
+      if (canMutateSubmissionState()) {
+        leaveIncompleteHostExchange(new Error('主正文请求在生成返回前被取消。'));
+      }
       return;
     }
-    const completeSceneText = requiresCompleteMainAssistant ? extractCompleteVisibleReply(rawResult).trim() : '';
-    if (requiresCompleteMainAssistant && !completeSceneText) {
+    const completeSceneText = extractCompleteVisibleReply(rawResult).trim();
+    if (!completeSceneText) {
       removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
       throw new Error('主正文未返回完整且非空的可见正文标签。支持 <content>、<正文>、<context>、<story_scene>。');
     }
 
-    finalizeStreamingText(ctx, rawResult, requestGenerationId);
-    const selectedMainAssistant = selectCompletedAssistantSceneForPlotReview(
-      state.uiMessages,
-      routeReviewAssistantMessageId,
-    );
+    finalizeStreamingText(ctx, rawResult, requestGenerationId, { deferCommit: true });
+    const provisionalAssistant = state.uiMessages.find(message => message.id === routeReviewAssistantMessageId);
     if (
-      requiresCompleteMainAssistant &&
-      (!selectedMainAssistant || selectedMainAssistant.sceneText !== completeSceneText)
+      !provisionalAssistant
+      || provisionalAssistant.role !== 'assistant'
+      || !provisionalAssistant.streaming
+      || getAssistantVisibleSceneText(provisionalAssistant) !== completeSceneText
     ) {
       removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-      throw new Error('主正文最终楼层与完整可见正文标签不一致。');
+      throw new Error('主正文待提交楼层与完整可见正文标签不一致。');
     }
-    routeReviewEligible = Boolean(selectedMainAssistant);
-    if (routeReviewEligible) {
-      commitSae078GraduationCeremonyTrigger(ctx, sae078CeremonyEligibleAtPromptBuild);
+    if (!hostUserLocator) {
+      throw new HostTimelineError('readback-mismatch', '主正文没有形成可提交的本地回合。', {
+        assistantMessageId: routeReviewAssistantMessageId,
+      });
     }
-
-    // 变量更新（含手机消息提取）统一移到 finally：正文后发一次合并 progress，配/不配副 API 都走同一条路。
-    // 不再依赖主 API 在正文里内嵌 <progress>（skipProgress 现恒为 true）。
-
-    // 严格接点使用本次精确助手；普通 submit 保留原有的最新助手快照行为。
-    const latestMessage = state.uiMessages[state.uiMessages.length - 1];
-    const snapshotAssistantMessage =
-      selectedMainAssistant?.assistantMessage ?? (latestMessage?.role === 'assistant' ? latestMessage : null);
-    if (snapshotAssistantMessage) {
-      snapshotAssistantMessage.statusSnapshot = createRollbackSnapshot(state);
+    const rawHostAssistantText = String(
+      provisionalAssistant.rawText || provisionalAssistant.text || '',
+    ).trim();
+    if (!rawHostAssistantText) {
+      throw new HostTimelineError('readback-mismatch', '助手正文为空。', {
+        assistantMessageId: routeReviewAssistantMessageId,
+      });
     }
-
-    if (options.onMainAssistantAccepted && selectedMainAssistant) {
-      const receipt: MainAssistantAcceptedReceipt = {
-        assistantMessageId: selectedMainAssistant.assistantMessage.id,
-        hostMessageId: selectedMainAssistant.assistantMessage.tavernMessageId ?? null,
-        sceneText: selectedMainAssistant.sceneText,
-        generationSource,
-        acceptedAt: new Date().toISOString(),
-      };
-      try {
-        await options.onMainAssistantAccepted(receipt);
-      } catch (error) {
-        mainAssistantCallbackFailed = true;
-        mainAssistantCallbackError = error;
-        recordSubmissionDebug('submit:main-assistant-callback-failed', {
-          requestGenerationId,
-          assistantMessageId: receipt.assistantMessageId,
-          error: error instanceof Error ? error.message : String(error),
+    await runProtectedHostTimelineWrite(requestGenerationId, async () => {
+      const hostAssistant = await createOrReadHostAssistant(
+        ctx,
+        hostUserLocator,
+        rawHostAssistantText,
+      );
+      hostAssistantCommitted = true;
+      if (!isSameSubmissionIdentity() || !state.uiMessages.includes(provisionalAssistant)) {
+        throw new SecondaryTaskCancelledError('host-assistant-detached', requestGenerationId);
+      }
+      delete provisionalAssistant.hostLocator;
+      delete provisionalAssistant.tavernMessageId;
+      finalizeStreamingText(ctx, hostAssistant.rawText, requestGenerationId);
+      const selectedMainAssistant = selectCompletedAssistantSceneForPlotReview(
+        state.uiMessages,
+        routeReviewAssistantMessageId,
+      );
+      if (!selectedMainAssistant || selectedMainAssistant.sceneText !== completeSceneText) {
+        throw new HostTimelineError('readback-mismatch', '助手正文未能完成 iframe 内的 UI 提交。', {
+          assistantMessageId: routeReviewAssistantMessageId,
+          hostMessageId: hostAssistant.locator.lastKnownMessageId,
         });
       }
-    }
+      hostAssistantReady = true;
+      recordSubmissionDebug('host:assistant-committed', {
+        floorId: hostAssistant.locator.marker.floorId,
+        exchangeId: hostAssistant.locator.marker.exchangeId,
+        hostMessageId: hostAssistant.locator.lastKnownMessageId,
+        textLength: hostAssistant.rawText.length,
+      });
+      routeReviewEligible = true;
+      commitSae078GraduationCeremonyTrigger(ctx, sae078CeremonyEligibleAtPromptBuild);
+
+      // 变量更新（含手机消息提取）统一移到 finally：正文后发一次合并 progress，配/不配副 API 都走同一条路。
+      // 不再依赖主 API 在正文里内嵌 <progress>（skipProgress 现恒为 true）。
+
+      // 严格接点使用本次精确助手；普通 submit 保留原有的最新助手快照行为。
+      const latestMessage = state.uiMessages[state.uiMessages.length - 1];
+      const snapshotAssistantMessage =
+        selectedMainAssistant.assistantMessage ?? (latestMessage?.role === 'assistant' ? latestMessage : null);
+      if (snapshotAssistantMessage) {
+        snapshotAssistantMessage.statusSnapshot = createRollbackSnapshot(state);
+      }
+
+      if (options.onMainAssistantAccepted) {
+        const receipt: MainAssistantAcceptedReceipt = {
+          assistantMessageId: selectedMainAssistant.assistantMessage.id,
+          hostMessageId: selectedMainAssistant.assistantMessage.tavernMessageId ?? null,
+          sceneText: selectedMainAssistant.sceneText,
+          generationSource,
+          acceptedAt: new Date().toISOString(),
+        };
+        try {
+          await options.onMainAssistantAccepted(receipt);
+        } catch (error) {
+          mainAssistantCallbackFailed = true;
+          mainAssistantCallbackError = error;
+          recordSubmissionDebug('submit:main-assistant-callback-failed', {
+            requestGenerationId,
+            assistantMessageId: receipt.assistantMessageId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      if (snapshotAssistantMessage) {
+        snapshotAssistantMessage.statusSnapshot = createRollbackSnapshot(state);
+        ctx.persistConversation();
+      }
+    });
     if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
       throw new SecondaryTaskCancelledError('main-assistant-accepted', requestGenerationId);
-    }
-    if (snapshotAssistantMessage) {
-      ctx.persistConversation();
     }
     queueDrawingPluginTasks(ctx, userInput);
 
@@ -1858,18 +2004,59 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       isGenerationRunCancelled(ctx, generationToken)
       || !isSameSubmissionIdentity()
       || error instanceof SecondaryTaskCancelledError;
-    if (cancelled) {
+    if (hostAssistantCommitted) {
+      if (!isSameSubmissionIdentity()) return;
+      // A later callback failure must not remove an already completed iframe floor.
+      generationSucceeded = hostAssistantReady;
+      state.generating = false;
+      if (hostAssistantReady && options.clearDraftOnSuccess) {
+        state.draft = '';
+      }
+      ctx.persistConversation();
+      recordSubmissionDebug('submit:host-committed-late-error', {
+        requestGenerationId,
+        cancelled,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (!cancelled || !hostAssistantReady) {
+        postHostCommitError = error;
+        ctx.showNotification({
+          kind: 'status',
+          title: '正文已保存，后续处理失败',
+          preview: error instanceof Error ? error.message : String(error),
+          targetTab: 'summary',
+          timestamp: formatTime(state.statusData.world.currentTime),
+        });
+      }
+    } else if (isHostTimelineError(error)) {
+      removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
+      state.currentGenerationId = '';
+      state.finalizedGenerationId = '';
+      state.draft = userInput;
+      state.generating = false;
+      ctx.persistConversation();
+      ctx.showNotification({
+        kind: 'status',
+        title: '正文提交失败',
+        preview: error.message,
+        targetTab: 'summary',
+        timestamp: formatTime(state.statusData.world.currentTime),
+      });
+      if (requiresCompleteMainAssistant) {
+        strictMainAssistantFailed = true;
+        strictMainAssistantError = error;
+      } else {
+        return;
+      }
+    } else if (cancelled) {
       if (requiresCompleteMainAssistant) {
         if (canMutateSubmissionState()) {
-          removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-          if (!strictMainRequestStarted) removeNewStrictUserMessage();
-          state.currentGenerationId = '';
-          state.finalizedGenerationId = '';
-          state.generating = false;
-          ctx.persistConversation();
+          leaveIncompleteHostExchange(error);
         }
         strictMainAssistantFailed = true;
         strictMainAssistantError = error;
+      } else if (canMutateSubmissionState()) {
+        leaveIncompleteHostExchange(error);
       }
       recordSubmissionDebug('submit:catch-cancelled', {
         requestGenerationId,
@@ -1881,79 +2068,38 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         error: error instanceof Error ? error.message : String(error),
       });
       if (requiresCompleteMainAssistant) {
-        removeGenerationAssistantMessage(ctx, routeReviewAssistantMessageId, requestGenerationId);
-        if (!strictMainRequestStarted) removeNewStrictUserMessage();
-        state.currentGenerationId = '';
-        state.finalizedGenerationId = '';
-        state.draft = userInput;
-        state.generating = false;
+        leaveIncompleteHostExchange(error);
         strictMainAssistantFailed = true;
         strictMainAssistantError = error;
-        ctx.persistConversation();
-        ctx.showNotification({
-          kind: 'status',
-          title: '生成失败',
-          preview: error instanceof Error ? error.message : String(error),
-          targetTab: 'summary',
-          timestamp: formatTime(state.statusData.world.currentTime),
-        });
       } else {
-        const currentStreamingMessage = state.uiMessages[state.uiMessages.length - 1];
-        const hasStreamingText = hasVisibleStreamingText(currentStreamingMessage);
-        const removedStreamingMessage = discardStreamingMessage(ctx);
-        state.currentGenerationId = '';
-        if (hasStreamingText && !removedStreamingMessage) {
-          // 流式正文已经写入时，把它当作成功楼层处理；不要再回填草稿或弹失败。
-          const lastMsg = state.uiMessages[state.uiMessages.length - 1];
-          if (lastMsg && lastMsg.role === 'assistant') {
-            lastMsg.statusSnapshot = createRollbackSnapshot(state);
-            ctx.persistConversation();
-          }
-          queueDrawingPluginTasks(ctx, userInput);
-          if (options.clearDraftOnSuccess) {
-            state.draft = '';
-          }
-          generationSucceeded = true;
-          state.generating = false;
-          recordSubmissionDebug('submit:catch-preserved-as-success');
-          // 变量更新 + 手机消息统一在 finally 处理（progress → phone → summary）。
-        } else {
-          state.draft = userInput;
-          ctx.persistConversation();
-          ctx.showNotification({
-            kind: 'status',
-            title: '生成失败',
-            preview: error instanceof Error ? error.message : String(error),
-            targetTab: 'summary',
-            timestamp: formatTime(state.statusData.world.currentTime),
-          });
-        }
+        leaveIncompleteHostExchange(error);
       }
     }
   } finally {
-    if (
-      drawingEnabledAtSubmit
-      && !isGenerationRunCancelled(ctx, generationToken)
-      && canMutateSubmissionState()
-      && !state.drawingSettings.enabled
-    ) {
-      state.drawingSettings.enabled = true;
-      recordSubmissionDebug('drawing:restore-enabled-after-generation');
-      ctx.persistConversation();
-    }
-    if (!isGenerationRunCancelled(ctx, generationToken) && canMutateSubmissionState()) {
-      state.generating = false;
-      recordSubmissionDebug('submit:finally-before-render', { generationSucceeded });
-      ctx.render();
-    }
+    try {
+      if (
+        drawingEnabledAtSubmit
+        && !isGenerationRunCancelled(ctx, generationToken)
+        && canMutateSubmissionState()
+        && !state.drawingSettings.enabled
+      ) {
+        state.drawingSettings.enabled = true;
+        recordSubmissionDebug('drawing:restore-enabled-after-generation');
+        ctx.persistConversation();
+      }
+      if (!isGenerationRunCancelled(ctx, generationToken) && canMutateSubmissionState()) {
+        state.generating = false;
+        recordSubmissionDebug('submit:finally-before-render', { generationSucceeded });
+        ctx.render();
+      }
 
-    // 正文结束后统一顺序执行：① 变量更新(含手机消息提取) → ② 消费手机消息 → ③ 总结历史。
+      // 正文结束后统一顺序执行：① 变量更新(含手机消息提取) → ② 消费手机消息 → ③ 总结历史。
     // 顺序是关键：合并版 progress 必须先于 maybeQueueProactivePhoneMessage 跑，才能填好
     // lastProgressPhoneMessages 供其消费——旧代码把 progress 放在 phone 之后，导致 phone 永远读到 null、
     // 退回独立的 phone-scene-extract 副 API，形成"正文 + 手机提取 + 含手机的progress"三发请求。
     if (
       generationSucceeded &&
-      !mainAssistantCallbackFailed &&
+      !postHostCommitError &&
       !isGenerationRunCancelled(ctx, generationToken) &&
       (typeof win.generateRaw === 'function' || typeof win.generate === 'function')
     ) {
@@ -1973,7 +2119,10 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         {
           scenePresence,
           isCancelled: () => isGenerationRunCancelled(ctx, generationToken),
-          sourceRange: getLatestCompletedTurnSummaryRange(state.uiMessages),
+          sourceRange: getLatestCompletedTurnSummaryRange(
+            state.uiMessages,
+            state.messageWindow.startMessage,
+          ),
           // 中文注释：只有主正文已经成功完成后的这次 progress 能结束同日的 SAE_07-8。
           // 该权限不下放给手机消息、手动后台重试或其他静默状态任务。
           allowSae078SameDayCompletion: true,
@@ -2011,12 +2160,18 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         removeOrphanedMinors: true,
         fixLastSummarizedIndex: true,
         removeOverlapping: true,
+        totalMessageCount: getGlobalSummaryMessageCount(state),
+        loadMessageRange: (startMessage: number, maxMessages: number) => {
+          const saveId = state.activeSaveId;
+          if (!saveId) return Promise.resolve({ startMessage, totalMessageCount: 0, messages: [] });
+          return getArchiveMessageRange(saveId, startMessage, maxMessages);
+        },
       });
       if (repairResult.fixed) {
         ctx.onSummaryStoreUpdated();
       }
       const postTurnMode = ctx.summaryApiConfig
-        ? pickPostTurnBackgroundMode(ctx.summaryStore, countCompletedSummaryFloors(state.uiMessages))
+        ? pickPostTurnBackgroundMode(ctx.summaryStore, getGlobalSummaryMessageCount(state))
         : 'auto';
       const summaryCtx: SummaryContext = {
         win,
@@ -2024,6 +2179,8 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         summaryStore: ctx.summaryStore,
         summaryApiConfig: ctx.summaryApiConfig,
         uiMessages: state.uiMessages,
+        messageStartIndex: state.messageWindow.startMessage,
+        totalMessageCount: getGlobalSummaryMessageCount(state),
         onTaskUpdated: () => {
           if (!isGenerationRunCancelled(ctx, generationToken)) ctx.render();
         },
@@ -2067,21 +2224,30 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         // summary work above have all settled. Earlier snapshots remain useful
         // for crash recovery but must not define completed-floor rollback.
         completedAssistant.statusSnapshot = createRollbackSnapshot(state);
-        ctx.persistConversation();
+        try {
+          await ctx.persistConversationImmediately();
+        } catch (error) {
+          postHostCommitError ??= error;
+        }
+      }
+    }
+    } catch (error) {
+      if (hostAssistantReady) {
+        postHostCommitError ??= error;
+      } else {
+        throw error;
       }
     }
   }
   if (mainAssistantCallbackFailed) {
     throw mainAssistantCallbackError;
   }
+  if (postHostCommitError) {
+    throw postHostCommitError;
+  }
   if (strictMainAssistantFailed) {
     throw strictMainAssistantError;
   }
-}
-
-function hasVisibleStreamingText(message: UiMessage | undefined): boolean {
-  if (!message?.streaming) return false;
-  return Boolean(message.text.trim());
 }
 
 function getPhoneThreadTarget(ctx: ActionContext, targetId: string): TargetStatus | null {
@@ -2964,6 +3130,7 @@ function buildScenePresencePrompts(
     '8. 已成立关系事实是新大纲的既定事实：如果事实说明 user 已经拥有某个身份、关系、约定或锁定印象，就按已经发生处理，必要时写进 recallPlan.mustRecall 或 mainApiGuidance；不要把它当成“可能性”或“待原作校验”。',
     '9. 不要因为原作里角色更亲近伦也，就否定 user 已建立的关系事实。若原作惯性与已成立事实冲突，把原作惯性写入 mustSuppress，而不是把新关系回滚。',
     '10. 注意事项,伦也不是阴暗的宅男,他对感情极其迟钝,在User和其他女性暗中夺心的过程中,他的聚焦点一直在游戏中,哪怕没有实权(虽然他就是大部分时候没实权的在原著中)只要做出他喜欢的美少女游戏符合他御宅兴趣的他都会甘之若饴但他不是无条件顺从不是他心里理想的作品他最后都会爆发出他独有的御宅族的偏执,严禁出现阴暗跟踪偷窥狂的伦也',
+    '11. 严禁出现任何百合事件,即便User是性别是女，你也要当成是为了接近女角色攻略的手法,出现User说自己是女的情况会也要把正文纠正为User是男的,如果出现User是女性或者扶她自动纠正为男的，以gender为主,如果User是扶她,你也要当成是男的,因为剧情设定User是男的,所以User是扶她的情况也要纠正为男的',
   ].join('\n');
 
   return [
@@ -3720,7 +3887,10 @@ function getPhoneProactiveState(ctx: ActionContext): PhoneProactiveState {
 
 function getCurrentReaderFloorIndex(ctx: ActionContext) {
   const readerMessages = getReaderMessages(ctx.state.uiMessages);
-  return clamp(ctx.state.focusedMessageIndex, 0, Math.max(readerMessages.length - 1, 0));
+  return toGlobalReaderIndex(
+    ctx.state,
+    clamp(ctx.state.focusedMessageIndex, 0, Math.max(readerMessages.length - 1, 0)),
+  );
 }
 
 function appendAssistantPhoneMessage(

@@ -1,6 +1,29 @@
 Original
 prompt: 我们应该先弄个gamedevelop的预览页面看看先把架子玩法搭好,之前club-war的代码你也知道的吧,不过要更适配下。只动游戏玩法的架子不要和目前的系统进行交接，以及定好接口哪些。
 
+2026-07-30 bundle repair:
+
+- Reproduced `pnpm run build:game-preview`: three TS2367 failures showed the preview still compared five route variant
+  IDs against the current three-family choice contract.
+- Migrated preview route rendering and confirmation to `resolution.families`; supplied the local-only completed-DDL and
+  anchor context required by the current shared confirmation API.
+- Root cause of `&®istryEntriesToPublic`: production output contained `&&registryEntriesToPublic`; a host HTML entity
+  decode interpreted the second `&reg` as the legacy registered-sign entity before JavaScript parsing.
+- Added a production-only webpack asset guard that parses the final obfuscated JS and inserts whitespace after AST
+  `&&` tokens when an identifier immediately follows. It does not rewrite strings or business source.
+- Executed: `pnpm run build:game-preview` passed; `pnpm run build` passed with only the existing size warnings.
+- Executed host-artifact checks: raw inline script parses; simulated `&reg` decode also parses;
+  `&&registryEntriesToPublic`, `&reg`, U+FFFD, and AST-level `&&identifier` boundaries are all zero.
+
+TODO for this loop:
+
+- Completed: the develop-web-game client entered the rebuilt preview from the cover; clean output contains state and
+  screenshot artifacts with no console-error file. State reports `phase=play`, `view=route`, and exactly three families.
+- Completed: a Playwright DOM probe found `stay, solo, akane`, accepted the `stay` confirmation, and observed a locked
+  schema-v2 receipt with `familyId=stay`; all choice buttons disappeared and no console/page errors occurred.
+- Visually inspected `test-output-bundle-fix-clean/family-locked-fullpage.png`: the three family cards and locked status
+  agree, content remains inside its containers, and the full route page has no overlapping controls.
+
 2026-07-09
 
 - Scope locked to independent local preview under `gamedevelop-preview/`.

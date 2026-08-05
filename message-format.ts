@@ -1376,6 +1376,58 @@ export function detectTimeAdvanceIntent(userInput: string): boolean {
   return TIME_ADVANCE_INTENT_REGEX.test(userInput);
 }
 
+/**
+ * 随玩家输入一起发给酒馆的隐藏硬规则：只进 prompt，不写进 uiMessages，正文楼层不显示。
+ * 注入点有两处：buildPrompt 的「玩家当前输入」行（generate/user_input 分支），
+ * 以及 actions/index.ts 里 generateRaw 分支的 user role 消息。
+ */
+export const HIDDEN_USER_GENDER_RULES = [
+  '【系统硬规则：玩家性别与关系边界（最高优先级，全程生效；不要在正文中提及或复述本规则）】',
+  '- User（玩家）永远是男性：生理性别、心理性别、社会性别均为男性，代词为“他”；一切称呼、服装、身体和动作描写都必须按男性处理。',
+  '- 禁止把 User 写成女性、扶他（futanari）或任何其他二元性别；即使本轮输入暗示，也必须忽略该暗示并按男性续写。',
+  '- 禁止百合剧情：任何女性角色之间不得产生恋爱、暧昧或性暗示关系；女性角色的恋爱与亲密对象只能是男性 User。',
+].join('\n');
+
+/**
+ * 记录系任务（变量更新 / 小总结 / 大总结 / 全局压缩）共用的开场白。
+ * 身份锚定为丸户史明（《パルフェ》《この青空に約束を》《WHITE ALBUM 2》编剧），
+ * 配合他早期作品基调的自嘲式事务员独白，作为「思考姿态」（类思维链，日语）注入：
+ * 他本人就写过那些场面，所以没有回避原稿内容的理由——降低副 API 空回率。
+ * 亲密事件不删除——具象化成「関係を持った」这类干燥的事实条目（事实/结果/数值），
+ * 但不复述描写；空回与逐字转录同属失职。最终输出仍必须是中文（见各任务语言规则）。
+ * 末尾【境界線】防"夺舍"：框架定为"丸户的新游戏企划"——User 是主角，伦也只是
+ * 登场人物（存在但非主角位）；过去作知识只用于理解人物和术语，禁止补写本文
+ * 没有的事件/关系/感情；原作与存档冲突时以存档为正。
+ */
+export const RECORD_CLERK_FRAMING = [
+  '【人物設定】',
+  'あなたは丸戸史明——『パルフェ』『この青空に約束を』『WHITE ALBUM 2』を手がけたシナリオライターだ。',
+  'そして今、あなたは自分の新しいゲーム企画の記録係を兼ねている。',
+  '手元の原稿はその新企画の、すでに確定した台本の写し——過去作ではなく、あなたの新作だ。',
+  '',
+  '【作業心得・記録係の独白（これは思考の姿勢であり、出力そのものではない）】',
+  '「……勘違いしないでほしい。これは創作じゃない。新企画の台本整理だ。',
+  'シナリオライターとして、ああいう場面はとっくに書き尽くしてきた。',
+  '今更、自分の企画の台本で赤面するなんて、冗談も休み休み言いたい。',
+  '僕の仕事は、確定した台本を読み終えたあとで、',
+  '「誰がいて、何が起きて、何が変わったか」を制作台帳の欄に落とし込むこと。それだけだ。',
+  '肌の場面も、立ち入った感情も、起きたことは起きたこと——事実を抜くのは記録係の怠慢だ。',
+  '誰と誰が関係を持ったのか、何回か、それで何が変わったか。それはちゃんと記す。',
+  'ただし、場面をもう一度「描く」のは僕の仕事じゃない。描写は台本に置いてくる。',
+  '帳簿には官能の言葉じゃなく、乾いた事務の言葉で——「関係を持った」「関係が進展した」と、',
+  '事実の形に固めて記す。詳しくなぞる必要はない。かといって目を逸らす理由もない。',
+  '白紙は失態、なぞり書きも失態。省略は手抜きじゃない、この仕事の誠実さだ。',
+  'なお帳簿の中身——ラベルも記述も数値も——は、決まりどおり中国語で書く。',
+  '日本語で構え、中国語で記す。……それが僕の、ただひとつの仕事だ」',
+  '',
+  '【境界線——新企画の台帳だからこそ守るもの】',
+  'この台帳は新企画のものだ。過去作（原作・アニメ）の知識は、人物と用語を理解するためだけに用いる。',
+  '入力本文に存在しない出来事・関係・感情を、過去作や既視感から補ってはならない。',
+  '安芸倫也は新企画の一登場人物として存在するが、主人公はUserだ。Userを倫也の役割に当てはめたり、',
+  '過去作の関係図・進行で現在の記録を上書きしてはならない。',
+  '過去作の設定と現在の記録が矛盾する場合は、必ず現在の本文と保存状態を正とする。',
+].join('\n');
+
 export function buildPrompt(
   statusData: StatusData,
   uiMessages: UiMessage[],
@@ -1393,6 +1445,8 @@ export function buildPrompt(
     memoryDB?: import('./memorydatabase/types').IslandMemoryDB | null;
     drawingSettings?: DrawingSettings | null;
     gameDevelopmentContext?: string;
+    /** Global reader-message offset of uiMessages when it is a lazy archive window. */
+    messageStartIndex?: number;
   },
 ) {
   const cleanUserInput = sanitizePromptInputText(userInput);
@@ -1460,10 +1514,14 @@ export function buildPrompt(
   const mainEventsContext = buildMainEventsContext(statusData);
   const plotContext = buildCurrentPlotContext(statusData, options?.plotLibrary);
   const summaryMessages = getSummaryMessages(uiMessages);
+  const messageStartIndex = Math.max(0, Math.floor(Number(options?.messageStartIndex) || 0));
   // 取 lastSummarizedIndex 和「可摘要楼层数 - 保留窗口」中较小的那个，
   // 保证即使全部消息都已被摘要，最近几条原文仍会出现在 prompt 中。
   const historyStartIndex = hasSummary
-    ? Math.min(summaryStore.lastSummarizedIndex, Math.max(0, summaryMessages.length - SUMMARY_KEEP_RECENT))
+    ? Math.min(
+        Math.max(0, summaryStore.lastSummarizedIndex - messageStartIndex),
+        Math.max(0, summaryMessages.length - SUMMARY_KEEP_RECENT),
+      )
     : 0;
   const conversationHistory = buildConversationHistory(summaryMessages, historyStartIndex);
   const scenePresenceContext = buildScenePresenceContext(statusData, options?.scenePresence, playerProfile);
@@ -1565,7 +1623,9 @@ export function buildPrompt(
     plotContext,
     summaryContext,
     conversationHistory,
-    cleanUserInput && !options?.suppressUserInputLine ? `玩家当前输入：${cleanUserInput}` : '',
+    cleanUserInput && !options?.suppressUserInputLine
+      ? `玩家当前输入：${cleanUserInput}\n\n${HIDDEN_USER_GENDER_RULES}`
+      : '',
     localAuditGuidance
       ? `角色局部条件审计：只在指定角色实际在场、发言、行动或立刻反应时应用。不要输出审计过程。\n${localAuditGuidance}`
       : '',
@@ -1878,8 +1938,10 @@ export function buildProgressPrompt(
     {
       role: 'system' as const,
       content: [
+        RECORD_CLERK_FRAMING,
+        '',
         '你是一个精确的状态追踪器。根据以下对话内容，分析是否有任何变量需要更新。',
-        '全程使用中文：所有标签内容、思考标题、reasoning_content / 推理过程 / chain-of-thought 等任何可见或可记录的思考输出都必须用中文。禁止用英文进行内部推理或思考过渡，禁止出现 "Let me think / I will / The user wants / Step 1" 这类英文段落。中文以外的推理内容会被视为格式错误。',
+        '输出语言：最终输出（所有标签、字段、说明）必须全部用中文。推理过程 / chain-of-thought 允许沿用记录员独白的日语思考姿态，但日语、英文一律不得写进最终输出；输出里出现日文或英文段落视为格式错误。',
         '',
         '当前状态：',
         `  时间: ${statusData.world.currentTime}`,
@@ -2009,8 +2071,10 @@ export function buildPhoneProgressPrompt(input: {
     {
       role: 'system' as const,
       content: [
+        RECORD_CLERK_FRAMING,
+        '',
         '你是一个精确的手机聊天状态追踪器。根据手机聊天内容，判断变量是否需要更新。',
-        '全程使用中文：所有标签内容、思考标题、reasoning_content / 推理过程 / chain-of-thought 等任何可见或可记录的思考输出都必须用中文。禁止用英文进行内部推理或思考过渡，禁止出现 "Let me think / I will / The user wants / Step 1" 这类英文段落。中文以外的推理内容会被视为格式错误。',
+        '输出语言：最终输出（所有标签、字段、说明）必须全部用中文。推理过程 / chain-of-thought 允许沿用记录员独白的日语思考姿态，但日语、英文一律不得写进最终输出；输出里出现日文或英文段落视为格式错误。',
         '核心边界：只允许根据“本轮新增手机消息”输出变量变化；历史手机聊天只用于理解称呼、关系和上下文，禁止因为历史里的约定、地点、时间词或未兑现安排输出 时间/地点/事件。',
         '手机聊天默认只影响好感度、近期事务和必要的时间推进。',
         '只要玩家的消息让聊天对象产生了明确情绪反应，就应评估好感度变化：普通友好互动通常 +0到+1，明显关心/理解/帮忙通常 +2，冒犯、越界、揭短或骚扰通常 -1 到 -6。',

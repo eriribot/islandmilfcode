@@ -2,6 +2,7 @@ import { escapeHtml } from '../html';
 import { renderMemoryEditor } from '../memorydatabase/editor';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import { getReaderMessages } from '../message-format';
+import { getGlobalReaderMessageCount, toGlobalReaderIndex } from '../state/message-window';
 import {
   GAME_DEVELOPMENT_ACTIONS,
   getAllowedGameDevelopmentActions,
@@ -162,8 +163,11 @@ function renderFloatingPhoneStyle(position: FloatingPhonePosition) {
 
 function getRenderedPhoneMessageStore(state: AppState): PhoneMessageStore {
   const readerMessages = getReaderMessages(state.uiMessages);
-  const latestFloorIndex = Math.max(readerMessages.length - 1, 0);
-  const focusedFloorIndex = Math.max(0, Math.min(state.focusedMessageIndex, latestFloorIndex));
+  const latestFloorIndex = Math.max(getGlobalReaderMessageCount(state) - 1, 0);
+  const focusedFloorIndex = Math.max(0, Math.min(
+    toGlobalReaderIndex(state, state.focusedMessageIndex),
+    latestFloorIndex,
+  ));
 
   if (focusedFloorIndex >= latestFloorIndex) {
     return state.phoneMessages;

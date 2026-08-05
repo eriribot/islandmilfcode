@@ -1,4 +1,4 @@
-import type { FloorRecord, GameState, SaveKind, SaveMeta } from '../types';
+import type { FloorRecord, GameState, MessageWindowState, SaveKind, SaveMeta } from '../types';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import type { SummaryStore } from '../summary/types';
 
@@ -147,6 +147,11 @@ export type ArchiveSaveSnapshot = {
   state: ArchiveStateBlock;
   summary?: ArchiveSummaryBlock;
   memory?: ArchiveMemoryBlock;
+  messageWindow?: ArchiveMessageWindow;
+};
+
+export type ArchiveMessageWindow = MessageWindowState & {
+  floors: FloorRecord[];
 };
 
 export type ArchiveCreateInput = {

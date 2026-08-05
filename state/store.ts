@@ -1,4 +1,4 @@
-import { getReaderMessages, getSummaryMessages, isFrontendHtmlShell } from '../message-format';
+import { getReaderMessages, getSummaryMessages } from '../message-format';
 import { createDefaultSummaryStore, deserializeSummaryStore, type SummaryStore } from '../summary/types';
 import { hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
 import type { FloatingPhonePosition } from '../phone/types';
@@ -29,8 +29,14 @@ import {
   clearPlotRouteChoiceAfterFloor,
   reconcilePlotRouteChoiceAfterTimelineChange,
 } from '../plot-state-machine/memory';
+import { parseHostMessageLocator } from './host-timeline-adapter';
+import { usesRealHostTimeline } from './host-timeline-policy';
+import { createCompleteMessageWindow, normalizeMessageWindow } from './message-window';
 
-export const MESSAGE_MARKER = 'islandmilfcode';
+function toGlobalReaderIndex(state: Pick<AppState, 'messageWindow'>, localIndex: number) {
+  return state.messageWindow.startMessage + Math.max(0, Math.floor(localIndex));
+}
+
 const GAME_DEVELOPMENT_TARGET_ID = 'route:v07';
 const GAME_DEVELOPMENT_STORAGE_KEY = 'gameDevelopment.v1.state';
 const PROFILE_KEYS = {
@@ -65,6 +71,7 @@ const serializedMessageCache = new WeakMap<
     rawText: string | undefined;
     statusSnapshot: UiMessage['statusSnapshot'];
     illustrationSignature: string;
+    hostLocatorSignature: string;
     value: PersistedMessage | null;
   }
 >();
@@ -234,12 +241,30 @@ function getIllustrationSignature(illustrations: UiMessage['illustrations']) {
     .join('\n');
 }
 
+function getHostLocatorSignature(locator: UiMessage['hostLocator']) {
+  const parsed = parseHostMessageLocator(locator);
+  if (!parsed) return '';
+  return [
+    parsed.lastKnownMessageId,
+    parsed.marker.v,
+    parsed.marker.source,
+    parsed.marker.runId,
+    parsed.marker.branchId,
+    parsed.marker.floorId,
+    parsed.marker.parentFloorId ?? '',
+    parsed.marker.exchangeId,
+    parsed.marker.part,
+  ].join('|');
+}
+
 function serializeMessage(message: UiMessage): PersistedMessage | null {
   if (message.role !== 'user' && message.role !== 'assistant') return null;
+  const hostLocator = usesRealHostTimeline() ? parseHostMessageLocator(message.hostLocator) : null;
   const speaker = String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User'));
   const text = String(message.text ?? '');
   const rawText = message.rawText ? String(message.rawText) : undefined;
   const illustrationSignature = getIllustrationSignature(message.illustrations);
+  const hostLocatorSignature = usesRealHostTimeline() ? getHostLocatorSignature(message.hostLocator) : '';
   const cached = serializedMessageCache.get(message);
   if (
     cached &&
@@ -249,7 +274,8 @@ function serializeMessage(message: UiMessage): PersistedMessage | null {
     cached.text === text &&
     cached.rawText === rawText &&
     cached.statusSnapshot === message.statusSnapshot &&
-    cached.illustrationSignature === illustrationSignature
+    cached.illustrationSignature === illustrationSignature &&
+    cached.hostLocatorSignature === hostLocatorSignature
   ) {
     return cached.value;
   }
@@ -272,6 +298,9 @@ function serializeMessage(message: UiMessage): PersistedMessage | null {
   if (message.statusSnapshot) {
     base.statusSnapshot = normalizeRollbackSnapshot(message.statusSnapshot, { includeSideWindows: false });
   }
+  if (hostLocator) {
+    base.hostLocator = hostLocator;
+  }
 
   serializedMessageCache.set(message, {
     id: message.id,
@@ -281,6 +310,7 @@ function serializeMessage(message: UiMessage): PersistedMessage | null {
     rawText,
     statusSnapshot: message.statusSnapshot,
     illustrationSignature,
+    hostLocatorSignature,
     value: base,
   });
   return base;
@@ -778,27 +808,6 @@ function pruneMemoryAndSummariesAfterRollback(
   state.summaryStore.lastSummarizedIndex = Math.min(state.summaryStore.lastSummarizedIndex, pruneThreshold);
 }
 
-function mapChatMessageToUiMessage(
-  message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>,
-): UiMessage {
-  return {
-    id: crypto.randomUUID(),
-    role: message.role,
-    speaker: message.name || message.role,
-    text: String(message.message ?? ''),
-    rawText: String(message.message ?? ''),
-    tavernMessageId: message.message_id,
-  };
-}
-
-function isMarkedMessage(message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>) {
-  return message?.data?.islandmilfcode_source === MESSAGE_MARKER;
-}
-
-function isLegacyHiddenMessage(message: NonNullable<ReturnType<NonNullable<TavernWindow['getChatMessages']>>[number]>) {
-  return message?.is_hidden === true && (message?.role === 'user' || message?.role === 'assistant');
-}
-
 /** 将界面消息序列化为存档槽里的 PersistedMessage[]。 */
 export function serializeMessages(messages: UiMessage[]): PersistedMessage[] {
   return messages.map(serializeMessage).filter((message): message is PersistedMessage => Boolean(message));
@@ -810,6 +819,7 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
   return messages
     .filter(msg => msg && (msg.role === 'user' || msg.role === 'assistant') && typeof msg.text === 'string')
     .map(msg => {
+      const locator = usesRealHostTimeline() ? parseHostMessageLocator(msg.hostLocator) : null;
       const ui: UiMessage = {
         id: String(msg.id || crypto.randomUUID()),
         role: msg.role,
@@ -822,6 +832,10 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
               .filter((illustration): illustration is NonNullable<typeof illustration> => Boolean(illustration))
           : undefined,
       };
+      if (locator) {
+        ui.hostLocator = locator;
+        ui.tavernMessageId = locator.lastKnownMessageId;
+      }
       if (msg.statusSnapshot) {
         ui.statusSnapshot = normalizeRollbackSnapshot(msg.statusSnapshot, { includeSideWindows: false });
       }
@@ -862,6 +876,14 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     plotLibrary: createEmptyPlotLibrary(),
     characterCardLibrary: createEmptyCharacterCardLibrary(),
     uiMessages: [createSystemMessage()],
+    messageWindow: {
+      startFloor: 0,
+      endFloorExclusive: 0,
+      startMessage: 0,
+      endMessageExclusive: 0,
+      totalFloorCount: 0,
+      totalMessageCount: 0,
+    },
     statusData: normalizeStatusData(defaultStatusData),
     musicPlayer: createDefaultMusicPlayerState(),
     drawingSettings: createDefaultDrawingSettings(),
@@ -884,48 +906,14 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
   };
 }
 
-export function replaceConversationMessages(state: AppState, messages: UiMessage[]) {
+export function replaceConversationMessages(
+  state: AppState,
+  messages: UiMessage[],
+  messageWindow = createCompleteMessageWindow(messages),
+) {
   state.uiMessages = [createSystemMessage(), ...messages];
+  state.messageWindow = normalizeMessageWindow(messageWindow);
   syncFocusedMessage(state, { keepLatest: true });
-}
-
-export async function loadMessagesFromChat(win: TavernWindow): Promise<UiMessage[]> {
-  if (typeof win.getChatMessages !== 'function') {
-    return [];
-  }
-
-  try {
-    const allMessages = win.getChatMessages('0-{{lastMessageId}}', {
-      hide_state: 'all',
-      include_swipes: false,
-    });
-
-    if (!Array.isArray(allMessages) || !allMessages.length) {
-      return [];
-    }
-
-    const markedMessages = allMessages.filter(
-      (message): message is NonNullable<typeof message> =>
-        Boolean(message) && typeof message.message_id === 'number' && isMarkedMessage(message),
-    );
-
-    const selectedMessages = markedMessages.length
-      ? markedMessages
-      : allMessages.filter(
-          (message): message is NonNullable<typeof message> =>
-            Boolean(message) && typeof message.message_id === 'number' && isLegacyHiddenMessage(message),
-        );
-
-    if (!selectedMessages.length) {
-      return [];
-    }
-
-    return selectedMessages
-      .filter(message => !isFrontendHtmlShell(String(message.message ?? '')))
-      .map(message => mapChatMessageToUiMessage(message));
-  } catch {
-    return [];
-  }
 }
 
 export function clampFocusedMessageIndex(state: AppState, index: number) {
@@ -985,7 +973,8 @@ export function getSourceUserTextForReaderIndex(state: AppState, index: number) 
 export async function rollbackConversation(
   state: AppState,
   readerIndex: number,
-  win?: TavernWindow,
+  _win?: TavernWindow,
+  _hostTimeline?: import('./host-timeline-adapter').HostTimelineAdapter,
   isCurrent: () => boolean = () => true,
 ) {
   if (!isCurrent()) return null;
@@ -993,22 +982,9 @@ export async function rollbackConversation(
   if (!target) return null;
   const previousSummaryStore = cloneJson(state.summaryStore);
   const previousMemoryDB = cloneJson(state.memoryDB);
-  const rollbackSummaryFloorIndex = countSummaryFloorsBeforeUiIndex(state, target.sourceUserIndex);
-
-  const removedMessageIds = state.uiMessages
-    // v3 rollback-to-input keeps the selected user message. Only its old
-    // assistant response and future timeline are removed.
-    .slice(target.sourceUserIndex + 1)
-    .map(message => message.tavernMessageId)
-    .filter((messageId): messageId is number => typeof messageId === 'number');
-
-  if (removedMessageIds.length && typeof win?.deleteChatMessages === 'function') {
-    try {
-      await win.deleteChatMessages(removedMessageIds, { refresh: 'all' });
-    } catch {
-      // 不在 Tavern 内或删除失败时直接忽略。
-    }
-  }
+  const rollbackSummaryFloorIndex = state.messageWindow.startMessage
+    + countSummaryFloorsBeforeUiIndex(state, target.sourceUserIndex);
+  const globalSourceReaderIndex = toGlobalReaderIndex(state, target.sourceReaderIndex);
 
   if (!isCurrent()) return null;
 
@@ -1025,18 +1001,18 @@ export async function rollbackConversation(
   state.uiMessages = state.uiMessages.slice(0, Math.max(1, target.sourceUserIndex + 1));
   state.focusedMessageIndex = Math.max(getReaderMessages(state.uiMessages).length - 1, 0);
   state.focusedMessagePage = 0;
-  prunePhoneMessagesAfterFloor(state, target.sourceReaderIndex - 1);
+  prunePhoneMessagesAfterFloor(state, globalSourceReaderIndex - 1);
   pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, rollbackSummaryFloorIndex, {
     mergePrevious: false,
   });
   // 中文注释：choice 绑定确认时的时间线头部，而不是玩家当时正在翻看的页面。
   // 回退跨过确认楼层后只写路线 tombstone，不恢复整个 memoryDB；保留锚点之后的回退则继续锁定原 choice。
-  clearPlotRouteChoiceAfterFloor(state.memoryDB, 'v07', target.sourceReaderIndex);
+  clearPlotRouteChoiceAfterFloor(state.memoryDB, 'v07', globalSourceReaderIndex);
   reconcilePlotRouteChoiceAfterTimelineChange(state.memoryDB, 'v07', {
     currentTime: state.statusData.world.currentTime,
     currentMainEventId: state.statusData.world.currentMainEventId,
     mainEvents: state.statusData.world.mainEvents,
-    readerFloorCount: getReaderMessages(state.uiMessages).length,
+    readerFloorCount: rollbackSummaryFloorIndex,
   });
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';
@@ -1048,7 +1024,8 @@ export async function rollbackConversation(
 export async function deleteReaderMessage(
   state: AppState,
   readerIndex: number,
-  win?: TavernWindow,
+  _win?: TavernWindow,
+  _hostTimeline?: import('./host-timeline-adapter').HostTimelineAdapter,
   isCurrent: () => boolean = () => true,
 ) {
   if (!isCurrent()) return false;
@@ -1058,36 +1035,11 @@ export async function deleteReaderMessage(
   const targetUiIndex = state.uiMessages.findIndex(message => message.id === targetMessage.id);
   if (targetUiIndex < 0) return false;
 
-  const deletedTavernMessageId = typeof targetMessage.tavernMessageId === 'number'
-    ? targetMessage.tavernMessageId
-    : null;
-  let hostMessageDeleted = false;
-  if (deletedTavernMessageId !== null && typeof win?.deleteChatMessages === 'function') {
-    try {
-      await win.deleteChatMessages([deletedTavernMessageId], { refresh: 'all' });
-      hostMessageDeleted = true;
-    } catch {
-      // 不在 Tavern 内或删除失败时直接忽略。
-    }
-  }
-
   if (!isCurrent()) return false;
   // “删除该楼层”是文本外科操作：只移除玩家点中的 reader
   // 卡片并保留之后的正文与当前权威状态。因果回滚由另外两个明确的
   // “回到用户输入/回到完成楼层”动作负责，不能在这里混合两套语义。
-  state.uiMessages = state.uiMessages
-    .filter(message => message.id !== targetMessage.id)
-    .map(message => {
-      if (
-        hostMessageDeleted
-        && deletedTavernMessageId !== null
-        && typeof message.tavernMessageId === 'number'
-        && message.tavernMessageId > deletedTavernMessageId
-      ) {
-        return { ...message, tavernMessageId: message.tavernMessageId - 1 };
-      }
-      return message;
-    });
+  state.uiMessages = state.uiMessages.filter(message => message.id !== targetMessage.id);
   syncFocusedMessage(state);
 
   return true;
@@ -1135,7 +1087,8 @@ export function restoreFloorStateSnapshot(state: AppState, snapshot: FloorStateS
 export async function rollbackAfterCompletedReaderMessage(
   state: AppState,
   readerIndex: number,
-  win?: TavernWindow,
+  _win?: TavernWindow,
+  _hostTimeline?: import('./host-timeline-adapter').HostTimelineAdapter,
   isCurrent: () => boolean = () => true,
 ) {
   if (!isCurrent()) return false;
@@ -1145,18 +1098,9 @@ export async function rollbackAfterCompletedReaderMessage(
   if (targetUiIndex < 0) return false;
   const previousSummaryStore = cloneJson(state.summaryStore);
   const previousMemoryDB = cloneJson(state.memoryDB);
-  const keptSummaryFloorCount = countSummaryFloorsBeforeUiIndex(state, targetUiIndex + 1);
-  const removedMessageIds = state.uiMessages
-    .slice(targetUiIndex + 1)
-    .map(message => message.tavernMessageId)
-    .filter((messageId): messageId is number => typeof messageId === 'number');
-  if (removedMessageIds.length && typeof win?.deleteChatMessages === 'function') {
-    try {
-      await win.deleteChatMessages(removedMessageIds, { refresh: 'all' });
-    } catch (error) {
-      console.warn('[reader] host future deletion deferred:', error);
-    }
-  }
+  const keptSummaryFloorCount = state.messageWindow.startMessage
+    + countSummaryFloorsBeforeUiIndex(state, targetUiIndex + 1);
+  const globalReaderIndex = toGlobalReaderIndex(state, readerIndex);
   if (!isCurrent()) return false;
   if (targetMessage.statusSnapshot) {
     restoreRollbackSnapshot(state, normalizeRollbackSnapshot(targetMessage.statusSnapshot));
@@ -1166,16 +1110,16 @@ export async function rollbackAfterCompletedReaderMessage(
   state.uiMessages = state.uiMessages.slice(0, targetUiIndex + 1);
   state.focusedMessageIndex = Math.max(0, getReaderMessages(state.uiMessages).length - 1);
   state.focusedMessagePage = 0;
-  prunePhoneMessagesAfterFloor(state, state.focusedMessageIndex);
+  prunePhoneMessagesAfterFloor(state, globalReaderIndex);
   pruneMemoryAndSummariesAfterRollback(state, previousSummaryStore, previousMemoryDB, keptSummaryFloorCount, {
     mergePrevious: false,
   });
-  clearPlotRouteChoiceAfterFloor(state.memoryDB, 'v07', readerIndex + 1);
+  clearPlotRouteChoiceAfterFloor(state.memoryDB, 'v07', globalReaderIndex + 1);
   reconcilePlotRouteChoiceAfterTimelineChange(state.memoryDB, 'v07', {
     currentTime: state.statusData.world.currentTime,
     currentMainEventId: state.statusData.world.currentMainEventId,
     mainEvents: state.statusData.world.mainEvents,
-    readerFloorCount: getReaderMessages(state.uiMessages).length,
+    readerFloorCount: keptSummaryFloorCount,
   });
   state.currentGenerationId = '';
   state.finalizedGenerationId = '';

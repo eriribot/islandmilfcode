@@ -3,9 +3,11 @@ import type {
   ArchiveFloorChunk,
   ArchiveFloorIndexPage,
   ArchiveJournalRecord,
+  ArchiveMemoryBlock,
   ArchiveObjectKind,
   ArchiveRoot,
   ArchiveSaveMeta,
+  ArchiveSummaryBlock,
 } from './archive-backend';
 import {
   IDB_STORE_ARCHIVE_ROOTS_V3,
@@ -38,8 +40,20 @@ const rootKey = (rootHash: string) => `root:${rootHash}`;
 
 export class BrowserArchiveBackend implements ArchiveBackend {
   readonly mode = 'browser-primary' as const;
+  private static readonly OBJECT_CACHE_LIMIT = 12;
   private readonly knownPlayableRootHashes = new Set<string>();
   private readonly knownReadableStateRootHashes = new Set<string>();
+  private readonly objectCache = new Map<string, unknown>();
+
+  private cacheObject(key: string, value: unknown) {
+    this.objectCache.delete(key);
+    this.objectCache.set(key, value);
+    while (this.objectCache.size > BrowserArchiveBackend.OBJECT_CACHE_LIMIT) {
+      const oldest = this.objectCache.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.objectCache.delete(oldest);
+    }
+  }
 
   private isFutureRoot(root: ArchiveRoot) {
     return Number(root.formatVersion) > 3 || Number(root.schemaVersion) > 3;
@@ -49,7 +63,7 @@ export class BrowserArchiveBackend implements ArchiveBackend {
     if (this.knownPlayableRootHashes.has(rootHash)) return true;
     try {
       if (typeof root.stateHash !== 'string' || !root.stateHash) return false;
-      const state = await idbGet<unknown>(IDB_STORE_SAVE_STATE_V3, root.stateHash);
+      const state = await this.getObject<unknown>('state', root.stateHash);
       if (!state || typeof state !== 'object') return false;
       const gameState = (state as { gameState?: unknown }).gameState;
       if (!gameState || typeof gameState !== 'object') return false;
@@ -58,10 +72,25 @@ export class BrowserArchiveBackend implements ArchiveBackend {
       if (!statusData || typeof statusData !== 'object') return false;
       this.knownReadableStateRootHashes.add(rootHash);
 
+      if (typeof root.summaryHash !== 'string' || !root.summaryHash) return false;
+      const summary = await this.getObject<ArchiveSummaryBlock>('summary', root.summaryHash);
+      if (
+        !summary
+        || !summary.summaryStore
+        || typeof summary.summaryStore !== 'object'
+      ) {
+        return false;
+      }
+      if (typeof root.memoryHash !== 'string' || !root.memoryHash) return false;
+      const memory = await this.getObject<ArchiveMemoryBlock>('memory', root.memoryHash);
+      if (!memory || !memory.memoryDB || typeof memory.memoryDB !== 'object') return false;
+
       const floorCount = Number(root.floorCount);
+      const messageCount = Number(root.messageCount);
       const chunkSize = Number(root.chunkSize);
       const indexPageChunkCount = Number(root.indexPageChunkCount);
       if (!Number.isInteger(floorCount) || floorCount < 0) return false;
+      if (!Number.isInteger(messageCount) || messageCount < 0) return false;
       if (!Number.isInteger(chunkSize) || chunkSize <= 0) return false;
       if (!Number.isInteger(indexPageChunkCount) || indexPageChunkCount <= 0) return false;
       if (
@@ -72,35 +101,45 @@ export class BrowserArchiveBackend implements ArchiveBackend {
         return false;
       }
 
-      const entries: Array<{ pageNo: number; entry: ArchiveFloorIndexPage['entries'][number] }> = [];
-      for (const [pageNoText, pageHash] of Object.entries(root.floorIndexPageHashes)) {
-        const pageNo = Number(pageNoText);
-        if (!Number.isInteger(pageNo) || pageNo < 0 || typeof pageHash !== 'string' || !pageHash) return false;
-        const page = await idbGet<ArchiveFloorIndexPage>(IDB_STORE_FLOOR_INDEX_V3, pageHash);
-        if (!page || !Array.isArray(page.entries)) return false;
-        for (const entry of page.entries) entries.push({ pageNo, entry });
-      }
-      entries.sort((left, right) => Number(left.entry.chunkNo) - Number(right.entry.chunkNo));
-
       const expectedChunkCount = Math.ceil(floorCount / chunkSize);
-      if (entries.length !== expectedChunkCount) return false;
-      let observedFloorCount = 0;
-      for (let chunkNo = 0; chunkNo < entries.length; chunkNo += 1) {
-        const { pageNo, entry } = entries[chunkNo];
+      const expectedPageCount = Math.ceil(expectedChunkCount / indexPageChunkCount);
+      const pageHashes = Object.entries(root.floorIndexPageHashes);
+      if (pageHashes.length !== expectedPageCount) return false;
+      for (let pageNo = 0; pageNo < expectedPageCount; pageNo += 1) {
+        const pageHash = root.floorIndexPageHashes[String(pageNo)];
+        if (typeof pageHash !== 'string' || !pageHash) return false;
+      }
+
+      // Normal open validates only the storage head. Cold chunks are checked
+      // when their 16-floor reader slice is requested, so opening cost stays
+      // bounded instead of walking the complete timeline twice.
+      if (expectedChunkCount > 0) {
+        const chunkNo = expectedChunkCount - 1;
+        const pageNo = Math.floor(chunkNo / indexPageChunkCount);
+        const pageHash = root.floorIndexPageHashes[String(pageNo)];
+        const page = await this.getObject<ArchiveFloorIndexPage>('floor-index', pageHash);
+        if (!page || Number(page.pageNo) !== pageNo || !Array.isArray(page.entries)) return false;
+        const entry = page.entries.find(candidate => Number(candidate.chunkNo) === chunkNo);
         const startFloor = chunkNo * chunkSize;
-        const endFloorExclusive = Math.min(floorCount, startFloor + chunkSize);
+        const endFloorExclusive = floorCount;
         if (
-          Number(entry.chunkNo) !== chunkNo
+          !entry
           || Number(entry.startFloor) !== startFloor
           || Number(entry.endFloorExclusive) !== endFloorExclusive
-          || Math.floor(chunkNo / indexPageChunkCount) !== pageNo
           || typeof entry.chunkHash !== 'string'
           || !entry.chunkHash
         ) {
           return false;
         }
-        const chunk = await idbGet<ArchiveFloorChunk>(IDB_STORE_FLOOR_CHUNKS_V3, entry.chunkHash);
-        if (!chunk || !Array.isArray(chunk.floors) || chunk.floors.length !== endFloorExclusive - startFloor) {
+        const chunk = await this.getObject<ArchiveFloorChunk>('floor-chunk', entry.chunkHash);
+        if (
+          !chunk
+          || Number(chunk.chunkNo) !== chunkNo
+          || Number(chunk.startFloor) !== startFloor
+          || Number(chunk.endFloorExclusive) !== endFloorExclusive
+          || !Array.isArray(chunk.floors)
+          || chunk.floors.length !== endFloorExclusive - startFloor
+        ) {
           return false;
         }
         for (let offset = 0; offset < chunk.floors.length; offset += 1) {
@@ -131,9 +170,7 @@ export class BrowserArchiveBackend implements ArchiveBackend {
           }
           if (floor.provenance?.syntheticUserMessage && !assistantMessage) return false;
         }
-        observedFloorCount += chunk.floors.length;
       }
-      if (observedFloorCount !== floorCount) return false;
       this.knownPlayableRootHashes.add(rootHash);
       return true;
     } catch {
@@ -179,11 +216,22 @@ export class BrowserArchiveBackend implements ArchiveBackend {
   }
 
   async getObject<T>(kind: Exclude<ArchiveObjectKind, 'root'>, hash: string): Promise<T | null> {
-    return idbGet<T>(storeForKind(kind), hash);
+    const key = `${kind}\u0000${hash}`;
+    if (this.objectCache.has(key)) {
+      const value = this.objectCache.get(key) as T;
+      this.cacheObject(key, value);
+      return value;
+    }
+    const value = await idbGet<T>(storeForKind(kind), hash);
+    if (value == null) return null;
+    this.cacheObject(key, value);
+    return value;
   }
 
   async putObject(kind: Exclude<ArchiveObjectKind, 'root'>, hash: string, value: unknown): Promise<void> {
     await idbPut(storeForKind(kind), hash, value);
+    const key = `${kind}\u0000${hash}`;
+    this.cacheObject(key, value);
   }
 
   async commitRoot(

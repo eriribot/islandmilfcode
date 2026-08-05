@@ -97,21 +97,11 @@ export function discardStreamingMessage(ctx: StreamingContext) {
     return false;
   }
 
-  // 主请求偶尔会在流式正文已经到达后再抛错；此时不能删楼层，否则会出现“实际生成了但少一层”。
-  if (current.text.trim()) {
-    current.streaming = false;
-    state.currentGenerationId = '';
-    syncFocusedMessage(state, { keepLatest: true });
-    ctx.persistConversation();
-    recordGenerationDebug(ctx, 'discard:preserve-streaming-text');
-    return false;
-  }
-
   state.uiMessages = state.uiMessages.slice(0, -1);
   state.currentGenerationId = '';
   syncFocusedMessage(state, { keepLatest: true });
   ctx.persistConversation();
-  recordGenerationDebug(ctx, 'discard:removed-empty-streaming');
+  recordGenerationDebug(ctx, 'discard:removed-provisional-streaming');
   return true;
 }
 
@@ -140,7 +130,7 @@ export function finalizeStreamingText(
   ctx: StreamingContext,
   text: string,
   generationId = ctx.state.currentGenerationId,
-  options: { allowEmpty?: boolean } = {},
+  options: { allowEmpty?: boolean; deferCommit?: boolean } = {},
 ) {
   const { state } = ctx;
   if (generationId && state.finalizedGenerationId === generationId) {
@@ -155,6 +145,7 @@ export function finalizeStreamingText(
     rawLength: String(text ?? '').length,
     visibleLength: visibleText.length,
     allowEmpty: Boolean(options.allowEmpty),
+    deferCommit: Boolean(options.deferCommit),
   });
 
   // 流式结束事件有时只包含思考标签或前置文本，真正的 <content> 会在 generate() 返回值里。
@@ -165,14 +156,23 @@ export function finalizeStreamingText(
     return;
   }
 
-  if (generationId) {
-    state.finalizedGenerationId = generationId;
-  }
-
   current.text = visibleText || current.text;
   const rawFinalText = String(text ?? '');
   if (rawFinalText.trim() && (/<tucao\b/i.test(rawFinalText) || !/<tucao\b/i.test(current.rawText ?? ''))) {
     current.rawText = rawFinalText;
+  }
+  if (options.deferCommit) {
+    syncFocusedMessage(state, { keepLatest: true });
+    recordGenerationDebug(ctx, 'finalize:staged-for-host', {
+      generationId,
+      stagedTextLength: current.text.length,
+    });
+    ctx.render();
+    return;
+  }
+
+  if (generationId) {
+    state.finalizedGenerationId = generationId;
   }
   current.streaming = false;
   state.currentGenerationId = '';
@@ -283,8 +283,8 @@ export function setupStreamingHooks(ctx: StreamingContext, eventStops: Array<() 
         return;
       }
       if (isActiveMainGeneration(generationId)) {
-        recordGenerationDebug(ctx, 'event:ended-accept', { generationId, rawLength: String(text ?? '').length });
-        finalizeStreamingText(ctx, String(text ?? ''), generationId, { allowEmpty: false });
+        recordGenerationDebug(ctx, 'event:ended-preview', { generationId, rawLength: String(text ?? '').length });
+        updateStreamingText(ctx, String(text ?? ''));
       } else {
         recordGenerationDebug(ctx, 'event:ended-ignore-inactive', {
           generationId,

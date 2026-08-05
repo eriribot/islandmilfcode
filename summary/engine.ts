@@ -1,4 +1,4 @@
-﻿import { extractTaggedReply, getPromptMessageText } from '../message-format';
+import { extractTaggedReply, getPromptMessageText, RECORD_CLERK_FRAMING } from '../message-format';
 import type { UiMessage } from '../types';
 import type { FactAnchor, KeyFact, KeyFactCategory, SummaryEntry, SummaryStore } from './types';
 import { KEY_FACT_CATEGORY_LABEL, KEY_FACT_CATEGORY_MAP } from './types';
@@ -44,7 +44,7 @@ export function shouldRunGlobalCompression(store: SummaryStore): boolean {
 type OrderedPrompt = { role: 'system' | 'user' | 'assistant'; content: string };
 
 const CHINESE_AUDIT_LANGUAGE_RULE =
-  '- 全程使用中文：最终标签内容、审计说明、思考标题、reasoning_content / 推理过程 / chain-of-thought 等任何可见或可记录的思考输出都必须用中文。禁止用英文进行内部推理或思考过渡，禁止出现 "Let me think / I will / The user wants / Step 1" 这类英文段落。中文以外的推理内容会被视为格式错误。';
+  '- 输出语言：最终输出（标签内容、审计说明、摘要、字段）必须全部用中文。推理过程 / chain-of-thought 允许沿用记录员独白的日语思考姿态，但日语、英文一律不得写进最终输出；输出里出现日文或英文段落视为格式错误。';
 
 /** 将消息列表格式化为 [说话人]\n内容 的文本块，供摘要 prompt 使用。 */
 function formatMessagesForSummary(messages: UiMessage[]): string {
@@ -209,6 +209,8 @@ export function buildMinorSummaryPrompt(messages: UiMessage[], anchor?: FactAnch
     {
       role: 'system',
       content: [
+        RECORD_CLERK_FRAMING,
+        '',
         MINOR_SUMMARY_FRAMEWORK,
         '',
         SUMMARY_SHARED_ACCURACY_RULES,
@@ -284,6 +286,8 @@ export function buildMajorSummaryPrompt(
     {
       role: 'system',
       content: [
+        RECORD_CLERK_FRAMING,
+        '',
         MAJOR_SUMMARY_FRAMEWORK,
         '',
         SUMMARY_SHARED_ACCURACY_RULES,
@@ -342,6 +346,8 @@ export function buildGlobalCompressionPrompt(
     {
       role: 'system',
       content: [
+        RECORD_CLERK_FRAMING,
+        '',
         GLOBAL_SUMMARY_FRAMEWORK,
         '',
         SUMMARY_SHARED_ACCURACY_RULES,

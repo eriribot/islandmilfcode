@@ -107,6 +107,8 @@ export type PersistedMessage = {
   rawText?: string;
   illustrations?: MessageIllustration[];
   statusSnapshot?: RollbackSnapshot;
+  /** Stable host marker + last-known position. message_id is only a locator hint. */
+  hostLocator?: import('./state/host-timeline-adapter').HostMessageLocator;
 };
 
 export type PersistedUserMessage = PersistedMessage & { role: 'user' };
@@ -489,6 +491,8 @@ export type UiMessage = {
   streaming?: boolean;
   tavernMessageId?: number;
   statusSnapshot?: RollbackSnapshot;
+  /** Real TT/ST message identity. The host marker is authoritative; the id is repairable. */
+  hostLocator?: import('./state/host-timeline-adapter').HostMessageLocator;
 };
 
 export type NotificationState = {
@@ -551,6 +555,20 @@ export type DrawingSettings = {
   systemPrompt: string;
 };
 
+/**
+ * The reader only keeps a bounded archive slice in memory. Message offsets
+ * use the persisted source-message coordinate; floor offsets use archive
+ * FloorRecord coordinates.
+ */
+export type MessageWindowState = {
+  startFloor: number;
+  endFloorExclusive: number;
+  startMessage: number;
+  endMessageExclusive: number;
+  totalFloorCount: number;
+  totalMessageCount: number;
+};
+
 export type AppState = {
   activeRunId: string | null;
   activeSaveId: string | null;
@@ -578,6 +596,7 @@ export type AppState = {
   plotLibrary: PlotLibrary;
   characterCardLibrary: CharacterCardLibrary;
   uiMessages: UiMessage[];
+  messageWindow: MessageWindowState;
   statusData: StatusData;
   musicPlayer: MusicPlayerState;
   drawingSettings: DrawingSettings;
@@ -645,6 +664,7 @@ export type TavernWindow = Window &
         message: string;
         is_hidden?: boolean;
         data?: Record<string, unknown>;
+        extra?: Record<string, unknown>;
       }>,
       option?: { refresh?: 'none' | 'affected' | 'all'; insert_before?: number | 'end' },
     ) => Promise<void>;
@@ -654,6 +674,7 @@ export type TavernWindow = Window &
     ) => void;
     getVariables?: (option?: Record<string, unknown>) => Record<string, unknown>;
     getCurrentMessageId?: () => number;
+    getLastMessageId?: () => number;
     getCharWorldbookNames?: (characterName: 'current' | string) => CharWorldbooks;
     getWorldbook?: (worldbookName: string) => Promise<WorldbookEntry[]>;
     createWorldbookEntries?: (worldbookName: string, entries: Array<Partial<WorldbookEntry>>) => Promise<unknown>;

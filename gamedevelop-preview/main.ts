@@ -1024,7 +1024,7 @@ function renderRoutePage(): void {
     ? `当前日期 ${state.currentDate} 在路线判断窗口内，${eligibleCount} 条路线满足当前事实。`
     : `当前日期 ${state.currentDate} 不在路线判断窗口内，choice 不能提交。`;
   routePageStatus.textContent = resolution.choice
-    ? `已锁定：${V07_PLOT_MACHINE.routes.find(route => route.id === resolution.choice)?.label ?? resolution.choice}`
+    ? `已锁定：${resolution.families.find(family => family.id === resolution.choice)?.label ?? resolution.choice}`
     : '尚未锁定路线';
   routePageStatus.className = `route-page-status ${resolution.choice ? 'is-locked' : ''}`;
   routeEvidencePage.innerHTML = signalDefinitions
@@ -1053,13 +1053,16 @@ function confirmLocalRoute(routeId: PlotRouteId, skipDialog = false): boolean {
     storedChoice: state.localChoice,
     routeId,
     source: 'manual',
+    currentMainEventId: '',
+    mainEvents: { 'SAE_07-8': '已结束' },
+    anchorFloorIndex: state.turn,
   });
   if (confirmation.status === 'rejected') return false;
   if (confirmation.status === 'unchanged') return true;
 
-  const route = confirmation.resolution.routes.find(item => item.id === routeId);
-  if (!route) return false;
-  if (!skipDialog && !window.confirm(`仅在本地预览中确认「${route.label}」路线？此操作不写生产 memoryDB。`)) return false;
+  const family = confirmation.resolution.families.find(item => item.id === routeId);
+  if (!family) return false;
+  if (!skipDialog && !window.confirm(`仅在本地预览中确认「${family.label}」路线？此操作不写生产 memoryDB。`)) return false;
   state.localChoice = confirmation.commit.receipt;
   state.lastTriggerChain = [
     `local route click: ${routeId}`,
@@ -1167,20 +1170,20 @@ function renderStorySignals(): void {
 function renderRouteResolution(): void {
   const resolution = resolveCurrentRoutes();
   const insideDecisionWindow = isPlotDateInWindow(state.currentDate, V07_PLOT_MACHINE.promptWindow);
-  routeResolutionList.innerHTML = resolution.routes
-    .map(route => {
-      const selected = resolution.choice === route.id;
-      const canChoose = route.eligible && insideDecisionWindow && !state.localChoice;
+  routeResolutionList.innerHTML = resolution.families
+    .map(family => {
+      const selected = resolution.choice === family.id;
+      const canChoose = insideDecisionWindow && !state.localChoice;
       return `
-        <article class="route-result ${route.eligible ? 'is-eligible' : ''} ${selected ? 'is-selected' : ''}">
+        <article class="route-result is-eligible ${selected ? 'is-selected' : ''}">
           <div>
-            <span>${route.eligible ? '可选' : '未满足'}</span>
-            <strong>${escapeHtml(route.label)}</strong>
+            <span>可选</span>
+            <strong>${escapeHtml(family.label)}</strong>
           </div>
-          <p>${route.missingFlagIds.length ? `缺少：${escapeHtml(route.missingFlagIds.join(' / '))}` : '全部必要事实已为 yes'}</p>
+          <p>${family.missingFlagIds.length ? `倾向事实尚缺：${escapeHtml(family.missingFlagIds.join(' / '))}` : '该路线倾向事实已完整'}</p>
           ${
             canChoose
-              ? `<button type="button" data-route-choice="${route.id}">本地确认</button>`
+              ? `<button type="button" data-route-choice="${family.id}">本地确认</button>`
               : selected
                 ? '<em>本地 choice 已锁定</em>'
                 : ''

@@ -52,6 +52,7 @@ import {
   restoreImageAssetFromBackup,
   type ImageAssetBackupRecord,
 } from './image-assets';
+import { parseHostMessageLocator } from './host-timeline-adapter';
 import {
   ISLANDMILFCODE_VERSION,
   SAVE_SCHEMA_VERSION,
@@ -430,6 +431,7 @@ function normalizePersistedMessages(messages: PersistedMessage[] | undefined): P
     )
     .map(message => {
       const statusSnapshot = normalizePersistedStatusSnapshot(message.statusSnapshot);
+      const hostLocator = parseHostMessageLocator(message.hostLocator);
       let id = typeof message.id === 'string' ? message.id.trim() : '';
       while (!id || seenIds.has(id)) id = crypto.randomUUID();
       seenIds.add(id);
@@ -447,6 +449,7 @@ function normalizePersistedMessages(messages: PersistedMessage[] | undefined): P
             }
           : {}),
         ...(statusSnapshot ? { statusSnapshot } : {}),
+        ...(hostLocator ? { hostLocator } : {}),
       };
     });
 }

@@ -1432,8 +1432,47 @@
     const object = await getArchiveObject({ kind: 'root', hash: rootHash }).catch(() => null);
     if (!isArchiveRootValue(object?.value)) return null;
     if (Number(object.value.formatVersion) > 3 || Number(object.value.schemaVersion) > 3) return object.value;
-    const state = await getArchiveObject({ kind: 'state', hash: object.value.stateHash }).catch(() => null);
-    return isRecord(state?.value) ? object.value : null;
+    const root = object.value;
+    const state = await getArchiveObject({ kind: 'state', hash: root.stateHash }).catch(() => null);
+    if (!isRecord(state?.value) || !isRecord(state.value.gameState)) return null;
+
+    if (typeof root.summaryHash !== 'string' || !root.summaryHash) return null;
+    const summary = await getArchiveObject({ kind: 'summary', hash: root.summaryHash }).catch(() => null);
+    if (!isRecord(summary?.value) || !isRecord(summary.value.summaryStore)) return null;
+
+    if (typeof root.memoryHash !== 'string' || !root.memoryHash) return null;
+    const memory = await getArchiveObject({ kind: 'memory', hash: root.memoryHash }).catch(() => null);
+    if (!isRecord(memory?.value) || !isRecord(memory.value.memoryDB)) return null;
+
+    const floorCount = Number(root.floorCount);
+    const chunkSize = Number(root.chunkSize);
+    const pageChunkCount = Number(root.indexPageChunkCount);
+    if (!Number.isInteger(floorCount) || floorCount < 0) return null;
+    if (!Number.isInteger(chunkSize) || chunkSize <= 0) return null;
+    if (!Number.isInteger(pageChunkCount) || pageChunkCount <= 0) return null;
+    if (!floorCount) return root;
+
+    const chunkNo = Math.ceil(floorCount / chunkSize) - 1;
+    const pageNo = Math.floor(chunkNo / pageChunkCount);
+    const pageHash = root.floorIndexPageHashes?.[String(pageNo)];
+    if (typeof pageHash !== 'string' || !pageHash) return null;
+    const page = await getArchiveObject({ kind: 'floor-index', hash: pageHash }).catch(() => null);
+    if (!isRecord(page?.value) || !Array.isArray(page.value.entries)) return null;
+    const entry = page.value.entries.find(candidate => isRecord(candidate) && Number(candidate.chunkNo) === chunkNo);
+    if (!isRecord(entry) || typeof entry.chunkHash !== 'string' || !entry.chunkHash) return null;
+    const chunk = await getArchiveObject({ kind: 'floor-chunk', hash: entry.chunkHash }).catch(() => null);
+    const expectedStart = chunkNo * chunkSize;
+    if (
+      !isRecord(chunk?.value)
+      || Number(chunk.value.startFloor) !== expectedStart
+      || Number(chunk.value.endFloorExclusive) !== floorCount
+      || !Array.isArray(chunk.value.floors)
+      || chunk.value.floors.length !== floorCount - expectedStart
+      || chunk.value.floors.some((floor, offset) => !isRecord(floor) || Number(floor.floorIndex) !== expectedStart + offset)
+    ) {
+      return null;
+    }
+    return root;
   }
 
   async function probeArchiveStorage() {
