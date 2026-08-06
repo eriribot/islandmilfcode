@@ -224,3 +224,24 @@ docs/16-floor-lazy-loading-operation-guide-v0.1.md
 4. 刷新一次并发送一轮新正文，确认酒馆外层不新增 `#1/#2`，正文只出现在 `#0` iframe。
 
 真实 SillyTavern 刷新与发送：**not run**。完成以上四项前，不把运行时修复标记为正式通过。
+
+## HP-010：高楼层重roll摘要清零修复与分类存储验收
+
+状态：waiting-for-human-review
+
+本轮修复两个共享边界：回滚裁剪使用调用方已经计算出的全局独占楼层边界，不再用当前驻留的 16 层切片长度压缩；v3 存档对象按固定类别写入 `user/files/islandmilfcode/` 下的 `dialogue`、`summaries`、`memory`、`system`、`media`、`legacy` 六个目录，同时兼容旧平铺和 `islandmilfcode-v3/` 单目录读取。
+
+自动证据：
+
+- 245 层、仅驻留 16 层、回滚到 243 的状态级合同：**passed**。
+- 原有大总结 `[0,104]`、`[105,239]` 保留，只有尾段 `[240,244]` 退役：**passed**。
+- SillyTavern 多级目录正例和穿越/绝对路径反例单测：**passed**。
+- 桥脚本语法、开发构建、正式构建、两仓 `git diff --check`：**passed**。
+
+仍需实战：
+
+- DS 在约 245 楼、内存仅驻留 16 层时执行重roll，确认摘要与回收站只变化尾段：**not run**。
+- 玩家人工确认摘要页的大总结、全局摘要、事实/事件/属性没有批量归零：**not run**。
+- 分类目录切换后刷新、手动保存/读取、关闭再打开 SillyTavern：**not run**。
+
+不自动恢复现有回收站批次；需先由 DS/玩家区分误退役与真实删除，避免复活本来就该删除的数据。

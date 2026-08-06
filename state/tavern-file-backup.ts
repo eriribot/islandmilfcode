@@ -400,7 +400,7 @@ export function probeTavernArchiveCapability(options: { force?: boolean } = {}):
         persistent?: boolean;
         storagePath?: string;
         archiveFormatVersion?: number;
-        archiveLayout?: 'subdir-v1' | 'flat-v3';
+        archiveLayout?: 'categorized-v1' | 'subdir-v1' | 'flat-v3';
       }>('probe');
       capability = {
         mode: result.archiveFormatVersion === 3 ? 'local-v3' : 'backend-unsupported',
@@ -473,7 +473,7 @@ function registryEntriesToPublic(registry: unknown): TavernBackupIndexEntry[] {
         updatedAt: Number(meta.updatedAt || entry.updatedAt) || 0,
         backedUpAt: new Date(Number(entry.updatedAt) || Date.now()).toISOString(),
         storage: 'archive-v3' as const,
-        storagePath: 'user/files/islandmilfcode-archive-registry-v3.json',
+        storagePath: 'user/files/islandmilfcode/system/islandmilfcode-archive-registry-v3.json',
       };
     });
 }

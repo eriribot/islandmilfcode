@@ -783,10 +783,9 @@ function pruneMemoryAndSummariesAfterRollback(
   options: { mergePrevious?: boolean } = {},
 ) {
   const { mergePrevious = true } = options;
-  const summaryFloorCount = countSummaryFloors(state);
   const pruneThreshold = Math.max(
     0,
-    Math.min(summaryFloorCount, Math.floor(pruneFromSummaryFloorIndex ?? summaryFloorCount)),
+    Math.floor(pruneFromSummaryFloorIndex ?? countSummaryFloors(state)),
   );
   if (mergePrevious) {
     mergeSummaryStoreAfterSnapshotRestore(state, previousSummaryStore, pruneThreshold);

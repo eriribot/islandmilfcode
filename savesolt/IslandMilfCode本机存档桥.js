@@ -8,6 +8,7 @@
   const LEGACY_RESPONSE_EVENT = 'islandmilfcode:tavern-backup:response:v1';
   const RUNTIME_KEY = '__islandmilfcodeTavernBackupBridgeV2__';
   const PUBLIC_FILE_ROOT = '/user/files';
+  const ISLANDMILFCODE_DIRECTORY = 'islandmilfcode';
   const BUNDLE_FILE = 'islandmilfcode-backups-v2.json';
   const LEGACY_INDEX_FILE = 'islandmilfcode-backup-index-v1.json';
   const AVATAR_IMAGE_FOLDER = 'islandmilfcode-avatars';
@@ -17,7 +18,18 @@
   const BUNDLE_VERSION = 2;
   const ARCHIVE_REGISTRY_FILE = 'islandmilfcode-archive-registry-v3.json';
   const ARCHIVE_PROBE_FILE = 'islandmilfcode-archive-probe-v3.json';
-  const ARCHIVE_OBJECT_DIRECTORY = 'islandmilfcode-v3';
+  const LEGACY_ARCHIVE_OBJECT_DIRECTORY = 'islandmilfcode-v3';
+  const ARCHIVE_DIRECTORIES = {
+    dialogue: `${ISLANDMILFCODE_DIRECTORY}/dialogue`,
+    summaries: `${ISLANDMILFCODE_DIRECTORY}/summaries`,
+    memory: `${ISLANDMILFCODE_DIRECTORY}/memory`,
+    system: `${ISLANDMILFCODE_DIRECTORY}/system`,
+    media: `${ISLANDMILFCODE_DIRECTORY}/media`,
+    legacy: `${ISLANDMILFCODE_DIRECTORY}/legacy`,
+  };
+  const ARCHIVE_REGISTRY_PATH = `${ARCHIVE_DIRECTORIES.system}/${ARCHIVE_REGISTRY_FILE}`;
+  const BUNDLE_PATH = `${ARCHIVE_DIRECTORIES.legacy}/${BUNDLE_FILE}`;
+  const LEGACY_INDEX_PATH = `${ARCHIVE_DIRECTORIES.legacy}/${LEGACY_INDEX_FILE}`;
   const ARCHIVE_IMAGE_DIRECTORY_PATH = '/user/images/islandmilfcode-v3-images/';
   const ARCHIVE_REGISTRY_LOCK = 'islandmilfcode-v3-registry';
   const ARCHIVE_REGISTRY_LEASE_KEY = 'islandmilfcode:v3-registry-lease';
@@ -201,6 +213,35 @@
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`读取 ${fileName} 失败：${await getResponseError(response)}`);
     return response.json();
+  }
+
+  async function readFirstJsonFile(paths) {
+    for (const relativePath of [...new Set(paths)]) {
+      const value = await readJsonFile(relativePath);
+      if (value !== null) return { value, relativePath };
+    }
+    return { value: null, relativePath: null };
+  }
+
+  async function readLegacyJsonFile(fileName) {
+    const categorizedPath = fileName === BUNDLE_FILE
+      ? BUNDLE_PATH
+      : fileName === LEGACY_INDEX_FILE ? LEGACY_INDEX_PATH : `${ARCHIVE_DIRECTORIES.legacy}/${fileName}`;
+    return (await readFirstJsonFile([
+      categorizedPath,
+      fileName,
+    ])).value;
+  }
+
+  async function uploadLegacyJsonFile(fileName, value) {
+    return uploadJsonFile(fileName, value, {
+      directory: ARCHIVE_DIRECTORIES.legacy,
+      allowFlatFallback: true,
+    });
+  }
+
+  async function readArchiveRegistryFile() {
+    return (await readFirstJsonFile([ARCHIVE_REGISTRY_PATH, ARCHIVE_REGISTRY_FILE])).value;
   }
 
   async function uploadJsonFile(fileName, value, options = {}) {
@@ -473,16 +514,16 @@
       updatedAt: entry.updatedAt,
       backedUpAt: entry.backedUpAt,
       storage,
-      storagePath: `user/files/${BUNDLE_FILE}`,
-      bundleFile: BUNDLE_FILE,
+      storagePath: `user/files/${BUNDLE_PATH}`,
+      bundleFile: BUNDLE_PATH,
       imageFolders,
     };
   }
 
   async function listBackups() {
     const results = await Promise.allSettled([
-      readJsonFile(BUNDLE_FILE).then(normalizeBundle),
-      readJsonFile(LEGACY_INDEX_FILE).then(normalizeLegacyIndex),
+      readLegacyJsonFile(BUNDLE_FILE).then(normalizeBundle),
+      readLegacyJsonFile(LEGACY_INDEX_FILE).then(normalizeLegacyIndex),
     ]);
     const bundle = results[0].status === 'fulfilled' ? results[0].value : createEmptyBundle();
     const legacyIndex = results[1].status === 'fulfilled' ? results[1].value : createEmptyLegacyIndex();
@@ -497,7 +538,7 @@
 
   async function writeBackup(input) {
     const backup = assertBackup(input);
-    const bundle = readBundleForWrite(await readJsonFile(BUNDLE_FILE));
+    const bundle = readBundleForWrite(await readLegacyJsonFile(BUNDLE_FILE));
     const backedUpAt = new Date().toISOString();
     const token = safeFileToken(backup.saveId);
     const stateEnvelope = {
@@ -543,9 +584,9 @@
 
     bundle.updatedAt = backedUpAt;
     bundle.entries = [entry, ...bundle.entries.filter(item => item.saveId !== entry.saveId)];
-    await uploadJsonFile(BUNDLE_FILE, bundle);
+    await uploadLegacyJsonFile(BUNDLE_FILE, bundle);
 
-    const persistedBundle = normalizeBundle(await readJsonFile(BUNDLE_FILE));
+    const persistedBundle = normalizeBundle(await readLegacyJsonFile(BUNDLE_FILE));
     const persistedEntry = persistedBundle.entries.find(item => item.saveId === entry.saveId);
     if (
       !persistedEntry ||
@@ -642,8 +683,8 @@
 
     const preferredStorage = preferredStorageValue === 'legacy-v1' ? 'legacy-v1' : 'bundle-v2';
     const [bundleResult, legacyResult] = await Promise.allSettled([
-      readJsonFile(BUNDLE_FILE).then(normalizeBundle),
-      readJsonFile(LEGACY_INDEX_FILE).then(normalizeLegacyIndex),
+      readLegacyJsonFile(BUNDLE_FILE).then(normalizeBundle),
+      readLegacyJsonFile(LEGACY_INDEX_FILE).then(normalizeLegacyIndex),
     ]);
     const bundle = bundleResult.status === 'fulfilled' ? bundleResult.value : createEmptyBundle();
     const legacyIndex = legacyResult.status === 'fulfilled' ? legacyResult.value : createEmptyLegacyIndex();
@@ -684,15 +725,32 @@
     return `islandmilfcode-v3-${safeFileToken(kind)}-${safeFileToken(hash)}.json`;
   }
 
+  function archiveObjectDirectory(fileName) {
+    const kind = String(fileName).match(
+      /^islandmilfcode-v3-(floor-chunk|floor-index|summary|memory|compatibility|state|root|image)-/,
+    )?.[1];
+    if (kind === 'floor-chunk' || kind === 'floor-index') return ARCHIVE_DIRECTORIES.dialogue;
+    if (kind === 'summary') return ARCHIVE_DIRECTORIES.summaries;
+    if (kind === 'memory') return ARCHIVE_DIRECTORIES.memory;
+    if (kind === 'image') return ARCHIVE_DIRECTORIES.media;
+    return ARCHIVE_DIRECTORIES.system;
+  }
+
   function archiveObjectPath(fileName, layout = archiveLayout) {
-    return layout === 'subdir-v1' ? `${ARCHIVE_OBJECT_DIRECTORY}/${fileName}` : fileName;
+    if (layout === 'categorized-v1') return `${archiveObjectDirectory(fileName)}/${fileName}`;
+    if (layout === 'subdir-v1') return `${LEGACY_ARCHIVE_OBJECT_DIRECTORY}/${fileName}`;
+    return fileName;
   }
 
   function archiveReadPaths(fileName) {
-    const nestedPath = `${ARCHIVE_OBJECT_DIRECTORY}/${fileName}`;
-    // Prefer the negotiated layout to avoid one guaranteed 404 per object, but
-    // retain the other path as a migration/downgrade fallback.
-    return archiveLayout === 'flat-v3' ? [fileName, nestedPath] : [nestedPath, fileName];
+    const categorizedPath = archiveObjectPath(fileName, 'categorized-v1');
+    const nestedPath = archiveObjectPath(fileName, 'subdir-v1');
+    const candidates = archiveLayout === 'flat-v3'
+      ? [fileName, categorizedPath, nestedPath]
+      : archiveLayout === 'subdir-v1'
+        ? [nestedPath, categorizedPath, fileName]
+        : [categorizedPath, nestedPath, fileName];
+    return [...new Set(candidates)];
   }
 
   async function findArchiveJsonFile(fileName, predicate) {
@@ -715,7 +773,9 @@
     if (archiveLayout === 'unknown') {
       throw new Error('v3 存储布局尚未探测');
     }
-    const directory = archiveLayout === 'subdir-v1' ? ARCHIVE_OBJECT_DIRECTORY : '';
+    const directory = archiveLayout === 'categorized-v1'
+      ? archiveObjectDirectory(fileName)
+      : archiveLayout === 'subdir-v1' ? LEGACY_ARCHIVE_OBJECT_DIRECTORY : '';
     const result = await uploadJsonFile(fileName, value, { directory });
     return {
       ...result,
@@ -1189,7 +1249,10 @@
 
   async function persistArchiveRegistry(registry) {
     registry.updatedAt = new Date().toISOString();
-    await uploadJsonFile(ARCHIVE_REGISTRY_FILE, registry);
+    await uploadJsonFile(ARCHIVE_REGISTRY_FILE, registry, {
+      directory: ARCHIVE_DIRECTORIES.system,
+      allowFlatFallback: true,
+    });
   }
 
   async function deferArchiveGc(registry, tombstoneId, tombstone, blocker) {
@@ -1239,7 +1302,7 @@
   }
 
   async function runArchiveGcMaintenanceUnlocked() {
-    let registry = readArchiveRegistry(await readJsonFile(ARCHIVE_REGISTRY_FILE), true);
+    let registry = readArchiveRegistry(await readArchiveRegistryFile(), true);
     const selected = selectArchiveGcTombstone(registry);
     if (!selected) return { ...archiveGcQueueSummary(registry, 'none'), continue: false };
     const [tombstoneId, originalTombstone] = selected;
@@ -1352,7 +1415,7 @@
     const deletion = await deleteGcBatch(batch);
     // Re-read before merging so the non-Web-Locks fallback is less likely to
     // overwrite a newer registry written by another page.
-    registry = readArchiveRegistry(await readJsonFile(ARCHIVE_REGISTRY_FILE), true);
+    registry = readArchiveRegistry(await readArchiveRegistryFile(), true);
     const latestTombstone = registry.gcTombstones[tombstoneId];
     if (!isRecord(latestTombstone)) {
       return { ...archiveGcQueueSummary(registry), continue: archiveGcEntries(registry).length > 0 };
@@ -1481,12 +1544,12 @@
     let probePath;
     if (archiveLayout === 'unknown') {
       const upload = await uploadJsonFile(ARCHIVE_PROBE_FILE, probe, {
-        directory: ARCHIVE_OBJECT_DIRECTORY,
+        directory: ARCHIVE_DIRECTORIES.system,
         allowFlatFallback: true,
       });
-      archiveLayout = upload.directoryApplied ? 'subdir-v1' : 'flat-v3';
+      archiveLayout = upload.directoryApplied ? 'categorized-v1' : 'flat-v3';
       probePath = upload.directoryApplied
-        ? `${ARCHIVE_OBJECT_DIRECTORY}/${ARCHIVE_PROBE_FILE}`
+        ? `${ARCHIVE_DIRECTORIES.system}/${ARCHIVE_PROBE_FILE}`
         : ARCHIVE_PROBE_FILE;
     } else {
       const upload = await uploadArchiveJsonFile(ARCHIVE_PROBE_FILE, probe);
@@ -1495,13 +1558,13 @@
     const readBack = await readJsonFile(probePath);
     if (!isRecord(readBack) || readBack.nonce !== nonce) throw new Error('v3 本机存储探针回读不一致');
     await deletePublicFile(fileUrl(probePath)).catch(() => undefined);
-    const registry = readArchiveRegistry(await readJsonFile(ARCHIVE_REGISTRY_FILE));
+    const registry = readArchiveRegistry(await readArchiveRegistryFile());
     return {
       persistent: true,
       archiveFormatVersion: 3,
       archiveLayout,
       registryLock: archiveRegistryLockMode(),
-      storagePath: `user/files/${ARCHIVE_REGISTRY_FILE}`,
+      storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
       saveCount: Object.keys(registry.entries).length,
       gc: archiveGcQueueSummary(registry),
       lastGc: registry.lastGc,
@@ -1521,7 +1584,8 @@
       fileName,
       value => isStoredArchiveObject(value, object.kind, object.hash, object.value),
     );
-    if (existing && !(archiveLayout === 'subdir-v1' && existing.relativePath === fileName)) {
+    const canonicalPath = archiveObjectPath(fileName);
+    if (existing?.relativePath === canonicalPath) {
       return archiveWriteResult('reused', {
         kind: object.kind,
         hash: object.hash,
@@ -1541,8 +1605,8 @@
     if (!isStoredArchiveObject(readBack, object.kind, object.hash, object.value)) {
       throw new Error(`v3 object 回读校验失败：${object.kind}/${object.hash}`);
     }
-    if (archiveLayout === 'subdir-v1' && existing?.relativePath === fileName) {
-      await deletePublicFile(fileUrl(fileName)).catch(() => undefined);
+    if (existing && existing.relativePath !== canonicalPath) {
+      await deletePublicFile(fileUrl(existing.relativePath)).catch(() => undefined);
     }
     return archiveWriteResult('uploaded', {
       kind: object.kind,
@@ -1570,6 +1634,7 @@
     const contentHash = await hashArchiveText(asset.dataUrl);
     const manifestFile = archiveObjectFile('image', asset.id);
     const storagePath = `user/files/${archiveObjectPath(manifestFile)}`;
+    const canonicalPath = archiveObjectPath(manifestFile);
     const existing = await findArchiveJsonFile(
       manifestFile,
       value => isStoredArchiveImage(value, asset, contentHash),
@@ -1578,7 +1643,7 @@
     if (
       existing &&
       existingReadable &&
-      !(archiveLayout === 'subdir-v1' && existing.relativePath === manifestFile)
+      existing.relativePath === canonicalPath
     ) {
       return archiveWriteResult('reused', {
         assetId: asset.id,
@@ -1589,15 +1654,14 @@
     if (
       existing &&
       existingReadable &&
-      archiveLayout === 'subdir-v1' &&
-      existing.relativePath === manifestFile
+      existing.relativePath !== canonicalPath
     ) {
       await uploadArchiveJsonFile(manifestFile, existing.value);
       const migrated = await readJsonFile(archiveObjectPath(manifestFile));
       if (!isStoredArchiveImage(migrated, asset, contentHash)) {
         throw new Error(`v3 image manifest 迁移回读校验失败：${asset.id}`);
       }
-      await deletePublicFile(fileUrl(manifestFile)).catch(() => undefined);
+      await deletePublicFile(fileUrl(existing.relativePath)).catch(() => undefined);
       return archiveWriteResult('uploaded', {
         assetId: asset.id,
         reference: existing.value.reference,
@@ -1617,8 +1681,8 @@
     if (!isStoredArchiveImage(readBack, asset, contentHash)) {
       throw new Error(`v3 image manifest 回读校验失败：${asset.id}`);
     }
-    if (archiveLayout === 'subdir-v1' && existing?.relativePath === manifestFile) {
-      await deletePublicFile(fileUrl(manifestFile)).catch(() => undefined);
+    if (existing && existing.relativePath !== canonicalPath) {
+      await deletePublicFile(fileUrl(existing.relativePath)).catch(() => undefined);
     }
     return archiveWriteResult(
       'uploaded',
@@ -1660,7 +1724,7 @@
     if (!saveId || !rootHash || !isRecord(request.root) || !isRecord(request.meta)) {
       throw new Error('提交 v3 root 时缺少 saveId/rootHash/root/meta');
     }
-    const registry = readArchiveRegistry(await readJsonFile(ARCHIVE_REGISTRY_FILE), true);
+    const registry = readArchiveRegistry(await readArchiveRegistryFile(), true);
     const rootRevision = Number(request.root.revision);
     const metaRevision = Number(request.meta.browserRevision);
     const revision = Math.max(0, Math.floor(Number.isFinite(rootRevision) ? rootRevision : (metaRevision || 0)));
@@ -1676,7 +1740,7 @@
           deletedAt,
           revision: Math.max(0, Number(deletionFence.revision) || 0),
           gc: archiveGcQueueSummary(registry),
-          storagePath: `user/files/${ARCHIVE_REGISTRY_FILE}`,
+          storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
         };
       }
       // A genuinely new player action after deletion may intentionally recreate
@@ -1696,7 +1760,7 @@
         entry: previous,
         ignored: true,
         reason: 'older-revision',
-        storagePath: `user/files/${ARCHIVE_REGISTRY_FILE}`,
+        storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
       };
     }
     if (previous && revision === previousRevision) {
@@ -1711,9 +1775,9 @@
         rootWrite,
         gc: archiveGcQueueSummary(registry),
         registryWrite: archiveWriteResult('reused', {
-          storagePath: `user/files/${ARCHIVE_REGISTRY_FILE}`,
+          storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
         }),
-        storagePath: `user/files/${ARCHIVE_REGISTRY_FILE}`,
+        storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
       };
     }
     const rootWrite = await putArchiveObject({ object: { kind: 'root', hash: rootHash, value: request.root } });
@@ -1757,7 +1821,7 @@
     registry.entries = { ...registry.entries, [saveId]: entry };
     registry.deletedSaves = pruneDeletedSaveFences(registry.deletedSaves);
     await persistArchiveRegistry(registry);
-    const readBack = readArchiveRegistry(await readJsonFile(ARCHIVE_REGISTRY_FILE));
+    const readBack = readArchiveRegistry(await readArchiveRegistryFile());
     const confirmed = readBack.entries[saveId];
     if (!isRecord(confirmed) || confirmed.rootHash !== rootHash || Number(confirmed.revision) !== entry.revision) {
       throw new Error('v3 registry 提交后回读校验失败');
@@ -1770,9 +1834,9 @@
       rootWrite,
       gc: archiveGcQueueSummary(readBack),
       registryWrite: archiveWriteResult('uploaded', {
-        storagePath: `user/files/${ARCHIVE_REGISTRY_FILE}`,
+        storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
       }),
-      storagePath: `user/files/${ARCHIVE_REGISTRY_FILE}`,
+      storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
     };
   }
 
@@ -1784,7 +1848,7 @@
     const saveId = String(request.saveId || '').trim();
     if (!saveId) throw new Error('删除 v3 本机存档时缺少 saveId');
     if (archiveLayout === 'unknown') await probeArchiveStorage();
-    let registry = readArchiveRegistry(await readJsonFile(ARCHIVE_REGISTRY_FILE), true);
+    let registry = readArchiveRegistry(await readArchiveRegistryFile(), true);
     const entry = registry.entries[saveId];
     let tombstoneId = null;
     const deleted = isRecord(entry);
@@ -1828,7 +1892,7 @@
       },
     });
     await persistArchiveRegistry(registry);
-    const confirmed = readArchiveRegistry(await readJsonFile(ARCHIVE_REGISTRY_FILE), true);
+    const confirmed = readArchiveRegistry(await readArchiveRegistryFile(), true);
     if (saveId in confirmed.entries) throw new Error('v3 registry 删除存档后回读仍存在');
     if (!isRecord(confirmed.deletedSaves[saveId])) {
       throw new Error('v3 registry 删除存档后未保留延迟提交栅栏');
@@ -1851,7 +1915,7 @@
 
   async function readArchiveRoot(request) {
     const saveId = String(request.saveId || '').trim();
-    const registry = readArchiveRegistry(await readJsonFile(ARCHIVE_REGISTRY_FILE));
+    const registry = readArchiveRegistry(await readArchiveRegistryFile());
     const entry = registry.entries[saveId];
     if (!isRecord(entry) || typeof entry.rootHash !== 'string') return { entry: null, root: null };
     const root = await readUsableArchiveRoot(entry.rootHash);
@@ -1914,7 +1978,7 @@
       case 'v3-read-root':
         return readArchiveRoot(request);
       case 'v3-read-registry':
-        return { registry: readArchiveRegistry(await readJsonFile(ARCHIVE_REGISTRY_FILE)) };
+        return { registry: readArchiveRegistry(await readArchiveRegistryFile()) };
       default:
         throw new Error(`不支持的本机存档操作：${String(request.action)}`);
     }
@@ -2036,7 +2100,7 @@
         legacySubscription?.stop?.();
       },
     };
-    console.info(`[IslandMilfCode Saves] v3 本机存档桥已启动：user/files/${ARCHIVE_REGISTRY_FILE}`);
+    console.info(`[IslandMilfCode Saves] v3 本机存档桥已启动：user/files/${ARCHIVE_REGISTRY_PATH}`);
   } catch (error) {
     console.warn('[IslandMilfCode Saves] 桥初始化失败；游戏仍可使用浏览器存档:', error);
   }

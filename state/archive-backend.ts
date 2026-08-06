@@ -167,7 +167,7 @@ export type ArchiveLocalCapability = {
   protocolVersion: number | null;
   persistent: boolean;
   storagePath: string;
-  archiveLayout?: 'subdir-v1' | 'flat-v3';
+  archiveLayout?: 'categorized-v1' | 'subdir-v1' | 'flat-v3';
   reason?: string;
 };
 

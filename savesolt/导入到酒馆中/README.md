@@ -13,9 +13,16 @@
 
 ## v3 文件布局
 
-- `user/files/islandmilfcode-archive-registry-v3.json`：很小的活动根索引，保存当前 root 与上一 root。
-- `user/files/islandmilfcode-v3/islandmilfcode-v3-<kind>-<hash>.json`：宿主支持目录协议时的 v3 对象目录；状态、楼层块、楼层索引、摘要和记忆都按内容哈希共享。
-- `user/files/islandmilfcode-v3-<kind>-<hash>.json`：旧 ST/TT 不支持目录上传时的自动兼容布局；功能和回收规则相同，不会因为宿主较旧而阻止玩家存档。
+支持多级目录的 SillyTavern 使用 `user/files/islandmilfcode/` 作为唯一根目录：
+
+- `dialogue/`：楼层正文块和楼层索引。
+- `summaries/`：大小总结与全局摘要对象。
+- `memory/`：记忆库对象。
+- `system/`：registry、root、状态和兼容数据。
+- `media/`：图片清单；实际图片仍在 `user/images/islandmilfcode-v3-images/`。
+- `legacy/`：v1/v2 整包备份和旧索引。
+
+对象仍按内容哈希共享，目录只负责分类，不改变 v3 schema、hash 或 registry 引用。桥读取时依次兼容新分类目录、旧 `user/files/islandmilfcode-v3/` 单目录和旧根目录平铺；迁移对象时先写新位置并回读校验，再删除旧副本。
 - `user/images/islandmilfcode-v3-images/`：v3 正文插图与头像。
 - `islandmilfcode-archive-probe-v3.json`：固定名称的写入/回读能力探针；探测完即删除，不会不断制造新文件。
 
@@ -39,11 +46,11 @@
 
 - 标准 SillyTavern：对官方 `1.18.0`（提交 `51ad27fb86d39a3daca3adaa970375c9670c12df`）应用 `savesolt/SillyTavern-1.18.0-v3-directory-host.patch`，先执行 `git apply --check <补丁路径>`，确认通过后再执行 `git apply <补丁路径>` 并重启 ST。其他版本不要强行套用此补丁。
 - TauriTavern：官方当前版本还没有这个上传参数；本项目提供 `savesolt/TauriTavern-v3-directory-host.patch` 供 TT 宿主源码应用和重新构建。
-- 未应用宿主补丁时，桥会自动显示 `archiveLayout: "flat-v3"` 并继续正常存档/回收；已支持时为 `archiveLayout: "subdir-v1"`。目录不是可玩性的前置条件。
+- 未应用宿主补丁时，桥会自动显示 `archiveLayout: "flat-v3"` 并继续正常存档/回收；已支持分类目录时为 `archiveLayout: "categorized-v1"`。旧 `subdir-v1` 只保留为读取兼容。目录不是可玩性的前置条件。
 
 ## 旧版兼容文件
 
-- `user/files/islandmilfcode-backups-v2.json`：旧版整包存档。
+- `user/files/islandmilfcode/legacy/islandmilfcode-backups-v2.json`：旧版整包存档；根目录旧副本仍可读取。
 - `user/images/islandmilfcode-avatars/`：玩家自定义头像。
 - `user/images/islandmilfcode-assets-<saveId>/`：对应存档的正文图片资源。
 

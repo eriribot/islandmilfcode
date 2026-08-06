@@ -1,183 +1,124 @@
 diff --git a/src/endpoints/files.js b/src/endpoints/files.js
-index 46abc82c99f57c790544e78cdb73f689b69fb0da..ee953d6cb6c0c85c27e24d48bd3fd4e1d2091a1a 100644
+index 46abc82c9..ebf8bd9de 100644
 --- a/src/endpoints/files.js
 +++ b/src/endpoints/files.js
-@@ -10,6 +10,68 @@ import { clientRelativePath } from '../util.js';
+@@ -6,10 +6,54 @@ import sanitize from 'sanitize-filename';
+ import { sync as writeFileSyncAtomic } from 'write-file-atomic';
+
+ import { validateAssetFileName } from './assets.js';
+-import { clientRelativePath } from '../util.js';
++import { clientRelativePath, isPathUnderParent } from '../util.js';
  
  export const router = express.Router();
  
-+function writeFileOperationLog(message) {
-+    try {
-+        const timestamp = new Date().toISOString();
-+        const logDirectory = path.join(globalThis.DATA_ROOT, 'logs');
-+        const logPath = path.join(logDirectory, `file-operations-${timestamp.slice(0, 10)}.log`);
-+        fs.mkdirSync(logDirectory, { recursive: true });
-+        fs.appendFileSync(logPath, `${timestamp} ${message}\n`, 'utf8');
-+    } catch (error) {
-+        // Logging must never turn a successful file operation into a failure.
-+        console.warn('Failed to write file operation log:', error);
++export function validateFileDirectory(input) {
++    if (input === undefined || input === null || input === '') {
++        return { error: false, directory: '' };
 +    }
++
++    if (typeof input !== 'string' || input.length > 256 || input.includes('\\')) {
++        return { error: true, message: 'Invalid upload directory.' };
++    }
++
++    const segments = input.split('/');
++    if (segments.some(segment => !segment || segment === '.' || segment === '..')) {
++        return { error: true, message: 'Invalid upload directory.' };
++    }
++
++    for (const segment of segments) {
++        if (!/^[a-zA-Z0-9_-]+$/.test(segment) || sanitize(segment) !== segment) {
++            return { error: true, message: 'Invalid upload directory.' };
++        }
++    }
++
++    return { error: false, directory: segments.join(path.sep) };
 +}
 +
-+/**
-+ * Checks whether a resolved path is contained by a directory.
-+ * @param {string} directory Root directory
-+ * @param {string} target Candidate path
-+ * @param {boolean} allowSame Whether the candidate may equal the root
-+ * @returns {boolean}
-+ */
-+function isPathInsideDirectory(directory, target, allowSame = false) {
-+    const relative = path.relative(path.resolve(directory), path.resolve(target));
-+    if (!relative) {
-+        return allowSame;
++function ensureUploadDirectory(filesDirectory, relativeDirectory) {
++    const filesRoot = fs.realpathSync(filesDirectory);
++    let current = filesRoot;
++    for (const segment of relativeDirectory.split(path.sep).filter(Boolean)) {
++        const next = path.join(current, segment);
++        if (fs.existsSync(next)) {
++            const stat = fs.lstatSync(next);
++            if (stat.isSymbolicLink() || !stat.isDirectory()) {
++                throw new Error('Invalid upload directory.');
++            }
++        } else {
++            fs.mkdirSync(next);
++        }
++        current = fs.realpathSync(next);
++        if (!isPathUnderParent(filesRoot, current)) {
++            throw new Error('Invalid upload directory.');
++        }
 +    }
-+
-+    return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
-+}
-+
-+/**
-+ * Resolves an optional, single-level upload directory below user/files.
-+ * @param {string} filesDirectory User files directory
-+ * @param {unknown} requestedDirectory Requested child directory
-+ * @returns {{path?: string, error?: string}}
-+ */
-+function resolveUploadDirectory(filesDirectory, requestedDirectory) {
-+    const filesRoot = path.resolve(filesDirectory);
-+    if (requestedDirectory === undefined || requestedDirectory === null || requestedDirectory === '') {
-+        return { path: filesRoot };
-+    }
-+
-+    if (typeof requestedDirectory !== 'string') {
-+        return { error: 'Invalid upload directory' };
-+    }
-+
-+    const directory = requestedDirectory.trim();
-+    if (!directory) {
-+        return { path: filesRoot };
-+    }
-+
-+    if (directory.length > 96 || !/^[a-zA-Z0-9_-]+$/.test(directory) || sanitize(directory) !== directory) {
-+        return { error: 'Invalid upload directory' };
-+    }
-+
-+    const uploadDirectory = path.resolve(filesRoot, directory);
-+    if (!isPathInsideDirectory(filesRoot, uploadDirectory)) {
-+        return { error: 'Invalid upload directory' };
-+    }
-+
-+    return { path: uploadDirectory };
++    return current;
 +}
 +
  router.post('/sanitize-filename', async (request, response) => {
      try {
          const fileName = String(request.body.fileName);
-@@ -40,10 +102,34 @@ router.post('/upload', async (request, response) => {
+@@ -40,7 +84,20 @@ router.post('/upload', async (request, response) => {
          if (validation.error)
              return response.status(400).send(validation.message);
  
 -        const pathToUpload = path.join(request.user.directories.files, request.body.name);
-+        const directoryResult = resolveUploadDirectory(request.user.directories.files, request.body.directory);
-+        if (directoryResult.error || !directoryResult.path) {
-+            return response.status(400).send(directoryResult.error || 'Invalid upload directory');
-+        }
++        const directoryValidation = validateFileDirectory(request.body.directory);
++        if (directoryValidation.error)
++            return response.status(400).send(directoryValidation.message);
 +
-+        fs.mkdirSync(directoryResult.path, { recursive: true });
-+        const filesRoot = fs.realpathSync(request.user.directories.files);
-+        const uploadDirectory = fs.realpathSync(directoryResult.path);
-+        if (!isPathInsideDirectory(filesRoot, uploadDirectory, true)) {
-+            return response.status(400).send('Invalid upload directory');
++        let uploadDirectory;
++        try {
++            uploadDirectory = ensureUploadDirectory(request.user.directories.files, directoryValidation.directory);
++        } catch {
++            return response.status(400).send('Invalid upload directory.');
 +        }
-+
-+        const logicalPathToUpload = path.resolve(directoryResult.path, request.body.name);
-+        const pathToUpload = path.resolve(uploadDirectory, request.body.name);
-+        if (
-+            !isPathInsideDirectory(directoryResult.path, logicalPathToUpload)
-+            || !isPathInsideDirectory(uploadDirectory, pathToUpload)
-+        ) {
-+            return response.status(400).send('Invalid upload path');
-+        }
-+
-+        if (fs.existsSync(pathToUpload) && fs.lstatSync(pathToUpload).isSymbolicLink()) {
-+            return response.status(400).send('Invalid upload path');
-+        }
++        const pathToUpload = path.join(uploadDirectory, request.body.name);
++        if (fs.existsSync(pathToUpload) && fs.lstatSync(pathToUpload).isSymbolicLink())
++            return response.status(400).send('Invalid upload path.');
 +
          writeFileSyncAtomic(pathToUpload, request.body.data, 'base64');
--        const url = clientRelativePath(request.user.directories.root, pathToUpload);
--        console.info(`Uploaded file: ${url} from ${request.user.profile.handle}`);
-+        const url = clientRelativePath(request.user.directories.root, logicalPathToUpload);
-+        writeFileOperationLog(`Uploaded file: ${url} from ${request.user.profile.handle}`);
-         return response.send({ path: url });
-     } catch (error) {
-         console.error(error);
-@@ -57,8 +143,9 @@ router.post('/delete', async (request, response) => {
+         const url = clientRelativePath(request.user.directories.root, pathToUpload);
+         console.info(`Uploaded file: ${url} from ${request.user.profile.handle}`);
+@@ -57,8 +114,9 @@ router.post('/delete', async (request, response) => {
              return response.status(400).send('No path specified');
          }
  
 -        const pathToDelete = path.join(request.user.directories.root, request.body.path);
 -        if (!pathToDelete.startsWith(request.user.directories.files)) {
-+        const pathToDelete = path.resolve(path.join(request.user.directories.root, request.body.path));
 +        const filesRoot = fs.realpathSync(request.user.directories.files);
-+        if (!isPathInsideDirectory(filesRoot, pathToDelete)) {
++        const pathToDelete = path.resolve(path.join(request.user.directories.root, request.body.path));
++        if (!isPathUnderParent(filesRoot, pathToDelete)) {
              return response.status(400).send('Invalid path');
          }
  
-@@ -66,8 +153,13 @@ router.post('/delete', async (request, response) => {
+@@ -66,6 +124,11 @@ router.post('/delete', async (request, response) => {
              return response.status(404).send('File not found');
          }
  
 +        const realPathToDelete = fs.realpathSync(pathToDelete);
-+        if (!isPathInsideDirectory(filesRoot, realPathToDelete)) {
++        if (!isPathUnderParent(filesRoot, realPathToDelete)) {
 +            return response.status(400).send('Invalid path');
 +        }
 +
          fs.unlinkSync(pathToDelete);
--        console.info(`Deleted file: ${request.body.path} from ${request.user.profile.handle}`);
-+        writeFileOperationLog(`Deleted file: ${request.body.path} from ${request.user.profile.handle}`);
+         console.info(`Deleted file: ${request.body.path} from ${request.user.profile.handle}`);
          return response.sendStatus(200);
-     } catch (error) {
-         console.error(error);
-@@ -84,8 +176,9 @@ router.post('/verify', async (request, response) => {
+@@ -84,13 +147,14 @@ router.post('/verify', async (request, response) => {
          const verified = {};
  
          for (const url of request.body.urls) {
 -            const pathToVerify = path.join(request.user.directories.root, url);
 -            if (!pathToVerify.startsWith(request.user.directories.files)) {
-+            const pathToVerify = path.resolve(path.join(request.user.directories.root, url));
 +            const filesRoot = fs.realpathSync(request.user.directories.files);
-+            if (!isPathInsideDirectory(filesRoot, pathToVerify)) {
++            const pathToVerify = path.resolve(path.join(request.user.directories.root, url));
++            if (!isPathUnderParent(filesRoot, pathToVerify)) {
                  console.warn(`File verification: Invalid path: ${pathToVerify}`);
                  continue;
              }
-diff --git a/src/endpoints/images.js b/src/endpoints/images.js
-index e6f7e98eafa70ea888e81f145c65f6a24ec605bb..49712e1b64c18b75b81a8cdb896208a1135fa974 100644
---- a/src/endpoints/images.js
-+++ b/src/endpoints/images.js
-@@ -25,6 +25,19 @@ function ensureDirectoryExistence(filePath) {
- 
- export const router = express.Router();
- 
-+function writeFileOperationLog(message) {
-+    try {
-+        const timestamp = new Date().toISOString();
-+        const logDirectory = path.join(globalThis.DATA_ROOT, 'logs');
-+        const logPath = path.join(logDirectory, `file-operations-${timestamp.slice(0, 10)}.log`);
-+        fs.mkdirSync(logDirectory, { recursive: true });
-+        fs.appendFileSync(logPath, `${timestamp} ${message}\n`, 'utf8');
-+    } catch (error) {
-+        // Logging must not turn a successful image deletion into a failure.
-+        console.warn('Failed to write file operation log:', error);
-+    }
-+}
-+
- /**
-  * Endpoint to handle image uploads.
-  * The image should be provided in the request body in base64 format.
-@@ -146,7 +159,7 @@ router.post('/delete', async (request, response) => {
+             const fileExists = fs.existsSync(pathToVerify);
+-            verified[url] = fileExists;
++            verified[url] = fileExists && isPathUnderParent(filesRoot, fs.realpathSync(pathToVerify));
          }
  
-         fs.unlinkSync(pathToDelete);
--        console.info(`Deleted image: ${request.body.path} from ${request.user.profile.handle}`);
-+        writeFileOperationLog(`Deleted image: ${request.body.path} from ${request.user.profile.handle}`);
-         return response.sendStatus(200);
-     } catch (error) {
-         console.error(error);
+         return response.send(verified);
