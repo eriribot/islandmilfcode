@@ -371,9 +371,6 @@ async function normalizeVirtualTurnResult(value: unknown): Promise<ShujukuVirtua
   if (!isRecord(value.diagnostics) || value.diagnostics.adapterRestored !== true) {
     throw new Error('shujuku 虚拟 runtime 未确认恢复');
   }
-  if (value.databaseCommitted !== true || value.planningObserved !== true) {
-    throw new Error('shujuku 虚拟回合未完成规划与数据库提交');
-  }
   return {
     rawText: value.rawText,
     ...(typeof value.plannedText === 'string' && value.plannedText.trim()

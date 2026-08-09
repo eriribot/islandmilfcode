@@ -936,6 +936,41 @@ button {
   color: var(--ink-dark);
 }
 
+.reader-shujuku-plan {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--paper-line);
+  color: var(--ink-soft);
+}
+
+.reader-shujuku-plan__title {
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.reader-shujuku-plan__row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px;
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+
+.reader-shujuku-plan__row + .reader-shujuku-plan__row {
+  margin-top: 6px;
+}
+
+.reader-shujuku-plan__label {
+  color: var(--ink-faint);
+}
+
+.reader-shujuku-plan__value {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .opening-generation-failure {
   display: flex;
   min-height: 100%;

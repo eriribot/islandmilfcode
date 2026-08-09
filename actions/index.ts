@@ -2067,7 +2067,12 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
       const currentUser = state.uiMessages.find(message => message.id === submittedUserMessageId);
       if (currentUser) {
         if (shujukuTurnResult.plannedText) currentUser.plannedText = shujukuTurnResult.plannedText;
-        if (shujukuTurnResult.userPluginData) currentUser.pluginData = shujukuTurnResult.userPluginData;
+        if (shujukuTurnResult.userPluginData) {
+          currentUser.pluginData = {
+            ...(currentUser.pluginData ?? {}),
+            ...shujukuTurnResult.userPluginData,
+          };
+        }
       }
     }
     const completeSceneText = extractCompleteVisibleReply(rawResult).trim();
@@ -2106,6 +2111,11 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
     }
     let selectedMainAssistant: { assistantMessage: UiMessage; sceneText: string } | null = null;
     if (narrativeRoute === 'shujuku') {
+      if (!shujukuTurnResult) {
+        throw new HostTimelineError('readback-mismatch', 'shujuku 回合缺少结果。', {
+          assistantMessageId: routeReviewAssistantMessageId,
+        });
+      }
       // v2 keeps the logical assistant in #0 state; no host assistant floor or host locator is created.
       selectedMainAssistant = selectCompletedAssistantSceneForPlotReview(
         state.uiMessages,
@@ -2124,16 +2134,14 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         tableCommit: shujukuTurnResult?.databaseCommitted ? 'committed' : 'missing',
         diagnostics: shujukuTurnResult?.diagnostics ?? {},
       });
-      if (!shujukuTurnResult?.planningObserved || !shujukuTurnResult.databaseCommitted) {
-        throw new HostTimelineError('readback-mismatch', 'shujuku 回合未提供规划或数据库提交证据。', {
-          planningObserved: shujukuTurnResult?.planningObserved ?? false,
-          databaseCommitted: shujukuTurnResult?.databaseCommitted ?? false,
-        });
-      }
-      if (shujukuTurnResult.assistantPluginData) {
+      if (shujukuTurnResult.databaseCommitted && shujukuTurnResult.assistantPluginData) {
         provisionalAssistant.pluginData = shujukuTurnResult.assistantPluginData;
       }
-      if (shujukuTurnResult.tableSnapshot && committedShujukuBinding) {
+      if (
+        shujukuTurnResult.databaseCommitted
+        && shujukuTurnResult.tableSnapshot
+        && committedShujukuBinding
+      ) {
         // ponytail: keep one current table snapshot; the handoff envelope still
         // retains the immutable pre-connection baseline for rerolls.
         state.runtimeFlags.shujukuTableSnapshot = shujukuTurnResult.tableSnapshot;

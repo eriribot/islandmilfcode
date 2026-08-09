@@ -228,6 +228,55 @@ function renderOptionsPanel(message: UiMessage) {
   `;
 }
 
+function readShujukuPlanningValue(message: UiMessage, key: string): unknown {
+  const pluginData = message.pluginData;
+  if (!pluginData) return undefined;
+  if (pluginData[key] !== undefined) return pluginData[key];
+  for (const containerKey of ['extra', 'data']) {
+    const container = pluginData[containerKey];
+    if (container && typeof container === 'object' && !Array.isArray(container)) {
+      const value = (container as Record<string, unknown>)[key];
+      if (value !== undefined) return value;
+    }
+  }
+  return undefined;
+}
+
+function formatShujukuPlanningValue(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value, null, 2) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function renderShujukuPlanning(message: UiMessage) {
+  if (message.role !== 'user') return '';
+  const rows = [
+    ['剧情', readShujukuPlanningValue(message, 'qrf_plot')],
+    ['任务', readShujukuPlanningValue(message, 'qrf_plot_tasks')],
+    ['预设', readShujukuPlanningValue(message, 'qrf_plot_preset')],
+  ]
+    .map(([label, value]) => [String(label), formatShujukuPlanningValue(value)] as const)
+    .filter(([, value]) => value);
+  if (!rows.length) return '';
+
+  return `
+    <aside class="reader-shujuku-plan" aria-label="shujuku 规划">
+      <div class="reader-shujuku-plan__title">shujuku 规划</div>
+      ${rows.map(([label, value]) => `
+        <div class="reader-shujuku-plan__row">
+          <span class="reader-shujuku-plan__label">${escapeHtml(label)}</span>
+          <span class="reader-shujuku-plan__value">${escapeHtml(value)}</span>
+        </div>
+      `).join('')}
+    </aside>
+  `;
+}
+
 function renderIllustrationFigures(
   messageId: string,
   illustrations: MessageIllustration[],
@@ -949,6 +998,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
         </div>
         <div class="reader-card__body" tabindex="0">
           ${renderAnchoredMessageBody(message, visibleText, state.imageRerollEditing)}
+          ${renderShujukuPlanning(message)}
         </div>
         ${renderOptionsPanel(message)}
       </article>

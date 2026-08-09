@@ -13,6 +13,7 @@ const actions = fs.readFileSync(path.join(root, 'actions', 'index.ts'), 'utf8');
 const opening = fs.readFileSync(path.join(root, 'actions', 'opening.ts'), 'utf8');
 const adapter = fs.readFileSync(path.join(root, 'shujuku', 'adapter.ts'), 'utf8');
 const phone = fs.readFileSync(path.join(root, 'phone', 'render.ts'), 'utf8');
+const render = fs.readFileSync(path.join(root, 'render.ts'), 'utf8');
 
 function section(source, start, end) {
   const startIndex = source.indexOf(start);
@@ -87,6 +88,20 @@ assert.match(virtualTurn, /generateVirtual[\s\S]*VIRTUAL_TURN_TIMEOUT_MS/,
   'contract: shujuku narrative turns use the virtual relay endpoint');
 assert.match(virtualTurn, /唯一当前 user[\s\S]*消息末尾/,
   'contract: virtual turns bind exactly one current user at the end of the timeline');
+const normalizeVirtualTurn = section(adapter, 'async function normalizeVirtualTurnResult(', '/** Run one shujuku-owned');
+assert.doesNotMatch(normalizeVirtualTurn, /未完成规划与数据库提交/,
+  'contract: missing planning or database evidence cannot discard a returned narrative body');
+assert.doesNotMatch(normalizeVirtualTurn, /(?:planningObserved|databaseCommitted)\s*!==\s*true/,
+  'contract: adapter normalization keeps qrf/table booleans as independent evidence states');
+const shujukuLogicalCommit = section(actions, '// v2 keeps the logical assistant in #0 state', '} else {');
+assert.doesNotMatch(shujukuLogicalCommit, /未提供规划或数据库提交证据/,
+  'contract: the main flow accepts a complete shujuku narrative independently of qrf/table status');
+assert.doesNotMatch(shujukuLogicalCommit, /!\s*shujukuTurnResult\.(?:planningObserved|databaseCommitted)/,
+  'contract: qrf/table booleans cannot re-enter the narrative acceptance gate');
+assert.match(shujukuLogicalCommit, /databaseCommitted[\s\S]*tableSnapshot/,
+  'contract: only a verified database commit advances the authoritative table snapshot');
+assert.match(render, /qrf_plot[\s\S]*qrf_plot_tasks[\s\S]*qrf_plot_preset[\s\S]*reader-shujuku-plan/,
+  'contract: the reader projects this turn qrf fields onto its logical user floor');
 const restoreStart = adapter.indexOf('export async function restoreShujukuTablesForHandoff(');
 assert.notEqual(restoreStart, -1, 'contract fixture missing: restoreShujukuTablesForHandoff');
 const restoreTables = adapter.slice(restoreStart);
@@ -125,4 +140,4 @@ assert.match(routeToggle, /shujuku 未返回可持久化的轮前表快照，已
 assert.match(routeToggle, /routeStatePersisted[\s\S]*previousHandoff[\s\S]*previousTableSnapshot[\s\S]*已恢复切换前状态/,
   'contract: a failed toggle save restores the prior in-memory binding');
 
-console.info('[shujuku-v2-save-wiring] 30 contracts passed');
+console.info('[shujuku-v2-save-wiring] 36 contracts passed');
