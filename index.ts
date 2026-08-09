@@ -17,7 +17,9 @@ import './title/styles.css';
 import {
   cancelCurrentGeneration,
   cancelPhoneMessageGeneration,
+  beginTimelineMutationFence,
   invalidateAsyncActions,
+  isTimelineMutationFenced,
   retryBackgroundProgressUpdate,
   submitMessage,
   submitPhoneMessage,
@@ -99,6 +101,7 @@ import {
   loadSaveAsync,
   normalizePlayerProfile,
   recoverMissingSaveIndexFromPayloads,
+  resolveMemoryDBForLoad,
   setActiveRunId,
   setActiveSaveId,
   writeAutosave,
@@ -109,13 +112,12 @@ import {
   installArchiveBridgeSync,
   listTavernFileBackups,
   persistArchiveSaveToTavernFiles,
-  readTavernArchiveBackup,
   readTavernFileBackup,
-  restoreTavernArchiveImages,
   writeTavernFileBackup,
 } from './state/tavern-file-backup';
 import { flushSaveStore, getSaveStoreDiagnostics, initSaveStore } from './state/save-store';
 import {
+  applyArchiveShujukuCompatibilityToRuntimeFlags,
   commitRuntimeArchive,
   deleteArchiveFloorMessage,
   deserializeArchiveFloorMessages,
@@ -125,6 +127,7 @@ import {
   flushArchiveRepository,
   forkArchiveSave,
   getArchiveFloor,
+  getArchiveFloorBeforeTurnShujukuBaseline,
   getArchiveMessageWindow,
   getArchiveMessageRange,
   getArchiveDiagnostics,
@@ -132,13 +135,16 @@ import {
   hasArchiveSaveSync,
   importPortableArchive,
   initArchiveRepository,
-  migrateLegacySaveToArchive,
+  loadArchiveAuxiliaryState,
   openArchiveSave,
   replaceArchiveFloorMessage,
   truncateArchiveAfterFloor,
   truncateArchiveFromAssistant,
+  type ArchiveFloorShujukuBaseline,
+  type ArchiveRollbackReceipt,
   type PortableArchiveBackup,
 } from './state/archive-repository';
+import { hashArchiveValue } from './state/archive-hash';
 import {
   exportImageAssetsForIds,
   flushImageAssetStore,
@@ -155,6 +161,7 @@ import {
   normalizeDrawingSettings,
   getReaderMessageByIndex,
   getSourceUserTextForReaderIndex,
+  hasAuthoritativeFloorStatusData,
   replaceConversationMessages,
   restoreFloorStateSnapshot,
   rollbackConversation,
@@ -187,15 +194,26 @@ import type { SummaryApiConfig } from './summary/types';
 import { bindCharacterCreationEvents, bindTitleHomeEvents, type TitleCallbacks } from './title/events';
 import { renderCharacterCreation, renderTitleHome } from './title/render';
 import type {
+  ArchiveShujukuCompatibility,
   DeepSeekFanLookupState,
   GameState,
+  NarrativeRoute,
   NotificationState,
   OpeningMode,
+  ShujukuCompatibilityState,
+  ShujukuHandoffEnvelope,
+  ShujukuTableSnapshot,
   StatusData,
   TabKey,
   TavernWindow,
   UiMessage,
 } from './types';
+import {
+  inspectCommittedShujukuBinding,
+  probeShujukuRuntime,
+  runShujukuTablesHandoffTransaction,
+  SHUJUKU_NATIVE_HANDOFF_VERSION,
+} from './shujuku/adapter';
 import {
   isPhoneArchiveGoldImpression,
   isPhoneThemeCharacterId,
@@ -276,6 +294,7 @@ let phoneBgmAudio: HTMLAudioElement | null = null;
 let phoneBgmResolvedUrl = '';
 let restoringSave = false;
 let restoringSaveOwner = 0;
+let suppressRenderPersistence = false;
 let saveLoadSequence = 0;
 let readerMutationSequence = 0;
 let readerWindowLoadSequence = 0;
@@ -283,6 +302,16 @@ const imageRerollSequenceByKey = new Map<string, number>();
 let playerAvatarSequence = 0;
 let quickReplyDelegationBound = false;
 let calendarEventDelegationBound = false;
+
+async function withTimelineMutation<T>(operation: () => Promise<T>, owner?: symbol): Promise<T> {
+  const release = beginTimelineMutationFence(owner);
+  try {
+    return await operation();
+  } finally {
+    release();
+  }
+}
+
 let v07DdlAutoOpened = false;
 
 let readerDragState: {
@@ -524,6 +553,7 @@ const ctx: ActionContext = {
     persistToSave();
   },
   persistConversationImmediately: () => persistToSaveImmediately(),
+  persistIncompleteConversationImmediately: () => persistToSaveImmediately({ allowIncomplete: true }),
   closeReaderContextMenu: (shouldRender: boolean) => {
     if (!state.readerContextMenu) return;
     state.readerContextMenu = null;
@@ -602,9 +632,9 @@ function hasIncompleteExchange(messages = state.uiMessages) {
   return false;
 }
 
-function writeCurrentAutosave() {
+function writeCurrentAutosave(options: { allowIncomplete?: boolean } = {}) {
   if (!state.activeRunId || restoringSave) return;
-  if (hasIncompleteExchange()) return;
+  if (hasIncompleteExchange() && !options.allowIncomplete) return;
   const runId = state.activeRunId;
   const saveId = getAutosaveBranchSaveId({
     activeSaveId: state.activeSaveId,
@@ -637,6 +667,9 @@ function writeCurrentAutosave() {
         state: runtimeState,
         existingMeta,
       });
+      if (canPromoteAutosave() && receipt.shujukuCompatibility !== undefined) {
+        applyArchiveShujukuCompatibilityToRuntimeFlags(state.runtimeFlags, receipt.shujukuCompatibility);
+      }
       if (canPromoteAutosave()) updateMessageWindowAfterCommit(state, receipt);
       delete state.runtimeFlags.hostTimelineHealth;
       if (canPromoteAutosave()) {
@@ -681,18 +714,20 @@ function persistToSave() {
   }, AUTOSAVE_DEBOUNCE_MS);
 }
 
-function flushPendingAutosave() {
+function flushPendingAutosave(options: { allowIncomplete?: boolean } = {}) {
   if (autosaveTimer) {
     clearTimeout(autosaveTimer);
     autosaveTimer = null;
   }
-  return writeCurrentAutosave();
+  return writeCurrentAutosave(options);
 }
 
-async function persistToSaveImmediately() {
+async function persistToSaveImmediately(options: { allowIncomplete?: boolean } = {}) {
   if (!state.activeRunId || restoringSave) return;
-  if (hasIncompleteExchange()) throw new Error('当前正文回合尚未完成，存档进度未推进。');
-  await flushPendingAutosave();
+  if (hasIncompleteExchange() && !options.allowIncomplete) {
+    throw new Error('当前正文回合尚未完成，存档进度未推进。');
+  }
+  await flushPendingAutosave(options);
   const auxiliaryFlushes = await Promise.allSettled([flushArchiveRepository(), flushSaveStore()]);
   auxiliaryFlushes.forEach(result => {
     if (result.status === 'rejected') {
@@ -708,6 +743,9 @@ const gameDevelopmentController: GameDevelopmentController = createGameDevelopme
   persist: () => persistToSave(),
   persistImmediately: () => persistToSaveImmediately(),
   submitMainMessage: async options => {
+    if (restoringSave || isTimelineMutationFenced(options.timelineMutationOwner)) {
+      throw new Error('当前正在切换或修改正文时间线，游戏开发回合没有发送。');
+    }
     if (!(await ensureHeadMessageWindow())) {
       throw new Error('最新楼层暂时无法读取，游戏开发回合没有发送。');
     }
@@ -735,10 +773,12 @@ async function persistManualSave() {
   const gameState = buildGameState();
   const runtimeState = captureRuntimeSaveState();
   let manualSaveId = '';
+  let manualShujukuCompatibility: ArchiveShujukuCompatibility | null | undefined;
   try {
     const forked = sourceSaveId ? await forkArchiveSave({ sourceSaveId, label: 'Manual save' }) : null;
     if (!forked) throw new Error('No active v3 root to fork');
     manualSaveId = forked.saveId;
+    manualShujukuCompatibility = forked.shujukuCompatibility;
   } catch (error) {
     if (runtimeState.messageWindow.startMessage > 0) {
       console.warn('[archive] manual fork unavailable while reading cold history; preserving the complete source root:', error);
@@ -769,6 +809,9 @@ async function persistManualSave() {
   if (state.activeRunId === runId && state.activeSaveId === sourceSaveId) {
     state.activeSaveId = manualSaveId;
     setActiveSaveId(manualSaveId);
+    if (manualShujukuCompatibility !== undefined) {
+      applyArchiveShujukuCompatibilityToRuntimeFlags(state.runtimeFlags, manualShujukuCompatibility);
+    }
   }
 }
 
@@ -905,19 +948,11 @@ async function restoreSaveFromTavernFiles() {
       window.alert('序号无效，没有恢复任何存档。');
       return;
     }
-    let recoveryDetail = '';
-    const result = selected.storage === 'archive-v3'
-      ? await (async () => {
-          const backup = await readTavernArchiveBackup(selected.saveId);
-          if (!backup) throw new Error('本机 v3 root 不存在');
-          if (backup.degradedRecovery) {
-            recoveryDetail = ' 当前 root 不可读，已从上一个可玩版本恢复。';
-          }
-          await restoreTavernArchiveImages(backup);
-          await importPortableArchive(backup);
-          return { imported: 1, skipped: 0 };
-        })()
-      : importAllSavesFromJson(JSON.stringify(await readTavernFileBackup(
+    if (selected.storage === 'archive-v3') {
+      await enterSave(selected.saveId, { archiveSource: 'local' });
+      return;
+    }
+    const result = importAllSavesFromJson(JSON.stringify(await readTavernFileBackup(
           selected.saveId,
           selected.storage === 'legacy-v1' ? 'legacy-v1' : 'bundle-v2',
         )));
@@ -927,7 +962,7 @@ async function restoreSaveFromTavernFiles() {
       if (item.status === 'rejected') console.warn('[archive] restored backup auxiliary flush deferred:', item.reason);
     });
     window.alert(
-      `已从 SillyTavern 本机数据目录恢复 ${result.imported} 个存档。${recoveryDetail}`
+      `已从 SillyTavern 本机数据目录恢复 ${result.imported} 个存档。`
       + (deferred ? ' 部分附件仍在后台落盘，正文存档已保留。' : '')
       + ' 即将刷新页面。',
     );
@@ -1368,13 +1403,18 @@ function getMemoryDBTableCounts(memoryDB: IslandMemoryDB) {
   return counts;
 }
 
-async function enterSave(saveId: string, options: { openingMode?: OpeningMode } = {}) {
+async function enterSave(saveId: string, options: { openingMode?: OpeningMode; archiveSource?: 'local' } = {}) {
+  return withTimelineMutation(async () => {
   await waitForHostTimelineWrites();
   const loadToken = ++saveLoadSequence;
   imageRerollSequenceByKey.clear();
   let archive = null as Awaited<ReturnType<typeof openArchiveSave>>;
   try {
-    archive = await openArchiveSave(saveId, { loadMessageWindow: true });
+    archive = await openArchiveSave(saveId, {
+      loadMessageWindow: true,
+      source: options.archiveSource,
+      loadAuxiliaryState: false,
+    });
   } catch (error) {
     if (loadToken !== saveLoadSequence) return;
     const message = error instanceof Error ? error.message : String(error);
@@ -1404,18 +1444,7 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
       return;
     }
     if (loadToken !== saveLoadSequence) return;
-    if (legacy) {
-      try {
-        await migrateLegacySaveToArchive(legacy.meta, legacy.payload);
-        if (loadToken !== saveLoadSequence) return;
-        archive = await openArchiveSave(saveId, { loadMessageWindow: true });
-        if (loadToken !== saveLoadSequence) return;
-      } catch (error) {
-        // A failed migration falls straight back to the still-retained v2
-        // source. It is a storage warning, never a title-screen dead end.
-        console.warn('[archive] on-demand migration failed; opening legacy save:', error);
-      }
-    }
+    // ponytail: keep legacy data as the read source; convert only on an explicit write.
   }
   if (!archive && !legacy) {
     if (await isStoredSaveReadOnly(saveId).catch(() => false)) {
@@ -1494,10 +1523,9 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
   const summaryStore = archive
     ? archive.summary?.summaryStore ?? createDefaultSummaryStore()
     : legacy?.payload.summaryStore ?? createDefaultSummaryStore();
-  const memoryDB = normalizeMemoryDB(
-    archive ? archive.memory?.memoryDB : legacy?.payload.memoryDB,
-    gameState.runId,
-  ) ?? createDefaultMemoryDB(gameState.runId);
+  const memoryDB = archive
+    ? resolveMemoryDBForLoad(archive.memory?.memoryDB, summaryStore, gameState.runId)
+    : normalizeMemoryDB(legacy?.payload.memoryDB, gameState.runId) ?? createDefaultMemoryDB(gameState.runId);
   const shouldGenerateOpening = options.openingMode === 'ai'
     && (archive ? archive.root.floorCount === 0 : loadedMessages.length === 0);
   const enteringRunId = gameState.runId;
@@ -1507,7 +1535,8 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
       console.warn('[archive] previous save flush deferred during navigation:', error);
     });
   }
-  invalidateAsyncActions(ctx);
+  await invalidateAsyncActions(ctx);
+  if (loadToken !== saveLoadSequence) return;
   restoringSave = true;
   restoringSaveOwner = loadToken;
   clearWorldbookRefreshRetry();
@@ -1543,18 +1572,6 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
   applyDrawingEnabledPreference();
   state.summaryStore = summaryStore;
   state.memoryDB = memoryDB;
-  try {
-    console.info('[saves:enter]', {
-      saveId,
-      runId: gameState.runId,
-      chatLogCount: loadedMessages.length,
-      archiveRevision: archive?.root.revision ?? null,
-      indexStats: getIndexStats(state.memoryDB),
-      tableCounts: getMemoryDBTableCounts(state.memoryDB),
-    });
-  } catch (error) {
-    console.warn('[saves:enter] diagnostic counters unavailable; restore continues:', error);
-  }
   state.phoneMessages = normalizePhoneMessageStore(state.runtimeFlags.phoneMessages);
   // Worldbook catalogs are derived from the currently bound character, never
   // from the previously opened save. A matching cache may hydrate them below.
@@ -1567,6 +1584,49 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
     console.warn('[save-restore] host variable mirror failed; browser save remains playable:', error);
   }
   rebuildRuntimeAfterRestore();
+  // Paint the bounded root/state/tail window before fetching the independent
+  // summary and memory blocks. Autosave stays fenced by restoringSave until
+  // both hashes are validated and installed below.
+  suppressRenderPersistence = true;
+  render();
+  if (archive) {
+    try {
+      const auxiliary = await loadArchiveAuxiliaryState(archive.root);
+      if (loadToken !== saveLoadSequence) return;
+      state.summaryStore = auxiliary.summary?.summaryStore ?? createDefaultSummaryStore();
+      state.memoryDB = resolveMemoryDBForLoad(
+        auxiliary.memory?.memoryDB,
+        state.summaryStore,
+        gameState.runId,
+      );
+      if (auxiliary.compatibility?.shujuku) {
+        applyArchiveShujukuCompatibilityToRuntimeFlags(
+          state.runtimeFlags,
+          auxiliary.compatibility.shujuku,
+        );
+      }
+    } catch (error) {
+      if (restoringSaveOwner === loadToken) {
+        restoringSave = false;
+        restoringSaveOwner = 0;
+      }
+      suppressRenderPersistence = false;
+      window.alert(`这个存档的摘要或记忆块无法读取，已阻止进入。\n\n${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+  }
+  try {
+    console.info('[saves:enter]', {
+      saveId,
+      runId: gameState.runId,
+      chatLogCount: loadedMessages.length,
+      archiveRevision: archive?.root.revision ?? null,
+      indexStats: getIndexStats(state.memoryDB),
+      tableCounts: getMemoryDBTableCounts(state.memoryDB),
+    });
+  } catch (error) {
+    console.warn('[saves:enter] diagnostic counters unavailable; restore continues:', error);
+  }
   await hydrateRecentWorldbookCache(() => loadToken === saveLoadSequence).catch(error => {
     console.warn('[worldbook] cached catalog hydrate skipped:', error);
     return false;
@@ -1609,30 +1669,38 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode } 
   // A host World Info API can occasionally never settle. Cached/current data
   // is sufficient to let the player start; a late refresh may still update the
   // catalog without holding autosave or the opening scene hostage.
-  const openingFallbackTimer = window.setTimeout(startOpeningIfNeeded, 5000);
+  const openingFallbackTimer = window.setTimeout(() => {
+    suppressRenderPersistence = false;
+    startOpeningIfNeeded();
+  }, 5000);
   void refreshCharacterWorldbookTargets()
     .catch(error => {
       console.warn('[save-restore] refreshCharacterWorldbookTargets failed:', error);
     })
     .finally(() => {
       window.clearTimeout(openingFallbackTimer);
+      suppressRenderPersistence = false;
       if (loadToken !== saveLoadSequence || state.activeSaveId !== saveId) return;
       startOpeningIfNeeded();
       if (lastWorldbookRefreshStatus !== 'success' && lastWorldbookRefreshStatus !== 'legitimate-empty') {
         scheduleWorldbookRefreshRetry(enteringRunId);
       }
     });
+  });
 }
 
 async function returnToTitle() {
+  return withTimelineMutation(async () => {
   await waitForHostTimelineWrites();
-  saveLoadSequence += 1;
+  const titleLoadToken = ++saveLoadSequence;
   imageRerollSequenceByKey.clear();
   worldbookRefreshSequence += 1;
   if (restoringSaveOwner) restoringSaveOwner = 0;
   restoringSave = false;
+  suppressRenderPersistence = false;
   clearWorldbookRefreshRetry();
-  invalidateAsyncActions(ctx);
+  await invalidateAsyncActions(ctx);
+  if (titleLoadToken !== saveLoadSequence) return;
   // Capture and enqueue the current run before clearing its identity. A plain
   // debounced persist would fire after activeRunId becomes null and silently
   // drop the player's final title-screen transition save.
@@ -1648,6 +1716,7 @@ async function returnToTitle() {
   void Promise.resolve(finalSave)
     .then(() => Promise.all([flushArchiveRepository(), flushSaveStore()]))
     .catch(error => console.warn('[archive] final save before title deferred:', error));
+  });
 }
 
 // ── UI actions (thin wrappers that stay in index.ts) ──
@@ -1702,11 +1771,19 @@ function cancelReaderEditor() {
 }
 
 async function saveReaderEditor() {
+  return withTimelineMutation(async () => {
   const editing = state.readerEditing;
   if (!editing) return;
+  const loadToken = saveLoadSequence;
+  const activeSaveId = state.activeSaveId;
   await waitForHostTimelineWrites();
   if (state.readerEditing !== editing) return;
-  invalidateAsyncActions(ctx);
+  await invalidateAsyncActions(ctx);
+  if (
+    state.readerEditing !== editing
+    || loadToken !== saveLoadSequence
+    || state.activeSaveId !== activeSaveId
+  ) return;
   readerMutationSequence += 1;
   const textarea = root?.querySelector<HTMLTextAreaElement>('[data-field="reader-edit-draft"]');
   const nextText = textarea?.value ?? editing.draft;
@@ -1755,6 +1832,7 @@ async function saveReaderEditor() {
       runtimeState: archiveRuntimeState,
     }).catch(error => console.warn('[archive] edited floor commit deferred:', error));
   }
+  });
 }
 
 function focusComposer(placeCursorAtEnd = true) {
@@ -1960,9 +2038,74 @@ function resolveArchiveFloorIndex(readerIndex: number): number | null {
   return null;
 }
 
-async function rollbackReaderInputWithArchive(readerIndex: number) {
+function captureReaderRollbackState() {
+  return structuredClone({
+    statusData: state.statusData,
+    playerProfile: state.playerProfile,
+    phoneMessages: state.phoneMessages,
+    drawingSettings: state.drawingSettings,
+    summaryStore: state.summaryStore,
+    memoryDB: state.memoryDB,
+    runtimeFlags: state.runtimeFlags,
+    uiMessages: state.uiMessages,
+    messageWindow: state.messageWindow,
+    backgroundTasks: state.backgroundTasks,
+    focusedMessageIndex: state.focusedMessageIndex,
+    focusedMessagePage: state.focusedMessagePage,
+    currentGenerationId: state.currentGenerationId,
+    finalizedGenerationId: state.finalizedGenerationId,
+    notification: state.notification,
+  });
+}
+
+function restoreReaderRollbackState(snapshot: ReturnType<typeof captureReaderRollbackState>) {
+  state.statusData = snapshot.statusData;
+  state.playerProfile = snapshot.playerProfile;
+  state.phoneMessages = snapshot.phoneMessages;
+  state.drawingSettings = snapshot.drawingSettings;
+  state.summaryStore = snapshot.summaryStore;
+  state.memoryDB = snapshot.memoryDB;
+  state.runtimeFlags = snapshot.runtimeFlags;
+  state.uiMessages = snapshot.uiMessages;
+  state.messageWindow = snapshot.messageWindow;
+  state.backgroundTasks = snapshot.backgroundTasks;
+  state.focusedMessageIndex = snapshot.focusedMessageIndex;
+  state.focusedMessagePage = snapshot.focusedMessagePage;
+  state.currentGenerationId = snapshot.currentGenerationId;
+  state.finalizedGenerationId = snapshot.finalizedGenerationId;
+  state.notification = snapshot.notification;
+}
+
+type ShujukuArchiveCommit = (
+  compatibility: ArchiveShujukuCompatibility | null,
+) => Promise<ArchiveRollbackReceipt | null>;
+
+async function rollbackReaderInputWithArchive(
+  readerIndex: number,
+  options: {
+    timelineMutationOwner?: symbol;
+    shujukuHandoffCutoff?: number;
+    shujukuCompatibilityOverride?: ArchiveShujukuCompatibility | null;
+    prepareShujukuBaseline?: (
+      baseline: ArchiveFloorShujukuBaseline,
+      floor: NonNullable<Awaited<ReturnType<typeof getArchiveFloor>>>,
+    ) => {
+      kind: 'transaction_after_rollback';
+      run: (commitArchive: ShujukuArchiveCommit) => Promise<ArchiveRollbackReceipt>;
+    } | null;
+    onShujukuBaselineUnavailable?: (baseline: ArchiveFloorShujukuBaseline) => void;
+    onShujukuCompatibilityRestored?: (compatibility: ArchiveShujukuCompatibility | null) => void;
+    onArchiveCommitFailed?: (error: unknown) => void;
+    requireAuthoritativeStatusBaseline?: boolean;
+  } = {},
+) {
+  return withTimelineMutation(async () => {
+  const requestedLoadToken = saveLoadSequence;
+  const requestedSaveId = state.activeSaveId;
   await waitForHostTimelineWrites();
-  invalidateAsyncActions(ctx);
+  if (requestedLoadToken !== saveLoadSequence || state.activeSaveId !== requestedSaveId) return null;
+  await invalidateAsyncActions(ctx);
+  if (requestedLoadToken !== saveLoadSequence || state.activeSaveId !== requestedSaveId) return null;
   const mutationToken = ++readerMutationSequence;
   const loadToken = saveLoadSequence;
   const saveId = state.activeSaveId;
@@ -1970,10 +2113,47 @@ async function rollbackReaderInputWithArchive(readerIndex: number) {
     && loadToken === saveLoadSequence
     && state.activeSaveId === saveId;
   const floorIndex = saveId && hasArchiveSaveSync(saveId) ? resolveArchiveFloorIndex(readerIndex) : null;
-  const floor = saveId && floorIndex !== null
-    ? await getArchiveFloor(saveId, floorIndex).catch(() => null)
-    : null;
+  let floor: Awaited<ReturnType<typeof getArchiveFloor>> = null;
+  if (saveId && floorIndex !== null) {
+    try {
+      floor = await getArchiveFloor(saveId, floorIndex);
+    } catch (error) {
+      if (options.prepareShujukuBaseline) options.onArchiveCommitFailed?.(error);
+      else console.warn('[archive] rollback floor read failed:', error);
+      return null;
+    }
+  }
   if (!isCurrent()) return null;
+  if (options.requireAuthoritativeStatusBaseline && floor && !hasAuthoritativeFloorStatusData(floor.beforeTurnState)) {
+    options.onArchiveCommitFailed?.(new Error('重 roll 目标缺少权威的轮前时间快照，正文时间线未改变。'));
+    return null;
+  }
+  let shujukuBaselinePreparation: ReturnType<NonNullable<typeof options.prepareShujukuBaseline>> | undefined;
+  if (options.prepareShujukuBaseline) {
+    if (!saveId || floorIndex === null || !floor) {
+      options.onArchiveCommitFailed?.(new Error('重 roll 目标没有可验证的归档楼层。'));
+      return null;
+    }
+    const handoffCutoff = options.shujukuHandoffCutoff;
+    if (typeof handoffCutoff !== 'number' || !Number.isInteger(handoffCutoff) || handoffCutoff < 0) {
+      options.onArchiveCommitFailed?.(new Error('当前 shujuku handoff 缺少有效的接通消息边界。'));
+      return null;
+    }
+    let baseline: ArchiveFloorShujukuBaseline;
+    try {
+      baseline = await getArchiveFloorBeforeTurnShujukuBaseline(saveId, floorIndex, handoffCutoff);
+    } catch (error) {
+      options.onArchiveCommitFailed?.(error);
+      return null;
+    }
+    if (!isCurrent()) return null;
+    shujukuBaselinePreparation = options.prepareShujukuBaseline(baseline, floor);
+    if (!shujukuBaselinePreparation) {
+      options.onShujukuBaselineUnavailable?.(baseline);
+      return null;
+    }
+  }
+  const rollbackState = options.prepareShujukuBaseline ? captureReaderRollbackState() : null;
   const target = await rollbackConversation(state, readerIndex, win, hostTimeline, isCurrent);
   if (!target) return null;
   if (!isCurrent()) return null;
@@ -1984,21 +2164,68 @@ async function rollbackReaderInputWithArchive(readerIndex: number) {
       console.warn('[archive] exact input snapshot was invalid; keeping local rollback state:', error);
     }
   }
-  if (saveId && floorIndex !== null && hasArchiveSaveSync(saveId)) {
-    const receipt = await truncateArchiveFromAssistant({
+  const hasShujukuCompatibilityOverride = Object.prototype.hasOwnProperty.call(
+    options,
+    'shujukuCompatibilityOverride',
+  );
+  if (hasShujukuCompatibilityOverride) {
+    applyArchiveShujukuCompatibilityToRuntimeFlags(
+      state.runtimeFlags,
+      options.shujukuCompatibilityOverride,
+    );
+  }
+  const commitArchive: ShujukuArchiveCommit = async compatibility => {
+    if (!isCurrent()) throw new Error('重 roll 事务在归档提交前已失去当前时间线所有权。');
+    if (!saveId || floorIndex === null || !hasArchiveSaveSync(saveId)) return null;
+    return truncateArchiveFromAssistant({
       saveId,
       floorIndex,
       gameState: buildGameState(),
       runtimeState: captureRuntimeSaveState(),
+      shujukuCompatibilityOverride: compatibility,
+    });
+  };
+  let receipt: ArchiveRollbackReceipt | null = null;
+  let archiveError: unknown = null;
+  if (shujukuBaselinePreparation?.kind === 'transaction_after_rollback') {
+    try {
+      receipt = await shujukuBaselinePreparation.run(commitArchive);
+      if (!receipt) throw new Error('重 roll 归档提交没有返回成功凭据。');
+    } catch (error) {
+      archiveError = error;
+    }
+    if (!receipt) {
+      if (rollbackState && isCurrent()) restoreReaderRollbackState(rollbackState);
+      options.onArchiveCommitFailed?.(
+        archiveError ?? new Error('重 roll 归档提交没有返回成功凭据。'),
+      );
+      return null;
+    }
+  } else if (saveId && floorIndex !== null && hasArchiveSaveSync(saveId)) {
+    receipt = await truncateArchiveFromAssistant({
+      saveId,
+      floorIndex,
+      gameState: buildGameState(),
+      runtimeState: captureRuntimeSaveState(),
+      ...(options.shujukuCompatibilityOverride !== undefined
+        ? { shujukuCompatibilityOverride: options.shujukuCompatibilityOverride }
+        : {}),
     }).catch(error => {
-      // Keep the already-restored in-memory timeline playable. The regular
-      // autosave below will retry the browser commit or use its legacy fallback.
-      console.warn('[archive] input rollback commit deferred:', error);
+      archiveError = error;
       return null;
     });
-    if (receipt && isCurrent()) await reloadReaderWindowAfterArchiveMutation(receipt);
+    if (!receipt && archiveError) {
+      // Generic rollback keeps its historical best-effort behavior.
+      console.warn('[archive] input rollback commit deferred:', archiveError);
+    }
+  }
+  if (receipt && isCurrent()) {
+    options.onShujukuCompatibilityRestored?.(receipt.restoredCompatibility);
+    applyArchiveShujukuCompatibilityToRuntimeFlags(state.runtimeFlags, receipt.restoredCompatibility);
+    await reloadReaderWindowAfterArchiveMutation(receipt);
   }
   return isCurrent() ? target : null;
+  }, options.timelineMutationOwner);
 }
 
 async function rollbackToReaderInput(readerIndex: number) {
@@ -2023,8 +2250,13 @@ function isV07RouteChoiceBlockingMainText(): boolean {
 }
 
 async function rollbackAfterReaderFloor(readerIndex: number) {
+  return withTimelineMutation(async () => {
+  const requestedLoadToken = saveLoadSequence;
+  const requestedSaveId = state.activeSaveId;
   await waitForHostTimelineWrites();
-  invalidateAsyncActions(ctx);
+  if (requestedLoadToken !== saveLoadSequence || state.activeSaveId !== requestedSaveId) return;
+  await invalidateAsyncActions(ctx);
+  if (requestedLoadToken !== saveLoadSequence || state.activeSaveId !== requestedSaveId) return;
   const mutationToken = ++readerMutationSequence;
   const loadToken = saveLoadSequence;
   const saveId = state.activeSaveId;
@@ -2056,13 +2288,17 @@ async function rollbackAfterReaderFloor(readerIndex: number) {
       console.warn('[archive] completed-floor rollback commit deferred:', error);
       return null;
     });
-    if (receipt && isCurrent()) await reloadReaderWindowAfterArchiveMutation(receipt);
+    if (receipt && isCurrent()) {
+      applyArchiveShujukuCompatibilityToRuntimeFlags(state.runtimeFlags, receipt.restoredCompatibility);
+      await reloadReaderWindowAfterArchiveMutation(receipt);
+    }
   }
   if (!isCurrent()) return;
   guardedAdapterSave(state.statusData);
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
   render();
+  });
 }
 
 function growComposerInput(textarea: HTMLTextAreaElement) {
@@ -2084,8 +2320,15 @@ function syncComposerSubmitAvailability(textarea: HTMLTextAreaElement) {
 }
 
 async function submitMainMessage(
-  options: { text?: string; keepDraft?: boolean; clearDraftOnSuccess?: boolean; reuseLatestUserMessage?: boolean } = {},
+  options: {
+    text?: string;
+    keepDraft?: boolean;
+    clearDraftOnSuccess?: boolean;
+    reuseLatestUserMessage?: boolean;
+    timelineMutationOwner?: symbol;
+  } = {},
 ) {
+  if (restoringSave || isTimelineMutationFenced(options.timelineMutationOwner)) return;
   if (!(await ensureHeadMessageWindow())) {
     ctx.showNotification({
       kind: 'status',
@@ -2096,6 +2339,7 @@ async function submitMainMessage(
     });
     return;
   }
+  if (restoringSave || isTimelineMutationFenced(options.timelineMutationOwner)) return;
   const userInput = (options.text ?? state.draft).trim();
   if (await gameDevelopmentController.submitFromMainDraft(userInput)) return;
   if (isV07RouteChoiceBlockingMainText()) {
@@ -2115,25 +2359,366 @@ async function submitMainMessage(
   await submitMessage(ctx, options);
 }
 
-async function rerunReaderMessage(readerIndex: number) {
-  const target = await rollbackReaderInputWithArchive(readerIndex);
-  if (!target?.sourceUserText) return;
-  state.draft = target.sourceUserText;
-  guardedAdapterSave(state.statusData);
-  ctx.persistConversation();
-  ctx.closeReaderContextMenu(false);
-  render();
-  if (await gameDevelopmentController.submitRestoredTurn(target.sourceUserText)) return;
-  await submitMainMessage({
-    text: target.sourceUserText,
-    keepDraft: true,
-    clearDraftOnSuccess: true,
-    reuseLatestUserMessage: true,
+type ShujukuRerollBinding = {
+  compatibility: ShujukuCompatibilityState;
+  handoff: ShujukuHandoffEnvelope;
+  tableSnapshot: ShujukuTableSnapshot;
+};
+
+type ShujukuRerollBindingRead =
+  | { kind: 'inactive' }
+  | { kind: 'invalid'; reason: string }
+  | { kind: 'active'; binding: ShujukuRerollBinding };
+
+function captureShujukuRerollBinding(): ShujukuRerollBindingRead {
+  const result = inspectCommittedShujukuBinding(state.runtimeFlags, {
+    saveId: state.activeSaveId,
+    runId: state.activeRunId,
   });
+  if (result.kind !== 'active') return result;
+  return {
+    kind: 'active',
+    binding: JSON.parse(JSON.stringify(result.binding)) as ShujukuRerollBinding,
+  };
+}
+
+async function createCommittedShujukuHandoff(input: {
+  currentCompatibility: Partial<ShujukuCompatibilityState> | null;
+  saveId: string;
+  runId: string;
+  branchId: string;
+  timelineAnchor: string;
+  cutoffFloor: number;
+  isolationKey: string;
+  capabilityHash: string;
+  tableSnapshot: ShujukuTableSnapshot;
+  sourceProjection: unknown;
+}): Promise<ArchiveShujukuCompatibility> {
+  const mappingVersion = SHUJUKU_NATIVE_HANDOFF_VERSION;
+  const handoffId = `${input.runId}:${input.saveId}:${input.branchId}:${input.timelineAnchor}:${input.cutoffFloor}:${mappingVersion}`;
+  const sourceHash = (await hashArchiveValue({
+    runId: input.runId,
+    saveId: input.saveId,
+    branchId: input.branchId,
+    timelineAnchor: input.timelineAnchor,
+    cutoffFloor: input.cutoffFloor,
+    mappingVersion,
+    source: input.sourceProjection,
+    tableHash: input.tableSnapshot.tableHash,
+  })).hash;
+  const handoff: ShujukuHandoffEnvelope = {
+    handoffId,
+    runId: input.runId,
+    saveId: input.saveId,
+    branchId: input.branchId,
+    timelineAnchor: input.timelineAnchor,
+    cutoffFloor: input.cutoffFloor,
+    mappingVersion,
+    sourceHash,
+    tableHash: input.tableSnapshot.tableHash,
+    status: 'committed',
+  };
+  const compatibility: ShujukuCompatibilityState = {
+    ...input.currentCompatibility,
+    saveId: input.saveId,
+    runId: input.runId,
+    route: 'shujuku',
+    handoffPhase: 'committed',
+    capabilityHash: input.capabilityHash,
+    isolationKey: input.isolationKey,
+    handoffId,
+    branchId: input.branchId,
+    lastTableHash: input.tableSnapshot.tableHash,
+    mappingVersion,
+    lastCheckedAt: new Date().toISOString(),
+  };
+  delete compatibility.lastError;
+  return {
+    state: compatibility,
+    handoff,
+    tableSnapshot: JSON.parse(JSON.stringify(input.tableSnapshot)) as ShujukuTableSnapshot,
+  };
+}
+
+async function commitShujukuRerollCheckpoint(input: {
+  binding: ShujukuRerollBinding;
+  checkpoint: ArchiveShujukuCompatibility;
+  commitArchive: ShujukuArchiveCommit;
+}): Promise<ArchiveRollbackReceipt> {
+  const compatibility = createShujukuRerollCompatibility(input.binding, input.checkpoint);
+  const snapshot = compatibility?.tableSnapshot;
+  const isolationKey = compatibility?.state.isolationKey?.trim();
+  if (!compatibility || !snapshot || !isolationKey) {
+    throw new Error('归档中的 shujuku 轮前表快照未通过身份校验。');
+  }
+  return runShujukuTablesHandoffTransaction(
+    win,
+    isolationKey,
+    snapshot.tables,
+    async imported => {
+      // The transaction already verifies every archived field after restore.
+      // shujuku may add export defaults, so its normalized snapshot can have a
+      // different hash without changing any archived table content.
+      const committedCompatibility: ArchiveShujukuCompatibility = {
+        ...compatibility,
+        state: {
+          ...compatibility.state,
+          capabilityHash: imported.capabilityHash,
+          lastTableHash: imported.tableSnapshot.tableHash,
+          lastCheckedAt: new Date().toISOString(),
+        },
+        tableSnapshot: imported.tableSnapshot,
+      };
+      const receipt = await input.commitArchive(committedCompatibility);
+      if (!receipt) throw new Error('shujuku 轮前表恢复没有取得归档提交凭据。');
+      return receipt;
+    },
+  );
+}
+
+function isExpectedCommittedShujukuCompatibility(
+  expected: ArchiveShujukuCompatibility | null,
+  actual: ArchiveShujukuCompatibility | null,
+): boolean {
+  if (!expected || !actual || !expected.handoff || !actual.handoff || !expected.tableSnapshot || !actual.tableSnapshot) {
+    return false;
+  }
+  return expected.state.route === 'shujuku'
+    && actual.state.route === 'shujuku'
+    && expected.state.handoffPhase === 'committed'
+    && actual.state.handoffPhase === 'committed'
+    && actual.state.saveId === expected.state.saveId
+    && actual.state.runId === expected.state.runId
+    && actual.state.branchId === expected.state.branchId
+    && actual.state.isolationKey === expected.state.isolationKey
+    && actual.state.handoffId === expected.state.handoffId
+    && actual.state.mappingVersion === SHUJUKU_NATIVE_HANDOFF_VERSION
+    && actual.state.lastTableHash === expected.tableSnapshot.tableHash
+    && actual.handoff.handoffId === expected.handoff.handoffId
+    && actual.handoff.branchId === expected.handoff.branchId
+    && actual.handoff.sourceHash === expected.handoff.sourceHash
+    && actual.handoff.cutoffFloor === expected.handoff.cutoffFloor
+    && actual.handoff.tableHash === expected.handoff.tableHash
+    && actual.tableSnapshot.tableHash === expected.tableSnapshot.tableHash;
+}
+
+function isRestoredShujukuRouteValidAfterReroll(
+  binding: ShujukuRerollBinding,
+  restored: ArchiveShujukuCompatibility | null,
+): boolean {
+  const expected = createShujukuRerollCompatibility(binding, restored);
+  return Boolean(expected && isExpectedCommittedShujukuCompatibility(expected, restored));
+}
+
+function createShujukuRerollCompatibility(
+  binding: ShujukuRerollBinding,
+  checkpoint: ArchiveShujukuCompatibility | null,
+): ArchiveShujukuCompatibility | null {
+  if (!isValidShujukuRerollCheckpoint(binding, checkpoint)) return null;
+  const compatibility: ShujukuCompatibilityState = {
+    ...binding.compatibility,
+    route: 'shujuku',
+    handoffPhase: 'committed',
+    lastTableHash: checkpoint.tableSnapshot.tableHash,
+  };
+  delete compatibility.lastError;
+  return {
+    state: compatibility,
+    handoff: JSON.parse(JSON.stringify(binding.handoff)),
+    tableSnapshot: JSON.parse(JSON.stringify(checkpoint.tableSnapshot)),
+  };
+}
+
+function isValidShujukuRerollCheckpoint(
+  binding: ShujukuRerollBinding,
+  checkpoint: ArchiveShujukuCompatibility | null,
+): checkpoint is ArchiveShujukuCompatibility & { tableSnapshot: ShujukuTableSnapshot } {
+  const snapshot = checkpoint?.tableSnapshot;
+  const handoff = binding.handoff;
+  const checkpointHandoff = checkpoint?.handoff;
+  return Boolean(
+    checkpoint
+    && snapshot
+    && typeof snapshot.tableHash === 'string'
+    && snapshot.tableHash.trim()
+    && snapshot.tables
+    && typeof snapshot.tables === 'object'
+    && !Array.isArray(snapshot.tables)
+    && checkpoint.state.route === 'shujuku'
+    && checkpoint.state.handoffPhase === 'committed'
+    && checkpoint.state.mappingVersion === SHUJUKU_NATIVE_HANDOFF_VERSION
+    && checkpoint.state.handoffId === binding.compatibility.handoffId
+    && (checkpoint.state.lastTableHash === undefined
+      || checkpoint.state.lastTableHash === snapshot.tableHash)
+    && handoff
+    && handoff.status === 'committed'
+    && typeof binding.compatibility.handoffId === 'string'
+    && binding.compatibility.handoffId.trim()
+    && handoff.handoffId === binding.compatibility.handoffId
+    && handoff.branchId === binding.compatibility.branchId
+    && checkpoint.state.branchId === binding.compatibility.branchId
+    && checkpointHandoff
+    && checkpointHandoff.status === 'committed'
+    && checkpointHandoff.mappingVersion === SHUJUKU_NATIVE_HANDOFF_VERSION
+    && checkpointHandoff.handoffId === handoff.handoffId
+    && checkpointHandoff.branchId === handoff.branchId
+    && checkpointHandoff.saveId === handoff.saveId
+    && checkpointHandoff.runId === handoff.runId
+    && checkpointHandoff.timelineAnchor === handoff.timelineAnchor
+    && checkpointHandoff.cutoffFloor === handoff.cutoffFloor
+    && checkpointHandoff.sourceHash === handoff.sourceHash
+    && checkpointHandoff.tableHash === handoff.tableHash
+    && (binding.compatibility.isolationKey === undefined
+      || checkpoint.state.isolationKey === binding.compatibility.isolationKey)
+    && (binding.compatibility.saveId === undefined
+      || (handoff.saveId === binding.compatibility.saveId
+        && checkpoint.state.saveId === binding.compatibility.saveId))
+    && (binding.compatibility.runId === undefined
+      || (handoff.runId === binding.compatibility.runId
+        && checkpoint.state.runId === binding.compatibility.runId)),
+  );
+}
+
+async function rerunReaderMessage(readerIndex: number) {
+  const timelineMutationOwner = Symbol('reader-reroll');
+  return withTimelineMutation(async () => {
+    const shujukuBindingRead = captureShujukuRerollBinding();
+    if (shujukuBindingRead.kind === 'invalid') {
+      ctx.showNotification({
+        kind: 'status',
+        title: '重 roll 已停止',
+        preview: `当前 shujuku 连接无法建立安全基线：${shujukuBindingRead.reason}。正文时间线未改变。`,
+        targetTab: 'summary',
+        timestamp: formatTime(state.statusData.world.currentTime),
+      });
+      return;
+    }
+    const shujukuRerollBinding = shujukuBindingRead.kind === 'active'
+      ? shujukuBindingRead.binding
+      : null;
+    let rerollRoute: NarrativeRoute = shujukuRerollBinding ? 'shujuku' : 'island';
+    let restoredShujukuCompatibility: ArchiveShujukuCompatibility | null = null;
+    let shujukuBaselineFailure = '';
+    let rerollTransactionFailure = '';
+    let rerollTableRestoreFailed = false;
+    const target = await rollbackReaderInputWithArchive(readerIndex, {
+      timelineMutationOwner,
+      requireAuthoritativeStatusBaseline: true,
+      ...(!shujukuRerollBinding ? { shujukuCompatibilityOverride: null } : {}),
+      ...(shujukuRerollBinding
+        ? {
+            shujukuHandoffCutoff: shujukuRerollBinding.handoff.cutoffFloor,
+            prepareShujukuBaseline: (
+              baseline: ArchiveFloorShujukuBaseline,
+              floor: NonNullable<Awaited<ReturnType<typeof getArchiveFloor>>>,
+            ) => {
+              if (baseline.kind === 'pre_handoff') {
+                void floor;
+                rerollRoute = 'island';
+                return {
+                  kind: 'transaction_after_rollback' as const,
+                  run: async (commitArchive: ShujukuArchiveCommit) => {
+                    const receipt = await commitArchive(null);
+                    if (!receipt) throw new Error('接通点前的 Island 重 roll 没有取得归档提交凭据。');
+                    return receipt;
+                  },
+                };
+              }
+              if (baseline.kind === 'missing_post_handoff') {
+                shujukuBaselineFailure = '该楼层位于 shujuku 接通后，但归档缺少当时的轮前表快照。';
+                return null;
+              }
+              const prepared = createShujukuRerollCompatibility(
+                shujukuRerollBinding,
+                baseline.checkpoint,
+              );
+              if (!prepared) {
+                shujukuBaselineFailure = '归档中的 shujuku 轮前表快照未通过身份或 hash 校验。';
+                return null;
+              }
+              return {
+                kind: 'transaction_after_rollback' as const,
+                run: (commitArchive: ShujukuArchiveCommit) => commitShujukuRerollCheckpoint({
+                  binding: shujukuRerollBinding,
+                  checkpoint: baseline.checkpoint,
+                  commitArchive,
+                }),
+              };
+            },
+            onShujukuBaselineUnavailable: (baseline: ArchiveFloorShujukuBaseline) => {
+              if (shujukuBaselineFailure) return;
+              shujukuBaselineFailure = baseline.kind === 'missing_post_handoff'
+                ? '该楼层位于 shujuku 接通后，但归档缺少当时的轮前表快照。'
+                : '该楼层的 shujuku 轮前表快照无法安全恢复。';
+            },
+          }
+        : {}),
+      onArchiveCommitFailed: (error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        if (detail.includes('权威的轮前时间快照')) shujukuBaselineFailure = detail;
+        else rerollTransactionFailure = detail;
+        rerollTableRestoreFailed = detail.includes('原表恢复失败');
+      },
+      onShujukuCompatibilityRestored: compatibility => {
+        restoredShujukuCompatibility = compatibility;
+      },
+    });
+    if (!target?.sourceUserText) {
+      if (rerollTransactionFailure || shujukuBaselineFailure) {
+        ctx.showNotification({
+          kind: 'status',
+          title: '重 roll 已停止',
+          preview: rerollTransactionFailure
+            ? rerollTableRestoreFailed
+              ? `重生成事务失败：${rerollTransactionFailure}。已停止继续生成；当前 shujuku 连接不能视为操作前状态，请刷新后重新接通。`
+              : `重生成事务失败：${rerollTransactionFailure}。正文时间线和当前 shujuku 连接已恢复到操作前状态。`
+            : `${shujukuBaselineFailure} 正文时间线和当前 shujuku 连接均未改变。`,
+          targetTab: 'summary',
+          timestamp: formatTime(state.statusData.world.currentTime),
+        });
+      }
+      return;
+    }
+    const canRegenerate = rerollRoute === 'island'
+      ? restoredShujukuCompatibility === null
+      : Boolean(
+          shujukuRerollBinding
+          && isRestoredShujukuRouteValidAfterReroll(shujukuRerollBinding, restoredShujukuCompatibility),
+        );
+    state.draft = target.sourceUserText;
+    guardedAdapterSave(state.statusData);
+    ctx.persistConversation();
+    ctx.closeReaderContextMenu(false);
+    render();
+    if (!canRegenerate) {
+      ctx.showNotification({
+        kind: 'status',
+        title: '重 roll 已停止',
+        preview: '归档回执中的 shujuku 表快照未通过身份校验，未开始新一轮生成。',
+        targetTab: 'summary',
+        timestamp: formatTime(state.statusData.world.currentTime),
+      });
+      return;
+    }
+    if (await gameDevelopmentController.submitRestoredTurn(target.sourceUserText, timelineMutationOwner)) {
+      return;
+    }
+    await submitMainMessage({
+      text: target.sourceUserText,
+      keepDraft: true,
+      clearDraftOnSuccess: true,
+      reuseLatestUserMessage: true,
+      timelineMutationOwner,
+    });
+  }, timelineMutationOwner);
 }
 
 async function deleteReaderFloor(readerIndex: number) {
+  return withTimelineMutation(async () => {
+  const requestedLoadToken = saveLoadSequence;
+  const requestedSaveId = state.activeSaveId;
   await waitForHostTimelineWrites();
+  if (requestedLoadToken !== saveLoadSequence || state.activeSaveId !== requestedSaveId) return;
   const targetMessage = getReaderMessageByIndex(state, readerIndex);
   const targetMessageId = targetMessage?.id ?? '';
   const mutationToken = ++readerMutationSequence;
@@ -2144,9 +2729,8 @@ async function deleteReaderFloor(readerIndex: number) {
     && loadToken === saveLoadSequence
     && state.activeSaveId === saveId
     && state.activeRunId === runId;
-  // Deleting an old card is text surgery and must not cancel an unrelated
-  // generation. Only deleting the active streaming card invalidates its task.
-  if (targetMessage?.streaming) invalidateAsyncActions(ctx);
+  await invalidateAsyncActions(ctx);
+  if (requestedLoadToken !== saveLoadSequence || state.activeSaveId !== requestedSaveId) return;
   if (!isCurrent()) return;
   const targetRemovedByInvalidation = Boolean(
     targetMessage?.streaming
@@ -2184,6 +2768,7 @@ async function deleteReaderFloor(readerIndex: number) {
   ctx.persistConversation();
   ctx.closeReaderContextMenu(false);
   render();
+  });
 }
 
 function navigatePhone(route: PhoneRoute) {
@@ -4254,6 +4839,190 @@ function bindEvents() {
       persistToSave();
       render();
     });
+  root
+    ?.querySelector<HTMLInputElement>('[data-field="shujuku-route-enabled"]')
+    ?.addEventListener('change', async event => {
+      const input = event.currentTarget as HTMLInputElement;
+      const runId = state.activeRunId;
+      const saveId = state.activeSaveId;
+      if (!runId || !saveId || state.generating) {
+        render();
+        return;
+      }
+
+      const rawCompatibility = state.runtimeFlags.shujukuCompatibility;
+      const previousHandoff = state.runtimeFlags.shujukuHandoff;
+      const previousTableSnapshot = state.runtimeFlags.shujukuTableSnapshot;
+      const currentCompatibility = rawCompatibility
+        && typeof rawCompatibility === 'object'
+        && !Array.isArray(rawCompatibility)
+        ? rawCompatibility as Partial<ShujukuCompatibilityState>
+        : null;
+      const branchId = typeof currentCompatibility?.branchId === 'string' && currentCompatibility.branchId.trim()
+        ? currentCompatibility.branchId
+        : crypto.randomUUID();
+      const previousIsolationKey = typeof currentCompatibility?.isolationKey === 'string'
+        ? currentCompatibility.isolationKey.trim()
+        : '';
+      const releaseTimelineFence = beginTimelineMutationFence();
+      input.disabled = true;
+      let activeIsolationKey: string | undefined;
+      let routeStatePersisted = false;
+
+      try {
+        await invalidateAsyncActions(ctx);
+        if (state.activeRunId !== runId || state.activeSaveId !== saveId) return;
+
+        if (!input.checked) {
+          const islandCompatibility: ShujukuCompatibilityState = {
+            ...currentCompatibility,
+            saveId,
+            runId,
+            route: 'island',
+            handoffPhase: 'none',
+            branchId,
+            lastCheckedAt: new Date().toISOString(),
+          };
+          delete islandCompatibility.handoffId;
+          delete islandCompatibility.lastTableHash;
+          delete islandCompatibility.lastError;
+          state.runtimeFlags.shujukuCompatibility = islandCompatibility;
+          delete state.runtimeFlags.shujukuHandoff;
+          delete state.runtimeFlags.shujukuTableSnapshot;
+          await persistToSaveImmediately({ allowIncomplete: true });
+          routeStatePersisted = true;
+          ctx.showNotification({
+            kind: 'status',
+            title: '已切换至 Island 路线',
+            preview: '当前存档后续正文将使用 Island 生成链。',
+            targetTab: 'summary',
+            timestamp: formatTime(state.statusData.world.currentTime),
+          });
+          return;
+        }
+
+        const probe = await probeShujukuRuntime(win);
+        if (state.activeRunId !== runId || state.activeSaveId !== saveId) return;
+        activeIsolationKey = probe.activeIsolationKey?.trim() || undefined;
+        const probeTableSnapshot = probe.tableSnapshot;
+        const checkedAt = new Date().toISOString();
+        if (!probe.available || !activeIsolationKey || !probeTableSnapshot) {
+          const lastError = !probe.available
+            ? probe.reason || 'shujuku 运行时不可用。'
+            : !activeIsolationKey
+              ? '未检测到 shujuku 隔离标识，请先在 shujuku 中启用并应用数据隔离。'
+              : 'shujuku 未返回可持久化的轮前表快照，已拒绝建立连接。';
+          const reviewCompatibility: ShujukuCompatibilityState = {
+            ...currentCompatibility,
+            saveId,
+            runId,
+            route: 'shujuku',
+            handoffPhase: 'needs_review',
+            branchId,
+            ...(probe.capabilityHash ? { capabilityHash: probe.capabilityHash } : {}),
+            ...((activeIsolationKey || previousIsolationKey)
+              ? { isolationKey: activeIsolationKey || previousIsolationKey }
+              : {}),
+            lastError,
+            lastCheckedAt: checkedAt,
+          };
+          delete reviewCompatibility.handoffId;
+          state.runtimeFlags.shujukuCompatibility = reviewCompatibility;
+          delete state.runtimeFlags.shujukuHandoff;
+          delete state.runtimeFlags.shujukuTableSnapshot;
+          await persistToSaveImmediately({ allowIncomplete: true });
+          routeStatePersisted = true;
+          ctx.showNotification({
+            kind: 'status',
+            title: 'shujuku 路线需要复核',
+            preview: lastError,
+            targetTab: 'summary',
+            timestamp: formatTime(state.statusData.world.currentTime),
+          });
+          return;
+        }
+
+        const readerMessages = getReaderMessages(state.uiMessages).filter(message => !message.streaming);
+        const timelineAnchor = readerMessages[readerMessages.length - 1]?.id ?? 'floor0';
+        const cutoffFloor = getGlobalReaderMessageCount(state);
+        const committed = await createCommittedShujukuHandoff({
+          currentCompatibility,
+          saveId,
+          runId,
+          branchId,
+          timelineAnchor,
+          cutoffFloor,
+          isolationKey: activeIsolationKey,
+          capabilityHash: probe.capabilityHash ?? '',
+          tableSnapshot: probeTableSnapshot,
+          sourceProjection: { source: 'shujuku-native', capabilityHash: probe.capabilityHash },
+        });
+        if (state.activeRunId !== runId || state.activeSaveId !== saveId) return;
+        state.runtimeFlags.shujukuCompatibility = committed.state;
+        state.runtimeFlags.shujukuHandoff = committed.handoff;
+        state.runtimeFlags.shujukuTableSnapshot = committed.tableSnapshot;
+        await persistToSaveImmediately({ allowIncomplete: true });
+        routeStatePersisted = true;
+
+        const connected = inspectCommittedShujukuBinding(state.runtimeFlags, {
+          saveId: state.activeSaveId,
+          runId: state.activeRunId,
+        }).kind === 'active';
+        ctx.showNotification({
+          kind: 'status',
+          title: connected ? 'shujuku 已连接' : 'shujuku 路线需要复核',
+          preview: connected
+            ? '当前存档后续正文将使用 shujuku 生成与填表链。'
+            : '存档分支已变化，请重新打开 shujuku 路线完成绑定。',
+          targetTab: 'summary',
+          timestamp: formatTime(state.statusData.world.currentTime),
+        });
+      } catch (error) {
+        if (state.activeRunId === runId && state.activeSaveId === saveId) {
+          const lastError = error instanceof Error ? error.message : String(error);
+          if (!routeStatePersisted) {
+            if (input.checked) {
+              // A failed shujuku probe must never leave an old committed handoff
+              // selecting the nonexistent direct-API path on the next send.
+              const fallbackCompatibility: ShujukuCompatibilityState = {
+                ...currentCompatibility,
+                saveId,
+                runId,
+                route: 'island',
+                handoffPhase: 'none',
+                branchId,
+                lastError,
+                lastCheckedAt: new Date().toISOString(),
+              };
+              delete fallbackCompatibility.handoffId;
+              delete fallbackCompatibility.lastTableHash;
+              state.runtimeFlags.shujukuCompatibility = fallbackCompatibility;
+              delete state.runtimeFlags.shujukuHandoff;
+              delete state.runtimeFlags.shujukuTableSnapshot;
+              await persistToSaveImmediately({ allowIncomplete: true });
+              routeStatePersisted = true;
+            } else {
+              if (rawCompatibility === undefined) delete state.runtimeFlags.shujukuCompatibility;
+              else state.runtimeFlags.shujukuCompatibility = rawCompatibility;
+              if (previousHandoff === undefined) delete state.runtimeFlags.shujukuHandoff;
+              else state.runtimeFlags.shujukuHandoff = previousHandoff;
+              if (previousTableSnapshot === undefined) delete state.runtimeFlags.shujukuTableSnapshot;
+              else state.runtimeFlags.shujukuTableSnapshot = previousTableSnapshot;
+            }
+          }
+          ctx.showNotification({
+            kind: 'status',
+            title: input.checked ? 'shujuku 连接失败' : 'Island 路线保存失败',
+            preview: routeStatePersisted ? lastError : `${lastError}；已恢复切换前状态。`,
+            targetTab: 'summary',
+            timestamp: formatTime(state.statusData.world.currentTime),
+          });
+        }
+      } finally {
+        releaseTimelineFence();
+        render();
+      }
+    });
   root?.querySelector<HTMLButtonElement>('[data-action="manual-save"]')?.addEventListener('click', async () => {
     await persistManualSave();
     render();
@@ -4682,10 +5451,12 @@ const titleCallbacks: TitleCallbacks = {
     void enterSave(save.saveId, { openingMode });
   },
   deleteSave: async id => {
+    return withTimelineMutation(async () => {
     if (state.activeSaveId === id) await waitForHostTimelineWrites();
-    saveLoadSequence += 1;
+    const deleteLoadToken = ++saveLoadSequence;
     readerMutationSequence += 1;
-    if (state.activeSaveId === id) invalidateAsyncActions(ctx);
+    if (state.activeSaveId === id) await invalidateAsyncActions(ctx);
+    if (deleteLoadToken !== saveLoadSequence) return;
     const localDelete = deleteTavernArchiveSave(id);
     deleteSave(id);
     void deleteArchiveSave(id).catch(error => console.warn('[archive] delete pointer failed:', error));
@@ -4709,6 +5480,7 @@ const titleCallbacks: TitleCallbacks = {
       setActiveRunId(null);
       clearActiveSaveId();
     }
+    });
   },
   exportSave: id => {
     downloadSaveBackup(id);
@@ -4762,7 +5534,7 @@ function render() {
     // 游戏界面。
     if (syncMainEvents(state.statusData, state.plotLibrary)) {
       guardedAdapterSave(state.statusData);
-      persistToSave();
+      if (!suppressRenderPersistence) persistToSave();
     }
     const routeChoiceRequired = isV07RouteChoiceBlockingMainText();
     if (routeChoiceRequired && !v07DdlAutoOpened) {
@@ -4943,7 +5715,7 @@ async function init() {
     window.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
         syncDrawingSettingsFromMountedControls();
-        flushPendingAutosave();
+        if (autosaveTimer) flushPendingAutosave();
         Promise.all([flushImageAssetStore(), flushArchiveRepository(), flushSaveStore()]).catch(err =>
           console.warn('[init] flush on hidden failed:', err),
         );
@@ -4951,7 +5723,7 @@ async function init() {
     });
     window.addEventListener('beforeunload', () => {
       syncDrawingSettingsFromMountedControls();
-      flushPendingAutosave();
+      if (autosaveTimer) flushPendingAutosave();
     });
   }
   render();

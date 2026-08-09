@@ -454,7 +454,7 @@ async function requestLegacy<T>(action: 'list' | 'write' | 'load', fields: Recor
   return requestBridge<T>(action, fields, protocol);
 }
 
-function registryEntriesToPublic(registry: unknown): TavernBackupIndexEntry[] {
+function registryEntriesToPublic(registry: unknown, registryStoragePath = ''): TavernBackupIndexEntry[] {
   if (!registry || typeof registry !== 'object') return [];
   const entries = (registry as { entries?: unknown }).entries;
   if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return [];
@@ -473,20 +473,20 @@ function registryEntriesToPublic(registry: unknown): TavernBackupIndexEntry[] {
         updatedAt: Number(meta.updatedAt || entry.updatedAt) || 0,
         backedUpAt: new Date(Number(entry.updatedAt) || Date.now()).toISOString(),
         storage: 'archive-v3' as const,
-        storagePath: 'user/files/islandmilfcode/system/islandmilfcode-archive-registry-v3.json',
+        storagePath: registryStoragePath || capability.storagePath || 'user/files',
       };
     });
 }
 
 export async function listTavernFileBackups(): Promise<TavernBackupIndexEntry[]> {
-  const next = await probeTavernArchiveCapability();
   const results = await Promise.allSettled([
-    next.mode === 'local-v3'
-      ? requestBridge<{ registry: unknown }>('v3-read-registry')
-      : Promise.resolve({ registry: null }),
-    next.mode === 'local-v3' || next.mode === 'local-v1' || next.mode === 'backend-unsupported'
-      ? requestLegacy<{ entries: TavernBackupIndexEntry[] }>('list')
-      : Promise.resolve({ entries: [] }),
+    requestBridge<{
+      registry: unknown;
+      storagePath?: string;
+      archiveLayout?: ArchiveLocalCapability['archiveLayout'];
+    }>('v3-read-registry'),
+    requestBridge<{ entries: TavernBackupIndexEntry[] }>('list')
+      .catch(() => requestBridge<{ entries: TavernBackupIndexEntry[] }>('list', {}, 1)),
   ]);
   const merged = new Map<string, TavernBackupIndexEntry>();
   if (results[1].status === 'fulfilled') {
@@ -496,7 +496,7 @@ export async function listTavernFileBackups(): Promise<TavernBackupIndexEntry[]>
       .forEach(entry => merged.set(`${entry.storage ?? 'legacy'}\u0000${entry.saveId}`, entry));
   }
   if (results[0].status === 'fulfilled') {
-    registryEntriesToPublic(results[0].value.registry)
+    registryEntriesToPublic(results[0].value.registry, String(results[0].value.storagePath || ''))
       .forEach(entry => merged.set(`${entry.storage ?? 'archive-v3'}\u0000${entry.saveId}`, entry));
   }
   const entries = [...merged.values()];
@@ -542,12 +542,23 @@ async function collectFullReferences(root: ArchiveRoot): Promise<ArchiveObjectRe
   const result: ArchiveObjectReference[] = [{ kind: 'state', hash: root.stateHash, byteLength: 0 }];
   if (root.summaryHash) result.push({ kind: 'summary', hash: root.summaryHash, byteLength: 0 });
   if (root.memoryHash) result.push({ kind: 'memory', hash: root.memoryHash, byteLength: 0 });
-  if (root.compatibilityHash) result.push({ kind: 'compatibility', hash: root.compatibilityHash, byteLength: 0 });
+  const compatibilityHashes = new Set<string>();
+  if (root.compatibilityHash) compatibilityHashes.add(root.compatibilityHash);
   for (const pageHash of Object.values(root.floorIndexPageHashes)) {
     result.push({ kind: 'floor-index', hash: pageHash, byteLength: 0 });
     const page = await browserBackend.getObject<ArchiveFloorIndexPage>('floor-index', pageHash);
-    page?.entries.forEach(entry => result.push({ kind: 'floor-chunk', hash: entry.chunkHash, byteLength: 0 }));
+    for (const entry of page?.entries ?? []) {
+      result.push({ kind: 'floor-chunk', hash: entry.chunkHash, byteLength: 0 });
+      const chunk = await browserBackend.getObject<ArchiveFloorChunk>('floor-chunk', entry.chunkHash);
+      for (const floor of chunk?.floors ?? []) {
+        const beforeHash = floor.beforeTurnState?.runtime?.shujukuCompatibilityHash;
+        const afterHash = floor.afterTurnState?.runtime?.shujukuCompatibilityHash;
+        if (beforeHash) compatibilityHashes.add(beforeHash);
+        if (afterHash) compatibilityHashes.add(afterHash);
+      }
+    }
   }
+  compatibilityHashes.forEach(hash => result.push({ kind: 'compatibility', hash, byteLength: 0 }));
   return result;
 }
 
@@ -1018,6 +1029,9 @@ export async function readTavernArchiveBackup(saveId: string): Promise<(Portable
     (!('migrationIssues' in compatibilityValue) || Array.isArray(compatibilityValue.migrationIssues))
     ? compatibilityValue as ArchiveCompatibilityBlock
     : null;
+  if (root.compatibilityHash && !compatibility) {
+    throw new Error('Local v3 root references an unreadable compatibility block; preserving the existing root');
+  }
   const pageHashes = Object.values(root.floorIndexPageHashes)
     .filter((hash): hash is string => typeof hash === 'string' && Boolean(hash));
   const pageResults = await Promise.allSettled(
@@ -1040,6 +1054,21 @@ export async function readTavernArchiveBackup(saveId: string): Promise<(Portable
     || floors.some((floor, index) => floor.floorIndex !== index);
   if (timelineIncomplete) {
     throw new Error(`本机 v3 楼层不完整：只读到 ${floors.length}/${root.floorCount} 层；已保留原存档`);
+  }
+  const checkpointHashes = new Set<string>();
+  floors.forEach(floor => {
+    const beforeHash = floor.beforeTurnState.runtime.shujukuCompatibilityHash;
+    const afterHash = floor.afterTurnState?.runtime.shujukuCompatibilityHash;
+    if (beforeHash) checkpointHashes.add(beforeHash);
+    if (afterHash) checkpointHashes.add(afterHash);
+  });
+  const compatibilityCheckpoints: Record<string, ArchiveCompatibilityBlock> = {};
+  for (const hash of checkpointHashes) {
+    const checkpoint = await getObject<ArchiveCompatibilityBlock>('compatibility', hash).catch(() => null);
+    if (!checkpoint) {
+      throw new Error(`Local v3 archive compatibility checkpoint ${hash} is unreadable; preserving the existing root`);
+    }
+    compatibilityCheckpoints[hash] = checkpoint;
   }
   const assetIds = new Set(floors.flatMap(floor => Array.isArray(floor.imageAssetIds) ? floor.imageAssetIds : []));
   if (meta.playerProfile?.avatarAssetId) assetIds.add(meta.playerProfile.avatarAssetId);
@@ -1065,6 +1094,7 @@ export async function readTavernArchiveBackup(saveId: string): Promise<(Portable
     ...(summary ? { summary } : {}),
     ...(memory ? { memory } : {}),
     ...(compatibility ? { compatibility } : {}),
+    ...(Object.keys(compatibilityCheckpoints).length ? { compatibilityCheckpoints } : {}),
     floors,
     ...(imageAssets.length ? { imageAssets } : {}),
     ...((result.degraded || timelineIncomplete) && resolvedRootHash

@@ -50,6 +50,52 @@ export type Difficulty = 'easy' | 'normal' | 'hard';
 
 export type OpeningMode = 'manual' | 'ai';
 
+export type NarrativeRoute = 'island' | 'shujuku';
+
+export type HandoffPhase = 'none' | 'observing' | 'pending' | 'committed' | 'needs_review' | 'conflict';
+
+export type ShujukuHandoffEnvelope = {
+  handoffId: string;
+  runId: string;
+  saveId: string;
+  branchId: string;
+  timelineAnchor: string;
+  cutoffFloor: number;
+  mappingVersion: string;
+  sourceHash: string;
+  tableHash?: string;
+  status: 'pending' | 'committed' | 'conflict';
+};
+
+export type ShujukuCompatibilityState = {
+  saveId?: string;
+  runId?: string;
+  route: NarrativeRoute;
+  handoffPhase: HandoffPhase;
+  pluginVersion?: string;
+  capabilityHash?: string;
+  isolationKey?: string;
+  handoffId?: string;
+  branchId: string;
+  lastTableHash?: string;
+  mappingVersion?: string;
+  lastError?: string;
+  lastCheckedAt?: string;
+};
+
+export type ShujukuTableSnapshot = Record<string, unknown> & {
+  capturedAt: string;
+  tableHash: string;
+  headRevision?: string | null;
+  tables: Record<string, unknown>;
+};
+
+export type ArchiveShujukuCompatibility = {
+  state: ShujukuCompatibilityState;
+  handoff?: ShujukuHandoffEnvelope;
+  tableSnapshot?: ShujukuTableSnapshot;
+};
+
 export type PlayerProfile = {
   name: string;
   familyName: string;
@@ -99,12 +145,36 @@ export type MessageSnapshot = {
   baseIndex?: number;
 };
 
+export type ShujukuStorageFrame = Record<string, unknown> & {
+  version: 2;
+  headRevision?: string | null;
+  checkpoint?: Record<string, unknown>;
+  logEntries: unknown[];
+};
+
+export type ShujukuIsolatedMessageData = Record<string, unknown> & {
+  storageFrame?: ShujukuStorageFrame;
+  _acu_storage_version?: number;
+};
+
+export type MessagePluginData = Record<string, unknown> & {
+  qrf_plot?: string;
+  qrf_plot_preset?: string;
+  qrf_plot_tasks?: Record<string, string>;
+  _qrf_from_planning?: boolean;
+  _qrf_plot_pending_hash?: string;
+  TavernDB_ACU_IsolatedData?: Record<string, ShujukuIsolatedMessageData>;
+};
+
 export type PersistedMessage = {
   id: string;
   role: 'user' | 'assistant';
   speaker: string;
   text: string;
   rawText?: string;
+  exchangeId?: string;
+  plannedText?: string;
+  pluginData?: MessagePluginData;
   illustrations?: MessageIllustration[];
   statusSnapshot?: RollbackSnapshot;
   /** Stable host marker + last-known position. message_id is only a locator hint. */
@@ -202,6 +272,8 @@ export type FloorPhoneStateSnapshot = {
 /** 当前明确允许跟随楼层恢复的运行时字段；未知 runtimeFlags 不得混入。 */
 export type FloorRuntimeSnapshot = {
   gameDevelopment?: GameDevelopmentState | null;
+  /** Content-addressed archive checkpoint; the table snapshot is not copied into every floor. */
+  shujukuCompatibilityHash?: string;
 };
 
 export type FloorStateSnapshotProvenance = {
@@ -487,6 +559,9 @@ export type UiMessage = {
   speaker: string;
   text: string;
   rawText?: string;
+  exchangeId?: string;
+  plannedText?: string;
+  pluginData?: MessagePluginData;
   illustrations?: MessageIllustration[];
   streaming?: boolean;
   tavernMessageId?: number;
@@ -658,6 +733,7 @@ export type TavernWindow = Window &
     deleteChatMessages?: (messageIds: number[], option?: { refresh?: 'none' | 'affected' | 'all' }) => Promise<void>;
     generate?: (config: Record<string, unknown>) => Promise<string>;
     generateRaw?: (config: Record<string, unknown>) => Promise<string>;
+    stopGenerationById?: (generationId: string) => boolean;
     createChatMessages?: (
       messages: Array<{
         role: 'system' | 'assistant' | 'user';

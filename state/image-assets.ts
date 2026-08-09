@@ -6,6 +6,7 @@ import {
   markImageGcCandidate,
   registerPendingImageAsset,
 } from './image-references';
+import { readTavernArchiveImage } from './tavern-archive-read';
 
 export type ImageAssetRecord = {
   id: string;
@@ -199,7 +200,22 @@ export async function loadImageAssetObjectUrl(assetId: string, floorKey: string)
     return cached.url;
   }
 
-  const record = assetMap.get(assetId) ?? await idbGet<ImageAssetRecord>(IDB_STORE_IMAGE_ASSETS, assetId);
+  let record = assetMap.get(assetId) ?? await idbGet<ImageAssetRecord>(IDB_STORE_IMAGE_ASSETS, assetId);
+  if (!record?.blob) {
+    const archived = await readTavernArchiveImage(assetId).catch(() => null);
+    if (archived) {
+      const decoded = dataUrlToBlob(archived.dataUrl);
+      record = {
+        id: archived.id,
+        blob: decoded.blob,
+        mimeType: archived.mimeType || decoded.mimeType,
+        byteLength: archived.byteLength || decoded.byteLength,
+        createdAt: archived.createdAt,
+        ...(archived.prompt ? { prompt: archived.prompt } : {}),
+      };
+      await idbPut(IDB_STORE_IMAGE_ASSETS, record.id, record).catch(() => undefined);
+    }
+  }
   if (!record?.blob) throw new Error(`Image asset not found: ${assetId}`);
   touchAsset(record);
 

@@ -7,6 +7,7 @@ import type {
   DrawingSettings,
   FloorStateSnapshot,
   ImageRerollContext,
+  MessagePluginData,
   PersistedMessage,
   PhoneMessageStore,
   PlotLibrary,
@@ -87,6 +88,11 @@ function applyProfileDefaults<T extends Record<string, unknown>>(profile: T): T 
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function cloneMessagePluginData(value: unknown): MessagePluginData | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return cloneJson(value as MessagePluginData);
 }
 
 function hasOwn(input: object, key: PropertyKey): boolean {
@@ -263,10 +269,16 @@ function serializeMessage(message: UiMessage): PersistedMessage | null {
   const speaker = String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User'));
   const text = String(message.text ?? '');
   const rawText = message.rawText ? String(message.rawText) : undefined;
+  // shujuku evidence is attached after the first save, so those messages must bypass the old cache.
+  const hasDynamicPluginFields =
+    typeof message.exchangeId === 'string' ||
+    typeof message.plannedText === 'string' ||
+    message.pluginData !== undefined;
   const illustrationSignature = getIllustrationSignature(message.illustrations);
   const hostLocatorSignature = usesRealHostTimeline() ? getHostLocatorSignature(message.hostLocator) : '';
   const cached = serializedMessageCache.get(message);
   if (
+    !hasDynamicPluginFields &&
     cached &&
     cached.id === message.id &&
     cached.role === message.role &&
@@ -289,6 +301,16 @@ function serializeMessage(message: UiMessage): PersistedMessage | null {
   if (rawText) {
     base.rawText = rawText;
   }
+  if (typeof message.exchangeId === 'string') {
+    base.exchangeId = message.exchangeId;
+  }
+  if (typeof message.plannedText === 'string') {
+    base.plannedText = message.plannedText;
+  }
+  const pluginData = cloneMessagePluginData(message.pluginData);
+  if (pluginData) {
+    base.pluginData = pluginData;
+  }
   if (message.illustrations?.length) {
     const illustrations = message.illustrations
       .map(normalizeIllustrationForPersistence)
@@ -302,17 +324,21 @@ function serializeMessage(message: UiMessage): PersistedMessage | null {
     base.hostLocator = hostLocator;
   }
 
-  serializedMessageCache.set(message, {
-    id: message.id,
-    role: message.role,
-    speaker,
-    text,
-    rawText,
-    statusSnapshot: message.statusSnapshot,
-    illustrationSignature,
-    hostLocatorSignature,
-    value: base,
-  });
+  if (hasDynamicPluginFields) {
+    serializedMessageCache.delete(message);
+  } else {
+    serializedMessageCache.set(message, {
+      id: message.id,
+      role: message.role,
+      speaker,
+      text,
+      rawText,
+      statusSnapshot: message.statusSnapshot,
+      illustrationSignature,
+      hostLocatorSignature,
+      value: base,
+    });
+  }
   return base;
 }
 
@@ -819,12 +845,16 @@ export function deserializeMessages(messages: PersistedMessage[]): UiMessage[] {
     .filter(msg => msg && (msg.role === 'user' || msg.role === 'assistant') && typeof msg.text === 'string')
     .map(msg => {
       const locator = usesRealHostTimeline() ? parseHostMessageLocator(msg.hostLocator) : null;
+      const pluginData = cloneMessagePluginData(msg.pluginData);
       const ui: UiMessage = {
         id: String(msg.id || crypto.randomUUID()),
         role: msg.role,
         speaker: String(msg.speaker || (msg.role === 'assistant' ? 'Assistant' : 'User')),
         text: String(msg.text ?? ''),
         rawText: msg.rawText ? String(msg.rawText) : undefined,
+        ...(typeof msg.exchangeId === 'string' ? { exchangeId: msg.exchangeId } : {}),
+        ...(typeof msg.plannedText === 'string' ? { plannedText: msg.plannedText } : {}),
+        ...(pluginData ? { pluginData } : {}),
         illustrations: Array.isArray(msg.illustrations)
           ? msg.illustrations
               .map(normalizeIllustrationForUi)
@@ -1045,7 +1075,14 @@ export async function deleteReaderMessage(
 }
 
 /** Restore the bounded authoritative state carried by a v3 floor. */
+export function hasAuthoritativeFloorStatusData(snapshot: FloorStateSnapshot): boolean {
+  return snapshot.provenance.statusData !== 'defaulted'
+    && snapshot.provenance.statusData !== 'save-current-fallback';
+}
+
 export function restoreFloorStateSnapshot(state: AppState, snapshot: FloorStateSnapshot) {
+  const statusDataIsAuthoritative = hasAuthoritativeFloorStatusData(snapshot);
+  const currentStatusData = state.statusData;
   const rollback: RollbackSnapshot = {
     statusData: cloneJson(snapshot.statusData),
     playerProfile: cloneJson(snapshot.playerProfile),
@@ -1055,11 +1092,13 @@ export function restoreFloorStateSnapshot(state: AppState, snapshot: FloorStateS
     rollback.gameDevelopment = cloneJson(snapshot.runtime.gameDevelopment);
   }
   restoreRollbackSnapshot(state, rollback);
-  if (snapshot.provenance.statusData !== 'defaulted' && snapshot.provenance.statusData !== 'save-current-fallback') {
+  if (statusDataIsAuthoritative) {
     // An explicit floor snapshot is allowed to restore a legitimate zero
     // affinity. The corruption guard remains active only for inferred legacy
     // fallbacks where zero may mean "field was missing".
     state.statusData = normalizeStatusData(cloneJson(snapshot.statusData));
+  } else {
+    state.statusData = currentStatusData;
   }
 
   const threads: PhoneMessageStore['threads'] = {};

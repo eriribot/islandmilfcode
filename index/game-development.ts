@@ -24,7 +24,7 @@ export type GameDevelopmentController = {
   ) => Promise<void>;
   readonly submitFromMainDraft: (sourceUserText: string) => Promise<boolean>;
   readonly restoreEditorAfterRollback: (sourceUserText: string) => boolean;
-  readonly submitRestoredTurn: (sourceUserText: string) => Promise<boolean>;
+  readonly submitRestoredTurn: (sourceUserText: string, timelineMutationOwner?: symbol) => Promise<boolean>;
 };
 
 export function createGameDevelopmentController(dependencies: {
@@ -33,7 +33,10 @@ export function createGameDevelopmentController(dependencies: {
   readonly render: () => void;
   readonly persist: () => void;
   readonly persistImmediately: () => Promise<void>;
-  readonly submitMainMessage: Parameters<typeof submitGameDevelopmentTurn>[0]['submitMainMessage'];
+  readonly submitMainMessage: (
+    options: Parameters<Parameters<typeof submitGameDevelopmentTurn>[0]['submitMainMessage']>[0]
+      & { timelineMutationOwner?: symbol },
+  ) => Promise<void>;
   readonly notify: (notification: NotificationState) => void;
   readonly focusComposer: () => void;
 }): GameDevelopmentController {
@@ -120,7 +123,7 @@ export function createGameDevelopmentController(dependencies: {
     );
   };
 
-  const submit = async () => {
+  const submit = async (timelineMutationOwner?: symbol) => {
     if (dependencies.getState().generating) {
       notify('当前正在生成正文', '请等待现有主正文请求结束后再开始游戏开发回合。');
       return false;
@@ -135,7 +138,7 @@ export function createGameDevelopmentController(dependencies: {
         readState: () => readActiveState() ?? current,
         writeState,
         persistImmediately: dependencies.persistImmediately,
-        submitMainMessage: dependencies.submitMainMessage,
+        submitMainMessage: options => dependencies.submitMainMessage({ ...options, timelineMutationOwner }),
         allowedTargetIds,
         runId: () => dependencies.getState().activeRunId ?? '',
         now: () => new Date().toISOString(),
@@ -252,7 +255,7 @@ export function createGameDevelopmentController(dependencies: {
     return setGameChoiceEdit(current);
   };
 
-  const submitRestoredTurn = async (sourceUserText: string) => {
+  const submitRestoredTurn = async (sourceUserText: string, timelineMutationOwner?: symbol) => {
     if (!restoreEditorAfterRollback(sourceUserText)) return false;
     const current = readActiveState();
     if (!current || !hasCurrentGameChoiceEdit(current)) return false;
@@ -263,7 +266,7 @@ export function createGameDevelopmentController(dependencies: {
     writeState(updated.value, false);
     clearGameChoiceEdit();
     dependencies.persist();
-    await submit();
+    await submit(timelineMutationOwner);
     return true;
   };
 

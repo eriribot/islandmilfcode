@@ -60,7 +60,7 @@ export type GameDevelopmentAssistantAcceptance = {
   readonly assistantMessageId: string;
   readonly hostMessageId: number | null;
   readonly sceneText: string;
-  readonly generationSource: 'tavern_generate' | 'tavern_generate_raw';
+  readonly generationSource: 'tavern_generate' | 'tavern_generate_raw' | 'shujuku_island_generate';
   readonly acceptedAt: string;
   readonly runId: string;
 };

@@ -43,6 +43,7 @@ import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
 import { getPhoneRelationshipPairCount, renderPhoneRelationships } from './relationships';
 import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './types';
 import { isPlayerPhonePseudoTarget } from './types';
+import { inspectCommittedShujukuBinding } from '../shujuku/adapter';
 
 type PhoneCharacterThemeId = PhoneThemeCharacterId;
 
@@ -1665,6 +1666,37 @@ function renderGameDevelopmentPhonePage(state: AppState) {
 
 function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
   const plotRouteReviewEnabled = isPlotRouteReviewEnabled(state.runtimeFlags);
+  const rawShujukuCompatibility = state.runtimeFlags.shujukuCompatibility;
+  const shujukuCompatibility = rawShujukuCompatibility
+    && typeof rawShujukuCompatibility === 'object'
+    && !Array.isArray(rawShujukuCompatibility)
+    ? rawShujukuCompatibility as Record<string, unknown>
+    : null;
+  const shujukuRequested = shujukuCompatibility?.route === 'shujuku';
+  const shujukuBinding = inspectCommittedShujukuBinding(state.runtimeFlags, {
+    saveId: state.activeSaveId,
+    runId: state.activeRunId,
+  });
+  const shujukuConnected = shujukuBinding.kind === 'active';
+  const shujukuNeedsReview = shujukuRequested && !shujukuConnected;
+  const boundIsolationKey = typeof shujukuCompatibility?.isolationKey === 'string'
+    ? shujukuCompatibility.isolationKey
+    : '';
+  const shujukuReviewReason = shujukuBinding.kind === 'invalid'
+    ? shujukuBinding.reason
+    : typeof shujukuCompatibility?.lastError === 'string'
+      ? shujukuCompatibility.lastError.trim()
+      : '';
+  const shujukuStatus = shujukuConnected
+    ? '已连接'
+    : shujukuNeedsReview
+      ? shujukuReviewReason
+        ? `需复核：${shujukuReviewReason}`
+        : boundIsolationKey
+          ? `需复核；当前绑定：${boundIsolationKey}`
+          : '需复核'
+      : '当前使用 Island 路线';
+  const shujukuToggleDisabled = state.generating || !state.activeRunId || !state.activeSaveId;
   return `
     <section class="phone-route-page phone-app-page" data-phone-route-view="app:settings">
       ${renderPhoneAppHeader(state, '设置 / 保存', state.activeSaveId ? '存档已连接' : '未保存')}
@@ -1680,7 +1712,21 @@ function renderSettingsPhonePage(state: AppState, renderers: PhoneRenderers) {
               type="checkbox"
               data-field="plot-route-review-enabled"
               ${plotRouteReviewEnabled ? 'checked' : ''}
+              ${shujukuConnected ? 'disabled' : ''}
               aria-label="自动路线事实核对"
+            />
+          </label>
+          <label class="phone-settings-toggle">
+            <span>
+              <strong>shujuku 剧情路线</strong>
+              <small>${escapeHtml(shujukuStatus)}</small>
+            </span>
+            <input
+              type="checkbox"
+              data-field="shujuku-route-enabled"
+              ${shujukuConnected ? 'checked' : ''}
+              ${shujukuToggleDisabled ? 'disabled' : ''}
+              aria-label="shujuku 剧情路线"
             />
           </label>
           <div class="settings-actions">

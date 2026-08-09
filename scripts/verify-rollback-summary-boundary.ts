@@ -1,9 +1,18 @@
 import assert from 'node:assert/strict';
 
 import type { UiMessage } from '../types';
-import { createInitialState, rollbackConversation } from '../state/store';
+import {
+  createInitialState,
+  createRollbackSnapshot,
+  hasAuthoritativeFloorStatusData,
+  restoreFloorStateSnapshot,
+  rollbackConversation,
+} from '../state/store';
+import type { FloorSnapshotFieldSource, FloorStateSnapshot } from '../types';
 
 const createdAt = '2026-08-05T13:03:14.000Z';
+const beforeTurnTime = '2012-03-30 22:15';
+const headTime = '2012-03-31 08:30';
 
 function message(index: number): UiMessage {
   return {
@@ -14,11 +23,73 @@ function message(index: number): UiMessage {
   };
 }
 
-async function main() {
+function floorSnapshot(state: ReturnType<typeof createInitialState>, source: FloorSnapshotFieldSource): FloorStateSnapshot {
+  return {
+    statusData: JSON.parse(JSON.stringify(state.statusData)),
+    playerProfile: JSON.parse(JSON.stringify(state.playerProfile)),
+    phoneState: {
+      activeThreadId: state.phoneMessages.activeThreadId,
+      draft: state.phoneMessages.draft,
+      threads: {},
+    },
+    drawingSettings: JSON.parse(JSON.stringify(state.drawingSettings)),
+    runtime: {},
+    provenance: {
+      statusData: source,
+      playerProfile: source,
+      phoneState: source,
+      drawingSettings: source,
+      runtime: source,
+    },
+  };
+}
+
+function verifyFloorTimeProvenance() {
   const state = createInitialState({ x: 0, y: 0 });
+  state.statusData.world.currentTime = beforeTurnTime;
+  const exact = floorSnapshot(state, 'message-snapshot');
+  state.statusData.world.currentTime = headTime;
+  restoreFloorStateSnapshot(state, exact);
+  assert.equal(
+    state.statusData.world.currentTime,
+    beforeTurnTime,
+    'an exact message snapshot restores its before-turn time',
+  );
+
+  const fallback = floorSnapshot(state, 'save-current-fallback');
+  assert.equal(hasAuthoritativeFloorStatusData(fallback), false, 'save-current fallback is not a reroll time authority');
+  fallback.statusData.world.currentTime = '2012-01-01 00:00';
+  state.statusData.world.currentTime = headTime;
+  restoreFloorStateSnapshot(state, fallback);
+  assert.equal(
+    state.statusData.world.currentTime,
+    headTime,
+    'a save-current fallback cannot overwrite the current time with a fabricated historical baseline',
+  );
+
+  const defaulted = floorSnapshot(state, 'defaulted');
+  assert.equal(hasAuthoritativeFloorStatusData(defaulted), false, 'defaulted status is not a reroll time authority');
+  defaulted.statusData.world.currentTime = '2012-01-02 00:00';
+  state.statusData.world.currentTime = headTime;
+  restoreFloorStateSnapshot(state, defaulted);
+  assert.equal(
+    state.statusData.world.currentTime,
+    headTime,
+    'a defaulted snapshot cannot overwrite the current time with a fabricated historical baseline',
+  );
+}
+
+async function main() {
+  verifyFloorTimeProvenance();
+  const state = createInitialState({ x: 0, y: 0 });
+  state.statusData.world.currentTime = beforeTurnTime;
+  const beforeTurnSnapshot = createRollbackSnapshot(state);
+  state.statusData.world.currentTime = headTime;
+  const residentMessages = Array.from({ length: 16 }, (_, index) => message(index));
+  residentMessages[14].statusSnapshot = beforeTurnSnapshot;
   state.uiMessages = [
     { id: 'system', role: 'system', speaker: 'system', text: '' },
-    ...Array.from({ length: 16 }, (_, index) => message(index)),
+    ...residentMessages,
   ];
   state.messageWindow = {
     startFloor: 229,
@@ -71,6 +142,11 @@ async function main() {
 
   const result = await rollbackConversation(state, 14);
   assert.ok(result, 'rollback target must exist');
+  assert.equal(
+    state.statusData.world.currentTime,
+    beforeTurnTime,
+    'reroll restores the exact user before-turn time instead of retaining the current head time',
+  );
   assert.equal(state.memoryDB.lastProcessedIndex, 243, 'memory cursor uses the global rollback boundary');
   assert.equal(state.summaryStore.lastSummarizedIndex, 243, 'summary cursor uses the global rollback boundary');
   assert.deepEqual(

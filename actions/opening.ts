@@ -1,4 +1,9 @@
 import { buildPrompt, extractCompleteVisibleReply } from '../message-format';
+import {
+  inspectCommittedShujukuBinding,
+  runShujukuVirtualTurn,
+  type ShujukuVirtualMessageInput,
+} from '../shujuku/adapter';
 import { createRollbackSnapshot } from '../state/store';
 import type { SummaryStore } from '../summary/types';
 import type { IslandMemoryDB } from '../memorydatabase/types';
@@ -22,6 +27,10 @@ const OPENING_USER_INPUT =
   '新建角色后的 AI 自动开场生成请求。这里没有玩家角色的主动发言、指令或行动；请只根据已经创建好的玩家档案与当前世界状态生成第一幕开场正文。';
 
 function buildOpeningPresetInput(state: AppState, ctx: Pick<OpeningActionContext, 'summaryStore' | 'memoryDB'>) {
+  const shujukuBinding = inspectCommittedShujukuBinding(state.runtimeFlags, {
+    saveId: state.activeSaveId,
+    runId: state.activeRunId,
+  });
   const promptHistory = state.uiMessages[state.uiMessages.length - 1]?.streaming
     ? state.uiMessages.slice(0, -1)
     : state.uiMessages;
@@ -33,6 +42,7 @@ function buildOpeningPresetInput(state: AppState, ctx: Pick<OpeningActionContext
     suppressUserInputLine: true,
     memoryDB: ctx.memoryDB,
     drawingSettings: state.drawingSettings,
+    narrativeRoute: shujukuBinding.kind === 'active' ? 'shujuku' : 'island',
     messageStartIndex: state.messageWindow.startMessage,
   });
 
@@ -81,12 +91,29 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
   };
   const hasPresetGenerate = typeof win.generate === 'function';
   const hasRawGenerate = typeof win.generateRaw === 'function';
+  const shujukuBinding = inspectCommittedShujukuBinding(state.runtimeFlags, {
+    saveId: state.activeSaveId,
+    runId: state.activeRunId,
+  });
+  const rawCompatibility = state.runtimeFlags.shujukuCompatibility;
+  const shujukuRequested = Boolean(
+    rawCompatibility
+    && typeof rawCompatibility === 'object'
+    && !Array.isArray(rawCompatibility)
+    && (rawCompatibility as Record<string, unknown>).route === 'shujuku',
+  );
+  const narrativeRoute = shujukuBinding.kind === 'active'
+    ? 'shujuku'
+    : shujukuRequested
+      ? 'blocked'
+      : 'island';
 
   ctx.clearNotification(false);
   recordGenerationDebug(ctx, 'opening:start', {
     generationId,
     hasPresetGenerate,
     hasRawGenerate,
+    route: narrativeRoute,
     playerName: state.playerProfile.name,
     className: state.playerProfile.className ?? '',
     backgroundCount: state.playerProfile.backgrounds?.length ?? 0,
@@ -97,26 +124,76 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
     const openingAssistantMessageId = streamingMessage.id;
     ctx.render();
 
-    if (!hasPresetGenerate) {
+    if (narrativeRoute === 'blocked') {
+      throw new Error(
+        shujukuBinding.kind === 'invalid'
+          ? `shujuku 路线需要复核：${shujukuBinding.reason}`
+          : 'shujuku 路线需要复核：当前 handoff 尚未完成。',
+      );
+    }
+    if (narrativeRoute === 'island' && !hasPresetGenerate) {
       throw new Error('真实 AI 开场生成接口不可用。');
     }
     const userInput = buildOpeningPresetInput(state, ctx);
-    // Opening generation must enter Tavern's preset stack; never use generateRaw/ordered_prompts here.
-    const generateOpening = win.generate;
-    const result = await generateOpening({
-      should_stream: true,
-      should_silence: true,
-      generation_id: generationId,
-      user_input: userInput,
-    });
+    let rawResult = '';
+    let shujukuTurnResult: Awaited<ReturnType<typeof runShujukuVirtualTurn>> | null = null;
+    if (narrativeRoute === 'shujuku') {
+      if (!shujukuBinding) throw new Error('shujuku handoff 已失效；开场未发送。');
+      const promptHistory = state.uiMessages.filter(message =>
+        (message.role === 'user' || message.role === 'assistant') && !message.streaming,
+      );
+      const rootMessage = promptHistory[0]?.role === 'assistant' ? promptHistory[0] : null;
+      const virtualMessages: ShujukuVirtualMessageInput[] = promptHistory
+        .slice(rootMessage ? 1 : 0)
+        .reduce<ShujukuVirtualMessageInput[]>((messages, message) => {
+          if (message.role === 'user' || message.role === 'assistant') {
+            messages.push({
+              role: message.role,
+              name: message.speaker,
+              text: message.text,
+              rawText: message.rawText,
+              ...(message.pluginData ? { pluginData: message.pluginData } : {}),
+            });
+          }
+          return messages;
+        }, []);
+      virtualMessages.push({
+        role: 'user',
+        name: state.playerProfile.name || '用户',
+        text: OPENING_USER_INPUT,
+        current: true,
+      });
+      shujukuTurnResult = await runShujukuVirtualTurn(win, {
+        rootText: rootMessage?.rawText || rootMessage?.text || '[开局]',
+        messages: virtualMessages,
+        userInput: OPENING_USER_INPUT,
+        systemPrompt: userInput,
+        generationId,
+        mode: 'opening',
+      });
+      rawResult = shujukuTurnResult.rawText;
+      recordGenerationDebug(ctx, 'shujuku:opening-virtual-turn', {
+        generationId,
+        planning: shujukuTurnResult.planningObserved ? 'observed' : 'missing',
+        tableCommit: shujukuTurnResult.databaseCommitted ? 'committed' : 'missing',
+        diagnostics: shujukuTurnResult.diagnostics,
+      });
+    } else {
+      // Opening generation enters Tavern's preset stack on the Island route.
+      const result = await win.generate!({
+        should_stream: true,
+        should_silence: true,
+        generation_id: generationId,
+        user_input: userInput,
+      });
+      rawResult = String(result ?? '');
+    }
 
     if (abandonIfStale()) return false;
     recordGenerationDebug(ctx, 'opening:generate-returned', {
       generationId,
-      resultLength: String(result ?? '').length,
+      resultLength: rawResult.length,
     });
-    const rawResult = String(result ?? '');
-
     const completeSceneText = extractCompleteVisibleReply(rawResult).trim();
     if (!completeSceneText) {
       throw new Error('开场未返回完整且非空的可见正文标签。');
@@ -134,6 +211,22 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
       throw new Error('开场待提交楼层与完整可见正文标签不一致。');
     }
     finalizeStreamingText(ctx, rawResult, generationId);
+    if (shujukuTurnResult) {
+      if (shujukuTurnResult.assistantPluginData) {
+        provisionalAssistant.pluginData = shujukuTurnResult.assistantPluginData;
+      }
+      if (shujukuTurnResult.tableSnapshot) {
+        state.runtimeFlags.shujukuTableSnapshot = shujukuTurnResult.tableSnapshot;
+        const compatibility = state.runtimeFlags.shujukuCompatibility;
+        if (compatibility && typeof compatibility === 'object' && !Array.isArray(compatibility)) {
+          state.runtimeFlags.shujukuCompatibility = {
+            ...(compatibility as Record<string, unknown>),
+            lastTableHash: shujukuTurnResult.tableSnapshot.tableHash,
+            lastCheckedAt: new Date().toISOString(),
+          };
+        }
+      }
+    }
     provisionalAssistant.statusSnapshot = createRollbackSnapshot(state);
     ctx.persistConversation();
     state.openingGenerationError = null;

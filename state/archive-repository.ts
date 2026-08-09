@@ -1,6 +1,6 @@
 import type { IslandMemoryDB } from '../memorydatabase/types';
-import type { SummaryStore } from '../summary/types';
 import type {
+  ArchiveShujukuCompatibility,
   AppState,
   DrawingSettings,
   FloorPhoneStateSnapshot,
@@ -37,7 +37,7 @@ import type {
   StoredFloorRecord,
 } from './archive-backend';
 import { hashArchiveValue } from './archive-hash';
-import { BrowserArchiveBackend } from './browser-archive-backend';
+import { TavernArchiveBackend } from './tavern-archive-backend';
 import {
   IDB_STORE_ARCHIVE_ROOTS_V3,
   IDB_STORE_BACKUP_JOURNAL_V3,
@@ -53,6 +53,7 @@ import { buildLegacyV2ToV3MigrationPlan, type LegacyMigrationIssue } from './sav
 import { deserializeMessages, restoreGameDevelopmentSnapshot, serializeMessages } from './store';
 import { readImageAssetReferences, replaceImageAssetReferences } from './image-references';
 import { isMessageWindowAtHead } from './message-window';
+import { SHUJUKU_NATIVE_HANDOFF_VERSION } from '../shujuku/adapter';
 
 const FLOOR_CHUNK_SIZE = 16;
 const INDEX_PAGE_CHUNK_COUNT = 128;
@@ -61,7 +62,10 @@ const FLOOR_CACHE_LIMIT = 24;
 type RuntimeArchiveState = Pick<
   AppState,
   'statusData' | 'playerProfile' | 'phoneMessages' | 'drawingSettings' | 'summaryStore' | 'memoryDB' | 'uiMessages' | 'messageWindow'
->;
+> & {
+  shujukuCompatibilityHash?: string;
+  previousShujukuCompatibilityHash?: string;
+};
 
 export type ArchiveCheckpointInput = {
   saveId: string;
@@ -80,10 +84,12 @@ export type ArchiveCommitReceipt = {
   floorCount: number;
   messageCount: number;
   committed: true;
+  shujukuCompatibility?: ArchiveShujukuCompatibility | null;
 };
 
 export type ArchiveRollbackReceipt = ArchiveCommitReceipt & {
   restoredState: FloorStateSnapshot;
+  restoredCompatibility: ArchiveShujukuCompatibility | null;
   sourceUserText: string;
   capability: 'exact' | 'best-effort';
 };
@@ -98,6 +104,7 @@ export type PortableArchiveBackup = {
   summary?: ArchiveSummaryBlock;
   memory?: ArchiveMemoryBlock;
   compatibility?: ArchiveCompatibilityBlock;
+  compatibilityCheckpoints?: Record<string, ArchiveCompatibilityBlock>;
   floors: FloorRecord[];
 };
 
@@ -124,7 +131,7 @@ export type ArchiveCommitEvent = {
 
 type ArchiveCommitListener = (event: ArchiveCommitEvent) => Promise<void> | void;
 
-const backend = new BrowserArchiveBackend();
+const backend = new TavernArchiveBackend();
 const metaCache = new Map<string, ArchiveSaveMeta>();
 const floorCache = new Map<string, { floor: FloorRecord; accessedAt: number }>();
 const pendingOperations = new Set<Promise<unknown>>();
@@ -144,6 +151,193 @@ class ArchiveMetaCasConflict extends Error {
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function createCompatibilityScaffold(): ArchiveCompatibilityBlock {
+  return {
+    formatVersion: 3,
+    sourceSchemaVersion: null,
+    rawLegacyExtras: {},
+    excludedRuntimeFlagKeys: [],
+  };
+}
+
+export function prepareArchiveCompatibilityForFork(
+  source: ArchiveCompatibilityBlock,
+  identity: { runId: string; saveId: string; branchId: string },
+): ArchiveCompatibilityBlock {
+  const forked = cloneJson(source);
+  if (!forked.shujuku) return forked;
+  const sourceState = forked.shujuku.state;
+  const sourceHandoff = forked.shujuku.handoff;
+  const sourceSnapshot = forked.shujuku.tableSnapshot;
+  const hasCurrentMapping = sourceState.mappingVersion === SHUJUKU_NATIVE_HANDOFF_VERSION
+    && sourceHandoff?.mappingVersion === SHUJUKU_NATIVE_HANDOFF_VERSION;
+  const canContinueCommittedRoute = Boolean(
+    sourceState.route === 'shujuku'
+    && sourceState.handoffPhase === 'committed'
+    && hasCurrentMapping
+    && sourceState.isolationKey?.trim()
+    && sourceHandoff?.status === 'committed'
+    && sourceHandoff.handoffId === sourceState.handoffId
+    && sourceSnapshot
+    && sourceSnapshot.tableHash === sourceState.lastTableHash,
+  );
+  if (canContinueCommittedRoute && sourceHandoff && sourceSnapshot) {
+    const handoffId = crypto.randomUUID();
+    forked.shujuku.state = {
+      ...sourceState,
+      saveId: identity.saveId,
+      runId: identity.runId,
+      branchId: identity.branchId,
+      handoffId,
+      route: 'shujuku',
+      handoffPhase: 'committed',
+      lastTableHash: sourceSnapshot.tableHash,
+    };
+    delete forked.shujuku.state.lastError;
+    forked.shujuku.handoff = {
+      ...sourceHandoff,
+      handoffId,
+      saveId: identity.saveId,
+      runId: identity.runId,
+      branchId: identity.branchId,
+      tableHash: sourceSnapshot.tableHash,
+      status: 'committed',
+    };
+    return forked;
+  }
+  const requiresReview = sourceState.route === 'shujuku';
+  forked.shujuku.state = {
+    ...sourceState,
+    saveId: identity.saveId,
+    runId: identity.runId,
+    route: requiresReview ? sourceState.route : 'island',
+    handoffPhase: requiresReview ? 'needs_review' : 'none',
+    branchId: identity.branchId,
+  };
+  delete forked.shujuku.state.isolationKey;
+  delete forked.shujuku.state.handoffId;
+  delete forked.shujuku.handoff;
+  if (!hasCurrentMapping) {
+    // Synthetic migration snapshots are not native shujuku checkpoints.
+    delete forked.shujuku.state.lastTableHash;
+    delete forked.shujuku.tableSnapshot;
+  }
+  return forked;
+}
+
+export function resolveArchiveCompatibilityForRollback(
+  target: ArchiveCompatibilityBlock | null | undefined,
+  _current?: ArchiveCompatibilityBlock | null,
+): ArchiveCompatibilityBlock | null {
+  return target ? cloneJson(target) : null;
+}
+
+function isShujukuCompatibilityState(value: unknown): value is ArchiveShujukuCompatibility['state'] {
+  if (!isRecord(value)) return false;
+  return (value.route === 'island' || value.route === 'shujuku')
+    && ['none', 'observing', 'pending', 'committed', 'needs_review', 'conflict'].includes(String(value.handoffPhase))
+    && typeof value.branchId === 'string'
+    && value.branchId.trim().length > 0;
+}
+
+function isArchiveCompatibilityBlockValue(value: unknown): value is ArchiveCompatibilityBlock {
+  if (
+    !isRecord(value)
+    || Number(value.formatVersion) !== 3
+    || !isRecord(value.rawLegacyExtras)
+    || !Array.isArray(value.excludedRuntimeFlagKeys)
+  ) return false;
+  if (value.shujuku === undefined) return true;
+  if (!isRecord(value.shujuku) || !isShujukuCompatibilityState(value.shujuku.state)) return false;
+  const state = value.shujuku.state;
+  const requiresHandoff = ['pending', 'committed', 'conflict'].includes(state.handoffPhase);
+  if (requiresHandoff && value.shujuku.handoff === undefined) return false;
+  if (value.shujuku.handoff !== undefined) {
+    const handoff = value.shujuku.handoff;
+    if (
+      !isRecord(handoff)
+      || typeof handoff.handoffId !== 'string'
+      || handoff.handoffId !== state.handoffId
+      || typeof handoff.branchId !== 'string'
+      || handoff.branchId !== state.branchId
+      || (state.saveId && handoff.saveId !== state.saveId)
+      || (state.runId && handoff.runId !== state.runId)
+      || !['pending', 'committed', 'conflict'].includes(String(handoff.status))
+    ) return false;
+  }
+  if (value.shujuku.tableSnapshot !== undefined) {
+    const snapshot = value.shujuku.tableSnapshot;
+    if (
+      !isRecord(snapshot)
+      || typeof snapshot.capturedAt !== 'string'
+      || typeof snapshot.tableHash !== 'string'
+      || !isRecord(snapshot.tables)
+      || (state.lastTableHash && snapshot.tableHash !== state.lastTableHash)
+    ) return false;
+  }
+  return true;
+}
+
+function readRuntimeShujukuCompatibility(
+  gameState: GameState,
+  identity: { saveId: string; runId: string },
+  fallback?: ArchiveShujukuCompatibility,
+): ArchiveShujukuCompatibility | undefined {
+  const flags = gameState.runtimeFlags ?? {};
+  if (!isShujukuCompatibilityState(flags.shujukuCompatibility)) {
+    return fallback ? cloneJson(fallback) : undefined;
+  }
+  const state = cloneJson(flags.shujukuCompatibility);
+  const identityMismatch = (state.saveId && state.saveId !== identity.saveId)
+    || (state.runId && state.runId !== identity.runId);
+  if (identityMismatch && fallback) return cloneJson(fallback);
+  state.saveId = identity.saveId;
+  state.runId = identity.runId;
+
+  const handoff = isRecord(flags.shujukuHandoff)
+    ? cloneJson(flags.shujukuHandoff) as ArchiveShujukuCompatibility['handoff']
+    : undefined;
+  const tableSnapshot = isRecord(flags.shujukuTableSnapshot)
+    ? cloneJson(flags.shujukuTableSnapshot) as ArchiveShujukuCompatibility['tableSnapshot']
+    : undefined;
+  return {
+    state,
+    ...(handoff ? { handoff } : {}),
+    ...(tableSnapshot ? { tableSnapshot } : {}),
+  };
+}
+
+export function applyArchiveShujukuCompatibilityToRuntimeFlags(
+  runtimeFlags: Record<string, unknown>,
+  shujuku: ArchiveShujukuCompatibility | null | undefined,
+): void {
+  if (!shujuku) {
+    delete runtimeFlags.shujukuCompatibility;
+    delete runtimeFlags.shujukuHandoff;
+    delete runtimeFlags.shujukuTableSnapshot;
+    return;
+  }
+  runtimeFlags.shujukuCompatibility = cloneJson(shujuku.state);
+  if (shujuku.handoff) runtimeFlags.shujukuHandoff = cloneJson(shujuku.handoff);
+  else delete runtimeFlags.shujukuHandoff;
+  if (shujuku.tableSnapshot) runtimeFlags.shujukuTableSnapshot = cloneJson(shujuku.tableSnapshot);
+  else delete runtimeFlags.shujukuTableSnapshot;
+}
+
+function mergeRuntimeCompatibility(
+  gameState: GameState,
+  identity: { saveId: string; runId: string },
+  previous: ArchiveCompatibilityBlock | null,
+): ArchiveCompatibilityBlock | null {
+  const shujuku = readRuntimeShujukuCompatibility(gameState, identity, previous?.shujuku);
+  if (!shujuku) return previous ? cloneJson(previous) : null;
+  const compatibility = { ...(previous ? cloneJson(previous) : createCompatibilityScaffold()), shujuku };
+  if (!isArchiveCompatibilityBlockValue(compatibility)) {
+    throw new Error('Runtime shujuku compatibility state is inconsistent; preserving the existing root');
+  }
+  return compatibility;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -366,7 +560,15 @@ function snapshotFromRuntime(
     playerProfile: cloneJson(state.playerProfile),
     phoneState: phoneSnapshot(state.phoneMessages, phoneFloorIndex, position),
     drawingSettings: cloneJson(state.drawingSettings),
-    runtime: {},
+    runtime: {
+      ...((position === 'before' ? state.previousShujukuCompatibilityHash : state.shujukuCompatibilityHash)
+        ? {
+            shujukuCompatibilityHash: position === 'before'
+              ? state.previousShujukuCompatibilityHash
+              : state.shujukuCompatibilityHash,
+          }
+        : {}),
+    },
     provenance: {
       statusData: source,
       playerProfile: source,
@@ -388,7 +590,9 @@ function snapshotFromRollback(
     playerProfile: cloneJson(input.playerProfile ?? fallback.playerProfile),
     phoneState: cloneJson(fallback.phoneState),
     drawingSettings: cloneJson(input.drawingSettings ?? fallback.drawingSettings),
-    runtime: input.gameDevelopment === undefined ? cloneJson(fallback.runtime) : { gameDevelopment: cloneJson(input.gameDevelopment) },
+    runtime: input.gameDevelopment === undefined
+      ? cloneJson(fallback.runtime)
+      : { ...cloneJson(fallback.runtime), gameDevelopment: cloneJson(input.gameDevelopment) },
     provenance: {
       statusData: input.statusData ? source : fallback.provenance.statusData,
       playerProfile: input.playerProfile ? source : fallback.provenance.playerProfile,
@@ -453,6 +657,12 @@ function messagesToFloors(input: {
     const beforeTurnState = group.user.statusSnapshot
       ? snapshotFromRollback(group.user.statusSnapshot, beforeFallback, 'message-snapshot')
       : cloneJson(existing?.beforeTurnState ?? beforeFallback);
+    if (!existing) {
+      const beforeCompatibilityHash = input.state.previousShujukuCompatibilityHash
+        ?? input.state.shujukuCompatibilityHash;
+      if (beforeCompatibilityHash) beforeTurnState.runtime.shujukuCompatibilityHash = beforeCompatibilityHash;
+      else delete beforeTurnState.runtime.shujukuCompatibilityHash;
+    }
     const isLatest = localFloorIndex === groups.length - 1;
     const afterFallback = isLatest
       ? snapshotFromRuntime(input.state, floorIndex, 'after', 'save-current-fallback', afterPhoneFloorIndex)
@@ -797,11 +1007,30 @@ async function publish(input: {
   references: ArchiveObjectReference[];
   existingMeta?: SaveMeta | ArchiveSaveMeta | null;
   warnings?: string[];
-  compatibility?: ArchiveCompatibilityBlock;
+  /** undefined inherits, null clears, and a block replaces the prior checkpoint. */
+  compatibility?: ArchiveCompatibilityBlock | null;
+  compatibilityHash?: string;
 }): Promise<ArchiveCommitReceipt> {
+  const gameState = cloneJson(input.gameState);
+  const resolvedCompatibility = input.compatibility && !input.compatibility.shujuku
+    ? (() => {
+        const shujuku = readRuntimeShujukuCompatibility(
+          gameState,
+          { saveId: input.saveId, runId: input.runId },
+        );
+        return shujuku ? { ...cloneJson(input.compatibility), shujuku } : input.compatibility;
+      })()
+    : input.compatibility;
+  if (resolvedCompatibility && !isArchiveCompatibilityBlockValue(resolvedCompatibility)) {
+    throw new Error('Archive compatibility block is invalid; preserving the existing root');
+  }
+  if (resolvedCompatibility !== undefined) {
+    gameState.runtimeFlags = cloneJson(gameState.runtimeFlags ?? {});
+    applyArchiveShujukuCompatibilityToRuntimeFlags(gameState.runtimeFlags, resolvedCompatibility?.shujuku);
+  }
   const stateBlock: ArchiveStateBlock = {
     formatVersion: 3,
-    gameState: cloneJson(input.gameState),
+    gameState,
   };
   const stateHash = await putHashed('state', stateBlock, input.references);
   const summaryBlock: ArchiveSummaryBlock = {
@@ -816,9 +1045,12 @@ async function publish(input: {
     floorBoundary: input.state.memoryDB.lastProcessedIndex,
   };
   const memoryHash = await putHashed('memory', memoryBlock, input.references);
-  const compatibilityHash = input.compatibility
-    ? await putHashed('compatibility', input.compatibility, input.references)
-    : input.previous?.root.compatibilityHash;
+  const compatibilityHash = input.compatibilityHash
+    ?? (resolvedCompatibility
+      ? await putHashed('compatibility', resolvedCompatibility, input.references)
+      : resolvedCompatibility === null
+        ? undefined
+        : input.previous?.root.compatibilityHash);
   const root: ArchiveRoot = {
     formatVersion: 3,
     schemaVersion: 3,
@@ -877,6 +1109,9 @@ async function publish(input: {
     floorCount: input.floorCount,
     messageCount: input.messageCount,
     committed: true,
+    ...(resolvedCompatibility !== undefined
+      ? { shujukuCompatibility: resolvedCompatibility?.shujuku ? cloneJson(resolvedCompatibility.shujuku) : null }
+      : {}),
   };
   for (const listener of listeners) {
     Promise.resolve(listener({ receipt, root, meta, journal })).catch(error => {
@@ -964,6 +1199,27 @@ export function commitRuntimeArchive(input: ArchiveCheckpointInput): Promise<Arc
     if (previous) assertNoFutureArchiveSchema(previous.root, 'Existing save');
     const revision = nextRevision(previous?.root.revision ?? (Number(input.existingMeta?.browserRevision) || 0));
     const references: ArchiveObjectReference[] = [];
+    const previousCompatibility = previous?.root.compatibilityHash
+      ? await backend.getObject<ArchiveCompatibilityBlock>('compatibility', previous.root.compatibilityHash).catch(() => null)
+      : null;
+    if (previous?.root.compatibilityHash && !previousCompatibility) {
+      throw new Error('Archive compatibility block is missing; preserving the existing root');
+    }
+    const compatibility = mergeRuntimeCompatibility(
+      input.gameState,
+      { saveId: input.saveId, runId: input.runId },
+      previousCompatibility,
+    );
+    const compatibilityHash = compatibility
+      ? await putHashed('compatibility', compatibility, references)
+      : undefined;
+    const stateWithCompatibility: RuntimeArchiveState = {
+      ...input.state,
+      ...(compatibilityHash ? { shujukuCompatibilityHash: compatibilityHash } : {}),
+      ...(previous?.root.compatibilityHash
+        ? { previousShujukuCompatibilityHash: previous.root.compatibilityHash }
+        : {}),
+    };
     const runtimeWindowIsHead = !previous || isMessageWindowAtHead(input.state.messageWindow);
     const layout = previous && !runtimeWindowIsHead
       ? {
@@ -976,7 +1232,7 @@ export function commitRuntimeArchive(input: ArchiveCheckpointInput): Promise<Arc
           saveId: input.saveId,
           root: previous.root,
           revision,
-          state: input.state,
+          state: stateWithCompatibility,
           references,
         })
         : await (async () => {
@@ -987,13 +1243,15 @@ export function commitRuntimeArchive(input: ArchiveCheckpointInput): Promise<Arc
             sourceMessageOffset: 0,
             startFloor: 0,
             revision,
-            state: input.state,
+            state: stateWithCompatibility,
           });
           const layout = await writeFloorLayout(floors, references);
           return { ...layout, floorCount: floors.length };
         })();
     return publish({
       ...input,
+      gameState: input.gameState,
+      state: stateWithCompatibility,
       previous,
       revision,
       pageHashes: layout.pageHashes,
@@ -1001,6 +1259,8 @@ export function commitRuntimeArchive(input: ArchiveCheckpointInput): Promise<Arc
       messageCount: layout.messageCount,
       references,
       existingMeta: input.existingMeta ?? getArchiveMetaSync(input.saveId),
+      compatibility,
+      compatibilityHash,
     });
   }).catch(error => {
     lastError = error instanceof Error ? error.message : String(error);
@@ -1182,30 +1442,33 @@ export async function openArchiveSave(
     loadMessageWindow?: boolean;
     messageWindowStartFloor?: number;
     messageWindowEndFloorExclusive?: number;
+    source?: 'local';
+    loadAuxiliaryState?: boolean;
   } = {},
 ): Promise<ArchiveSaveSnapshot | null> {
-  const pointer = await backend.getRoot(saveId);
+  const knownMeta = getArchiveMetaSync(saveId);
+  let pointer;
+  if (options.source === 'local') {
+    pointer = await backend.preferLocalRoot(saveId);
+  } else if (knownMeta?.archiveBackendMode === 'local-v3') {
+    pointer = await backend.preferLocalRoot(saveId).catch(() => null);
+    if (!pointer) pointer = await backend.getRoot(saveId);
+  } else {
+    pointer = await backend.getRoot(saveId);
+  }
   if (!pointer) return null;
   assertNoFutureArchiveSchema(pointer.root, 'Save');
-  const meta = getArchiveMetaSync(saveId) ?? await idbGet<ArchiveSaveMeta>(IDB_STORE_SAVE_META_V3, saveId);
+  const meta = pointer.localMeta ?? knownMeta ?? await idbGet<ArchiveSaveMeta>(IDB_STORE_SAVE_META_V3, saveId);
   if (!meta) return null;
   assertNoFutureArchiveSchema(meta, 'Save metadata');
+  if (pointer.localMeta) metaCache.set(saveId, cloneJson(pointer.localMeta));
   const state = await backend.getObject<ArchiveStateBlock>('state', pointer.root.stateHash);
-  if (!state) return null;
-  const [summary, memory] = await Promise.all([
-    pointer.root.summaryHash
-      ? backend.getObject<ArchiveSummaryBlock>('summary', pointer.root.summaryHash).catch(() => null)
-      : null,
-    pointer.root.memoryHash
-      ? backend.getObject<ArchiveMemoryBlock>('memory', pointer.root.memoryHash).catch(() => null)
-      : null,
-  ]);
-  if (pointer.root.summaryHash && !summary) {
-    throw new Error('Archive summary block is missing; preserving the existing root');
+  if (!state || !isRecord(state.gameState)) {
+    throw new Error('Archive core state block is missing or invalid; preserving the existing root');
   }
-  if (pointer.root.memoryHash && !memory) {
-    throw new Error('Archive memory block is missing; preserving the existing root');
-  }
+  const auxiliary = options.loadAuxiliaryState === false
+    ? { summary: null, memory: null, compatibility: null }
+    : await loadArchiveAuxiliaryState(pointer.root);
   const resolvedMeta: ArchiveSaveMeta = pointer.rootHash === meta.rootHash
     ? meta
     : {
@@ -1234,10 +1497,48 @@ export async function openArchiveSave(
     meta: resolvedMeta,
     root: pointer.root,
     state,
-    ...(summary ? { summary } : {}),
-    ...(memory ? { memory } : {}),
+    ...(auxiliary.summary ? { summary: auxiliary.summary } : {}),
+    ...(auxiliary.memory ? { memory: auxiliary.memory } : {}),
+    ...(auxiliary.compatibility ? { compatibility: auxiliary.compatibility } : {}),
     ...(messageWindow ? { messageWindow } : {}),
   };
+}
+
+export async function loadArchiveAuxiliaryState(root: ArchiveRoot): Promise<{
+  summary: ArchiveSummaryBlock | null;
+  memory: ArchiveMemoryBlock | null;
+  compatibility: ArchiveCompatibilityBlock | null;
+}> {
+  const [summary, memory, compatibility] = await Promise.all([
+    root.summaryHash
+      ? backend.getObject<ArchiveSummaryBlock>('summary', root.summaryHash).catch(() => null)
+      : null,
+    root.memoryHash
+      ? backend.getObject<ArchiveMemoryBlock>('memory', root.memoryHash).catch(() => null)
+      : null,
+    root.compatibilityHash
+      ? backend.getObject<ArchiveCompatibilityBlock>('compatibility', root.compatibilityHash).catch(() => null)
+      : null,
+  ]);
+  if (root.summaryHash && !summary) {
+    throw new Error('Archive summary block is missing; preserving the existing root');
+  }
+  if (root.memoryHash && !memory) {
+    throw new Error('Archive memory block is missing; preserving the existing root');
+  }
+  if (summary && !isRecord(summary.summaryStore)) {
+    throw new Error('Archive summary block is invalid; preserving the existing root');
+  }
+  if (memory && !isRecord(memory.memoryDB)) {
+    throw new Error('Archive memory block is invalid; preserving the existing root');
+  }
+  if (root.compatibilityHash && !compatibility) {
+    throw new Error('Archive compatibility block is missing; preserving the existing root');
+  }
+  if (compatibility && !isArchiveCompatibilityBlockValue(compatibility)) {
+    throw new Error('Archive compatibility block is invalid; preserving the existing root');
+  }
+  return { summary, memory, compatibility };
 }
 
 function validateArchiveFloorChunk(
@@ -1582,9 +1883,16 @@ async function republishFloors(input: {
   gameState: GameState;
   runtimeState: RuntimeArchiveState;
   preserveState?: boolean;
+  compatibility?: ArchiveCompatibilityBlock | null;
 }): Promise<ArchiveCommitReceipt> {
   const revision = nextRevision(input.stateSnapshot.root.revision);
   const references: ArchiveObjectReference[] = [];
+  const compatibility = input.compatibility === undefined
+    ? input.stateSnapshot.compatibility ?? null
+    : input.compatibility;
+  const compatibilityHash = compatibility
+    ? await putHashed('compatibility', compatibility, references)
+    : undefined;
   const layout = await writeFloorLayout(input.floors.map(floor => ({ ...floor, revision })), references);
   const runtimeState = input.preserveState
     ? runtimeStateFromSnapshot(input.stateSnapshot, input.floors)
@@ -1607,7 +1915,52 @@ async function republishFloors(input: {
     references,
     existingMeta: input.stateSnapshot.meta,
     warnings: input.stateSnapshot.meta.migrationWarnings,
+    compatibility,
+    compatibilityHash,
   });
+}
+
+async function getFloorCompatibility(snapshot: FloorStateSnapshot): Promise<ArchiveCompatibilityBlock | null> {
+  const hash = snapshot.runtime.shujukuCompatibilityHash;
+  if (!hash) return null;
+  const compatibility = await backend.getObject<ArchiveCompatibilityBlock>('compatibility', hash).catch(() => null);
+  if (!isArchiveCompatibilityBlockValue(compatibility)) {
+    throw new Error('Rollback compatibility checkpoint is missing; preserving the existing root');
+  }
+  return cloneJson(compatibility);
+}
+
+export type ArchiveFloorShujukuBaseline =
+  | { kind: 'pre_handoff'; beforeMessageCount: number }
+  | { kind: 'checkpoint'; beforeMessageCount: number; checkpoint: ArchiveShujukuCompatibility }
+  | { kind: 'missing_post_handoff'; beforeMessageCount: number };
+
+export async function getArchiveFloorBeforeTurnShujukuBaseline(
+  saveId: string,
+  floorIndex: number,
+  handoffCutoff: number,
+): Promise<ArchiveFloorShujukuBaseline> {
+  if (!Number.isInteger(floorIndex) || floorIndex < 0) throw new Error('Rollback floor index is invalid');
+  if (!Number.isInteger(handoffCutoff) || handoffCutoff < 0) throw new Error('Shujuku handoff cutoff is invalid');
+
+  const floors = await streamArchiveFloors(saveId);
+  const floor = floors[floorIndex];
+  if (!floor) throw new Error('Rollback floor is missing from the archive');
+  const beforeMessageCount = floors
+    .slice(0, floorIndex)
+    .reduce((sum, candidate) => sum + getFloorSourceMessageCount(candidate), 0);
+
+  if (beforeMessageCount < handoffCutoff) {
+    return { kind: 'pre_handoff', beforeMessageCount };
+  }
+
+  const compatibility = await getFloorCompatibility(floor.beforeTurnState);
+  if (!compatibility?.shujuku) return { kind: 'missing_post_handoff', beforeMessageCount };
+  return {
+    kind: 'checkpoint',
+    beforeMessageCount,
+    checkpoint: cloneJson(compatibility.shujuku),
+  };
 }
 
 export function truncateArchiveFromAssistant(input: {
@@ -1615,6 +1968,7 @@ export function truncateArchiveFromAssistant(input: {
   floorIndex: number;
   gameState: GameState;
   runtimeState: RuntimeArchiveState;
+  shujukuCompatibilityOverride?: ArchiveShujukuCompatibility | null;
 }): Promise<ArchiveRollbackReceipt | null> {
   return enqueueMutation(async () => {
     const snapshot = await openArchiveSave(input.saveId);
@@ -1622,17 +1976,54 @@ export function truncateArchiveFromAssistant(input: {
     const floors = await streamArchiveFloors(input.saveId);
     const target = floors[input.floorIndex];
     if (!target) return null;
+    const hasShujukuOverride = Object.prototype.hasOwnProperty.call(input, 'shujukuCompatibilityOverride');
+    const targetCompatibility = hasShujukuOverride
+      ? snapshot.compatibility
+        ? cloneJson(snapshot.compatibility)
+        : null
+      : resolveArchiveCompatibilityForRollback(
+          await getFloorCompatibility(target.beforeTurnState),
+          snapshot.compatibility,
+        );
+    let compatibility = targetCompatibility;
+    if (hasShujukuOverride) {
+      if (input.shujukuCompatibilityOverride) {
+        compatibility = {
+          ...(targetCompatibility ?? createCompatibilityScaffold()),
+          shujuku: cloneJson(input.shujukuCompatibilityOverride),
+        };
+      } else if (targetCompatibility) {
+        const { shujuku: _removedShujuku, ...withoutShujuku } = targetCompatibility;
+        void _removedShujuku;
+        compatibility = Object.keys(withoutShujuku).length ? withoutShujuku : null;
+      }
+    }
+    const beforeTurnState = cloneJson(target.beforeTurnState);
+    if (hasShujukuOverride && compatibility) {
+      beforeTurnState.runtime.shujukuCompatibilityHash = (await hashArchiveValue(compatibility)).hash;
+    } else if (hasShujukuOverride) {
+      delete beforeTurnState.runtime.shujukuCompatibilityHash;
+    }
     const nextTarget: FloorRecord = {
       ...target,
+      beforeTurnState,
       assistantMessage: undefined,
       afterTurnState: undefined,
       imageAssetIds: collectImageAssetIds(target.userMessage),
     };
     const nextFloors = [...floors.slice(0, input.floorIndex), nextTarget];
-    const receipt = await republishFloors({ ...input, floors: nextFloors, stateSnapshot: snapshot });
+    const { shujukuCompatibilityOverride: _override, ...republishInput } = input;
+    void _override;
+    const receipt = await republishFloors({
+      ...republishInput,
+      floors: nextFloors,
+      stateSnapshot: snapshot,
+      compatibility,
+    });
     return {
       ...receipt,
-      restoredState: cloneJson(target.beforeTurnState),
+      restoredState: cloneJson(nextTarget.beforeTurnState),
+      restoredCompatibility: compatibility?.shujuku ? cloneJson(compatibility.shujuku) : null,
       sourceUserText: target.userMessage.text,
       capability: Object.values(target.beforeTurnState.provenance).some(value => value === 'defaulted' || value === 'save-current-fallback')
         ? 'best-effort'
@@ -1654,10 +2045,20 @@ export function truncateArchiveAfterFloor(input: {
     const target = floors[input.floorIndex];
     if (!target?.afterTurnState) return null;
     const nextFloors = floors.slice(0, input.floorIndex + 1);
-    const receipt = await republishFloors({ ...input, floors: nextFloors, stateSnapshot: snapshot });
+    const compatibility = resolveArchiveCompatibilityForRollback(
+      await getFloorCompatibility(target.afterTurnState),
+      snapshot.compatibility,
+    );
+    const receipt = await republishFloors({
+      ...input,
+      floors: nextFloors,
+      stateSnapshot: snapshot,
+      compatibility,
+    });
     return {
       ...receipt,
       restoredState: cloneJson(target.afterTurnState),
+      restoredCompatibility: compatibility?.shujuku ? cloneJson(compatibility.shujuku) : null,
       sourceUserText: target.userMessage.text,
       capability: Object.values(target.afterTurnState.provenance).some(value => value === 'defaulted' || value === 'save-current-fallback')
         ? 'best-effort'
@@ -1807,14 +2208,36 @@ export function forkArchiveSave(input: {
     const source = await openArchiveSave(input.sourceSaveId);
     if (!source) return null;
     const saveId = input.saveId ?? crypto.randomUUID();
+    const branchId = crypto.randomUUID();
     const revision = nextRevision();
+    const sourceCompatibility = mergeRuntimeCompatibility(
+      source.state.gameState,
+      { saveId: input.sourceSaveId, runId: source.meta.runId },
+      source.compatibility ?? null,
+    );
+    const compatibility = sourceCompatibility
+      ? prepareArchiveCompatibilityForFork(sourceCompatibility, { runId: source.meta.runId, saveId, branchId })
+      : null;
+    const references: ArchiveObjectReference[] = [];
+    const compatibilityHash = compatibility
+      ? await putHashed('compatibility', compatibility, references)
+      : undefined;
+    const stateBlock = cloneJson(source.state);
+    stateBlock.gameState.runtimeFlags = cloneJson(stateBlock.gameState.runtimeFlags ?? {});
+    applyArchiveShujukuCompatibilityToRuntimeFlags(stateBlock.gameState.runtimeFlags, compatibility?.shujuku);
+    const stateHash = compatibility?.shujuku
+      ? await putHashed('state', stateBlock, references)
+      : source.root.stateHash;
     const root: ArchiveRoot = {
       ...cloneJson(source.root),
       saveId,
       revision,
+      stateHash,
+      ...(compatibilityHash ? { compatibilityHash } : {}),
       previousRootHash: source.meta.rootHash,
       committedAt: new Date().toISOString(),
     };
+    if (!compatibilityHash) delete root.compatibilityHash;
     const rootHash = (await hashArchiveValue(root)).hash;
     const meta: ArchiveSaveMeta = {
       ...cloneJson(source.meta),
@@ -1834,7 +2257,7 @@ export function forkArchiveSave(input: {
       saveId,
       revision,
       rootHash,
-      objects: [],
+      objects: references,
       status: 'pending',
       attempts: 0,
       createdAt: now,
@@ -1851,6 +2274,7 @@ export function forkArchiveSave(input: {
       floorCount: root.floorCount,
       messageCount: root.messageCount,
       committed: true as const,
+      shujukuCompatibility: compatibility?.shujuku ? cloneJson(compatibility.shujuku) : null,
     };
     listeners.forEach(listener => Promise.resolve(listener({ receipt, root, meta, journal })).catch(() => undefined));
     return receipt;
@@ -1874,9 +2298,21 @@ export function deleteArchiveSave(saveId: string): Promise<void> {
 export async function exportPortableArchive(saveId: string): Promise<PortableArchiveBackup> {
   const snapshot = await openArchiveSave(saveId);
   if (!snapshot) throw new Error('Archive save does not exist');
-  const compatibility = snapshot.root.compatibilityHash
-    ? await backend.getObject<ArchiveCompatibilityBlock>('compatibility', snapshot.root.compatibilityHash).catch(() => null)
-    : null;
+  const compatibility = snapshot.compatibility ?? null;
+  const floors = await streamArchiveFloors(saveId);
+  const checkpointHashes = new Set<string>();
+  floors.forEach(floor => {
+    const beforeHash = floor.beforeTurnState.runtime.shujukuCompatibilityHash;
+    const afterHash = floor.afterTurnState?.runtime.shujukuCompatibilityHash;
+    if (beforeHash) checkpointHashes.add(beforeHash);
+    if (afterHash) checkpointHashes.add(afterHash);
+  });
+  const compatibilityCheckpoints: Record<string, ArchiveCompatibilityBlock> = {};
+  for (const hash of checkpointHashes) {
+    const checkpoint = await backend.getObject<ArchiveCompatibilityBlock>('compatibility', hash).catch(() => null);
+    if (!checkpoint) throw new Error(`Archive compatibility checkpoint ${hash} is missing`);
+    compatibilityCheckpoints[hash] = cloneJson(checkpoint);
+  }
   return {
     version: 3,
     kind: 'archive-v3',
@@ -1887,7 +2323,8 @@ export async function exportPortableArchive(saveId: string): Promise<PortableArc
     ...(snapshot.summary ? { summary: cloneJson(snapshot.summary) } : {}),
     ...(snapshot.memory ? { memory: cloneJson(snapshot.memory) } : {}),
     ...(compatibility ? { compatibility: cloneJson(compatibility) } : {}),
-    floors: await streamArchiveFloors(saveId),
+    ...(Object.keys(compatibilityCheckpoints).length ? { compatibilityCheckpoints } : {}),
+    floors,
   };
 }
 
@@ -1996,6 +2433,19 @@ export function importPortableArchive(input: PortableArchiveBackup): Promise<Arc
     if (input.root.memoryHash && !input.memory?.memoryDB) {
       throw new Error('Imported v3 archive is missing its memory block');
     }
+    if (input.root.compatibilityHash && !input.compatibility) {
+      throw new Error('Imported v3 archive is missing its compatibility block');
+    }
+    if (input.compatibility && !isArchiveCompatibilityBlockValue(input.compatibility)) {
+      throw new Error('Imported v3 archive compatibility block is invalid');
+    }
+    if (
+      input.root.compatibilityHash
+      && input.compatibility
+      && (await hashArchiveValue(input.compatibility)).hash !== input.root.compatibilityHash
+    ) {
+      throw new Error('Imported v3 archive compatibility block failed hash validation');
+    }
     if (
       input.floors.length !== input.root.floorCount
       || input.floors.some((floor, floorIndex) => Number(floor.floorIndex) !== floorIndex)
@@ -2025,6 +2475,22 @@ export function importPortableArchive(input: PortableArchiveBackup): Promise<Arc
     };
     runtimeState.memoryDB.runId = runId;
     const references: ArchiveObjectReference[] = [];
+    const checkpointHashes = new Set<string>();
+    input.floors.forEach(floor => {
+      const beforeHash = floor.beforeTurnState?.runtime?.shujukuCompatibilityHash;
+      const afterHash = floor.afterTurnState?.runtime?.shujukuCompatibilityHash;
+      if (beforeHash) checkpointHashes.add(beforeHash);
+      if (afterHash) checkpointHashes.add(afterHash);
+    });
+    for (const hash of checkpointHashes) {
+      const checkpoint = input.compatibilityCheckpoints?.[hash]
+        ?? (hash === input.root.compatibilityHash ? input.compatibility : undefined);
+      if (!isArchiveCompatibilityBlockValue(checkpoint)) {
+        throw new Error(`Imported v3 archive is missing or has invalid compatibility checkpoint ${hash}`);
+      }
+      const writtenHash = await putHashed('compatibility', checkpoint, references);
+      if (writtenHash !== hash) throw new Error(`Imported compatibility checkpoint ${hash} failed hash validation`);
+    }
     const revision = nextRevision(Math.max(Number(input.meta.browserRevision) || 0, previous?.root.revision ?? 0));
     const floors = input.floors.map((floor, floorIndex) => ({
       ...cloneJson(floor),
@@ -2051,7 +2517,7 @@ export function importPortableArchive(input: PortableArchiveBackup): Promise<Arc
       references,
       existingMeta: input.meta,
       warnings: input.meta.migrationWarnings,
-      compatibility: input.compatibility,
+      compatibility: input.compatibility ?? null,
     });
   });
 }

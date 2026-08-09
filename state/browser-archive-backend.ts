@@ -3,11 +3,10 @@ import type {
   ArchiveFloorChunk,
   ArchiveFloorIndexPage,
   ArchiveJournalRecord,
-  ArchiveMemoryBlock,
   ArchiveObjectKind,
+  ArchiveRootPointer,
   ArchiveRoot,
   ArchiveSaveMeta,
-  ArchiveSummaryBlock,
 } from './archive-backend';
 import {
   IDB_STORE_ARCHIVE_ROOTS_V3,
@@ -33,7 +32,7 @@ function storeForKind(kind: Exclude<ArchiveObjectKind, 'root'>): string {
 }
 
 type BrowserRootPointer = { rootHash: string; previousRootHash?: string; revision?: number };
-type BrowserRootResult = BrowserRootPointer & { root: ArchiveRoot };
+type BrowserRootResult = BrowserRootPointer & ArchiveRootPointer;
 
 const pointerKey = (saveId: string) => `save:${saveId}`;
 const rootKey = (rootHash: string) => `root:${rootHash}`;
@@ -71,19 +70,6 @@ export class BrowserArchiveBackend implements ArchiveBackend {
       const statusData = (gameState as { statusData?: unknown }).statusData;
       if (!statusData || typeof statusData !== 'object') return false;
       this.knownReadableStateRootHashes.add(rootHash);
-
-      if (typeof root.summaryHash !== 'string' || !root.summaryHash) return false;
-      const summary = await this.getObject<ArchiveSummaryBlock>('summary', root.summaryHash);
-      if (
-        !summary
-        || !summary.summaryStore
-        || typeof summary.summaryStore !== 'object'
-      ) {
-        return false;
-      }
-      if (typeof root.memoryHash !== 'string' || !root.memoryHash) return false;
-      const memory = await this.getObject<ArchiveMemoryBlock>('memory', root.memoryHash);
-      if (!memory || !memory.memoryDB || typeof memory.memoryDB !== 'object') return false;
 
       const floorCount = Number(root.floorCount);
       const messageCount = Number(root.messageCount);
@@ -193,7 +179,7 @@ export class BrowserArchiveBackend implements ArchiveBackend {
     for (let depth = 0; candidateHash && depth < 8; depth += 1) {
       if (visited.has(candidateHash)) return stateOnlyFallback;
       visited.add(candidateHash);
-      const root = await idbGet<ArchiveRoot>(IDB_STORE_ARCHIVE_ROOTS_V3, rootKey(candidateHash)).catch(() => null);
+      const root: ArchiveRoot | null = await idbGet<ArchiveRoot>(IDB_STORE_ARCHIVE_ROOTS_V3, rootKey(candidateHash)).catch(() => null);
       if (root) {
         // A future root is deliberately returned even if its objects are not
         // readable, so the repository can enforce the sole hard read-only
@@ -204,7 +190,7 @@ export class BrowserArchiveBackend implements ArchiveBackend {
           stateOnlyFallback = { rootHash: candidateHash, root };
         }
       }
-      const nextHash = root?.previousRootHash || pointerFallback;
+      const nextHash: string | undefined = root?.previousRootHash || pointerFallback;
       pointerFallback = undefined;
       candidateHash = typeof nextHash === 'string' && nextHash ? nextHash : undefined;
     }

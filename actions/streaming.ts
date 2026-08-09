@@ -39,6 +39,18 @@ export function recordGenerationDebug(
   list.push(entry);
   flags.generationDebug = list.slice(-120);
   (win as TavernWindow & { __islandmilfcodeDebug?: unknown }).__islandmilfcodeDebug = flags.generationDebug;
+  if (
+    event.startsWith('shujuku:')
+    || event === 'submit:generate-returned'
+    || event === 'submit:main-success-before-phone'
+    || event === 'submit:main-assistant-callback-failed'
+  ) {
+    try {
+      console.log(`[islandmilfcode:generation] ${event}`, entry);
+    } catch {
+      // Console output is diagnostic only.
+    }
+  }
 }
 
 export function ensureStreamingMessage(ctx: StreamingContext) {

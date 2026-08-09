@@ -1,5 +1,38 @@
 Original prompt: DESIGN.md 根据这个md文件修复提到的问题
 
+2026-08-09 shujuku v2 虚拟转发接线
+
+- shujuku 路线已从 Island `generateRaw()` 改为临时 `chat[]` -> shujuku 包装 `TavernHelper.generate()` -> 虚拟 assistant -> `triggerUpdate()`；结果回写卡内状态，不创建宿主 `#1/#2`。
+- 主回合与 AI 开场共用 `runShujukuVirtualTurn()`；Island 路线保持原生成器。重 roll 恢复轮前表快照后仍走同一入口。
+- qrf、正文、数据库提交独立取证；只有当前 virtual user 的 qrf 写回能标记规划成功，`plannedText` 不能单独升级成功状态。
+- 角色桥 `5.2.0` 导入 JSON 已同步。执行证据：虚拟转发 30、接线 30、消息 codec 13、prompt 隔离 15、路线绑定 9、存档兼容 39 条合同通过；生产构建通过。
+- 真实酒馆中的 qrf、正文、storageFrame/表更新、刷新和重 roll 仍为 `not run`，见 `humanpending.md` HP-011。
+
+2026-08-08 shujuku 角色桥运行域复核
+
+- JS-Slash-Runner `main@69ac6804` 的脚本 iframe 对 `window.SillyTavern` 使用每次返回新 facade 的 getter；shujuku 缓存对象 A，角色桥后来读到对象 B，修改 B 不会影响 `triggerUpdate()` 读取的 A。
+- 当前接通标签：`AutoCardUpdaterAPI` 真实状态读取已发现；逻辑规划、正文生成包装和数据库提交均未接通。角色桥保持 fail-closed，不再把缺少运行域误报为 CDN 缺少 `planVirtualTurn/updateVirtualTurn`。
+- 生产调用链已不再调用本地 memoryDB 迁移或初次 handoff 导表；原生表与存档快照不一致时在生成前拒绝，且不会恢复/导入任何表。
+- 执行证据：adapter 44 contracts、submit wiring 33、save compatibility 35、message codec 13、prompt isolation 15、save wiring 16、memory migration fixture 和角色桥 getter 反例均通过；生产构建及 `git diff --check` 通过。真实 qrf、正文和原生填表：`not run`。
+
+2026-08-06 shujuku v2 接入第 1 批
+
+- 增加 `NarrativeRoute`、`ShujukuCompatibilityState`、`ShujukuHandoffEnvelope`、qrf/pluginData 和真实 v2 storageFrame 类型合同。
+- `state/store.ts` 的消息 codec 保留 `exchangeId`、`plannedText`、qrf、未知插件扩展及 assistant storageFrame；带动态插件字段的消息绕过旧 WeakMap 缓存，避免延迟证据被旧快照吞掉。
+- `state/save-migration.ts` 与 `state/saves.ts` 的白名单/规范化路径保留同一批字段，v2→v3 迁移不再丢失逻辑 exchange 绑定。
+- 旧 `HEAD` 上同一合同已执行失败，首个断点为 `exchangeId` 丢失；当前合同 `13 passed`。
+- 生产构建、相关 ESLint、`git diff --check` 和最终 inline 产物安全检查通过；全仓 `tsc --noEmit` 仍被既有诊断阻断，新增 shujuku 行无新诊断。
+- 当前接通标签：不涉及真实接通。未调用 shujuku、未触发生成、未读写数据库、未改变单 `#0` 拓扑。
+
+2026-08-06 shujuku v2 接入第 2 批
+
+- `state/saves.ts` 增加 memoryDB 读取保护：合法空库、仅过期内容和 malformed 输入不会覆盖非空 legacy `summaryStore`；malformed 输入也不会触发空写回。
+- archive compatibility 现在持久化 route/branch/handoff/table checkpoint hash；提交、导入导出、fork 和 rollback 都校验 hash 并按目标分支恢复或清理兼容状态。
+- 本地 Tavern archive transport 同步保存历史兼容 checkpoint；缺失 root/checkpoint compatibility 时 fail-closed。
+- 新增保存兼容合同 `scripts/verify-shujuku-v2-save-compatibility.ts`（23 passed）和 wiring 合同 `scripts/verify-shujuku-v2-save-wiring.mjs`（10 passed）。
+- 生产构建、archive/message 定向合同、相关 ESLint、inline bundle 安全和 `git diff --check` 通过；全仓 `tsc --noEmit` 仍被既有诊断阻断，未发现新增 shujuku 行诊断。
+- 当前接通标签：仍不涉及真实接通。未探测/调用 shujuku，未创建 virtual session，未触发生成，未读写真实表，未改变单 `#0` 拓扑。
+
 2026-03-15
 
 - 已实现从 Tavern 聊天记录回灌 `uiMessages`：

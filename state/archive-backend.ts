@@ -1,4 +1,11 @@
-import type { FloorRecord, GameState, MessageWindowState, SaveKind, SaveMeta } from '../types';
+import type {
+  ArchiveShujukuCompatibility,
+  FloorRecord,
+  GameState,
+  MessageWindowState,
+  SaveKind,
+  SaveMeta,
+} from '../types';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import type { SummaryStore } from '../summary/types';
 
@@ -79,6 +86,7 @@ export type ArchiveCompatibilityBlock = {
   excludedRuntimeFlagKeys: string[];
   messageSnapshots?: unknown[];
   migrationIssues?: unknown[];
+  shujuku?: ArchiveShujukuCompatibility;
 };
 
 export type ArchiveRoot = {
@@ -147,7 +155,15 @@ export type ArchiveSaveSnapshot = {
   state: ArchiveStateBlock;
   summary?: ArchiveSummaryBlock;
   memory?: ArchiveMemoryBlock;
+  compatibility?: ArchiveCompatibilityBlock;
   messageWindow?: ArchiveMessageWindow;
+};
+
+export type ArchiveRootPointer = {
+  root: ArchiveRoot;
+  rootHash: string;
+  /** Present only when the root was read from the local Tavern registry. */
+  localMeta?: ArchiveSaveMeta;
 };
 
 export type ArchiveMessageWindow = MessageWindowState & {
@@ -173,7 +189,7 @@ export type ArchiveLocalCapability = {
 
 export interface ArchiveBackend {
   readonly mode: ArchiveBackendMode;
-  getRoot(saveId: string): Promise<{ root: ArchiveRoot; rootHash: string } | null>;
+  getRoot(saveId: string): Promise<ArchiveRootPointer | null>;
   getObject<T>(kind: Exclude<ArchiveObjectKind, 'root'>, hash: string): Promise<T | null>;
   putObject(kind: Exclude<ArchiveObjectKind, 'root'>, hash: string, value: unknown): Promise<void>;
   commitRoot(

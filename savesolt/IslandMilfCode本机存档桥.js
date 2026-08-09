@@ -38,6 +38,7 @@
   const ARCHIVE_GC_BATCH_SIZE = 32;
   const ARCHIVE_DELETE_FENCE_LIMIT = 256;
   let archiveLayout = 'unknown';
+  let lastArchiveRegistryPath = null;
 
   function archiveLockStorage() {
     try {
@@ -240,8 +241,60 @@
     });
   }
 
+  function archiveRegistryStoragePath(layout = archiveLayout) {
+    const relativePath = layout === 'categorized-v1'
+      ? ARCHIVE_REGISTRY_PATH
+      : layout === 'flat-v3'
+        ? ARCHIVE_REGISTRY_FILE
+        : lastArchiveRegistryPath || ARCHIVE_REGISTRY_FILE;
+    return `user/files/${relativePath}`;
+  }
+
+  function isArchiveRegistryValue(value) {
+    return isRecord(value)
+      && value.format === 'islandmilfcode-archive-registry'
+      && Number(value.formatVersion) === 3
+      && isRecord(value.entries);
+  }
+
+  function archiveRegistryFreshness(value) {
+    const entries = isRecord(value?.entries) ? Object.values(value.entries) : [];
+    const maxRevision = entries.reduce((maximum, entry) => {
+      const revision = Number(isRecord(entry) ? entry.revision : 0);
+      return Number.isFinite(revision) ? Math.max(maximum, revision) : maximum;
+    }, 0);
+    const updatedAt = Date.parse(String(value?.updatedAt || ''));
+    return {
+      maxRevision,
+      updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+    };
+  }
+
   async function readArchiveRegistryFile() {
-    return (await readFirstJsonFile([ARCHIVE_REGISTRY_PATH, ARCHIVE_REGISTRY_FILE])).value;
+    const preferredPaths = archiveLayout === 'flat-v3'
+      ? [ARCHIVE_REGISTRY_FILE, ARCHIVE_REGISTRY_PATH]
+      : [ARCHIVE_REGISTRY_PATH, ARCHIVE_REGISTRY_FILE];
+    if (archiveLayout !== 'unknown') {
+      const selected = await readFirstJsonFile(preferredPaths);
+      lastArchiveRegistryPath = selected.relativePath;
+      return selected.value;
+    }
+
+    const candidates = [];
+    for (const relativePath of [...new Set(preferredPaths)]) {
+      const value = await readJsonFile(relativePath);
+      if (value !== null) candidates.push({ relativePath, value });
+    }
+    const valid = candidates.filter(candidate => isArchiveRegistryValue(candidate.value));
+    const selected = valid.sort((left, right) => {
+      const leftFreshness = archiveRegistryFreshness(left.value);
+      const rightFreshness = archiveRegistryFreshness(right.value);
+      return rightFreshness.maxRevision - leftFreshness.maxRevision
+        || rightFreshness.updatedAt - leftFreshness.updatedAt;
+    })[0] || candidates[0];
+    if (!selected) return null;
+    lastArchiveRegistryPath = selected.relativePath;
+    return selected.value;
   }
 
   async function uploadJsonFile(fileName, value, options = {}) {
@@ -1496,17 +1549,6 @@
     if (!isArchiveRootValue(object?.value)) return null;
     if (Number(object.value.formatVersion) > 3 || Number(object.value.schemaVersion) > 3) return object.value;
     const root = object.value;
-    const state = await getArchiveObject({ kind: 'state', hash: root.stateHash }).catch(() => null);
-    if (!isRecord(state?.value) || !isRecord(state.value.gameState)) return null;
-
-    if (typeof root.summaryHash !== 'string' || !root.summaryHash) return null;
-    const summary = await getArchiveObject({ kind: 'summary', hash: root.summaryHash }).catch(() => null);
-    if (!isRecord(summary?.value) || !isRecord(summary.value.summaryStore)) return null;
-
-    if (typeof root.memoryHash !== 'string' || !root.memoryHash) return null;
-    const memory = await getArchiveObject({ kind: 'memory', hash: root.memoryHash }).catch(() => null);
-    if (!isRecord(memory?.value) || !isRecord(memory.value.memoryDB)) return null;
-
     const floorCount = Number(root.floorCount);
     const chunkSize = Number(root.chunkSize);
     const pageChunkCount = Number(root.indexPageChunkCount);
@@ -1564,7 +1606,7 @@
       archiveFormatVersion: 3,
       archiveLayout,
       registryLock: archiveRegistryLockMode(),
-      storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
+      storagePath: archiveRegistryStoragePath(),
       saveCount: Object.keys(registry.entries).length,
       gc: archiveGcQueueSummary(registry),
       lastGc: registry.lastGc,
@@ -1740,7 +1782,7 @@
           deletedAt,
           revision: Math.max(0, Number(deletionFence.revision) || 0),
           gc: archiveGcQueueSummary(registry),
-          storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
+          storagePath: archiveRegistryStoragePath(),
         };
       }
       // A genuinely new player action after deletion may intentionally recreate
@@ -1760,7 +1802,7 @@
         entry: previous,
         ignored: true,
         reason: 'older-revision',
-        storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
+        storagePath: archiveRegistryStoragePath(),
       };
     }
     if (previous && revision === previousRevision) {
@@ -1775,9 +1817,9 @@
         rootWrite,
         gc: archiveGcQueueSummary(registry),
         registryWrite: archiveWriteResult('reused', {
-          storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
+          storagePath: archiveRegistryStoragePath(),
         }),
-        storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
+        storagePath: archiveRegistryStoragePath(),
       };
     }
     const rootWrite = await putArchiveObject({ object: { kind: 'root', hash: rootHash, value: request.root } });
@@ -1834,9 +1876,9 @@
       rootWrite,
       gc: archiveGcQueueSummary(readBack),
       registryWrite: archiveWriteResult('uploaded', {
-        storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
+        storagePath: archiveRegistryStoragePath(),
       }),
-      storagePath: `user/files/${ARCHIVE_REGISTRY_PATH}`,
+      storagePath: archiveRegistryStoragePath(),
     };
   }
 
@@ -1978,7 +2020,11 @@
       case 'v3-read-root':
         return readArchiveRoot(request);
       case 'v3-read-registry':
-        return { registry: readArchiveRegistry(await readArchiveRegistryFile()) };
+        return {
+          registry: readArchiveRegistry(await readArchiveRegistryFile()),
+          archiveLayout,
+          storagePath: archiveRegistryStoragePath(),
+        };
       default:
         throw new Error(`不支持的本机存档操作：${String(request.action)}`);
     }
@@ -2100,7 +2146,7 @@
         legacySubscription?.stop?.();
       },
     };
-    console.info(`[IslandMilfCode Saves] v3 本机存档桥已启动：user/files/${ARCHIVE_REGISTRY_PATH}`);
+    console.info('[IslandMilfCode Saves] v3 本机存档桥已启动；存储布局由探针协商');
   } catch (error) {
     console.warn('[IslandMilfCode Saves] 桥初始化失败；游戏仍可使用浏览器存档:', error);
   }

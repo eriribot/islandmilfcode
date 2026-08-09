@@ -441,6 +441,11 @@ function normalizePersistedMessages(messages: PersistedMessage[] | undefined): P
         speaker: String(message.speaker || (message.role === 'assistant' ? 'Assistant' : 'User')),
         text: String(message.text ?? ''),
         ...(message.rawText ? { rawText: String(message.rawText) } : {}),
+        ...(typeof message.exchangeId === 'string' ? { exchangeId: message.exchangeId } : {}),
+        ...(typeof message.plannedText === 'string' ? { plannedText: message.plannedText } : {}),
+        ...(message.pluginData && typeof message.pluginData === 'object' && !Array.isArray(message.pluginData)
+          ? { pluginData: cloneJson(message.pluginData) }
+          : {}),
         ...(Array.isArray(message.illustrations) && message.illustrations.length
           ? {
               illustrations: message.illustrations
@@ -669,6 +674,86 @@ function getSummaryCursorFromMemoryDB(memoryDB: IslandMemoryDB): number {
   return cursor;
 }
 
+function hasActiveMemoryRows(memoryDB: IslandMemoryDB): boolean {
+  const tables = [
+    memoryDB.entities,
+    memoryDB.events,
+    memoryDB.facts,
+    memoryDB.relations,
+    memoryDB.impressions,
+    memoryDB.tasks,
+    memoryDB.secrets,
+    memoryDB.items,
+    memoryDB.phoneMessages,
+    memoryDB.summaries,
+    memoryDB.attributes,
+    memoryDB.worldState,
+    ...Object.values(memoryDB.extensions ?? {}),
+  ];
+  return tables.some(rows => rows.some(row => !row.expired));
+}
+
+function hasAnyMemoryRows(memoryDB: IslandMemoryDB): boolean {
+  return [
+    memoryDB.entities,
+    memoryDB.events,
+    memoryDB.facts,
+    memoryDB.relations,
+    memoryDB.impressions,
+    memoryDB.tasks,
+    memoryDB.secrets,
+    memoryDB.items,
+    memoryDB.phoneMessages,
+    memoryDB.summaries,
+    memoryDB.attributes,
+    memoryDB.worldState,
+    ...Object.values(memoryDB.extensions ?? {}),
+  ].some(rows => rows.length > 0);
+}
+
+function isMemoryDBInputStructurallyValid(raw: unknown, normalized: IslandMemoryDB | null): boolean {
+  if (!raw || typeof raw !== 'object' || !normalized) return false;
+  const input = raw as Record<string, unknown>;
+  const tableNames = [
+    'entities',
+    'events',
+    'facts',
+    'relations',
+    'impressions',
+    'tasks',
+    'secrets',
+    'items',
+    'phoneMessages',
+    'summaries',
+    'attributes',
+    'worldState',
+  ] as const;
+  return tableNames.every(tableName => {
+    const value = input[tableName];
+    return value === undefined
+      || (Array.isArray(value) && value.length === normalized[tableName].length);
+  });
+}
+
+function hasLegacySummaryContent(summaryStore: SummaryStore): boolean {
+  return Boolean(
+    String(summaryStore.global ?? '').trim()
+    || summaryStore.major.length
+    || summaryStore.minor.length
+    || summaryStore.keyFacts.length,
+  );
+}
+
+export function resolveMemoryDBForLoad(
+  rawMemoryDB: unknown,
+  summaryStore: SummaryStore,
+  runId: string,
+): IslandMemoryDB {
+  const normalized = normalizeMemoryDB(rawMemoryDB, runId);
+  if (normalized && (hasActiveMemoryRows(normalized) || !hasLegacySummaryContent(summaryStore))) return normalized;
+  return migrateSummaryStoreToMemoryDB(summaryStore, runId);
+}
+
 function getLatestVisiblePreview(messages: PersistedMessage[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -863,8 +948,13 @@ function readPayload(saveId: string): SavePayload | null {
 
   const rawSummaryStore = cloneJson(payload.summaryStore ?? createDefaultSummaryStore());
 
-  // memoryDB：优先从存档读取，没有则从 summaryStore 迁移
-  const memoryDB = normalizeMemoryDB(payload.memoryDB, runId) ?? migrateSummaryStoreToMemoryDB(rawSummaryStore, runId);
+  // A schema-valid but content-empty memoryDB is not authoritative over a
+  // non-empty legacy summaryStore. Expired-only rows count as empty.
+  const normalizedPayloadMemoryDB = normalizeMemoryDB(payload.memoryDB, runId);
+  const memoryDB = resolveMemoryDBForLoad(payload.memoryDB, rawSummaryStore, runId);
+  const preserveMalformedEmptyMemory = payload.memoryDB !== undefined
+    && !isMemoryDBInputStructurallyValid(payload.memoryDB, normalizedPayloadMemoryDB)
+    && !hasAnyMemoryRows(memoryDB);
 
   // 一次性 sweep：旧 schema 残留（流水账 attributes、伪 worldState 行）的清洗。幂等。
   const sweepStats = sweepLegacyMemoryDB(memoryDB);
@@ -922,7 +1012,7 @@ function readPayload(saveId: string): SavePayload | null {
   };
   // 中文注释：summaryStore 已经被收敛成空壳（只保留 cursor + 失败状态），这是 migration 幂等性的根本保障；
   // 不再硬删 facts/summaries 里 source='migration' 的行 —— 迁移过来的 keyFacts 是真实数据，不应该每次读存档就被抹掉。
-  if (
+  const shouldWriteNormalizedPayload =
     JSON.stringify(rawSummaryStore) !== JSON.stringify(summaryStore) ||
     !payload.memoryDB ||
     sweepHadEffect ||
@@ -931,8 +1021,8 @@ function readPayload(saveId: string): SavePayload | null {
     messageIdsMigrated ||
     megumiRecovery.recovered ||
     plotRouteReconciled ||
-    payload.version !== SAVE_VERSION
-  ) {
+    payload.version !== SAVE_VERSION;
+  if (shouldWriteNormalizedPayload && !preserveMalformedEmptyMemory) {
     writePayloadSync(saveId, {
       ...payload,
       gameState: {
@@ -944,6 +1034,8 @@ function readPayload(saveId: string): SavePayload | null {
       memoryDB,
       version: SAVE_VERSION,
     } as unknown as Record<string, unknown>);
+  } else if (shouldWriteNormalizedPayload) {
+    console.warn('[saves] malformed memoryDB retained because normalization would publish an empty replacement', { saveId });
   }
 
   return {

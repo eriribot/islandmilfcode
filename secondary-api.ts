@@ -12,6 +12,12 @@ export type SecondaryTaskKind =
   | 'phone-directive-detect'
   | 'scene-presence'
   | 'phone-scene-extract'
+  | 'shujuku-plan-detached'
+  | 'shujuku-assistant-generated-detached'
+  | 'shujuku-result-detached'
+  | 'host-assistant-detached'
+  | 'main-assistant-accepted'
+  | 'phone-message'
   | 'custom';
 
 export type SecondaryTaskCall = {

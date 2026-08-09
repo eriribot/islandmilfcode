@@ -45,7 +45,7 @@ export type GameDevelopmentAssistantReceipt = {
   readonly frozenPayloadFingerprint: string;
   readonly generationAttemptId: GameDevelopmentGenerationAttemptId;
   readonly messageIdentity: GameDevelopmentAssistantMessageIdentity;
-  readonly generationSource: 'tavern_generate' | 'tavern_generate_raw';
+  readonly generationSource: 'tavern_generate' | 'tavern_generate_raw' | 'shujuku_island_generate';
   readonly sceneFingerprint: string;
   readonly acceptedAt: string;
   readonly receiptFingerprint: string;

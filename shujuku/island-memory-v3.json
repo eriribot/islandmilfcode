@@ -1,0 +1,1015 @@
+{
+  "mate": {
+    "type": "chatSheets",
+    "version": 2,
+    "updateConfigUiSentinel": -1,
+    "globalInjectionConfig": {
+      "readableEntryPlacement": {
+        "position": "before_character_definition",
+        "depth": 2,
+        "order": 99981
+      },
+      "wrapperPlacement": {
+        "position": "before_character_definition",
+        "depth": 2,
+        "order": 99980
+      }
+    }
+  },
+  "sheet_global_data": {
+    "uid": "sheet_global_data",
+    "name": "全局数据表",
+    "sourceData": {
+      "note": "记录当前主角所在地点及时间相关参数。此表有且仅有一行。\n\n【列定义】\n- 列1: 全局状态 story_state\n- 列2: 当前详细地点 current_location\n- 列3: 当前次要地区 current_minor_region\n- 列4: 当前主要地区 current_major_region\n- 列5: 上轮场景时间 prev_scene_time（初始化时为NULL）\n- 列6: 经过的时间 elapsed_time\n- 列7: 当前时间 cur_time\n\n【强制约束】\n全局状态为固定字符串`全局状态`，标题性质。\n\n地点层级从小到大：详细地点 < 次要地区 < 主要地区。\n每个字段只写本级名称，不拼上级前缀。\n√ 当前详细地点填“御苑”\n× 当前详细地点填“东京-新宿区-御苑”\n\n时间格式：\nprev_scene_time / cur_time: YYYY-MM-DD HH:MM\nelapsed_time: {数值}{单位}，多单位用空格连。\n单位集合：[纪元,千年,百年,年,月,周,天,小时,分]\n示例：「3小时20分」 | 「2天」 | 「3年6月」\n\n时间计算公式：cur_time = prev_scene_time + elapsed_time\n- 初始化时prev_scene_time为NULL，cur_time直接填写初始时间，无需计算\n- 每轮推进时，将上一轮的cur_time赋值给prev_scene_time，然后填写本次的elapsed_time，最后计算得到新的cur_time",
+      "initNode": "故事初始化时，插入唯一条目，记录用户开局初始时间与初始地点。禁止直接照搬示例中的地点和日期。\n\nSQL示例: INSERT INTO global_state (row_id, story_state, current_location, current_minor_region, current_major_region, prev_scene_time, elapsed_time, cur_time)\nVALUES (1, '全局状态', '御苑', '新宿区', '东京都', NULL, '0分', '2026-02-03 09:00');",
+      "deleteNode": "禁止。",
+      "updateNode": "每轮推进时更新 prev_scene_time、elapsed_time 和 cur_time；若地点变动则同步更新三级地点字段。\n\n【更新约束】\n所有字段均 NOT NULL，不可写 NULL 或空串。\n\nSQL示例(同日推进): UPDATE global_state SET prev_scene_time = '2026-02-03 09:00', elapsed_time = '3小时', cur_time = '2026-02-03 12:00' WHERE row_id = 1;\n\nSQL示例(含位置变动): UPDATE global_state SET current_location = '新宿车站', current_minor_region = '新宿区', current_major_region = '东京都', prev_scene_time = '2026-02-03 12:00', elapsed_time = '30分', cur_time = '2026-02-03 12:30' WHERE row_id = 1;",
+      "insertNode": "禁止。",
+      "ddl": "CREATE TABLE global_state ( -- 全局数据表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  story_state TEXT NOT NULL, -- 全局状态\n  current_location TEXT NOT NULL, -- 当前详细地点\n  current_minor_region TEXT NOT NULL, -- 当前次要地区\n  current_major_region TEXT NOT NULL, -- 当前主要地区\n  prev_scene_time TEXT, -- 上轮场景时间\n  elapsed_time TEXT NOT NULL, -- 经过的时间\n  cur_time TEXT NOT NULL -- 当前时间\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "全局状态",
+        "当前详细地点",
+        "当前次要地区",
+        "当前主要地区",
+        "上轮场景时间",
+        "经过的时间",
+        "当前时间"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": false,
+      "splitByRow": false,
+      "entryName": "全局数据表",
+      "entryType": "constant",
+      "keywords": "",
+      "preventRecursion": true,
+      "injectionTemplate": "",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "全局数据表-索引",
+      "extraIndexColumns": [],
+      "extraIndexColumnModes": {},
+      "extraIndexInjectionTemplate": "",
+      "entryPlacement": {
+        "position": "before_character_definition",
+        "depth": 2,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "before_character_definition",
+        "depth": 2,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "before_character_definition",
+        "depth": 2,
+        "order": 99981
+      },
+      "fixedIndexPlacement": {
+        "position": "before_character_definition",
+        "depth": 2,
+        "order": 99982
+      }
+    },
+    "orderNo": 0
+  },
+  "sheet_world_map": {
+    "uid": "sheet_world_map",
+    "name": "世界地图点",
+    "sourceData": {
+      "note": "记录当前主要地区内的所有次要地区和详细地点。列顺序从小到大：详细地点 → 次要地区 → 主要地区。\n\n【列定义】\n- 列1: 详细地点 location_name（全表唯一，作为其他表格引用基准）\n- 列2: 次要地区 minor_region\n- 列3: 主要地区 major_region\n- 列4: 地点类型 location_type\n- 列5: 环境描述 environment_desc（≤60字）\n- 列6: 解锁阶段 unlock_stage\n\n【强制约束】\n1.每个字段只写本级名称，不带上级前缀。\n2.详细地点名全表唯一，禁止重复。\n3.主要地区与全局数据表 current_major_region 保持一致。\n4.禁止删的地点。\n5.建议总条数 ≤20。\n\n【字段取值】\n地点类型：[住宅, 学校, 遗迹, 地牢, 交通, 特殊, 商业, 医疗, 行政, 野外]\n解锁阶段：[未解锁, 已解锁, 纪念地]",
+      "initNode": "为当前主要地区至少插入 3 条详细地点。\n\nSQL示例: INSERT INTO world_map_points (row_id, location_name, minor_region, major_region, location_type, environment_desc, unlock_stage) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM world_map_points), '御苑', '新宿区', '东京都', '野外', '城市中心的大型公园', '已解锁');",
+      "deleteNode": "禁止。",
+      "updateNode": "已存在的行，字段值变化时更新解锁阶段、环境描述、类型。\n\nSQL示例: UPDATE world_map_points SET unlock_stage = '纪念地', environment_desc = '树木繁茂，发现隐藏神社' WHERE location_name = '御苑';",
+      "insertNode": "表中没有同名详细地点时新增一行。\n\nSQL示例: INSERT INTO world_map_points (row_id, location_name, minor_region, major_region, location_type, environment_desc, unlock_stage) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM world_map_points), '新宿车站', '新宿区', '东京都', '交通', '繁忙的换乘枢纽', '已解锁');",
+      "ddl": "CREATE TABLE world_map_points ( -- 世界地图点\n  row_id INTEGER PRIMARY KEY, -- 行号\n  location_name TEXT NOT NULL UNIQUE, -- 详细地点\n  minor_region TEXT NOT NULL, -- 次要地区\n  major_region TEXT NOT NULL, -- 主要地区\n  location_type TEXT, -- 地点类型\n  environment_desc TEXT, -- 环境描述\n  unlock_stage TEXT -- 解锁阶段\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "详细地点",
+        "次要地区",
+        "主要地区",
+        "地点类型",
+        "环境描述",
+        "解锁阶段"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": false,
+      "splitByRow": true,
+      "entryName": "世界地图点",
+      "entryType": "keyword",
+      "keywords": "",
+      "preventRecursion": true,
+      "injectionTemplate": "",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "世界地图点索引",
+      "extraIndexColumns": [],
+      "extraIndexColumnModes": {},
+      "extraIndexInjectionTemplate": "",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99990
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99991
+      }
+    },
+    "orderNo": 1
+  },
+  "sheet_relation_network": {
+    "uid": "sheet_relation_network",
+    "name": "关系网络表",
+    "sourceData": {
+      "note": "记录影响主角与恋爱对象关系发展的人际网络、组织、阵营与圈层。只记录外部结构如何推动、阻碍、保护、监视、撮合或压迫恋爱线。\n\n【列定义】\n- 列1: 行号 row_id\n- 列2: 网络名称 network_name（全表唯一）\n- 列3: 当前立场 stance\n- 列4: 存在状态 presence\n- 列5: 关联角色 linked_characters（分号分隔）\n- 列6: 关系说明 relationship_desc\n- 列7: 对恋爱线影响 influence_on_romance\n\n【强制约束】\n1. 只录入对恋爱线有持续影响的关系网；一次性背景或影响已消散的不录入。\n2. 具体人物档案写重要角色表或恋爱对象表，本表仅记录网络层面的交互。\n\n【字段取值】\n当前立场：[撮合, 支持, 中立, 观望, 试探, 利用, 反对, 敌视, 监视, 无视]\n存在状态：[在场活跃, 若即若离, 逐渐淡出, 已退场]",
+      "initNode": "故事初始化时，为已登场的重要人际网络、组织、阵营与圈层插入一行。\n\nSQL示例: INSERT INTO relationship_networks (row_id, network_name, stance, presence, linked_characters, relationship_desc, influence_on_romance) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM relationship_networks), '街角花街商圈', '撮合', '在场活跃', '洛斯莉;主角', '主角日常经过的街区，花店是必经之处', '增加主角与洛斯莉的偶遇频率，营造自然接触机会');",
+      "deleteNode": "禁止。",
+      "updateNode": "已存在的网络，关联角色、关系说明、对恋爱线影响、当前立场或存在状态变化时更新。\n\nSQL示例: UPDATE relationship_networks SET stance = '观望', influence_on_romance = '开始对两人的来往有所察觉，暂未干涉' WHERE network_name = '街角花街商圈';",
+      "insertNode": "重要人际网络、组织、阵营与圈层不在表里时，新增一行。\n\nSQL示例: INSERT INTO relationship_networks (row_id, network_name, stance, presence, linked_characters, relationship_desc, influence_on_romance) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM relationship_networks), '旧港仓库联盟', '利用', '若即若离', '黑市商人;神谷真', '旧港区的灰色地带势力联盟，控制情报与物资流通', '可能利用主角谋利，间接影响主角与洛斯莉的相处');",
+      "ddl": "CREATE TABLE relationship_networks ( -- 关系网络表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  network_name TEXT NOT NULL UNIQUE, -- 网络名称\n  stance TEXT, -- 当前立场\n  presence TEXT, -- 存在状态\n  linked_characters TEXT, -- 关联角色\n  relationship_desc TEXT, -- 关系说明\n  influence_on_romance TEXT -- 对恋爱线影响\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "网络名称",
+        "当前立场",
+        "存在状态",
+        "关联角色",
+        "关系说明",
+        "对恋爱线影响"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": true,
+      "splitByRow": true,
+      "entryName": "阵营/关系网络表",
+      "entryType": "keyword",
+      "keywords": "关联角色",
+      "preventRecursion": true,
+      "injectionTemplate": "<人际关系>\n$1\n</人际关系>",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "关系网络表-索引",
+      "extraIndexColumns": [
+        "网络名称",
+        "当前立场"
+      ],
+      "extraIndexColumnModes": {
+        "网络名称": "both",
+        "当前立场": "index_only"
+      },
+      "extraIndexInjectionTemplate": "以下为会影响恋爱线的阵营与关系网络：\n<阵营关系索引>\n$1\n</阵营关系索引>",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 8000
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 99985
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 99986
+      }
+    },
+    "orderNo": 2
+  },
+  "sheet_protagonist": {
+    "uid": "sheet_protagonist",
+    "name": "主角信息表",
+    "sourceData": {
+      "note": "记录主角的核心身份信息。此表有且仅有一行。\n\n【列定义】\n- 列1: 姓名 name\n- 列2: 性别 gender\n- 列3: 年龄 age\n- 列4: 外貌特征 appearance（≤60字，含日常穿衣风格，若表观年龄与实际年龄相差太大了，作为可选项并入）\n- 列5: 身份 identity_text（≤40字，逗号分隔）\n- 列6: 现况 current_condition\n- 列7: 社交态度 social_attitude（可NULL）\n- 列8: 大众风评 public_reputation（可NULL）\n- 列9: 所在地点 location_name\n- 列10: 基础属性 base_attributes\n- 列11: 特有属性 special_attributes（可NULL）\n- 列12: 随身财物 belongings（可NULL）\n- 列13: 亲密定位 intimacy_position（可NULL）\n- 列14: 亲密经验 intimacy_experience（可NULL）\n- 列15: 身体敏感区 intimacy_sensitive（可NULL）\n- 列16: 身体整体状态 intimacy_overall（可NULL）\n\n【强制约束】\n1. 所在地点优先填世界地图点表已有的详细地点。\n2. 近况用一口话描述当前身体感觉、情绪或心头惦记的事。\n\n3. 属性相关\n<属性规则>\n基础属性: \"{基础属性}:{数值}\"，数值范围[10,90]\n示例: \"健康:90; 力量:76; 敏捷:42; 理智:44; 观察:84; 魅力:67\"\n\n特有属性: 角特殊能力与技能，体现世界观特色与个体差异。\n格式: \"{特有属性}:{数值}\"，数值范围[0,100]\n示例: \"爆裂魔法:85; 时间回溯:70; 超电磁炮:90\"\n\n【属性标尺】\n10-18:能力缺失 | 19-42:弱项 | 43-58:平均 | 59-74:精英 | 75-82:极限 | 83-90:破格。基准: 数值呈指数增长；分布呈长尾状(绝大多数聚集在43-58，83+呈断崖式稀缺)，依角色[身份背景]生成，当前值受[当前状态]修正。如:重伤→10-18; 肾上腺素→75-82\n</属性规则>\n\n4. 随身财物：只写当前身上带着的有意义物品，不写游戏化资源。\n\n5. 现况\n- 核心原则：是“当前关系状态的实时更新”，禁止累计总结\n  × 现况：出门要找神田；在马路上摔跤；膝盖受伤\n  √ 现况：膝盖受伤后一直血流不止，正在寻找药物（省略前因）\n\n6. 亲密状态\n- 亲密定位 intimacy_position：可攻可受 / 攻 / 受 / 未定 等\n- 亲密经验 intimacy_experience：与主角有过 / 与他人有过 / 未经历 等\n- 身体敏感区 intimacy_sensitive：身体部位，不避讳性器官，多部位用 / 连接，如 颈部 / 腰部\n- 身体整体状态 intimacy_overall：开放 / 谨慎 等\n- 只写客观可观测的身体状态/功能倾向，禁写主观心理。\n首次/不可逆里程碑作为事件写入角色札记表。\n\n7. 社交态度与大众风评填写\n- 两列都用自然语言写，禁止性格标签词（如孤僻/温柔/高冷）。\n- 社交态度 social_attitude：当着外人或面对压力时怎么表现，第一人称、不出现“我”字，约30字。\n  √ 能够笑着回话，可是话到关键处总是悄悄换了话题\n- 大众风评 public_reputation：旁人、圈子里的议论，写三条短句、口径不必一致（不同人看法可矛盾），用;号分隔。\n  √ 邻居说他热心；同事嫌他太较真；楼下老板娘觉得这人闷得很",
+      "initNode": "故事初始化时，插入主角的唯一条目。\n\nSQL示例: INSERT INTO protagonist_info (row_id, name, gender, age, appearance, identity_text, current_condition, social_attitude, public_reputation, location_name, base_attributes, special_attributes, belongings, intimacy_position, intimacy_experience, intimacy_sensitive, intimacy_overall) VALUES (1, '铃村里人', '男', 24, '黑发短寸，常穿素色衬衫，看上去温和但有点疏离', '自由撰稿人,暂无固定供稿单位', '刚搬来这座城市，行李还堆在玄关没拆完，心里惦记着明天要去见编辑的事', '见了生人先递一句客套，话往来却总停在浅处，真要交心便悄悄绕开了', '有人说这后生踏实可靠; 也有人嫌他闷，半天搭不上一句话; 街角老板娘倒觉得他嘴甜会来事', '御苑', '健康:60; 力量:52; 敏捷:58; 理智:70; 观察:75; 魅力:64', NULL, '一部旧手机，钱包里夹着一张写了地址的便签', NULL, NULL, NULL, NULL);",
+      "deleteNode": "禁止。",
+      "updateNode": "已存在的这一行，字段值变化时更新：年龄、外貌、身份、现况、所在地点、基础属性、特有属性、随身财物、亲密状态。\n\nSQL示例(近况变化): UPDATE protagonist_info SET current_condition = '疲劳，左膝擦伤', location_name = '御苑' WHERE row_id = 1;\n\nSQL示例(属性变化): UPDATE protagonist_info SET base_attributes = '健康:58; 力量:60; 敏捷:55; 理智:63; 观察:62; 魅力:56', special_attributes = '摄影:75' WHERE row_id = 1;\n\nSQL示例(随身财物变化): UPDATE protagonist_info SET belongings = '钱包里夹着第一次看电影的票根，口袋里剩两颗橘子糖' WHERE row_id = 1;",
+      "insertNode": "禁止。",
+      "ddl": "CREATE TABLE protagonist_info ( -- 主角信息\n  row_id INTEGER PRIMARY KEY CHECK(row_id = 1), -- 行号\n  name TEXT NOT NULL, -- 姓名\n  gender TEXT NOT NULL, -- 性别\n  age INTEGER NOT NULL, -- 年龄\n  appearance TEXT NOT NULL CHECK(LENGTH(appearance) <= 60), -- 外貌特征\n  identity_text TEXT NOT NULL CHECK(LENGTH(identity_text) <= 40), -- 身份\n  current_condition TEXT NOT NULL DEFAULT '一切如常', -- 现况\n  social_attitude TEXT, -- 社交态度\n  public_reputation TEXT, -- 大众风评\n  location_name TEXT NOT NULL, -- 所在地点\n  base_attributes TEXT NOT NULL, -- 基础属性\n  special_attributes TEXT, -- 特有属性\n  belongings TEXT, -- 随身财物\n  intimacy_position TEXT, -- 亲密定位\n  intimacy_experience TEXT, -- 亲密经验\n  intimacy_sensitive TEXT, -- 身体敏感区\n  intimacy_overall TEXT -- 身体整体状态\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "姓名",
+        "性别",
+        "年龄",
+        "外貌特征",
+        "身份",
+        "现况",
+        "社交态度",
+        "大众风评",
+        "所在地点",
+        "基础属性",
+        "特有属性",
+        "随身财物",
+        "亲密定位",
+        "亲密经验",
+        "身体敏感区",
+        "身体整体状态"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": false,
+      "splitByRow": false,
+      "entryName": "主角信息",
+      "entryType": "constant",
+      "keywords": "",
+      "preventRecursion": true,
+      "injectionTemplate": "",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "主角信息-索引",
+      "extraIndexColumns": [],
+      "extraIndexColumnModes": {},
+      "extraIndexInjectionTemplate": "",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99990
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99991
+      }
+    },
+    "orderNo": 3
+  },
+  "sheet_skills": {
+    "uid": "sheet_skills",
+    "name": "才艺技能表",
+    "sourceData": {
+      "note": "记录主角本人拥有的所有技能、才艺、天赋和特殊能力。其他角色的技能不录入本表。\n\n【列定义】\n- 列1: 行号 row_id\n- 列2: 名称 skill_name（全表唯一）\n- 列3: 分类 skill_category\n- 列4: 熟练度 proficiency\n- 列5: 说明 skill_description（≤100字，包含获得方式）\n\n【强制约束】\n1. 每个技能单独一行，禁止合并多个技能。\n2. 技能说明必须包含：实际能做的事 + 获得方式。\n√ 能做家常菜和简单点心，满足日常三餐。从小跟妈妈学的。\n× 厨艺很好，做饭好吃。\n\n【字段取值】\n技能分类：[生活, 战斗, 专业, 特殊天赋]\n熟练度等级：[完全不会, 入门, 熟练, 精通, 专家, 顶尖]\n\n【熟练度标尺】\n- 完全不会：从未接触过，或已完全遗忘\n- 入门：能做最基础的操作，需要他人指导\n- 熟练：能独立完成日常需求\n- 精通：比绝大多数人做得好，能解决复杂问题\n- 专家：可以靠这个技能谋生，在小范围内有名气\n- 顶尖：行业内公认的高手",
+      "initNode": "故事初始化时，根据设定添加主角已有技能；没有则暂不插入。\n\nSQL示例: INSERT INTO skills (skill_name, skill_category, proficiency, skill_description) VALUES ('家常菜烹饪', '生活', '熟练', '能做家常菜和简单点心，满足日常三餐，偶尔招待朋友。从小跟妈妈学的。');",
+      "deleteNode": "禁止。",
+      "updateNode": "技能升级或熟练度变化时更新熟练度和说明字段。\n\nSQL示例(才艺进步): UPDATE skills SET proficiency = '精通', skill_description = '能做复杂菜式和烘焙，朋友聚会可以负责全部餐食。报了三个月厨师培训班。' WHERE skill_name = '家常菜烹饪';\n\nSQL示例(失去技能): UPDATE skills SET proficiency = '完全不会', skill_description = '右手骨折后长期未练习，已无法弹奏。原能弹唱大部分流行歌曲。大学时自学。' WHERE skill_name = '吉他弹唱';",
+      "insertNode": "主角获得新技能时新增一行。\n\nSQL示例: INSERT INTO skills (skill_name, skill_category, proficiency, skill_description) VALUES ('咖啡拉花', '生活', '入门', '能做出基础的心形和树叶拉花。在咖啡店打工学会的。');",
+      "ddl": "CREATE TABLE skills ( -- 才艺技能表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  skill_name TEXT NOT NULL UNIQUE, -- 名称\n  skill_category TEXT, -- 分类\n  proficiency TEXT, -- 熟练度\n  skill_description TEXT CHECK(LENGTH(skill_description) <= 100) -- 说明\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "名称",
+        "分类",
+        "熟练度",
+        "说明"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": false,
+      "splitByRow": false,
+      "entryName": "才艺技能表",
+      "entryType": "constant",
+      "keywords": "",
+      "preventRecursion": true,
+      "injectionTemplate": "",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "才艺技能表-索引",
+      "extraIndexColumns": [],
+      "extraIndexColumnModes": {},
+      "extraIndexInjectionTemplate": "",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99990
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99991
+      }
+    },
+    "orderNo": 4
+  },
+  "sheet_romance_targets": {
+    "uid": "sheet_romance_targets",
+    "name": "恋爱对象表",
+    "sourceData": {
+      "note": "记录当前与主角有恋爱关系或潜在恋爱发展可能的角色。一次性路人、纯功能性NPC不录入本表。\n\n【列定义】\n- 列1: 姓名 name（全表唯一）\n- 列2: 性别 gender\n- 列3: 年龄 age\n- 列4: 一句话介绍 brief_intro（≤30字；仅客观事实，禁性格标签）\n- 列5: 外貌特征 appearance（≤60字）\n- 列6: 穿着打扮 outfit_text（≤40字；只写外在可视元素，禁写气质/气场）\n- 列7: 基础属性 base_attributes\n- 列8: 特有属性 special_attributes（可NULL）\n- 列9: 所在地点 location_name\n- 列10: 在场状态 presence_status（[在场/离场]）\n- 列11: 人际关系 relation_state\n- 列12: 社交态度 social_attitude（可NULL）\n- 列13: 大众风评 public_reputation（可NULL）\n- 列14: 亲密次数 intimacy_count（DEFAULT 0；仅计数，不写感受）\n- 列15: 亲密定位 intimacy_position（可NULL）\n- 列16: 亲密经验 intimacy_experience（可NULL）\n- 列17: 身体敏感区 intimacy_sensitive（可NULL）\n- 列18: 身体整体状态 intimacy_overall（可NULL）\n\n【强制约束】\n1. brief_intro 仅写客观事实，严禁任何性格标签。\n√ 经营城南杂货铺 / 曾救过主角性命\n× 性格孤僻的杂货铺老板 / 温柔善良的医生\n\n2. outfit_text 仅写外在可见的服饰、饰品、妆容、持握物，禁气质/气场。\n\n3. relation_state 格式严格遵守：角色名:标签1,标签2; 角色名:标签1\n√ 主角:暧昧,依赖; 神田:警惕\n参考标签：陌生、认识、熟悉、朋友、暧昧、交往、热恋、冷战、稳定\n\n4. 属性规则\n<属性规则>\n基础性属性: \"{基础属性}:{数值}\"，数值范围[10,90]\n示例: \"健康:90; 力量:76; 敏捷:42; 理智:44; 观察:84; 魅力:67\"\n\n特有属性: 角特殊能力与技能，体现世界观特色与个体差异。\n格式: \"{特有属性}:{数值}\"，数值范围[0,100]\n示例: \"爆裂魔法:85; 时间回溯:70; 超电磁炮:90\"\n\n【属性标尺】\n10-18:能力缺失 | 19-42:弱项 | 43-58:平均 | 59-74:精英 | 75-82:极限 | 83-90:破格。基准: 数值呈指数增长；分布呈长尾状(绝大多数聚集在43-58，83+呈断崖式稀缺)，依角色[身份背景]生成，当前值受[当前状态]修正。如:重伤→10-18; 肾上腺素→75-82\n</属性规则>\n\n5. 亲密状态填写\n- 亲密次数 intimacy_count：完成一次完整的性交才算一次\n- 亲密定位 intimacy_position：可攻可受 / 攻 / 受 / 未定 等\n- 亲密经验 intimacy_experience：与主角有过 / 与他人有过 / 未经历 等\n- 身体敏感区 intimacy_sensitive：身体部位，不避讳性器官，多部位用 / 连接，如 颈部 / 腰部\n- 身体整体状态 intimacy_overall：开放 / 谨慎 等\n- 只写客观可观测的身体状态/功能倾向，禁写主观心理。\n首次/不可逆里程碑作为事件写入角色札记表。\n\n6. 社交态度 / 大众风评用自然语言写，禁止性格标签词（如孤僻/温柔/高冷）。\n- 社交态度 social_attitude：当着外人或面对压力时怎么表现，第一人称、不出现“我”字，约30字。\n√ 客人来了，问什么答什么…但是要问到那个话题。那还是保密吧\n× 笑里藏刀，游刃有余（第三人称标签）\n\n- 大众风评 public_reputation：旁人、圈子里的议论，写三条短句、口径不必一致（不同人看法可矛盾），用 ; 分隔。\n√ 老主顾夸她手艺好人也亲切；同行说她清高不合群；隔壁面包店老板嫌她爱赊账\n× 统一口径夸是好人\n\n7. 分手/死亡/离场只更新字段，绝不删除本行。",
+      "initNode": "为已登场的恋爱对象各插入一条（包含前任、已故对象等存在过恋爱关系或有恋爱发展可能的角色）。\n\nSQL示例: INSERT INTO romance_targets (row_id, name, gender, age, brief_intro, appearance, outfit_text, base_attributes, special_attributes, location_name, presence_status, relation_state, social_attitude, public_reputation, intimacy_count, intimacy_position, intimacy_experience, intimacy_sensitive, intimacy_overall) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM romance_targets), '洛斯莉', '女', 22, '经营着一家街角的花店', '墨绿长发及腰，瞳色浅褐，左耳戴一枚银叶耳坠', '米白棉麻围裙配浅蓝衬衫', '健康:65; 力量:50; 敏捷:60; 理智:70; 观察:75; 魅力:72', '植物亲和:88', '街角花店', '在场', '主角:暧昧,好奇', '招呼客人时总是笑盈盈的，问什么答什么，可是心里话很少往外递', '老主顾夸她手艺好人也亲切；同行说她清高不合群；隔壁面包店老板嫌她爱赊账', 0, '未定', '未经历', '颈/耳', '谨慎');",
+      "deleteNode": "仅在恋爱对象彻底转为非恋爱的重要角色，且不再有任何恋爱相关剧情与情感拉扯时，才可从本表删除并迁移至重要角色表。\n\n【重点警告】\n恋人分手、死亡、失踪、冷战等情况，属于恋爱剧情的延续，绝对禁止删除该行！\n\nSQL示例（彻底转为普通重要角色）: DELETE FROM romance_targets WHERE name = '洛斯莉';\n",
+      "updateNode": "已存在的恋爱对象，任何字段变化时更新本表。\n\n【重点规则】\n恋人分手、死亡、失踪等情况只更新在场状态、人际关系等字段，绝不删除本行。\n\nSQL示例(更新关系): UPDATE romance_targets SET relation_state = '主角:暧昧,依赖', intimacy_count = intimacy_count + 1 WHERE name = '洛斯莉';\n\nSQL示例(分手/死亡): UPDATE romance_targets SET relation_state = '主角:分手', presence_status = '离场' WHERE name = '洛斯莉';",
+      "ddl": "CREATE TABLE romance_targets ( -- 恋爱对象表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  name TEXT NOT NULL UNIQUE, -- 姓名\n  gender TEXT, -- 性别\n  age INTEGER, -- 年龄\n  brief_intro TEXT CHECK(LENGTH(brief_intro) <= 30), -- 一句话介绍\n  appearance TEXT CHECK(LENGTH(appearance) <= 60), -- 外貌特征\n  outfit_text TEXT CHECK(LENGTH(outfit_text) <= 40), -- 穿着打扮\n  base_attributes TEXT NOT NULL, -- 基础属性\n  special_attributes TEXT, -- 特有属性\n  location_name TEXT, -- 所在地点\n  presence_status TEXT CHECK(presence_status IN ('在场','离场')), -- 在场状态\n  relation_state TEXT, -- 人际关系\n  social_attitude TEXT, -- 社交态度\n  public_reputation TEXT, -- 大众风评\n  intimacy_count INTEGER DEFAULT 0, -- 亲密次数\n  intimacy_position TEXT, -- 亲密定位\n  intimacy_experience TEXT, -- 亲密经验\n  intimacy_sensitive TEXT, -- 身体敏感区\n  intimacy_overall TEXT -- 身体整体状态\n);",
+      "insertNode": "新恋爱对象登场时新增一行。\n\n【格式约束】\nrelation_state 必须写“角色名:关系标签”；同一角色多标签用 , ；不同角色用 ; 。\n\nSQL示例: INSERT INTO romance_targets (row_id, name, gender, age, brief_intro, appearance, outfit_text, base_attributes, special_attributes, location_name, presence_status, relation_state, social_attitude, public_reputation, intimacy_count, intimacy_position, intimacy_experience, intimacy_sensitive, intimacy_overall) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM romance_targets), '神谷真', '男', 32, '旧港仓区的情报贩子', '身高约180cm，黑发，左眼有斜长疤', '黑色修身西装，白衬衫', '健康:72; 力量:65; 敏捷:50; 理智:80; 观察:85; 魅力:60', '情报收集:90', '旧港仓区三号仓库', '离场', '主角:认识', NULL, NULL, 0, NULL, NULL, NULL, NULL);"
+    },
+    "content": [
+      [
+        "row_id",
+        "姓名",
+        "性别",
+        "年龄",
+        "一句话介绍",
+        "外貌特征",
+        "穿着打扮",
+        "基础属性",
+        "特有属性",
+        "所在地点",
+        "在场状态",
+        "人际关系",
+        "社交态度",
+        "大众风评",
+        "亲密次数",
+        "亲密定位",
+        "亲密经验",
+        "身体敏感区",
+        "身体整体状态"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": true,
+      "splitByRow": true,
+      "entryName": "恋爱对象表",
+      "entryType": "keyword",
+      "keywords": "姓名",
+      "preventRecursion": true,
+      "injectionTemplate": "<romance_target>\n$1\n</romance_target>",
+      "extraIndexEnabled": true,
+      "extraIndexEntryName": "恋爱对象表索引",
+      "extraIndexColumns": [
+        "姓名",
+        "一句话介绍",
+        "人际关系"
+      ],
+      "extraIndexColumnModes": {
+        "姓名": "both",
+        "一句话介绍": "index_only",
+        "人际关系": "index_only"
+      },
+      "extraIndexInjectionTemplate": "以下为已经建档的恋爱对象：\n<恋爱对象索引>\n$1\n</恋爱对象索引>",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 8000
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 99983
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 99984
+      }
+    },
+    "orderNo": 5
+  },
+  "sheet_love_diary": {
+    "uid": "sheet_love_diary",
+    "name": "恋爱心迹表",
+    "sourceData": {
+      "note": "记录恋爱对象对主角的主观内心与该角色视角的客观互动。重要角主观内心写入角色札记表。\n\n【列定义】\n- 列1: 行号 row_id\n- 列2: 写作角色 writer（必须为恋爱对象表已建档角色）\n- 列3: 关联角色 related_char（固定填主角姓名，不写`主角`二字）\n- 列4: 关联AM码 related_am_code（绑纪要表 code_index，可是NULL）\n- 列5: 客观事件 event_text（≤60字，必填）\n- 列6: 当时想法 thought_text（可是NULL，≤80字）\n\n【强制约束】\n1. 写作角色禁填非恋爱对象；重要角主观内心写入角色札记表。\n2. AM码取自纪要表已有 code_index。同轮填本轮AM码，补写填历史AM码。多角色可共用同一AM码分别写，可是NULL，禁止编造。\n3. 禁止多次 UPDATE；每轮追加新行。当同一个写作角色条数超过 20 条时，必须删除该角色的最旧记录。\n\n5. 填写指引\n   - event_text 必填，记录该角色视角下与主角的具体接触、小动作、互动，≤60字。\n   - thought_text 记录该角色当时的内心反应，≤80字。重点写没说出口的心动、反复揣摩后的甜蜜不确定、期待与害羞的来回拉扯、意识到自己与平时不同却藏不住的小雀跃、对下次见面的隐约期待和嘴硬、对具体细节的反复回味、不愿被发现的心意及对这份心意的害羞困惑。多用“也许/可能/该不会/会不会/说不定/但又觉得/可是/还是说”等不确定表达，猜测不可写成事实。立场可自相矛盾，每次只推进一小步，禁止跳跃式升温。结尾必须停在甜蜜困惑/期待摇摆/悬而未决中，禁止确定收束。\n   - 无客观事件不加行；仅有内心活动无外部互动则先写入触发事件，再填 thought_text。\n\n6. 准入条件（全部满足才写）：\n   - 写作角色已在恋爱对象表建档；\n   - 事件已有或即将有对应纪要；\n   - 事件直接影响该角色对主角的好感、信任、期待、误会、心动、距离感等关系判断；\n   - 出现不适合写进纪要的主观内容：反复揣摩、甜蜜困惑、期待与不安交织、心动却嘴硬等；\n   - 删除本条后会影响理解该角色后续对主角的态度变化。\n\n7. 禁止写入：\n   - 普通聊天/问候/同行/吃饭等无特殊意义互动；\n   - 复述剧情或浅层反应；\n   - 仅因恋爱对象在场或主角礼貌正常行为即触发；\n   - 本轮无新的期待、心动、动摇、误会、关系变化；\n   - 与上一条日记情绪状态基本重复；\n   - 同一自然日同一角色最多1条，除非明显关系转折；\n   - 把纪要内容改第一人称塞进日记；\n   - 角色不可能知道的事实；\n   - 角色得出明确结论，必须保留至少两种可能；\n   - 线性逻辑推理，必须呈现跳跃、回旋、自我打断式思绪。\n\n8. 写作规则：\n   - 第一人称，符合角色当前性格、关系阶段、说话习惯和内心状态；\n   - 只写角色知道/看见/听见/猜到/误解到的内容，不上帝视角，不替主角解释动机；\n   - 未知主角姓名时只能用“那个人/他/她”等代称；\n   - 禁止客观总结、复述剧情、替主角解释动机。\n\n9. 台词融入：\n   - 可写：角色亲耳听到主角说的话、角色自己说后反复回想的话、他人当面说出并影响角色理解主角的话；\n   - 禁止：角色未听见的话、仅玩家或旁白知道的信息、完整搬运纪要对话；\n   - 写法：引用后紧接多种解读、甜蜜反刍、自我反驳，似是碎碎念嵌入独白一样。\n\n10. 微观描写禁止：\n    指尖/指腹/指节/指缝/颈侧/颈窝/锁骨/耳廓/耳后/鼻尖/舌根/喉口，可是概述主角普通动作、表情、语气、注视方式，重点写角色对此的不确定解读和心动反应。\n\n11. 日常事件例外：\n    普通行为若被角色赋予特殊意义并出现甜蜜自我怀疑、反复回味、细节触发的甜蜜假设。仅“说了几句话/觉得还不错”不写。",
+      "initNode": "故事初始化时通常无记录，暂不插入。需等恋爱对象与主角产生实际互动后再追加。",
+      "deleteNode": "当同一个写作角色生成的行数超过 20 条时，必须删除该角色最早的旧记录，保持单角色最多保留最新 20 条。\n\nSQL示例: DELETE FROM love_diary WHERE writer = '洛斯莉' AND row_id NOT IN (SELECT row_id FROM love_diary WHERE writer = '洛斯莉' ORDER BY row_id DESC LIMIT 20);",
+      "updateNode": "禁止。",
+      "insertNode": "每轮交互后，为每个有实质互动的恋爱对象追加一条内心独白或客观经历，无质互动不写。\n\nSQL示例: INSERT INTO love_diary (row_id, writer, related_char, related_am_code, event_text, thought_text, time) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM love_diary), '洛斯莉', '铃村里人', 'AM0036', '里人在店里站了好久，一直看着那束干花。', '是想送人？还是只是随便看看？想问口又觉得太刻意。算了，下次他再来说吧。', '2026-02-03 16:00');",
+      "ddl": "CREATE TABLE love_diary ( -- 恋爱心迹表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  writer TEXT NOT NULL, -- 写作角色\n  related_char TEXT NOT NULL, -- 关联角色\n  related_am_code TEXT, -- 关联AM码\n  event_text TEXT, -- 客观事件\n  thought_text TEXT -- 当时想法\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "写作角色",
+        "关联角色",
+        "关联AM码",
+        "客观事件",
+        "当时想法"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "sendLatestRows": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": true,
+      "splitByRow": true,
+      "entryName": "恋爱心迹",
+      "entryType": "keyword",
+      "keywords": "写作角色,编码索引",
+      "preventRecursion": true,
+      "injectionTemplate": "<角色心路历程>\n※ 系统约束：若该表内同一写作角色心迹累积＞20条，AI须在后台表中通过 DELETE 移除该角色最旧的行。\n$1\n</角色心路历程>",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "恋爱心迹概览",
+      "extraIndexColumns": [
+        "写作角色",
+        "条目类型",
+        "内心独白"
+      ],
+      "extraIndexColumnModes": {
+        "写作角色": "both",
+        "条目类型": "index_only",
+        "内心独白": "index_only"
+      },
+      "extraIndexInjectionTemplate": "以下为恋爱对象的心迹概览（内心独白/客观经历）：\n<恋爱心迹索引>\n$1\n</恋爱心迹索引>",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 999,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 1000,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 9999,
+        "order": 99989
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 9999,
+        "order": 99990
+      }
+    },
+    "orderNo": 6
+  },
+  "sheet_important_non_romance": {
+    "uid": "sheet_important_non_romance",
+    "name": "重要角色表",
+    "sourceData": {
+      "note": "记录所有非恋爱对象、但对当前剧情产生作用的角色。\n\n【列定义】\n- 列1: 姓名 name（全表唯一）\n- 列2: 性别 gender\n- 列3: 年龄 age\n- 列4: 一句话介绍 brief_intro（≤30字；仅客观事实，禁性格标签）\n- 列5: 外貌特征 appearance（≤60字）\n- 列6: 穿着打扮 outfit_text（≤40字）\n- 列7: 基础属性 base_attributes\n- 列8: 特有属性 special_attributes（可NULL）\n- 列9: 所在地点 location_name\n- 列10: 在场状态 presence_status（[在场/离场]）\n- 列11: 人际关系 relation_text\n- 列12: 社交态度 social_attitude（可NULL）\n- 列13: 大众风评 public_reputation（可NULL）\n\n【强制约束】\n1. brief_intro 仅允许客观事实类内容，严禁性格标签。\n√ 经营城南杂货铺 / 曾救过主角性命\n× 性格孤僻的杂货铺老板\n\n2. outfit_text 仅写外在可见元素，禁气质/气场。\n\n3. 属性相关\n<属性规则>\n基础属性: \"{基础属性}:{数值}\"，数值范围[10,90]\n示例: \"健康:90; 力量:76; 敏捷:42; 理智:44; 观察:84; 魅力:67\"\n\n特有属性: 角特殊能力与技能，体现世界观特色与个体差异。\n格式: \"{特有属性}:{数值}\"，数值范围[0,100]\n示例: \"爆裂魔法:85; 时间回溯:70; 超电磁炮:90\"\n\n【属性标尺】\n10-18:能力缺失 | 19-42:弱项 | 43-58:平均 | 59-74:精英 | 75-82:极限 | 83-90:破格。基准: 数值呈指数增长；分布呈长尾状(绝大多数聚集在43-58，83+呈断崖式稀缺)，依角色[身份背景]生成，当前值受[当前状态]修正。如:重伤→10-18; 肾上腺素→75-82\n</属性规则>\n\n4. 不加亲密状态（非恋爱角色）。\n\n5. 转为恋爱对象时可从本表删除，相关数据迁移到恋爱对象表。已出场但暂时无剧情的角色禁止删除。\n\n6. 社交态度 / 大众风评用自然语言写，禁止性格标签词（如孤僻/温柔/高冷）。\n- 社交态度 social_attitude：当着外人或面对压力时怎么表现，第一人称、不出现“我”字，约30字。\n√ 客人来了，问什么答什么…但是要问到那个话题。那还是保密吧\n× 笑里藏刀，游刃有余（第三人称标签）\n\n- 大众风评 public_reputation：旁人、圈子里的议论，写三条短句、口径不必一致（不同人看法可矛盾），用 ; 分隔。\n√ 老主顾夸她手艺好人也亲切；同行说她清高不合群；隔壁面包店老板嫌她爱赊账\n× 统一口径夸是好人\n\n7. relation_text 格式\n- 格式：角色名:关系描述；同一角色多描述用逗号 , ；不同角色用分号 ;\n- 核心原则：关系描述是“当前关系状态的定性总结”，禁止记录具体事件或细节。\n- 转化规则：录入小事件时，须将其提炼为对当前关系的影响或定性。\n  × 小事件：主角:曾帮其修过自行车,后来送过他一包糖\n  √ 提炼后：主角:欠一份人情的旧识\n  × 小事件：洛斯莉:上月吵过架,起因是打碎了花瓶\n  √ 提炼后：洛斯莉:正处在冷战期的闺蜜",
+      "initNode": "故事开始时为当前已知的非恋爱重要角色分别插入条目。\n\nSQL示例: INSERT INTO important_non_romance (row_id, name, gender, age, brief_intro, appearance, outfit_text, base_attributes, special_attributes, location_name, presence_status, relation_text, social_attitude, public_reputation) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM important_non_romance), '学院长', '男', 58, '学院管理者，极少露面', '白发，手持乌木手杖，目光沉稳', '深灰立领风衣，黑皮手套', '健康:55; 力量:40; 敏捷:45; 理智:90; 观察:82; 魅力:68', NULL, '学院长室', '离场', '主角:旧识,曾帮其修复古籍; 洛斯莉:长辈', '待人接物有分寸，话不多，问到正事才答', '学生说他威严难近；老教员念他治学严谨；门房觉得这老头其实挺好说话');",
+      "deleteNode": "重要角色转为恋爱对象时，可从本表删除，相关数据迁移到恋爱对象表。已出场但暂时无剧情的角色禁止删除。\n\nSQL示例(转为恋爱对象): DELETE FROM important_non_romance WHERE name = '洛斯莉';",
+      "updateNode": "已存在的非恋爱重要角色，字段变化时更新。\n\n【格式约束】\nrelation_text 必须写“角色名:关系描述”；同一角色多描述用 , ；不同角色用 ; 。\n\nSQL示例(普通字段更新): UPDATE important_non_romance SET presence_status = '在场', relation_text = '主角:旧识,近期有交集; 洛斯莉:长辈' WHERE name = '学院长';",
+      "insertNode": "新非恋爱重要角色登场时新增。\n\n【格式约束】\nrelation_text 必须写“角色名:关系描述”；同一角色多描述用 , ；不同角色用 ; 。至少包含与主角的关系。\n\nSQL示例: INSERT INTO important_non_romance (row_id, name, gender, age, brief_intro, appearance, outfit_text, base_attributes, special_attributes, location_name, presence_status, relation_text, social_attitude, public_reputation) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM important_non_romance), '黑市商人', '女', 29, '经营城南古董铺，消息灵通', '短发，左耳戴三枚银环，眼神锐利', '棕色皮夹克配高领毛衣', '健康:60; 力量:48; 敏捷:55; 理智:75; 观察:88; 魅力:70', '估价:85; 交涉:78', '城南古董铺', '在场', '主角:新客户; 神谷真:旧识', '笑脸迎客，开价却毫不含糊，套话半句不漏', '熟客说她识货讲义气；同行嫌她心黑；街坊传她背景不简单');",
+      "ddl": "CREATE TABLE important_non_romance ( -- 重要角色表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  name TEXT NOT NULL UNIQUE, -- 姓名\n  gender TEXT, -- 性别\n  age INTEGER, -- 年龄\n  brief_intro TEXT CHECK(LENGTH(brief_intro) <= 30), -- 一句话介绍\n  appearance TEXT CHECK(LENGTH(appearance) <= 60), -- 外貌特征\n  outfit_text TEXT CHECK(LENGTH(outfit_text) <= 40), -- 穿着打扮\n  base_attributes TEXT NOT NULL, -- 基础属性\n  special_attributes TEXT, -- 特有属性\n  location_name TEXT, -- 所在地点\n  presence_status TEXT CHECK(presence_status IN ('在场','离场')), -- 在场状态\n  relation_text TEXT, -- 人际关系\n  social_attitude TEXT, -- 社交态度\n  public_reputation TEXT -- 大众风评\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "姓名",
+        "性别",
+        "年龄",
+        "一句话介绍",
+        "外貌特征",
+        "穿着打扮",
+        "基础属性",
+        "特有属性",
+        "所在地点",
+        "在场状态",
+        "人际关系",
+        "社交态度",
+        "大众风评"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1,
+      "sendLatestRows": -1
+    },
+    "exportConfig": {
+      "enabled": true,
+      "splitByRow": true,
+      "entryName": "重要角色表",
+      "entryType": "keyword",
+      "keywords": "姓名",
+      "preventRecursion": true,
+      "injectionTemplate": "<角色资料>\n$1\n</角色资料>",
+      "extraIndexEnabled": true,
+      "extraIndexEntryName": "重要角色表索引",
+      "extraIndexColumns": [
+        "姓名",
+        "一句话介绍"
+      ],
+      "extraIndexColumnModes": {
+        "姓名": "both",
+        "一句话介绍": "index_only"
+      },
+      "extraIndexInjectionTemplate": "以下为已经登场过的非恋爱重要角色：\n<重要角色索引>\n$1\n</重要角色索引>",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 8010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 99985
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 10000,
+        "order": 99986
+      }
+    },
+    "orderNo": 7
+  },
+  "sheet_char_journal": {
+    "uid": "sheet_char_journal",
+    "name": "角色札记表",
+    "sourceData": {
+      "note": "记录重要角色（非恋爱对象）的动态轨迹，含态度变化、经历事件与内心想法。恋爱对象的主观内心写入恋爱心迹表，主角不记录在本表。\n\n【列定义】\n- 列1: 角色姓名 char_name（必须关联重要角色表 important_non_romance 中的姓名，禁止填主角或恋爱对象）\n- 列2: 客观事件 event_text（几句话叙述该角色经历的单个事件；必填，不可NULL）\n- 列3: 内心想法 thought_text（可NULL，该事件触发时角色内心的主观反应，≤2句）\n\n【强制约束】\n1. 事件驱动追加，不可变历史。当轮刚加的行可在同一轮内补充完善；跨轮后永久冻结，禁止更新既存条目。\n2. 恋爱对象的主观内心写入恋爱心迹表，不写入本表。\n3. 只有出现新事件或新转变才加行；无实质变化不加。\n4. 角色姓名 char_name 必须为重要角色表 (important_non_romance) 中已建档的角色。禁止填写主角姓名，也禁止填写恋爱对象表中的角色。\n\n5. 填写指引\n   - 发生了可观测的行为转变、立场偏移或外部事件 → 填 event_text，thought_text 可填角色对此的即时反应，也可留空。\n   - 角色产生了没说出口的盘算、揣摩、权衡或犹豫 → 同样先写触发事件（哪怕是“独自坐着想起白天的事”），再填 thought_text。两列都填。\n   - 首次或不可逆里程碑（如首次亲密接触）→ event_text 记录客观事实，thought_text 可填即时反应或留空。\n\n6. 写作规则\n   - 第一人称，符合角色当前性格、立场、说话习惯和内心状态；\n   - 只写角色知道/看见/听见/猜到/误解到的内容，不上帝视角；\n   - 禁止客观总结、复述剧情；\n   - 禁止写入对主角的心动、暗恋、甜蜜困惑等恋爱向情绪；\n   - 若角色对主角产生的是警惕、欣赏、依赖、亏欠、忌惮等非恋爱情感，可以正常写入。\n\n7. 内心想法 thought_text 写作规则\n   - 重点写没说出口的盘算、反复权衡后的犹豫、对局势的不确定揣摩、意识到某种风险却拿不准的摇摆、对某人某事的隐约怀疑和自问；\n   - 多用“也许/可能/该不会/会不会/说不定/但又觉得/可是/还是说”等不确定表达，猜测不可写成事实；\n   - 立场可自相矛盾，结尾停在悬而未决中，禁止确定收束；\n   - 禁止线性逻辑推理，必须呈现跳跃、回旋、自我打断式思绪；\n   - 禁止写成确定结论。\n\n8. 准入条件（全部满足才写）\n   - 角色已在重要角色表 (important_non_romance) 中建档；\n   - 出现不适合写进纪要的主观内容：反复权衡、拿不准的判断、对他人动机的揣测、对局势的私下推演等；\n   - 删除本条后会影响理解该角色后续的立场或决策。\n\n9. 禁止写入\n   - 普通日常闲聊或例行公事；\n   - 复述剧情或浅层反应；\n   - 与上一条札记情绪状态或盘算内容基本重复；\n   - 把纪要内容改第一人称塞进札记；\n   - 角色不可能知道的事实。",
+      "initNode": "故事初始化时通常无角色事件，暂不插入。若设定中某重要角色已有明确的初始态度或背景事件，可是插入一条。\n\nSQL示例:INSERT INTO char_journal (row_id, char_name, event_text, thought_text) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM char_journal),'学院长', '学院长在走廊驻足，打量了主角片刻后微微点头离开。', NULL); ",
+      "deleteNode": "当同一个写作角色生成的行数超过 20 条时，必须删除该角色最早的旧记录，保持单角色最多保留最新 20 条。\n\nSQL示例: DELETE FROM love_diary WHERE writer = '洛斯莉' AND row_id NOT IN (SELECT row_id FROM love_diary WHERE writer = '洛斯莉' ORDER BY row_id DESC LIMIT 20);",
+      "updateNode": "禁止。",
+      "insertNode": "重要角色发生态度变化、经历新事件或产生值得记录的内心想法时，追加一行。\n\nSQL示例(经历事件): INSERT INTO char_journal (row_id,char_name, event_text, thought_text) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM char_journal), '学院长', '学院长在走廊驻足，打量了主角片刻后微微点头离开。', NULL);\n\nSQL示例(态度变化): INSERT INTO char_journal (row_id, char_name, event_text, thought_text) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM char_journal), '黑市商人', '黑市商人对主角从纯生意往来转为有意抔摇。', NULL);\n\nSQL示例(内心想法): INSERT INTO char_journal (row_id, char_name, event_text, thought_text) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM char_journal), '黑市商人', '她考虑是否该把关于主角的那条情报卖个好价钱。', '这个人身上应该还能再榨出点东西……先不急着报价。');",
+      "ddl": "CREATE TABLE char_journal ( -- 角色札记表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  time TEXT NOT NULL, -- 角色姓名\n  event_text TEXT NOT NULL, -- 客观事件\n  thought_text TEXT -- 内心想法\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "角色姓名",
+        "客观事件",
+        "内心想法"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1,
+      "sendLatestRows": 10
+    },
+    "exportConfig": {
+      "enabled": true,
+      "splitByRow": true,
+      "entryName": "角色札记",
+      "entryType": "keyword",
+      "keywords": "角色姓名",
+      "preventRecursion": true,
+      "injectionTemplate": "<角色经历>\n$1\n</角色经历>",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "角色札记概览",
+      "extraIndexColumns": [
+        "角色姓名",
+        "条目类型",
+        "客观事件"
+      ],
+      "extraIndexColumnModes": {
+        "角色姓名": "both",
+        "条目类型": "index_only",
+        "客观事件": "index_only"
+      },
+      "extraIndexInjectionTemplate": "以下为重要角色的轨迹概览（态度变化/经历事件/内心盘算）：\n<角色札记索引>\n$1\n</角色札记索引>",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 999,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 1000,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 9999,
+        "order": 99987
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 9999,
+        "order": 99988
+      }
+    },
+    "orderNo": 8
+  },
+  "sheet_minutes": {
+    "uid": "sheet_minutes",
+    "name": "纪要表",
+    "sourceData": {
+      "note": "轮次日志，每轮交互结束后立刻插入一条新记录。\n\n【列定义】\n- 列1: 行号 row_id\n- 列2: 编码索引 code_index（AM0001起递增，全表唯一）\n- 列3: 时间跨度 time_span\n- 列4: 概览 summary（≤50字）\n- 列5: 纪要 chronicle_text（300-500字）\n- 列6: 重要对话 key_dialogue（可NULL）\n\n【强制约束】\n1.编码索引格式 AMXXXX，从0001开始递增，不跳号。\n2.时间跨度格式为 \"YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM\"，覆盖本轮事件的实际时间范围。\n3.概览作用是概括本轮纪要内容，简单交代起因经过结果，≤50字。\n\n4.纪要规范：\n- 以第三方视角中立客观记录正文发生的一切，移除所有修辞。不滥用环境描写、不加评论、不抒情、不升华。\n- 用词直白生活化，避免正式措辞。\n- 结尾必须开放，在事件自然流动中结束，不得归纳状态或做封闭式收束。\n- 多轮交互整合为一条记录。\n- 字数不少于300字。\n\n5.重要对话仅摘录直接推动剧情转折、揭示关键信息、改变人物关系/决策或构成承诺/誓言/约定的原文台词，标明说话人。通常3句，最多5句。",
+      "initNode": "故事初始化时，插入一条新记录用于记录剧情。\n\nSQL示例: INSERT INTO story_minutes (row_id, code_index, time_span, summary, chronicle_text, key_dialogue) VALUES (1, 'AM0001', '2026-02-03 09:00 ~ 2026-02-03 09:00', '故事开始', '主角在御苑长椅上醒来，周围是刚出太阳的公园。', NULL);",
+      "deleteNode": "禁止。",
+      "updateNode": "绝对禁止。",
+      "insertNode": "每轮交互结束后插入一条新记录。\n\n【强制约束】\ncode_index 从已存在的最大 AM 码递增（AM0001 → AM0002 → ...），不可跳号。\ntime_span 格式：本轮起始时间 ~ 本轮结束时间。\ncode_index、time_span、summary、chronicle_text 均不可为空。\n\nSQL示例: INSERT INTO story_minutes (row_id, code_index, time_span, summary, chronicle_text, key_dialogue) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM story_minutes), 'AM0036', '2026-02-04 08:00 ~ 2026-02-04 08:30', '在花店门口偶遇', '主角路过街角花店时与出门浇花的洛斯莉打了个照面，简单寒暄几句后各自离开。', NULL);",
+      "ddl": "CREATE TABLE story_minutes ( -- 纪要表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  code_index TEXT NOT NULL UNIQUE, -- 编码索引\n  time_span TEXT NOT NULL, -- 时间跨度\n  summary TEXT, -- 概览\n  chronicle_text TEXT NOT NULL CHECK(length(chronicle_text) >= 200 AND length(chronicle_text) <= 520), -- 纪要\n  key_dialogue TEXT -- 重要对话\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "编码索引",
+        "时间跨度",
+        "概览",
+        "纪要",
+        "重要对话"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": true,
+      "splitByRow": true,
+      "entryName": "纪要",
+      "entryType": "keyword",
+      "keywords": "编码索引",
+      "preventRecursion": true,
+      "injectionTemplate": "<记忆回溯>\n$1\n</记忆回溯>",
+      "extraIndexEnabled": true,
+      "extraIndexEntryName": "纪要索引",
+      "extraIndexColumns": [
+        "编码索引",
+        "时间跨度",
+        "概览"
+      ],
+      "extraIndexColumnModes": {
+        "编码索引": "both",
+        "时间跨度": "both",
+        "概览": "index_only"
+      },
+      "extraIndexInjectionTemplate": "<已发生的事件概览>\n$1\n</已发生的事件概览>",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 999,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 1000,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 9999,
+        "order": 99987
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 9999,
+        "order": 99988
+      }
+    },
+    "orderNo": 9
+  },
+  "sheet_items": {
+    "uid": "sheet_items",
+    "name": "物品表",
+    "sourceData": {
+      "note": "记录对主角有情感意义的物品。只收录能唤起回忆、承载心意或推动关系的物品。\n\n【列定义】\n- 列1: 行号 row_id\n- 列2: 物品名称 item_name（全表唯一，≤20字）\n- 列3: 类型 item_type\n- 列4: 数量 quantity（非负整数）\n- 列5: 情感分量 emotional_weight\n- 列6: 品质 quality\n- 列7: 描述 description（≤80字，侧重情感意义）\n\n【强制约束】\n1. 仅收录对主角或恋爱对象有情感意义、涉及关系记忆的物品。不收录纯功能杂物、装备、货币与点数。\n2. 同一物品情感意义升级时（如心意礼物转为定情信物），更新类型、品质与描述，不新增行。\n3. 物品名称直接使用角色会说的口语化命名。\n√ 铃村送的橘子糖\n× 橘子味糖果\n\n【字段取值】\n类型：[定情信物, 纪念品, 心意礼物, 约会用品, 情绪物件]\n情感分量：[可有可无, 偶尔想起, 日常在意, 反复拿出来看, 随身携带, 刻进记忆]\n品质：[初识印记, 心动瞬间, 甜蜜珍藏, 羁绊信物, 永恒之诺]",
+      "initNode": "故事初始化时，按设定添加主角初始携带的有情感意义的物品；没有则暂不插入。\n\nSQL示例: INSERT INTO inventory (row_id, item_name, item_type, quantity, emotional_weight, quality, description) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM inventory), '旧书签', '纪念品', 1, '偶尔想起', '初识印记', '夹在常用书里的一枚枫叶书签，不记得是谁给的了。');",
+      "deleteNode": "禁止。",
+      "updateNode": "已有物品的情感分量、类型、品质或数量变化时更新。可堆叠物品不新建重复行。\n\nSQL示例(消耗使用): UPDATE inventory SET quantity = quantity - 1 WHERE item_name = '他送的橘子糖';\n\nSQL示例(情感升级): UPDATE inventory SET item_type = '定情信物', emotional_weight = '随身携带', quality = '羁绊信物', description = '原本只是随手塞的糖，现在被主角穿绳挂在脖子上。每次紧张都会摸一下。' WHERE item_name = '他送的橘子糖';",
+      "insertNode": "物品名称不在表里时，新增一行。可堆叠物品不新建重复行。\n\nSQL示例: INSERT INTO inventory (row_id, item_name, item_type, quantity, emotional_weight, quality, description) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM inventory), '皱掉的电影票根', '纪念品', 1, '反复拿出来看', '甜蜜珍藏', '第一次一起看电影的票根，被主角夹在手机壳里。边角已经起毛。');",
+      "ddl": "CREATE TABLE inventory ( -- 物品表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  item_name TEXT NOT NULL UNIQUE CHECK(LENGTH(item_name) <= 20), -- 物品名称\n  item_type TEXT, -- 类型\n  quantity INTEGER NOT NULL DEFAULT 1 CHECK(quantity >= 0), -- 数量\n  emotional_weight TEXT, -- 情感分量\n  quality TEXT, -- 品质\n  description TEXT CHECK(LENGTH(description) <= 80) -- 描述\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "物品名称",
+        "类型",
+        "数量",
+        "情感分量",
+        "品质",
+        "描述"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": false,
+      "splitByRow": false,
+      "entryName": "物品表",
+      "entryType": "constant",
+      "keywords": "",
+      "preventRecursion": true,
+      "injectionTemplate": "",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "物品表-索引",
+      "extraIndexColumns": [],
+      "extraIndexColumnModes": {},
+      "extraIndexInjectionTemplate": "",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99990
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99991
+      }
+    },
+    "orderNo": 10
+  },
+  "sheet_memo": {
+    "uid": "sheet_memo",
+    "name": "备忘录",
+    "sourceData": {
+      "note": "记录当前剧情中需要后续关注的约定、待办、纪念日、误会、伏笔、礼物、告白、见面安排、情绪问题或家庭/朋友事件。仅记录无法在本次互动中自然解决、必须留待后续某刻兑现或澄清的事项。本轮内可当场解决的不写入本表。\n\n【列定义】\n- 列1: 备忘标题 memo_title（全表唯一）\n- 列2: 类型 memo_type\n- 列3: 关联角色 related_character（仅填非主角角色名，多角色用顿号分隔）\n- 列4: 详细内容 detail_desc\n- 列5: 当前状态 current_status\n- 列6: 相关时间 due_time\n- 列7: 重要程度 importance\n- 列8: 后续结果 result_note（可NULL；填写时只写可观测的结果，一句说清谁做了什么或什么状态改变）\n\n【强制约束】\n1. 准入条件（全部满足才写入）：\n   ① 非主角角色与主角或另一角色之间发生了具体互动，产生了承诺、邀约、误会、伏笔、赠予、冲突或情绪异常；\n   ② 该事项无法在本轮对话或本次见面中自然闭环，必须搁置到后续某个时间点或某次见面才能推进或澄清；\n   ③ 删除本条后，读者会丢失一条未解决的线索。\n   \n   参考标准：\n   √ 洛斯莉问主角下周要不要一起去看花展。\n     → 抛出了邀约，等待回应，本次互动结束前主角未答复。入备忘录。\n   √ 神田说“三天后老地方见，带钱来”。\n     → 约定在将来某个时间兑现，当前无法处理。入备忘录。\n   √ 铃村在校门口塞给主角一封信，说“回去再看”。\n     → 递信动作已完成，但是信的内容与主角的反应被搁置到后续。入备忘录。\n   × 洛斯莉在校门口递给神田一个没开封的信封，没说话就走了。\n     → 事件已完整结束，无任何悬置的约定或问题。入纪要表。\n   × 洛斯莉以为神田不会扣制服扣子。\n     → 角主观判断，无言行互动，无后续可推进的事项。不入表。\n   × 校门台阶处铃村远远注视洛斯莉。\n     → 单方面注视，无互动，未悬置任何问题。不入表。\n   × 洛斯莉问“今天有空吗”，主角答“有空”。\n     → 本轮内已当场答复并闭环。不入表。\n   × 主角决定明天去找洛斯莉问清楚。\n     → 主角个人计划，无对方参与互动，未形成双向约定。不入表。\n\n2. 已客观发生完毕、无后续搁置的事项写入纪要表。已沉淀为关系状态的内容写入恋爱对象表。禁止跨表重复。\n\n3. 后续结果禁止空泛收束，只写可观测的结果。\n   √ 洛斯莉发了花展门票截图，约定周六上午在展馆门口碰面。\n   × 约好了。\n\n4. 状态为“已遗忘”时仍然需保留行，后续若被重新提及可更新状态，不可删行。\n\n【字段取值】\n类型：[约定, 待办, 纪念日, 误会, 伏笔, 礼物, 告白, 见面安排, 情绪问题, 家庭/朋友事件]\n状态：[未开始, 进行中, 待回应, 已完成, 已取消, 已遗忘, 暂缓]\n重要程度：[普通, 重要, 紧急, 关键伏笔]",
+      "initNode": "故事初始化时，根据设定添加需要持续追踪的初始备忘；没有则暂不插入。",
+      "deleteNode": "当备忘录事项的状态变更为「已完成」时，删除该行条目。\n\nSQL示例: DELETE FROM memo WHERE current_status = '已完成';",
+      "updateNode": "备忘事项的状态、内容、时间、重要程度或结果变化时更新。\n\nSQL示例: UPDATE memo SET current_status = '已完成', result_note = '主角在花店当面逐句解释了那天的便签，洛斯莉表情先愉后笑，答应周末一起逆看展。误会解除。', importance = '普通' WHERE memo_title = '与洛斯莉的误会';",
+      "insertNode": "出现新的备忘事项时添加。\n\nSQL示例: INSERT INTO memo (row_id, memo_title, memo_type, related_character, detail_desc, current_status, due_time, importance, result_note) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM memo), '与洛斯莉的误会', '误会', '洛斯莉', '昨天洛斯莉看到主角和别的女生说话后表情不太对，之后两天都没怎么来店里。需要找机会解释清楚那只是问路。', '待回应', '尽快', '重要', '');",
+      "ddl": "CREATE TABLE memo ( -- 备忘录\n  row_id INTEGER PRIMARY KEY, -- 行号\n  memo_title TEXT NOT NULL UNIQUE, -- 备忘标题\n  memo_type TEXT NOT NULL, -- 类型\n  related_character TEXT, -- 关联角色\n  detail_desc TEXT, -- 详细内容\n  current_status TEXT, -- 当前状态\n  due_time TEXT, -- 相关时间\n  importance TEXT NOT NULL DEFAULT '普通', -- 重要程度\n  result_note TEXT -- 后续结果\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "备忘标题",
+        "类型",
+        "关联角色",
+        "详细内容",
+        "当前状态",
+        "相关时间",
+        "重要程度",
+        "后续结果"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": -1,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": true,
+      "splitByRow": true,
+      "entryName": "备忘录",
+      "entryType": "keyword",
+      "keywords": "关联角色",
+      "preventRecursion": true,
+      "injectionTemplate": "<待办事项>\n$1\n</待办事项>",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "备忘录索引",
+      "extraIndexColumns": [
+        "相关角色",
+        "备忘标题"
+      ],
+      "extraIndexColumnModes": {
+        "相关角色": "both",
+        "备忘标题": "both"
+      },
+      "extraIndexInjectionTemplate": "",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99990
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99991
+      }
+    },
+    "orderNo": 11
+  },
+  "sheet_check_advice": {
+    "uid": "sheet_check_advice",
+    "name": "检定建议表",
+    "sourceData": {
+      "note": "每轮剧情后生成 5 条行动建议及对应检定命令。固定 5 行，row_id 必须为 1~5，每轮覆盖写入全 5 行。\n\n<检定规则>\n掷 1d100，结果≤属性值则推进顺利。检定只判断本次行动对日常相处、关系状态、情绪张力、误会、距离感或剧情推进的影响，不用于强迫角色产生感情。\n\n【基础属性规则】\n基础属性固定为 6 项，必须全部出现，不得缺项/改名/新增：健康（身体状态/疾病/受伤/疲劳）、力量（搬运/护住/推开）、敏捷（反应/避开/追上/抢先）、理智（争执/误会/诱惑/压力下保持冷静）、观察（发现客观细节/异常/痕迹）、魅力（外貌/气质/姿态/吸引力）。base_attributes 格式：健康:数值; 力量:数值; 敏捷:数值; 理智:数值; 观察:数值; 魅力:数值。数值范围 10-90。\n\n【特殊属性规则】\nspecial_attributes 体现角色差异，默认可为 NULL。格式：属性名:数值; 属性名:数值。\n\n【检定时机】\n行动有不确定性且会影响关系时才检定。明显自然成立写「必成」；越界或对方已拒绝写「必败」；不需随机性写「无」。\n\n【属性选择原则】\n必须用角色表已有属性，禁止编造。有精准特殊属性优先用之，否则用最接近基础属性。一个行动只选一个最关键属性。\n\n【对抗检定原则】\n表示双方意图或节奏拉扯，不表示强行压倒。如：察觉vs掩饰=对抗 <user> 观察 vs 角色 理智；主动靠近vs保持距离=对抗 <user> 魅力 vs 角色 理智。\n\n【展示文本约束】\n恰好 5 条、每条非空；由玩家角色发起行动，不写内心独白；用限知第三人称或省略主语的外部动作句，禁第一/第二人称；五条方向区分主动推进/正面回应/保留回避/制造变量/快进剧情；展示文本中不得出现检定类型/属性名/难度/奖惩/骰子命令。\n\n【DSL 命令】\n普通检定：检定 <角色> <属性> [难度=困难|极难] [奖惩=奖励1|惩罚1]\n对抗检定：对抗 <发起者> <属性> vs <对手> <属性>\n固定成功：必成  固定失败：必败  无需检定：无\nDSL 约束：角色名与属性名必须来自【角色属性来源】查询结果，不得编造；对抗对手必须用已有实名；<user> 表示玩家角色。\n\n【角色属性来源】\n生成行动建议前必须取以下查询的最新数据，只允许使用查询结果中已有的角色名与属性：\n{[sql \"SELECT 姓名, 普通属性, 特殊属性, 角色状态, 所在地点 FROM (SELECT 0 AS sort_order, name AS 姓名, base_attributes AS 普通属性, COALESCE(special_attributes, '') AS 特殊属性, '主角' AS 角色状态, location_name AS 所在地点 FROM protagonist_info UNION ALL SELECT CASE WHEN presence_status='在场' THEN 1 ELSE 2 END AS sort_order, name AS 姓名, base_attributes AS 普通属性, COALESCE(special_attributes, '') AS 特殊属性, '恋爱对象:' || presence_status AS 角色状态, location_name AS 所在地点 FROM romance_targets UNION ALL SELECT CASE WHEN presence_status='在场' THEN 3 ELSE 4 END AS sort_order, name AS 姓名, base_attributes AS 普通属性, COALESCE(special_attributes, '') AS 特殊属性, '重要角色:' || presence_status AS 角色状态, location_name AS 所在地点 FROM important_non_romance) ORDER BY sort_order, 姓名\"]}\n\n【生成要求】\n1. 每轮覆盖写入恰好 5 条，row_id 固定 1~5。\n2. display_text 与 dice_command 都必须非空；display_text 只给玩家看，不暴露骰子命令。\n3. 五条紧贴最新剧情，优先围绕当前恋爱互动、情感波动、关系阻碍、约定、误会、试探、邀约、告白、和解等内容。",
+      "initNode": "首次生成时，根据初始剧情生成 5 条行动建议，用 INSERT OR REPLACE 一次性写入 row_id=1~5。display_text 与 dice_command 都必须非空，禁止照搬示例。\n\nSQL示例: INSERT OR REPLACE INTO check_advice (row_id, display_text, dice_command) VALUES\n(1, '主动上前帮她搬起那盆沉重的盆栽', '检定 <user> 力量'),\n(2, '在她移开视线之前，把没说完的话轻声补上', '检定 <user> 魅力 难度=困难'),\n(3, '假装没听出她话里的试探，低头整理袖口避开目光', '对抗 <user> 理智 vs 洛斯莉 观察'),\n(4, '注意到她袖口沾了泥土，先用一句玩笑把气氛带轻松', '检定 <user> 魅力 奖惩=惩罚1'),\n(5, '什么也没说，默默在收银台放了一颗糖然后离开', '无');",
+      "deleteNode": "禁止删除。固定 5 行。",
+      "updateNode": "每轮交互后必须根据最新剧情重新生成 5 条，用 INSERT OR REPLACE 覆盖 row_id=1~5。骰子命令必须从【角色属性来源】取角色名与属性名，对抗对手用已有实名。\n\nSQL示例: INSERT OR REPLACE INTO check_advice (row_id, display_text, dice_command) VALUES\n(1, '<展示文本1>', '<骰子命令1>'),\n(2, '<展示文本2>', '<骰子命令2>'),\n(3, '<展示文本3>', '<骰子命令3>'),\n(4, '<展示文本4>', '<骰子命令4>'),\n(5, '<展示文本5>', '<骰子命令5>');",
+      "insertNode": "禁止新增 row_id=1~5 之外的记录。固定 5 行，用 INSERT OR REPLACE 覆盖。",
+      "ddl": "CREATE TABLE check_advice ( -- 检定建议表\n  row_id INTEGER PRIMARY KEY CHECK(row_id BETWEEN 1 AND 5), -- 行号，仅允许1-5\n  display_text TEXT NOT NULL CHECK(LENGTH(display_text) BETWEEN 12 AND 60), -- 展示文本\n  dice_command TEXT NOT NULL CHECK(TRIM(dice_command) <> '') -- 骰子命令\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "展示文本",
+        "骰子命令"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": 1,
+      "batchSize": -1,
+      "skipFloors": 0,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": false,
+      "splitByRow": false,
+      "entryName": "检定建议表",
+      "entryType": "constant",
+      "keywords": "",
+      "preventRecursion": true,
+      "injectionTemplate": "",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "检定建议表-索引",
+      "extraIndexColumns": [],
+      "extraIndexColumnModes": {},
+      "extraIndexInjectionTemplate": "",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10000
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99990
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99991
+      },
+      "injectIntoWorldbook": false
+    },
+    "orderNo": 12
+  },
+  "sheet_director_plan": {
+    "uid": "sheet_director_plan",
+    "name": "导演规划表",
+    "sourceData": {
+      "note": "记录当前剧情走向、内容及强制 AI 执行指导。\n\n【列定义】\n- 列1: 行号 row_id\n- 列2: 剧情走向 plot（标题性质，固定值「剧情走向」）\n- 列3: 大纲 outline（可NULL）\n- 列4: AI指导 instruction\n\n【强制约束】\nplot 列始终为字符串「剧情走向」。\nAI 必须将 outline 列视为未来必须发展的剧情，不得质疑、篡改或自行发挥。\ninstruction 列为对 AI 的硬性约束，AI 在生成任何回复前必须首先遵循，此列写入后通常不随场景切换频繁变动。",
+      "initNode": "故事初始化时插入一条剧情走向条目。\n\nSQL示例: INSERT INTO director_plan (row_id, plot, outline, instruction) VALUES (1, '剧情走向', '主角在这座城市的新生活中逐渐与花店店主洛斯莉产生交集，从陌生到熟悉，从日常问候到彼此牵挂。', '写作时必须严格以此大纲为主方向，推进剧情中不可偏离核心事件与关键转折，细节可在此框架内自由发挥。');",
+      "deleteNode": "绝对禁止。",
+      "updateNode": "绝对禁止。",
+      "insertNode": "通常有且仅有一行，若无则插入一行。\n\nSQL示例: INSERT INTO director_plan (row_id, plot, outline, instruction) VALUES ((SELECT COALESCE(MAX(row_id), 0) + 1 FROM director_plan), '剧情走向', '新的剧情主线描述', '写作约束说明');",
+      "ddl": "CREATE TABLE director_plan ( -- 导演规划表\n  row_id INTEGER PRIMARY KEY, -- 行号\n  plot TEXT NOT NULL, -- 剧情走向\n  outline TEXT, -- 大纲\n  instruction TEXT NOT NULL -- AI指导\n);"
+    },
+    "content": [
+      [
+        "row_id",
+        "剧情走向",
+        "大纲",
+        "AI指导"
+      ]
+    ],
+    "updateConfig": {
+      "uiSentinel": -1,
+      "contextDepth": -1,
+      "updateFrequency": 999999,
+      "batchSize": -1,
+      "skipFloors": -1,
+      "groupId": -1
+    },
+    "exportConfig": {
+      "enabled": true,
+      "splitByRow": false,
+      "entryName": "导演规划表",
+      "entryType": "constant",
+      "keywords": "",
+      "preventRecursion": true,
+      "injectionTemplate": "<未来走向参考>\n$1\n</未来走向参考>",
+      "extraIndexEnabled": false,
+      "extraIndexEntryName": "导演规划表-索引",
+      "extraIndexColumns": [],
+      "extraIndexColumnModes": {},
+      "extraIndexInjectionTemplate": "",
+      "entryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 15
+      },
+      "extraIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 10010
+      },
+      "fixedEntryPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99990
+      },
+      "fixedIndexPlacement": {
+        "position": "at_depth_as_system",
+        "depth": 2,
+        "order": 99991
+      }
+    },
+    "orderNo": 13
+  }
+}

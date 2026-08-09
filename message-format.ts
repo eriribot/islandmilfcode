@@ -20,6 +20,7 @@ import { KEY_FACT_CATEGORY_LABEL } from './summary/types';
 import type {
   CharacterCardLibrary,
   DrawingSettings,
+  NarrativeRoute,
   PhoneChatMessage,
   PlayerProfile,
   PlayerStats,
@@ -1388,6 +1389,17 @@ export const HIDDEN_USER_GENDER_RULES = [
   '- 禁止百合剧情：任何女性角色之间不得产生恋爱、暧昧或性暗示关系；女性角色的恋爱与亲密对象只能是男性 User。',
 ].join('\n');
 
+export function resolveNarrativeRoute(compatibility: unknown): NarrativeRoute {
+  if (!compatibility || typeof compatibility !== 'object' || Array.isArray(compatibility)) return 'island';
+  const value = compatibility as Record<string, unknown>;
+  return value.route === 'shujuku'
+    && value.handoffPhase === 'committed'
+    && typeof value.branchId === 'string'
+    && value.branchId.trim().length > 0
+    ? 'shujuku'
+    : 'island';
+}
+
 /**
  * 记录系任务（变量更新 / 小总结 / 大总结 / 全局压缩）共用的开场白。
  * 身份锚定为丸户史明（《パルフェ》《この青空に約束を》《WHITE ALBUM 2》编剧），
@@ -1445,10 +1457,13 @@ export function buildPrompt(
     memoryDB?: import('./memorydatabase/types').IslandMemoryDB | null;
     drawingSettings?: DrawingSettings | null;
     gameDevelopmentContext?: string;
+    narrativeRoute?: NarrativeRoute;
     /** Global reader-message offset of uiMessages when it is a lazy archive window. */
     messageStartIndex?: number;
   },
 ) {
+  const narrativeRoute: NarrativeRoute = options?.narrativeRoute === 'shujuku' ? 'shujuku' : 'island';
+  const usesIslandPlanner = narrativeRoute === 'island';
   const cleanUserInput = sanitizePromptInputText(userInput);
   const topEvent = Object.entries(statusData.world.recentEvents).find(
     ([name, description]) => name !== '初始记录' && String(description ?? '').trim(),
@@ -1475,7 +1490,7 @@ export function buildPrompt(
       summaryStore.keyFacts.some(f => !f.superseded));
 
   // 构建记忆注入上下文
-  const memoryContext = options?.memoryDB
+  const memoryContext = usesIslandPlanner && options?.memoryDB
     ? {
         currentTime: statusData.world.currentTime,
         currentLocation: statusData.world.currentLocation,
@@ -1505,14 +1520,15 @@ export function buildPrompt(
       }
     : undefined;
 
-  const summaryContext =
-    options?.memoryDB && memoryContext
+  const summaryContext = usesIslandPlanner
+    ? options?.memoryDB && memoryContext
       ? buildSummaryContextInline(summaryStore, options.memoryDB, memoryContext)
       : hasSummary
         ? buildSummaryContextInline(summaryStore)
-        : '';
-  const mainEventsContext = buildMainEventsContext(statusData);
-  const plotContext = buildCurrentPlotContext(statusData, options?.plotLibrary);
+        : ''
+    : '';
+  const mainEventsContext = usesIslandPlanner ? buildMainEventsContext(statusData) : '';
+  const plotContext = usesIslandPlanner ? buildCurrentPlotContext(statusData, options?.plotLibrary) : '';
   const summaryMessages = getSummaryMessages(uiMessages);
   const messageStartIndex = Math.max(0, Math.floor(Number(options?.messageStartIndex) || 0));
   // 取 lastSummarizedIndex 和「可摘要楼层数 - 保留窗口」中较小的那个，
@@ -1523,11 +1539,13 @@ export function buildPrompt(
         Math.max(0, summaryMessages.length - SUMMARY_KEEP_RECENT),
       )
     : 0;
-  const conversationHistory = buildConversationHistory(summaryMessages, historyStartIndex);
-  const scenePresenceContext = buildScenePresenceContext(statusData, options?.scenePresence, playerProfile);
-  const fallbackWorldStateContext = options?.scenePresence
-    ? ''
-    : [
+  const conversationHistory = usesIslandPlanner
+    ? buildConversationHistory(summaryMessages, historyStartIndex)
+    : '';
+  const islandScenePresence = usesIslandPlanner ? options?.scenePresence : null;
+  const scenePresenceContext = buildScenePresenceContext(statusData, islandScenePresence, playerProfile);
+  const fallbackWorldStateContext = usesIslandPlanner && !islandScenePresence
+    ? [
         'World state facts:',
         ...buildSaenaiWorldStateFactLines({
           currentTime: statusData.world.currentTime,
@@ -1537,23 +1555,28 @@ export function buildPrompt(
           mainEvents: statusData.world.mainEvents,
           eventTriggerCounts: statusData.world.eventTriggerCounts,
         }),
-      ].join('\n');
-  const relationshipGuidanceList = buildRelationshipGuidanceList(statusData, playerProfile, options?.scenePresence);
-  const activeCharacterCards = buildActiveCharacterCards(
-    statusData,
-    options?.scenePresence,
-    options?.characterCardLibrary,
-  );
-  const recentSceneContext = uiMessages
-    .slice(-4)
-    .filter(message => message.role === 'assistant')
-    .map(message => getPromptMessageText(message))
-    .filter(Boolean)
-    .join('\n');
+      ].join('\n')
+    : '';
+  const relationshipGuidanceList = usesIslandPlanner
+    ? buildRelationshipGuidanceList(statusData, playerProfile, islandScenePresence)
+    : '';
+  const activeCharacterCards = usesIslandPlanner
+    ? buildActiveCharacterCards(statusData, islandScenePresence, options?.characterCardLibrary)
+    : '';
+  const recentSceneContext = usesIslandPlanner
+    ? uiMessages
+        .slice(-4)
+        .filter(message => message.role === 'assistant')
+        .map(message => getPromptMessageText(message))
+        .filter(Boolean)
+        .join('\n')
+    : '';
   // 审计协议只跟“当前可见场景/本轮输入”绑定，不能用剧情卡、事件名或地点命中。
   // 否则世界书里反复出现某角色名时，会让局部审计变成每轮全局常驻规则。
   const localAuditContext = [recentSceneContext, cleanUserInput].filter(Boolean).join('\n');
-  const localAuditGuidance = buildLocalCharacterAuditList(statusData, localAuditContext, options?.scenePresence);
+  const localAuditGuidance = usesIslandPlanner
+    ? buildLocalCharacterAuditList(statusData, localAuditContext, islandScenePresence)
+    : '';
   const gameDevelopmentContext = String(options?.gameDevelopmentContext ?? '').trim();
   const gameDevelopmentTurnGuidance = gameDevelopmentContext
     ? [
@@ -1602,11 +1625,22 @@ export function buildPrompt(
     '可以使用 <context>...</context> 保存隐藏上下文，但可见正文只能放在可见标签里。',
     '除非用户明确要求，否则不要使用 Markdown 表格。',
     '保持回复聚焦、自然，并与当前场景一致。',
-    '这是多角色场景系统。没有全局默认变量目标；镜头焦点只由当前正文、玩家输入、剧情卡、镜头判定、明确在场角色和转场目标决定。',
-    '优先使用本轮精确注入：镜头判定、夏野雾姬的因果页边批注、在场角色 0 层卡、角色局部关系指导、角色局部条件审计和当前主线剧情卡。',
-    'summaryContext、长期摘要、时间线、成长线和关键记忆只作为背景检索层：用于补足已发生事实、关系、承诺、秘密和阶段结果，不得抢走本轮镜头焦点。',
-    '如果长期摘要与夏野雾姬批注、角色 0 层卡、局部关系指导或当前剧情卡重复或冲突，以本轮精确注入为准；摘要只补缺，不复述、不扩写成新目标。',
-    '没有进入明确在场或转场目标的角色，即使在摘要、时间线、成长线或世界背景里被提到，也不得默认插话、旁听、吃醋或产生即时心理反应。',
+    usesIslandPlanner
+      ? '这是多角色场景系统。没有全局默认变量目标；镜头焦点只由当前正文、玩家输入、剧情卡、镜头判定、明确在场角色和转场目标决定。'
+      : '当前使用 shujuku 路线：剧情规划、历史召回、世界书扫描和表格更新只由 shujuku 负责；不要调用、模拟或补写 Island 的独立审稿、摘要召回或剧情规划。',
+    usesIslandPlanner
+      ? '优先使用本轮精确注入：镜头判定、夏野雾姬的因果页边批注、在场角色 0 层卡、角色局部关系指导、角色局部条件审计和当前主线剧情卡。'
+      : '',
+    usesIslandPlanner
+      ? 'summaryContext、长期摘要、时间线、成长线和关键记忆只作为背景检索层：用于补足已发生事实、关系、承诺、秘密和阶段结果，不得抢走本轮镜头焦点。'
+      : '',
+    usesIslandPlanner
+      ? '如果长期摘要与夏野雾姬批注、角色 0 层卡、局部关系指导或当前剧情卡重复或冲突，以本轮精确注入为准；摘要只补缺，不复述、不扩写成新目标。'
+      : '',
+    usesIslandPlanner
+      ? '没有进入明确在场或转场目标的角色，即使在摘要、时间线、成长线或世界背景里被提到，也不得默认插话、旁听、吃醋或产生即时心理反应。'
+      : '',
+    narrativeRoute === 'shujuku' ? `当前时间：${statusData.world.currentTime}` : '',
     `当前位置：${statusData.world.currentLocation}`,
     mainEventsContext,
     fallbackWorldStateContext,

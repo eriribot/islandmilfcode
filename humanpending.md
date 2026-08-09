@@ -1,5 +1,34 @@
 # Human Pending
 
+## HP-011：shujuku v2 第 1 批审查范围已消费
+
+状态：scope-consumed-awaiting-new-review
+
+第 1 批的审查范围已被后续实现消费；本条保留历史边界，不再单独阻挡第 2 批：
+
+- 接受 `exchangeId`、`plannedText`、`qrf_plot*`、未知 `pluginData` 扩展和 nested storageFrame 的 round-trip 行为；
+- 接受 handoff envelope 与 shujuku v2 storageFrame 的当前类型合同；
+- 第 2 批仅处理空 memoryDB 保护和 archive compatibility/handoff 持久化；
+- 第 2 批仍不得探测/调用真实 shujuku、触发生成或写数据库。
+
+自动证据：旧 `HEAD` 合同失败；当前 `13 passed`；生产构建、相关 ESLint、最终 inline 产物安全和 `git diff --check` 通过。全仓 TypeScript 检查仍被既有错误阻断。
+
+当前接通标签：不涉及真实接通。真实 shujuku 插件、虚拟 session、生成链、数据库和 UI 均未开始。
+
+## HP-012：shujuku v2 第 2 批审查门
+
+状态：waiting-for-human-review
+
+第 2 批已完成本地实现和合同验证，等待人工接受后才能进入第 3 批。第 3 批拟处理 capability 检测、virtual session、非流式规划/生成包装器及 qrf 独立取证；在此之前不进行真实 shujuku 接通。
+
+自动证据：保存兼容合同 `23 passed`；保存 wiring 合同 `10 passed`；既有 message codec、archive 初始化/读穿、生产构建、相关 ESLint、inline bundle 安全和 `git diff --check` 通过。全仓 `tsc --noEmit` 仍被既有诊断阻断。
+
+需要人工确认：
+
+- 接受合法空、过期-only 或 malformed `memoryDB` 不覆盖非空 legacy `summaryStore` 的迁移边界；
+- 接受 route/branch/handoff/table checkpoint 在导入导出、fork 和 rollback 中 fail-closed、按目标分支恢复的边界；
+- 接受本批仍“不涉及真实接通”，并授权下一批开始读取真实插件 capability/API，但尚不触发真实生成或写表。
+
 ## HP-001：是否批准运行艾尔登特任务执行器
 
 状态：pending
@@ -245,3 +274,36 @@ docs/16-floor-lazy-loading-operation-guide-v0.1.md
 - 分类目录切换后刷新、手动保存/读取、关闭再打开 SillyTavern：**not run**。
 
 不自动恢复现有回收站批次；需先由 DS/玩家区分误退役与真实删除，避免复活本来就该删除的数据。
+
+## HP-011：v2 shujuku 回溯与重 roll 现场问题（2026-08-09）
+
+状态：waiting-for-human-review
+
+先前基于三个不存在接口的结论仍然撤销。当前实现已改为参考项目的虚拟转发链；自动合同只证明 Island 侧接线和证据判定，不替代真实酒馆验收。
+
+本轮已执行：
+
+1. 角色桥构造临时 `chat[]`，通过 shujuku 已包装的 `TavernHelper.generate()` 执行非流式规划/正文，再在虚拟 assistant 加入后调用 `triggerUpdate()`。
+2. 主回合和 AI 开场的 shujuku 路线都调用 `runShujukuVirtualTurn()`；不再走 `win.generateRaw()`。Island 路线保持原生成器。
+3. qrf、正文和数据库提交分别取证；`plannedText` 不能单独冒充当前 virtual user 的 qrf 写回，表提交还要求同轮 save、storageFrame 变化和表快照。
+4. 结果写回卡内逻辑 user/assistant 与当前表快照，不创建宿主 `#1/#2`；所有临时 API 在 `finally` 中恢复。
+5. 重 roll 在截断前恢复目标 shujuku 表快照，再通过同一提交入口重新执行虚拟回合。
+6. 角色桥 `5.2.0` 源码已同步到酒馆导入 JSON；虚拟转发 `30/30`、接线 `30/30`、消息 codec `13/13`、prompt 隔离 `15/15`、路线绑定 `9/9`、存档兼容 `39/39`，生产构建通过。
+
+真实酒馆待验收：
+
+- 导入最新角色桥 JSON 与最新游戏构建后，记录当前回合 virtual user 的 `qrf_plot*`、逻辑 assistant 正文和同轮 storageFrame/表快照三条独立证据。
+- 验证关闭路线时 shujuku 调用次数为零；开启、刷新后仍保持用户请求值、持久化值、探测结果和实际提交路线一致。
+- 对同一回合执行重 roll，确认目标轮前表快照恢复、旧 qrf 不复用、时间基线正确，并再次产生三条新证据。
+- 记录 shujuku 运行时版本、frame id、isolation key、generation id 与诊断字段，不能用设置页“已连接”代替本轮证据。
+
+完整边界见 `docs/shujuku-v2-problem-boundary-2026-08-09.md`。真实重 roll、真实 shujuku 规划、刷新后开关持久化和真实数据库提交仍为 **not run**。
+
+本轮现场证据：
+
+- 脚本已加载、UI 显示已连接：`C:\Users\eriri\AppData\Local\Temp\codex-clipboard-eeba7441-6e21-4401-8e68-991cc0426119.png`
+- 接通点前重 roll 被旧逻辑停止：`C:\Users\eriri\AppData\Local\Temp\codex-clipboard-8396fcd4-4523-467e-93f4-8a611fcb5449.png`
+- 回溯后写入卡住与文件请求错误：`C:\Users\eriri\AppData\Local\Temp\codex-clipboard-da9c0dff-8947-4feb-b203-9b0b1ea0c27c.png`
+- 正文被错误逻辑回合链阻断：`C:\Users\eriri\AppData\Local\Temp\codex-clipboard-a775c9fd-b16a-42a1-9a65-37a6b654666f.png`
+
+源码桥与导入 JSON 的真实酒馆运行版本仍为 **not run**，自动检查不能替代现场验收。
