@@ -253,15 +253,30 @@ function formatShujukuPlanningValue(value: unknown): string {
   }
 }
 
+function readShujukuPlannedSections(plannedText: string | undefined) {
+  const source = plannedText ?? '';
+  const sections: ReadonlyArray<readonly [string, RegExp]> = [
+    ['本轮输入', /<本轮用户输入>([\s\S]*?)<\/本轮用户输入>/i],
+    ['召回', /<recall>([\s\S]*?)<\/recall>/i],
+    ['补充', /<supplement>([\s\S]*?)<\/supplement>/i],
+  ];
+  return sections
+    .map(([label, pattern]) => [label, source.match(pattern)?.[1]?.trim() ?? ''] as const)
+    .filter(([, value]) => value);
+}
+
 function renderShujukuPlanning(message: UiMessage) {
   if (message.role !== 'user') return '';
   const rows = [
-    ['剧情', readShujukuPlanningValue(message, 'qrf_plot')],
-    ['任务', readShujukuPlanningValue(message, 'qrf_plot_tasks')],
-    ['预设', readShujukuPlanningValue(message, 'qrf_plot_preset')],
-  ]
-    .map(([label, value]) => [String(label), formatShujukuPlanningValue(value)] as const)
-    .filter(([, value]) => value);
+    ...readShujukuPlannedSections(message.plannedText),
+    ...[
+      ['剧情', readShujukuPlanningValue(message, 'qrf_plot')],
+      ['任务', readShujukuPlanningValue(message, 'qrf_plot_tasks')],
+      ['预设', readShujukuPlanningValue(message, 'qrf_plot_preset')],
+    ]
+      .map(([label, value]) => [String(label), formatShujukuPlanningValue(value)] as const)
+      .filter(([, value]) => value),
+  ];
   if (!rows.length) return '';
 
   return `
