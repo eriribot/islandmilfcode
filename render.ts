@@ -253,16 +253,160 @@ function formatShujukuPlanningValue(value: unknown): string {
   }
 }
 
-function readShujukuPlannedSections(plannedText: string | undefined) {
+const SHUJUKU_PLANNING_SECTIONS = [
+  {
+    label: '本轮输入',
+    key: 'currentUserInput',
+    patterns: [
+      /<本轮用户输入>([\s\S]*?)<\/本轮用户输入>/i,
+      /<current_user_input>([\s\S]*?)<\/current_user_input>/i,
+    ],
+  },
+  { label: '召回', key: 'recall', patterns: [/<recall>([\s\S]*?)<\/recall>/i] },
+  { label: '补充', key: 'supplement', patterns: [/<supplement>([\s\S]*?)<\/supplement>/i] },
+  {
+    label: '雾姬朱批',
+    key: 'kirihimeReview',
+    patterns: [/<kirihime_review>([\s\S]*?)<\/kirihime_review>/i],
+  },
+] as const;
+const SHUJUKU_PLANNING_DISPLAY_PLUGIN_KEY = '_islandmilfcode_planning_display_v1';
+
+function readShujukuPlanningSectionValues(plannedText: string | undefined) {
   const source = plannedText ?? '';
-  const sections: ReadonlyArray<readonly [string, RegExp]> = [
-    ['本轮输入', /<本轮用户输入>([\s\S]*?)<\/本轮用户输入>/i],
-    ['召回', /<recall>([\s\S]*?)<\/recall>/i],
-    ['补充', /<supplement>([\s\S]*?)<\/supplement>/i],
-  ];
-  return sections
-    .map(([label, pattern]) => [label, source.match(pattern)?.[1]?.trim() ?? ''] as const)
+  return SHUJUKU_PLANNING_SECTIONS.map(section => ({
+    ...section,
+    value: section.patterns
+      .map(pattern => source.match(pattern)?.[1]?.trim() ?? '')
+      .find(Boolean) ?? '',
+  }));
+}
+
+function readShujukuPlannedSections(plannedText: string | undefined) {
+  return readShujukuPlanningSectionValues(plannedText)
+    .map(section => [section.label, section.value] as const)
     .filter(([, value]) => value);
+}
+
+function encodeUtf8Base64(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function readShujukuPlanningDisplaySnapshot(message: UiMessage) {
+  const raw = readShujukuPlanningValue(message, SHUJUKU_PLANNING_DISPLAY_PLUGIN_KEY);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  if (record.version !== 1 || !record.recallEntries || typeof record.recallEntries !== 'object' || Array.isArray(record.recallEntries)) {
+    return undefined;
+  }
+  const recallEntries: Record<string, { title: string; body: string; source: string }> = {};
+  for (const [code, entry] of Object.entries(record.recallEntries)) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const row = entry as Record<string, unknown>;
+    const title = String(row.title ?? '').trim();
+    const body = String(row.body ?? '').trim();
+    const source = String(row.source ?? '').trim();
+    if (!title && !body && !source) continue;
+    recallEntries[String(code).trim().toUpperCase()] = {
+      title: title.slice(0, 240),
+      body: body.slice(0, 20_000),
+      source: source.slice(0, 240),
+    };
+  }
+  return { version: 1 as const, recallEntries };
+}
+
+function buildTavernRegexPlanningInput(
+  plannedText: string,
+  displaySnapshot?: ReturnType<typeof readShujukuPlanningDisplaySnapshot>,
+): string {
+  const sections = readShujukuPlanningSectionValues(plannedText);
+  if (!sections.some(section => section.value)) return plannedText;
+  const payload = {
+    ...Object.fromEntries(sections.map(section => [section.key, section.value])),
+    ...(displaySnapshot ? { recallEntries: displaySnapshot.recallEntries } : {}),
+  };
+  return `以下是夏野雾姬规划B64:${encodeUtf8Base64(JSON.stringify(payload))}`;
+}
+
+type TavernRegexSegment = {
+  kind: 'html' | 'text';
+  content: string;
+};
+
+let shujukuRegexFrameRuntimeInstalled = false;
+
+function splitTavernRegexOutput(text: string): TavernRegexSegment[] {
+  const segments: TavernRegexSegment[] = [];
+  const fence = /```html\s*([\s\S]*?)```/gi;
+  let cursor = 0;
+  for (const match of text.matchAll(fence)) {
+    const start = match.index ?? 0;
+    const before = text.slice(cursor, start).trim();
+    const html = match[1]?.trim() ?? '';
+    if (before) segments.push({ kind: 'text', content: before });
+    if (html) segments.push({ kind: 'html', content: html });
+    cursor = start + match[0].length;
+  }
+  const after = text.slice(cursor).trim();
+  if (after) segments.push({ kind: 'text', content: after });
+  return segments;
+}
+
+function buildTavernRegexSrcdoc(segment: TavernRegexSegment): string {
+  if (segment.kind === 'html') return segment.content;
+  return `<div style="box-sizing:border-box;margin:0;padding:0;background:transparent;color:#2d2a26;font:15px/1.7 system-ui,'Segoe UI','Microsoft YaHei',sans-serif;white-space:pre-wrap;word-break:break-word">${escapeHtml(segment.content)}</div>`;
+}
+
+function ensureShujukuRegexFrameRuntime() {
+  if (shujukuRegexFrameRuntimeInstalled || typeof window === 'undefined') return;
+  shujukuRegexFrameRuntimeInstalled = true;
+  window.addEventListener('message', event => {
+    const data = event.data as { type?: unknown; height?: unknown } | null;
+    if (!data || data.type !== 'resizeIframe') return;
+    const frame = [...document.querySelectorAll<HTMLIFrameElement>('[data-shujuku-regex-frame="true"]')]
+      .find(item => item.contentWindow === event.source);
+    const height = Number(data.height);
+    if (frame && Number.isFinite(height) && height > 0) {
+      frame.style.height = `${Math.min(Math.max(height, 120), 720)}px`;
+    }
+  });
+}
+
+function renderTavernRegexPlanning(message: UiMessage) {
+  if (message.role !== 'user') return '';
+  const plannedText = message.plannedText?.trim();
+  if (!plannedText || typeof formatAsTavernRegexedString !== 'function') return '';
+
+  try {
+    const regexInput = buildTavernRegexPlanningInput(plannedText, readShujukuPlanningDisplaySnapshot(message));
+    const regexed = formatAsTavernRegexedString(regexInput, 'user_input', 'display', { depth: 0 });
+    if (!regexed.trim() || regexed.trim() === regexInput.trim()) return '';
+    const segments = splitTavernRegexOutput(regexed);
+    if (!segments.length) return '';
+    ensureShujukuRegexFrameRuntime();
+
+    return `
+      <aside class="reader-shujuku-plan reader-shujuku-plan--tavern-regex" aria-label="shujuku 规划">
+        ${segments.map((segment, index) => `
+          <iframe
+            class="reader-shujuku-plan__frame"
+            data-shujuku-regex-frame="true"
+            srcdoc="${escapeHtml(buildTavernRegexSrcdoc(segment))}"
+            title="${escapeHtml(`酒馆规划正则 ${index + 1}`)}"
+          ></iframe>
+        `).join('')}
+      </aside>
+    `;
+  } catch (error) {
+    console.warn('[shujuku] 酒馆规划正则渲染失败，使用内置文本兜底', error);
+    return '';
+  }
 }
 
 function renderShujukuPlanning(message: UiMessage) {
@@ -280,15 +424,20 @@ function renderShujukuPlanning(message: UiMessage) {
   if (!rows.length) return '';
 
   return `
-    <aside class="reader-shujuku-plan" aria-label="shujuku 规划">
-      <div class="reader-shujuku-plan__title">shujuku 规划</div>
-      ${rows.map(([label, value]) => `
-        <div class="reader-shujuku-plan__row">
-          <span class="reader-shujuku-plan__label">${escapeHtml(label)}</span>
-          <span class="reader-shujuku-plan__value">${escapeHtml(value)}</span>
-        </div>
-      `).join('')}
-    </aside>
+    <details class="reader-shujuku-plan reader-shujuku-plan--fallback">
+      <summary class="reader-shujuku-plan__title">
+        <span>shujuku 规划</span>
+        <span class="reader-shujuku-plan__count">${rows.length} 项，点击展开</span>
+      </summary>
+      <div class="reader-shujuku-plan__rows">
+        ${rows.map(([label, value]) => `
+          <div class="reader-shujuku-plan__row">
+            <span class="reader-shujuku-plan__label">${escapeHtml(label)}</span>
+            <span class="reader-shujuku-plan__value">${escapeHtml(value)}</span>
+          </div>
+        `).join('')}
+      </div>
+    </details>
   `;
 }
 
@@ -939,6 +1088,8 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
   const visibleText = getVisibleMessageText(message);
   const illustrations = message.illustrations?.filter(illustration => illustration.assetId?.trim() || illustration.imageData?.trim()) ?? [];
   const hasIllustrations = hasRenderableIllustrations(message);
+  const tavernRegexPlanningHtml = renderTavernRegexPlanning(message);
+  const shujukuPlanningHtml = tavernRegexPlanningHtml || renderShujukuPlanning(message);
   const deckClasses = ['paper-reader'];
   if (hasIllustrations) deckClasses.push('paper-reader--with-illustrations');
 
@@ -953,7 +1104,7 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
     </div>
   `;
 
-  if (!visibleText && !hasIllustrations && !message.streaming) {
+  if (!visibleText && !hasIllustrations && !message.streaming && !shujukuPlanningHtml) {
     return `
       <section class="${deckClasses.join(' ')}">
         ${topLane}
@@ -1012,8 +1163,10 @@ function renderReaderDeck(state: AppState, flipDir: string = '') {
           </div>
         </div>
         <div class="reader-card__body" tabindex="0">
-          ${renderAnchoredMessageBody(message, visibleText, state.imageRerollEditing)}
-          ${renderShujukuPlanning(message)}
+          ${tavernRegexPlanningHtml
+            ? renderIllustrationPanel(message.id, illustrations, state.imageRerollEditing)
+            : renderAnchoredMessageBody(message, visibleText, state.imageRerollEditing)}
+          ${shujukuPlanningHtml}
         </div>
         ${renderOptionsPanel(message)}
       </article>

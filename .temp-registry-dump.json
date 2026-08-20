@@ -1,0 +1,144 @@
+﻿{
+    "format":  "islandmilfcode-archive-registry",
+    "formatVersion":  3,
+    "updatedAt":  "2026-08-11T11:53:38.770Z",
+    "entries":  {
+                    "autosave_6614a5d5-b210-46f4-a84f-0e88b6604899":  {
+                                                                          "saveId":  "autosave_6614a5d5-b210-46f4-a84f-0e88b6604899",
+                                                                          "runId":  "27914d57-2576-4e91-b8c8-2071964de83e",
+                                                                          "rootHash":  "sha256:c8dec0aa86fc6b7a3912e64110509a6e57f06db1ca8759e160635fe929aa21fe",
+                                                                          "previousRootHash":  "sha256:f231d384f813f772d8a01e229cce667ef605f85a49005189d0e610fafed45413",
+                                                                          "revision":  1786448957621000,
+                                                                          "meta":  {
+                                                                                       "saveId":  "autosave_6614a5d5-b210-46f4-a84f-0e88b6604899",
+                                                                                       "runId":  "27914d57-2576-4e91-b8c8-2071964de83e",
+                                                                                       "kind":  "autosave",
+                                                                                       "label":  "Autosave",
+                                                                                       "createdAt":  1785636961343,
+                                                                                       "updatedAt":  1786448957810,
+                                                                                       "messageIndex":  122,
+                                                                                       "playerProfile":  {
+                                                                                                             "name":  "魏天祥",
+                                                                                                             "familyName":  "魏",
+                                                                                                             "givenName":  "天祥",
+                                                                                                             "gender":  "男",
+                                                                                                             "personality":  "外表拥有满级社交伪装与松弛感、内核却时刻紧握绝对主导权的从容掌控者；在日常中风趣随和、平易近人，善于用细腻的温情顺应水到渠成的情感累积，绝不制造突兀与刻意；但在关键时刻或主线危机前，则会瞬间切换为心防极高、杀伐果决的破局大佬，游刃有余地掌控一切节奏，且在这份强大的从容之下，对建立羁绊的灵魂伴侣保持着绝对的专一忠诚与不留任何缝隙的纯粹守护。",
+                                                                                                             "appearance":  "清秀可爱，容貌比女人还好看。",
+                                                                                                             "className":  "2年G班",
+                                                                                                             "schoolCalendarBaseClassName":  "2年G班",
+                                                                                                             "schoolIdentityKind":  "student",
+                                                                                                             "schoolIdentityLabel":  "私立丰之崎学园 2年G班",
+                                                                                                             "schoolCalendarSyncedAt":  "2012-12-07",
+                                                                                                             "stats":  {
+                                                                                                                           "knowledge":  100,
+                                                                                                                           "charm":  100,
+                                                                                                                           "proficiency":  100,
+                                                                                                                           "kindness":  100,
+                                                                                                                           "courage":  100
+                                                                                                                       },
+                                                                                                             "difficulty":  "easy",
+                                                                                                             "backgroundIds":  [
+
+                                                                                                                               ],
+                                                                                                             "backgrounds":  [
+
+                                                                                                                             ],
+                                                                                                             "backgroundCost":  0
+                                                                                                         },
+                                                                                       "activeTarget":  null,
+                                                                                       "location":  "咖啡厅",
+                                                                                       "gameTime":  "2012-12-07 18:10",
+                                                                                       "preview":  "解决掉那个难缠的责任编辑花了点时间，等我推开咖啡厅玻璃门时，冷风和里面温暖的咖啡香气撞了个满怀。\n\n那四个人已经占好了靠窗的座位。安艺伦也正对着笔记本电脑屏幕抓头发，泽村·斯宾塞·英梨梨戴着黑框眼镜在邻桌疯狂跟画板较劲，加藤惠安静地咬着吸管看手机，而提前溜进来的霞之丘诗羽则优雅地喝着黑咖啡。\n\n看到我走过来，诗羽轻轻放下杯子。\n\n@saenai:霞之丘诗羽「",
+                                                                                       "messageCount":  245,
+                                                                                       "version":  3,
+                                                                                       "schemaVersion":  3,
+                                                                                       "browserRevision":  1786448957621000,
+                                                                                       "localBackedUpRevision":  1786448947575000,
+                                                                                       "archiveBackendMode":  "local-v3",
+                                                                                       "rootHash":  "sha256:c8dec0aa86fc6b7a3912e64110509a6e57f06db1ca8759e160635fe929aa21fe",
+                                                                                       "floorCount":  123,
+                                                                                       "currentFloorIndex":  122,
+                                                                                       "health":  "ok"
+                                                                                   },
+                                                                          "updatedAt":  1786448959145
+                                                                      },
+                    "autosave_da251c59-a2ea-4d3b-b35b-631b5b3ca1de":  {
+                                                                          "saveId":  "autosave_da251c59-a2ea-4d3b-b35b-631b5b3ca1de",
+                                                                          "runId":  "da251c59-a2ea-4d3b-b35b-631b5b3ca1de",
+                                                                          "rootHash":  "sha256:827f68220c0cb29da62fde56bcfc0deab905a9d5bf4d4f93bfd2f9983f372fd8",
+                                                                          "previousRootHash":  "sha256:e89869e6250e54e5d315395957b128ce2f8de99b2b7522c616225b45b7b27679",
+                                                                          "revision":  1786449217383000,
+                                                                          "meta":  {
+                                                                                       "saveId":  "autosave_da251c59-a2ea-4d3b-b35b-631b5b3ca1de",
+                                                                                       "runId":  "da251c59-a2ea-4d3b-b35b-631b5b3ca1de",
+                                                                                       "kind":  "autosave",
+                                                                                       "label":  "Autosave",
+                                                                                       "createdAt":  1786272648643,
+                                                                                       "updatedAt":  1786449217415,
+                                                                                       "messageIndex":  4,
+                                                                                       "playerProfile":  {
+                                                                                                             "name":  "结城理",
+                                                                                                             "familyName":  "结城",
+                                                                                                             "givenName":  "理",
+                                                                                                             "gender":  "男",
+                                                                                                             "personality":  "拥有一头蓝色的顺滑短发，刘海很长，经常遮住部分眼睛。眼神平静、深邃，带有淡淡的忧郁与空灵感。",
+                                                                                                             "appearance":  "身材修长，皮肤白皙，因平时习惯被评价为有点轻微的“猫背”",
+                                                                                                             "className":  "3年C班",
+                                                                                                             "schoolCalendarBaseClassName":  "3年C班",
+                                                                                                             "schoolIdentityKind":  "student",
+                                                                                                             "schoolIdentityLabel":  "私立丰之崎学园 3年C班",
+                                                                                                             "schoolCalendarSyncedAt":  "2012-04-05",
+                                                                                                             "stats":  {
+                                                                                                                           "knowledge":  100,
+                                                                                                                           "charm":  100,
+                                                                                                                           "proficiency":  100,
+                                                                                                                           "kindness":  100,
+                                                                                                                           "courage":  100
+                                                                                                                       },
+                                                                                                             "difficulty":  "easy",
+                                                                                                             "backgroundIds":  [
+
+                                                                                                                               ],
+                                                                                                             "backgrounds":  [
+
+                                                                                                                             ],
+                                                                                                             "backgroundCost":  0
+                                                                                                         },
+                                                                                       "activeTarget":  null,
+                                                                                       "location":  "天台",
+                                                                                       "gameTime":  "2012-04-05 08:15",
+                                                                                       "preview":  "阳光把铁丝网的影子烙在水泥地上，风似乎在某一个瞬间彻底停滞了。\n\n我闭着眼睛，让后脑勺凭着直觉向后挪动，寻找一个更舒服的角度。耳机里的吉他失真被前奏轻快灵动的钢琴声顶替，记忆深处那首旋律准时敲打起耳膜。\n\n要是像闭上眼能回去就好了。\n\n那一天的屋顶也和现在一样。我顺从着重力的拉扯把头沉下去，稳稳地枕上了一块兼具弹性和冰凉的区域。一种本能的放松感从脊椎向上蔓延",
+                                                                                       "messageCount":  9,
+                                                                                       "version":  3,
+                                                                                       "schemaVersion":  3,
+                                                                                       "browserRevision":  1786449217383000,
+                                                                                       "localBackedUpRevision":  1786448912359000,
+                                                                                       "archiveBackendMode":  "local-v3",
+                                                                                       "rootHash":  "sha256:827f68220c0cb29da62fde56bcfc0deab905a9d5bf4d4f93bfd2f9983f372fd8",
+                                                                                       "floorCount":  5,
+                                                                                       "currentFloorIndex":  4,
+                                                                                       "health":  "ok"
+                                                                                   },
+                                                                          "updatedAt":  1786449217793
+                                                                      }
+                },
+    "gcTombstones":  {
+
+                     },
+    "deletedSaves":  {
+
+                     },
+    "lastGc":  {
+                   "status":  "complete",
+                   "deleted":  0,
+                   "missing":  1,
+                   "retainedShared":  0,
+                   "failed":  0,
+                   "pendingTombstones":  0,
+                   "pendingFiles":  0,
+                   "imagesDeferred":  false,
+                   "scanIncomplete":  true,
+                   "finishedAt":  1786449218770,
+                   "tombstoneId":  "retention:autosave_6614a5d5-b210-46f4-a84f-0e88b6604899:sha256-47a16e5296e3844c4683eadaccdfedf052e3cbdaa48dbbf919dae400c9f71242"
+               }
+}

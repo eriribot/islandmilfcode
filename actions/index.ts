@@ -59,7 +59,6 @@ import {
   removeGenerationAssistantMessage,
   type StreamingContext,
 } from './streaming';
-import { getCharacterRelationToTomoya } from '../relationship';
 import { commitProgressToMemoryDB } from '../memorydatabase/commit-points';
 import { expirePhoneMessageIndex, indexPhoneMessage } from '../memorydatabase/phone-repository';
 import type { IslandMemoryDB, MemoryImpressionRow, MemoryRelationRow } from '../memorydatabase/types';
@@ -76,7 +75,6 @@ import {
 } from '../plot-state-machine';
 import { buildSaenaiWorldStateFactLines } from '../saenai-world-facts';
 import {
-  buildKirihimeSchoolIdentitySegment,
   resolvePlayerSchoolIdentity,
   SAE_07_8_EVENT_ID,
   shouldInjectSae078GraduationCeremony,
@@ -95,7 +93,7 @@ import {
 } from '../plugins/image-generation';
 import { buildDeepSeekEvidenceContext, collectDeepSeekWebLookupEvidence } from '../plugins/deepseek-web-lookup';
 import { saveImageDataUrlAsAsset } from '../state/image-assets';
-import { getArchiveMessageRange } from '../state/archive-repository';
+import { getArchiveMessageRange, hydrateArchiveMessages } from '../state/archive-repository';
 import { restorePendingGameDevelopmentTurnForRollback } from '../game-development/state';
 import type { GameDevelopmentTurnTimeRange } from '../game-development/orchestration';
 import {
@@ -115,10 +113,25 @@ import {
   toGlobalReaderIndex,
 } from '../state/message-window';
 import {
+  cancelShujukuVirtualTurn,
   inspectCommittedShujukuBinding,
+  restoreShujukuTablesForHandoff,
   runShujukuVirtualTurn,
-  type ShujukuVirtualMessageInput,
 } from '../shujuku/adapter';
+import { buildShujukuVirtualTimeline } from '../shujuku/virtual-timeline';
+import {
+  APPEARANCE_CONSISTENCY_RULES,
+  buildIslandBodyContextFromPlanning,
+  buildEstablishedRelationshipFactLines,
+  buildIslandPlanningCharacterLines,
+  buildIslandPlanningIdentityPayload,
+  buildShujukuPlanningDisplaySnapshot,
+  CHARACTER_CONSISTENCY_RULES,
+  ISLAND_PLANNING_CONTEXT_PLUGIN_KEY,
+  SHUJUKU_PLANNING_DISPLAY_PLUGIN_KEY,
+  SCENE_CAMERA_EVIDENCE_RULES,
+  USER_CAUSALITY_RULES,
+} from '../shujukuinject';
 
 export type ActionContext = StreamingContext & {
   adapter: VariableAdapter;
@@ -286,9 +299,10 @@ function rollbackPendingPhoneSend(ctx: Pick<ActionContext, 'state' | 'memoryDB'>
   clearPendingPhoneSend(ctx);
 }
 
-function stopTavernGeneration(ctx: Pick<ActionContext, 'win'>, generationId: string) {
+async function stopTavernGeneration(ctx: Pick<ActionContext, 'win'>, generationId: string) {
   if (!generationId) return;
   try { ctx.win.stopGenerationById?.(generationId); } catch { /* best-effort host cancellation */ }
+  await cancelShujukuVirtualTurn(generationId);
 }
 
 export function cancelCurrentGeneration(ctx: ActionContext) {
@@ -297,7 +311,7 @@ export function cancelCurrentGeneration(ctx: ActionContext) {
   const generationId = state.currentGenerationId;
 
   generationRunEpoch += 1;
-  stopTavernGeneration(ctx, generationId);
+  void stopTavernGeneration(ctx, generationId);
   phoneRunEpoch += 1;
   delete state.runtimeFlags.generationCancelRequested;
   delete state.runtimeFlags.phoneCancelRequested;
@@ -346,7 +360,7 @@ export async function invalidateAsyncActions(ctx: ActionContext): Promise<void> 
   const { state } = ctx;
   const generationId = state.currentGenerationId;
   generationRunEpoch += 1;
-  stopTavernGeneration(ctx, generationId);
+  await stopTavernGeneration(ctx, generationId);
   phoneRunEpoch += 1;
   asyncActionInvalidationEpoch += 1;
   delete state.runtimeFlags.generationCancelRequested;
@@ -1851,6 +1865,9 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
   // 这一步必须在 syncMainEvents 之前——把世界游标推进到正确日期后，syncMainEvents 才能当场激活对应事件，
   // 恢复“玩家明确跳到某天 → 本回合立刻触发事件”的手感；同时全程过统一时间门，杜绝旧正则被叙事多日期带偏。
   let scenePresence: ScenePresence | null = null;
+  // Island's direct route may use its own preflight.  Shujuku owns the
+  // planning/table commit: its qrf `present` result is the only card selector,
+  // and body authority is built after that result is persisted/ACKed.
   if (narrativeRoute === 'island' && hasHostGenerate) {
     const preflightHistory = state.uiMessages.slice(0, -1);
     try {
@@ -1999,28 +2016,139 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
     let rawResult = '';
     let shujukuTurnResult: Awaited<ReturnType<typeof runShujukuVirtualTurn>> | null = null;
     if (narrativeRoute === 'shujuku') {
-      const logicalMessages = promptHistory
-        .filter((message): message is UiMessage & { role: 'user' | 'assistant' } =>
-          (message.role === 'user' || message.role === 'assistant') && !message.streaming,
-        );
-      const rootMessage = logicalMessages[0]?.role === 'assistant' ? logicalMessages[0] : null;
-      const virtualMessages: ShujukuVirtualMessageInput[] = logicalMessages
-        .slice(rootMessage ? 1 : 0)
-        .map(message => ({
-          role: message.role,
-          name: message.speaker,
-          text: message.text,
-          rawText: message.rawText,
-          ...(message.id === submittedUserMessageId ? { current: true } : {}),
-          ...(message.pluginData ? { pluginData: message.pluginData } : {}),
-        }));
+      if (!committedShujukuBinding) {
+        throw new Error('shujuku handoff 已失效；正文未发送。');
+      }
+      const sourceIsolationKey = committedShujukuBinding.compatibility.isolationKey?.trim();
+      if (!sourceIsolationKey) throw new Error('shujuku handoff 缺少稳定 isolationKey；正文未发送。');
+      const tableRestore = await restoreShujukuTablesForHandoff(
+        win,
+        sourceIsolationKey,
+        committedShujukuBinding.tableSnapshot,
+      );
+      if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
+        throw new SecondaryTaskCancelledError('shujuku-table-hydration', requestGenerationId);
+      }
+      const islandPlanningContext = buildIslandPlanningIdentityPayload(
+        state.playerProfile,
+        state.statusData.world.currentTime,
+      );
+      const planningTableSnapshot = state.runtimeFlags.shujukuTableSnapshot
+        && typeof state.runtimeFlags.shujukuTableSnapshot === 'object'
+        && !Array.isArray(state.runtimeFlags.shujukuTableSnapshot)
+        ? JSON.parse(JSON.stringify(state.runtimeFlags.shujukuTableSnapshot))
+        : null;
+      const archiveMessages = submissionSaveId
+        ? await hydrateArchiveMessages(submissionSaveId)
+        : [];
+      if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
+        throw new SecondaryTaskCancelledError('shujuku-timeline-hydration', requestGenerationId);
+      }
+      const virtualTimeline = buildShujukuVirtualTimeline({
+        archiveMessages,
+        runtimeMessages: promptHistory,
+        promptMessages: promptHistory,
+        currentUserId: submittedUserMessageId,
+        currentUserPluginData: {
+          [ISLAND_PLANNING_CONTEXT_PLUGIN_KEY]: islandPlanningContext,
+        },
+      });
+      const currentVirtualUser = virtualTimeline.messages.at(-1);
+      if (
+        !currentVirtualUser
+        || currentVirtualUser.role !== 'user'
+        || currentVirtualUser.current !== true
+        || typeof currentVirtualUser.exchangeId !== 'string'
+        || !Number.isInteger(currentVirtualUser.floorIndex)
+      ) {
+        throw new HostTimelineError('readback-mismatch', 'shujuku 完整虚拟时间线缺少当前 user 身份。', {
+          assistantMessageId: routeReviewAssistantMessageId,
+        });
+      }
+      recordSubmissionDebug('shujuku:complete-timeline-ready', {
+        archiveMessageCount: virtualTimeline.archiveMessageCount,
+        virtualMessageCount: virtualTimeline.messages.length,
+        promptMessageCount: virtualTimeline.promptMessages.length,
+        logicalAssistantCountBeforeGeneration: virtualTimeline.logicalAssistantCountBeforeGeneration,
+      });
       shujukuTurnResult = await runShujukuVirtualTurn(win, {
-        rootText: rootMessage?.rawText || rootMessage?.text || '[开局]',
-        messages: virtualMessages,
+        rootMessage: virtualTimeline.rootMessage,
+        messages: virtualTimeline.messages,
+        promptMessages: virtualTimeline.promptMessages,
+        assistantTarget: {
+          logicalId: routeReviewAssistantMessageId,
+          exchangeId: currentVirtualUser.exchangeId,
+          floorIndex: currentVirtualUser.floorIndex as number,
+          name: '助手',
+        },
         userInput: cleanUserInput,
         systemPrompt: `${systemPrompt}\n\n${HIDDEN_USER_GENDER_RULES}`,
         generationId: requestGenerationId,
+        isolationKeyHandoff: {
+          sourceIsolationKey,
+          targetIsolationKey: tableRestore.resolvedIsolationKey,
+        },
+      }, {
+        onPlanningReady: async progress => {
+          if (isGenerationRunCancelled(ctx, generationToken) || !isSameSubmissionIdentity()) {
+            throw new SecondaryTaskCancelledError('shujuku-planning-projection', requestGenerationId);
+          }
+          const currentUser = state.uiMessages.find(message => message.id === submittedUserMessageId);
+          if (!currentUser || currentUser.role !== 'user') {
+            throw new HostTimelineError('readback-mismatch', 'shujuku 规划无法写回本轮 user。', {
+              assistantMessageId: routeReviewAssistantMessageId,
+            });
+          }
+          currentUser.plannedText = progress.plannedText;
+          if (progress.userPluginData) {
+            currentUser.pluginData = {
+              ...(currentUser.pluginData ?? {}),
+              ...progress.userPluginData,
+            };
+          }
+          const planningDisplaySnapshot = buildShujukuPlanningDisplaySnapshot(
+            progress.plannedText,
+            planningTableSnapshot,
+          );
+          currentUser.pluginData = {
+            ...(currentUser.pluginData ?? {}),
+            [SHUJUKU_PLANNING_DISPLAY_PLUGIN_KEY]: planningDisplaySnapshot,
+          };
+          const bodyContext = buildIslandBodyContextFromPlanning({
+            plannedText: progress.plannedText,
+            statusData: state.statusData,
+            playerProfile: state.playerProfile,
+            plotLibrary: state.plotLibrary,
+            characterCardLibrary: state.characterCardLibrary,
+          });
+          if (!bodyContext.content.trim()) {
+            throw new HostTimelineError('readback-mismatch', 'shujuku 规划没有形成正文上下文。', {
+              assistantMessageId: routeReviewAssistantMessageId,
+            });
+          }
+          scenePresence = bodyContext.scenePresence;
+          ctx.persistConversation();
+          if (ctx.persistIncompleteConversationImmediately) {
+            await ctx.persistIncompleteConversationImmediately();
+          }
+          recordSubmissionDebug('shujuku:planning-rendered', {
+            exchangeId,
+            userMessageId: submittedUserMessageId,
+            bodyContextVersion: bodyContext.version,
+            bodyContextLength: bodyContext.content.length,
+          });
+          ctx.render();
+          return {
+            bodyContext: bodyContext.content,
+            projectionCommitted: true,
+          };
+        },
       });
+      if (!shujukuTurnResult.planningObserved || !shujukuTurnResult.databaseCommitted) {
+        throw new HostTimelineError('readback-mismatch', 'shujuku 规划或数据库提交未完成，正文未接纳。', {
+          assistantMessageId: routeReviewAssistantMessageId,
+        });
+      }
       rawResult = shujukuTurnResult.rawText;
       generationSource = 'shujuku_island_generate';
     } else {
@@ -2135,7 +2263,10 @@ export async function submitMessage(ctx: ActionContext, options: SubmitMessageOp
         diagnostics: shujukuTurnResult?.diagnostics ?? {},
       });
       if (shujukuTurnResult.databaseCommitted && shujukuTurnResult.assistantPluginData) {
-        provisionalAssistant.pluginData = shujukuTurnResult.assistantPluginData;
+        provisionalAssistant.pluginData = {
+          ...(provisionalAssistant.pluginData ?? {}),
+          ...shujukuTurnResult.assistantPluginData,
+        };
       }
       if (
         shujukuTurnResult.databaseCommitted
@@ -2925,14 +3056,6 @@ function normalizeScenePresenceIds(ids: unknown, resolveId: (value: unknown) => 
   return Array.from(new Set(ids.map(resolveId).filter(Boolean)));
 }
 
-function isPlayerMemoryId(value: string | undefined) {
-  return /^(user|player|玩家|主角)$/.test(
-    String(value ?? '')
-      .trim()
-      .toLowerCase(),
-  );
-}
-
 function mentionsPlayer(value: string | undefined) {
   return /\buser\b|\bplayer\b|玩家|主角/.test(String(value ?? ''));
 }
@@ -3166,48 +3289,6 @@ function buildPhoneMemoryContext(ctx: ActionContext, target: TargetStatus, cueTe
   return uniquePhoneMemoryLines([...relationLines, ...impressionLines]).join('\n');
 }
 
-function buildEstablishedRelationshipFactLines(ctx: ActionContext): string[] {
-  const targetNames = new Map(ctx.state.statusData.targets.map(target => [target.id, target.name]));
-  const lines: string[] = [];
-  const seen = new Set<string>();
-  const push = (text: string) => {
-    const line = text.trim().replace(/\s+/g, ' ');
-    if (!line || seen.has(line) || lines.length >= 8) return;
-    seen.add(line);
-    lines.push(`- ${line.length > 120 ? `${line.slice(0, 117)}...` : line}`);
-  };
-
-  for (const fact of ctx.memoryDB.facts.filter(row => !row.expired)) {
-    if (fact.category !== 'relation' && fact.category !== 'profile') continue;
-    if (
-      fact.category !== 'relation' &&
-      !mentionsPlayer(fact.subject) &&
-      !mentionsPlayer(fact.content) &&
-      !fact.relatedEntityIds?.some(isPlayerMemoryId)
-    ) {
-      continue;
-    }
-    push(`${fact.subject}: ${fact.content}`);
-  }
-
-  for (const relation of ctx.memoryDB.relations.filter(row => !row.expired)) {
-    if (!isPlayerMemoryId(relation.fromId) && !isPlayerMemoryId(relation.toId)) continue;
-    const from = targetNames.get(relation.fromId) ?? relation.fromId;
-    const to = targetNames.get(relation.toId) ?? relation.toId;
-    const stage = relation.stage ? `（${relation.stage}）` : '';
-    const reason = relation.reason ? `；${relation.reason}` : '';
-    push(`${from} -> ${to}: ${relation.label}${stage}${reason}`);
-  }
-
-  for (const impression of ctx.memoryDB.impressions.filter(row => !row.expired)) {
-    if (!isPlayerMemoryId(impression.subject) || !isPhoneArchiveGoldImpression(impression)) continue;
-    const target = targetNames.get(impression.targetId) ?? impression.targetId;
-    push(`${target}对user的锁定印象: ${impression.label}`);
-  }
-
-  return lines;
-}
-
 function buildSceneSummaryContextLines(ctx: ActionContext): string[] {
   const store = ctx.summaryStore;
   const lines: string[] = [];
@@ -3248,23 +3329,7 @@ function buildScenePresencePrompts(
   const currentWorldTime = ctx.state.statusData.world.currentTime;
   const playerSchoolIdentity = resolvePlayerSchoolIdentity(ctx.state.playerProfile, currentWorldTime);
   const playerClass = playerSchoolIdentity.className || playerSchoolIdentity.label;
-  const targets = ctx.state.statusData.targets
-    .map(target => {
-      const aliases = getPhoneTargetSearchTerms(target)
-        .filter(term => term !== target.id && term !== target.name)
-        .join('、');
-      const relation = getCharacterRelationToTomoya(target);
-      const schoolSegment = buildKirihimeSchoolIdentitySegment({
-        target,
-        playerProfile: ctx.state.playerProfile,
-        currentTime: currentWorldTime,
-        relationToTomoya: relation,
-      });
-      return `- id=${target.id}；姓名=${target.name}${target.alias ? `；别名=${target.alias}` : ''}${
-        aliases ? `；可匹配线索=${aliases}` : ''
-      }${schoolSegment}`;
-    })
-    .join('\n');
+  const targets = buildIslandPlanningCharacterLines(ctx.state.statusData, ctx.state.playerProfile).join('\n');
 
   const worldStateFacts = buildSaenaiWorldStateFactLines({
     currentTime: currentWorldTime,
@@ -3274,7 +3339,10 @@ function buildScenePresencePrompts(
     mainEvents: ctx.state.statusData.world.mainEvents,
     eventTriggerCounts: ctx.state.statusData.world.eventTriggerCounts,
   });
-  const establishedRelationshipFacts = buildEstablishedRelationshipFactLines(ctx);
+  const establishedRelationshipFacts = buildEstablishedRelationshipFactLines(
+    ctx.state.statusData.targets,
+    ctx.memoryDB,
+  );
   const sceneSummaryContext = buildSceneSummaryContextLines(ctx);
   const gameTurnContext = String(gameDevelopmentContext ?? '').trim();
 
@@ -3320,10 +3388,7 @@ function buildScenePresencePrompts(
         ]
       : []),
     '页边判断（在场）：',
-    '- present：她确实站在这一页的镜头里，能立刻说话、行动、沉默、吃醋或产生即时反应。',
-    '- focus：玩家这一笔正追上、寻找、靠近、转向或当面处理她；下一页可以自然转向她。',
-    '- absent：她已经离开、不在场、没来，或隔着距离无法即时反应。',
-    '- uncertain：她只是被提到、被回忆、被议论，或躺在旧信息里；那不等于她站在这一页。',
+    ...SCENE_CAMERA_EVIDENCE_RULES.map(rule => `- ${rule}`),
     '',
     '页边判断（时间推进 timeProposal）：',
     '- 只有当玩家这一笔明确把故事【推进/跳转】到某个新日期或新时段时，才输出 timeProposal。',
@@ -3344,14 +3409,14 @@ function buildScenePresencePrompts(
       : []),
     '',
     '页边判断（蝴蝶效应）：',
+    ...USER_CAUSALITY_RULES.map(rule => `- ${rule}`),
     '- 不要把“气氛变了”误写成“剧情变了”。只有玩家这一笔真的拨动因果线，才让 rippleLevel 高于 none。',
     '- 只是关系更近、空气更紧、情绪更浓，通常是 faint；提前揭露秘密、截走关键行动、阻断误会、改变谁先表态，是 clear。',
     '- 玩家直接夺走原作关键节点、把事件推向另一条路、让当前安排失效，才是 major 或 route_override。',
     '- causalTrace 只写短公开因果摘要：玩家做了什么、谁会立刻受影响、下一页必须承认什么偏转。',
     '',
     '页边判断（外貌护栏）：',
-    '- 外貌只能依据最近正文、角色卡、世界书或已明确的记忆锚点；不知道就写 unknown，不要靠常见设定补齐。',
-    '- 不准把没写金发的角色写成金发，不准把没写胸围的角色硬写成巨乳，不准把没写身材的角色补成模板美少女。',
+    ...APPEARANCE_CONSISTENCY_RULES.map(rule => `- ${rule}`),
     '- appearanceGuards 只给 present/focus 中本轮可能被描写外貌的角色；mustFollow 写已知锚点，mustNotInvent 写严禁脑补项。',
     '',
     '页边判断（召回计划 recallPlan）：',
@@ -3380,16 +3445,13 @@ function buildScenePresencePrompts(
     '- 坏例：把“风和日丽的清晨我目睹了眼镜男和波波头女生的邂逅……”整句放进 query；坏例：用“加藤惠 基础设定 平凡 存在感低”搜索普通角色骨头。',
     '',
     '夏野雾姬的审稿规矩：',
-    '1. 优先使用角色名单里的 id；若最近正文/玩家输入只写了别名、简称、罗马音或繁简/日文写法（如“硝子”“西宮硝子”“shoko”），也要先按角色名单的可匹配线索归一到对应角色 id 再输出。',
-    '2. 第一次输入若没有最近正文，只看玩家当前输入；没有明确点名/寻找/靠近任何角色时，present 和 focus 都为空。',
-    '3. 不要因为角色好感度、剧情常识、世界书设定或你觉得她“应该出现”，就把她塞进 present。那是偷懒，不是阅读。',
-    '4. 玩家当前输入若明确“追上去安慰她/去找某人/转向某人/和某人说话”，该角色进入 focus。',
-    '5. 输出必须是一个 JSON 对象，不要使用 Markdown 代码块。',
-    '6. 班级消歧：玩家输入若用班级/学年指人（如“去G班”“找同班同学”“B班那个”），用上面的“玩家班级”和角色“班级”做匹配——同字符串=同班；只有班级里的角色才算同班。仅“同班/同年级”这类泛指、又能唯一对应到名单里某个角色时，才把该角色判为 focus；对应不唯一就不要硬塞。',
+    ...CHARACTER_CONSISTENCY_RULES.map((rule, index) => `${index + 1}. ${rule}`),
+    '5. 优先使用角色名单里的 id；若最近正文/玩家输入只写了别名、简称、罗马音或繁简/日文写法（如“硝子”“西宮硝子”“shoko”），也要先按角色名单的可匹配线索归一到对应角色 id 再输出。',
+    '6. 第一次输入若没有最近正文，只看玩家当前输入；没有明确点名/寻找/靠近任何角色时，present 和 focus 都为空。',
+    '7. 玩家当前输入若明确“追上去安慰她/去找某人/转向某人/和某人说话”，该角色进入 focus。',
+    '8. 输出必须是一个 JSON 对象，不要使用 Markdown 代码块。',
+    '9. 班级消歧：玩家输入若用班级/学年指人（如“去G班”“找同班同学”“B班那个”），用上面的“玩家班级”和角色“班级”做匹配——同字符串=同班；只有班级里的角色才算同班。仅“同班/同年级”这类泛指、又能唯一对应到名单里某个角色时，才把该角色判为 focus；对应不唯一就不要硬塞。',
     '   但如果世界状态事实说明当前尚未分班，则班级匹配失效：不要因为“同班”“B班”“座位”这类未发生信息把加藤惠或任何角色塞进 focus/present。',
-    '7. 原作关系只锚定到“安艺伦也”：名单里的“原作关系”（青梅竹马/学姐/表姐等）描述的是该角色与伦也的关系，不是与 user 的关系。不要因为这些原作关系就默认该角色与 user 亲近、在场或应进入 focus；user 与角色的关系以实际剧情与好感度为准。尤其是注意青梅竹马不论是美智留还是英梨梨除非user特别设定,这个设定都不能适用于user,她们都与伦也的青梅竹马',
-    '8. 已成立关系事实是新大纲的既定事实：如果事实说明 user 已经拥有某个身份、关系、约定或锁定印象，就按已经发生处理，必要时写进 recallPlan.mustRecall 或 mainApiGuidance；不要把它当成“可能性”或“待原作校验”。',
-    '9. 不要因为原作里角色更亲近伦也，就否定 user 已建立的关系事实。若原作惯性与已成立事实冲突，把原作惯性写入 mustSuppress，而不是把新关系回滚。',
     '10. 注意事项,伦也不是阴暗的宅男,他对感情极其迟钝,在User和其他女性暗中夺心的过程中,他的聚焦点一直在游戏中,哪怕没有实权(虽然他就是大部分时候没实权的在原著中)只要做出他喜欢的美少女游戏符合他御宅兴趣的他都会甘之若饴但他不是无条件顺从不是他心里理想的作品他最后都会爆发出他独有的御宅族的偏执,严禁出现阴暗跟踪偷窥狂的伦也',
     '11. 严禁出现任何百合事件,即便User是性别是女，你也要当成是为了接近女角色攻略的手法,出现User说自己是女的情况会也要把正文纠正为User是男的,如果出现User是女性或者扶她自动纠正为男的，以gender为主,如果User是扶她,你也要当成是男的,因为剧情设定User是男的,所以User是扶她的情况也要纠正为男的',
   ].join('\n');

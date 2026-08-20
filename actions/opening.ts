@@ -1,14 +1,23 @@
 import { buildPrompt, extractCompleteVisibleReply } from '../message-format';
 import {
   inspectCommittedShujukuBinding,
+  restoreShujukuTablesForHandoff,
   runShujukuVirtualTurn,
-  type ShujukuVirtualMessageInput,
 } from '../shujuku/adapter';
+import { hydrateArchiveMessages } from '../state/archive-repository';
+import { buildShujukuVirtualTimeline } from '../shujuku/virtual-timeline';
 import { createRollbackSnapshot } from '../state/store';
 import type { SummaryStore } from '../summary/types';
 import type { IslandMemoryDB } from '../memorydatabase/types';
 import type { AppState } from '../types';
 import { formatTime } from '../variables/normalize';
+import {
+  buildIslandBodyContextFromPlanning,
+  buildIslandPlanningIdentityPayload,
+  buildShujukuPlanningDisplaySnapshot,
+  ISLAND_PLANNING_CONTEXT_PLUGIN_KEY,
+  SHUJUKU_PLANNING_DISPLAY_PLUGIN_KEY,
+} from '../shujukuinject';
 import {
   discardStreamingMessage,
   ensureStreamingMessage,
@@ -21,6 +30,7 @@ type OpeningActionContext = StreamingContext & {
   summaryStore: SummaryStore;
   readonly memoryDB: IslandMemoryDB;
   clearNotification: (shouldRender: boolean) => void;
+  persistConversationImmediately?: () => Promise<void>;
 };
 
 const OPENING_USER_INPUT =
@@ -138,39 +148,110 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
     let rawResult = '';
     let shujukuTurnResult: Awaited<ReturnType<typeof runShujukuVirtualTurn>> | null = null;
     if (narrativeRoute === 'shujuku') {
-      if (!shujukuBinding) throw new Error('shujuku handoff 已失效；开场未发送。');
+      if (shujukuBinding.kind !== 'active') throw new Error('shujuku handoff 已失效；开场未发送。');
+      const sourceIsolationKey = shujukuBinding.binding.compatibility.isolationKey?.trim();
+      if (!sourceIsolationKey) throw new Error('shujuku handoff 缺少稳定 isolationKey；开场未发送。');
+      const tableRestore = await restoreShujukuTablesForHandoff(
+        win,
+        sourceIsolationKey,
+        shujukuBinding.binding.tableSnapshot,
+      );
+      if (abandonIfStale()) return false;
       const promptHistory = state.uiMessages.filter(message =>
         (message.role === 'user' || message.role === 'assistant') && !message.streaming,
       );
-      const rootMessage = promptHistory[0]?.role === 'assistant' ? promptHistory[0] : null;
-      const virtualMessages: ShujukuVirtualMessageInput[] = promptHistory
-        .slice(rootMessage ? 1 : 0)
-        .reduce<ShujukuVirtualMessageInput[]>((messages, message) => {
-          if (message.role === 'user' || message.role === 'assistant') {
-            messages.push({
-              role: message.role,
-              name: message.speaker,
-              text: message.text,
-              rawText: message.rawText,
-              ...(message.pluginData ? { pluginData: message.pluginData } : {}),
-            });
-          }
-          return messages;
-        }, []);
-      virtualMessages.push({
+      const planningIdentity = buildIslandPlanningIdentityPayload(
+        state.playerProfile,
+        state.statusData.world.currentTime,
+      );
+      const openingUserId = `opening-user:${generationId}`;
+      const openingExchangeId = `opening-exchange:${generationId}`;
+      const openingUser = {
+        id: openingUserId,
         role: 'user',
-        name: state.playerProfile.name || '用户',
+        speaker: state.playerProfile.name || '用户',
         text: OPENING_USER_INPUT,
-        current: true,
+        exchangeId: openingExchangeId,
+        pluginData: {
+          [ISLAND_PLANNING_CONTEXT_PLUGIN_KEY]: planningIdentity,
+        },
+      } as const;
+      const archiveMessages = openingSaveId ? await hydrateArchiveMessages(openingSaveId) : [];
+      if (abandonIfStale()) return false;
+      const virtualTimeline = buildShujukuVirtualTimeline({
+        archiveMessages,
+        runtimeMessages: [...promptHistory, openingUser],
+        promptMessages: promptHistory,
+        currentUserId: openingUserId,
       });
+      const currentVirtualUser = virtualTimeline.messages.at(-1);
+      if (
+        !currentVirtualUser
+        || currentVirtualUser.current !== true
+        || typeof currentVirtualUser.exchangeId !== 'string'
+        || !Number.isInteger(currentVirtualUser.floorIndex)
+      ) {
+        throw new Error('shujuku 开场完整虚拟时间线缺少当前 user 身份。');
+      }
       shujukuTurnResult = await runShujukuVirtualTurn(win, {
-        rootText: rootMessage?.rawText || rootMessage?.text || '[开局]',
-        messages: virtualMessages,
+        rootMessage: virtualTimeline.rootMessage,
+        messages: virtualTimeline.messages,
+        promptMessages: virtualTimeline.promptMessages,
+        assistantTarget: {
+          logicalId: openingAssistantMessageId,
+          exchangeId: currentVirtualUser.exchangeId,
+          floorIndex: currentVirtualUser.floorIndex as number,
+          name: '助手',
+        },
         userInput: OPENING_USER_INPUT,
         systemPrompt: userInput,
         generationId,
         mode: 'opening',
+        isolationKeyHandoff: {
+          sourceIsolationKey,
+          targetIsolationKey: tableRestore.resolvedIsolationKey,
+        },
+      }, {
+        onPlanningReady: async progress => {
+          if (abandonIfStale()) throw new Error('shujuku 开场规划投影已失效。');
+          const openingMessage = state.uiMessages.find(message => message.id === openingAssistantMessageId);
+          if (!openingMessage || openingMessage.role !== 'assistant' || !openingMessage.streaming) {
+            throw new Error('shujuku 开场规划无法写回当前开场页。');
+          }
+          openingMessage.plannedText = progress.plannedText;
+          openingMessage.pluginData = {
+            ...(openingMessage.pluginData ?? {}),
+            ...(progress.userPluginData ?? {}),
+            [SHUJUKU_PLANNING_DISPLAY_PLUGIN_KEY]: buildShujukuPlanningDisplaySnapshot(
+              progress.plannedText,
+              state.runtimeFlags.shujukuTableSnapshot ?? null,
+            ),
+          };
+          const bodyContext = buildIslandBodyContextFromPlanning({
+            plannedText: progress.plannedText,
+            statusData: state.statusData,
+            playerProfile: state.playerProfile,
+            plotLibrary: state.plotLibrary,
+            characterCardLibrary: state.characterCardLibrary,
+          });
+          if (!bodyContext.content.trim()) throw new Error('shujuku 开场规划没有形成正文上下文。');
+          ctx.persistConversation();
+          await ctx.persistConversationImmediately?.();
+          ctx.render();
+          recordGenerationDebug(ctx, 'shujuku:opening-planning-projected', {
+            generationId,
+            bodyContextVersion: bodyContext.version,
+            bodyContextLength: bodyContext.content.length,
+          });
+          return {
+            bodyContext: bodyContext.content,
+            projectionCommitted: true,
+          };
+        },
       });
+      if (!shujukuTurnResult.planningObserved || !shujukuTurnResult.databaseCommitted) {
+        throw new Error('shujuku 开场规划或数据库提交未完成。');
+      }
       rawResult = shujukuTurnResult.rawText;
       recordGenerationDebug(ctx, 'shujuku:opening-virtual-turn', {
         generationId,
@@ -213,7 +294,10 @@ export async function generateOpeningScene(ctx: OpeningActionContext) {
     finalizeStreamingText(ctx, rawResult, generationId);
     if (shujukuTurnResult) {
       if (shujukuTurnResult.assistantPluginData) {
-        provisionalAssistant.pluginData = shujukuTurnResult.assistantPluginData;
+        provisionalAssistant.pluginData = {
+          ...(provisionalAssistant.pluginData ?? {}),
+          ...shujukuTurnResult.assistantPluginData,
+        };
       }
       if (shujukuTurnResult.tableSnapshot) {
         state.runtimeFlags.shujukuTableSnapshot = shujukuTurnResult.tableSnapshot;

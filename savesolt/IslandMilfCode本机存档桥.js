@@ -1049,12 +1049,12 @@
     if (graph.seenObjects.has(objectKey)) return graph.objectValues.get(objectKey) ?? null;
     graph.seenObjects.add(objectKey);
     try {
-      const found = await findArchiveJsonFile(fileName, value => isArchiveObjectEnvelope(value, kind, normalizedHash));
-      if (!found) {
+      const canonicalPath = archiveObjectPath(fileName);
+      const envelope = await readJsonFile(canonicalPath);
+      if (!envelope || !isArchiveObjectEnvelope(envelope, kind, normalizedHash)) {
         blockArchiveGraph(graph, `${kind}/${normalizedHash} 不存在`, strict, 'missing');
         return null;
       }
-      const envelope = found.value;
       if (Number(envelope.formatVersion) !== 3) {
         blockArchiveGraph(graph, `${kind}/${normalizedHash} 版本不可判定`, strict);
         return null;
@@ -1616,24 +1616,13 @@
   }
 
   async function putArchiveObject(request) {
+    if (archiveLayout === 'unknown') await probeArchiveStorage();
     const object = request.object;
     if (!isRecord(object) || typeof object.kind !== 'string' || typeof object.hash !== 'string' || !('value' in object)) {
       throw new Error('v3 object 请求不完整');
     }
     const fileName = archiveObjectFile(object.kind, object.hash);
     const storagePath = `user/files/${archiveObjectPath(fileName)}`;
-    const existing = await findArchiveJsonFile(
-      fileName,
-      value => isStoredArchiveObject(value, object.kind, object.hash, object.value),
-    );
-    const canonicalPath = archiveObjectPath(fileName);
-    if (existing?.relativePath === canonicalPath) {
-      return archiveWriteResult('reused', {
-        kind: object.kind,
-        hash: object.hash,
-        storagePath: `user/files/${existing.relativePath}`,
-      });
-    }
     const envelope = {
       format: 'islandmilfcode-archive-object',
       formatVersion: 3,
@@ -1643,12 +1632,28 @@
       writtenAt: new Date().toISOString(),
     };
     await uploadArchiveJsonFile(fileName, envelope);
-    const readBack = await readJsonFile(archiveObjectPath(fileName));
-    if (!isStoredArchiveObject(readBack, object.kind, object.hash, object.value)) {
-      throw new Error(`v3 object 回读校验失败：${object.kind}/${object.hash}`);
+    // 轮询等待文件真正可读，避免上传异步 flush 导致的竞态
+    const canonicalPath = archiveObjectPath(fileName);
+    let readBack = null;
+    let attempts = 0;
+    const maxAttempts = 10;
+    const retryDelay = 50; // ms
+    while (attempts < maxAttempts) {
+      try {
+        readBack = await readJsonFile(canonicalPath);
+        if (isStoredArchiveObject(readBack, object.kind, object.hash, object.value)) {
+          break; // 校验通过，文件已成功写入
+        }
+      } catch (error) {
+        // 404 或读取失败，继续重试
+      }
+      attempts++;
+      if (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      }
     }
-    if (existing && existing.relativePath !== canonicalPath) {
-      await deletePublicFile(fileUrl(existing.relativePath)).catch(() => undefined);
+    if (!isStoredArchiveObject(readBack, object.kind, object.hash, object.value)) {
+      throw new Error(`v3 object 回读校验失败：${object.kind}/${object.hash}（${attempts} 次重试后仍不可读）`);
     }
     return archiveWriteResult('uploaded', {
       kind: object.kind,
@@ -1658,14 +1663,26 @@
   }
 
   async function getArchiveObject(request) {
+    if (archiveLayout === 'unknown') await probeArchiveStorage();
     const kind = String(request.kind || '').trim();
     const hash = String(request.hash || '').trim();
     if (!kind || !hash) throw new Error('读取 v3 object 时缺少 kind/hash');
-    const found = await findArchiveJsonFile(
-      archiveObjectFile(kind, hash),
-      value => isArchiveObjectEnvelope(value, kind, hash),
-    );
-    return found ? { kind, hash, value: found.value.value } : null;
+    const fileName = archiveObjectFile(kind, hash);
+    // 跨目录查找：如果当前布局的路径找不到，尝试其他布局（categorized-v1、subdir-v1、平铺）
+    // 这样可以兼容目录格式切换时的旧存档
+    const candidatePaths = archiveReadPaths(fileName);
+    let value = null;
+    for (const relativePath of candidatePaths) {
+      try {
+        value = await readJsonFile(relativePath);
+      } catch (error) {
+        if (error instanceof SyntaxError) continue; // 损坏的副本，继续查找其他位置
+        continue; // 其他错误（如 404）继续查找下一个候选路径
+      }
+      if (value) break; // 找到有效值就停止
+    }
+    if (!value || !isArchiveObjectEnvelope(value, kind, hash)) return null;
+    return { kind, hash, value: value.value };
   }
 
   async function putArchiveImage(request) {
@@ -1676,40 +1693,6 @@
     const contentHash = await hashArchiveText(asset.dataUrl);
     const manifestFile = archiveObjectFile('image', asset.id);
     const storagePath = `user/files/${archiveObjectPath(manifestFile)}`;
-    const canonicalPath = archiveObjectPath(manifestFile);
-    const existing = await findArchiveJsonFile(
-      manifestFile,
-      value => isStoredArchiveImage(value, asset, contentHash),
-    );
-    const existingReadable = existing ? await isPublicImageReadable(existing.value.reference) : false;
-    if (
-      existing &&
-      existingReadable &&
-      existing.relativePath === canonicalPath
-    ) {
-      return archiveWriteResult('reused', {
-        assetId: asset.id,
-        reference: existing.value.reference,
-        storagePath: `user/files/${existing.relativePath}`,
-      });
-    }
-    if (
-      existing &&
-      existingReadable &&
-      existing.relativePath !== canonicalPath
-    ) {
-      await uploadArchiveJsonFile(manifestFile, existing.value);
-      const migrated = await readJsonFile(archiveObjectPath(manifestFile));
-      if (!isStoredArchiveImage(migrated, asset, contentHash)) {
-        throw new Error(`v3 image manifest 迁移回读校验失败：${asset.id}`);
-      }
-      await deletePublicFile(fileUrl(existing.relativePath)).catch(() => undefined);
-      return archiveWriteResult('uploaded', {
-        assetId: asset.id,
-        reference: existing.value.reference,
-        storagePath,
-      });
-    }
     const reference = await uploadImageAsset(asset, 'islandmilfcode-v3-images', asset.id);
     if (!reference) throw new Error(`v3 image 格式不支持：${asset.id}`);
     await uploadArchiveJsonFile(manifestFile, {
@@ -1722,9 +1705,6 @@
     const readBack = await readJsonFile(archiveObjectPath(manifestFile));
     if (!isStoredArchiveImage(readBack, asset, contentHash)) {
       throw new Error(`v3 image manifest 回读校验失败：${asset.id}`);
-    }
-    if (existing && existing.relativePath !== canonicalPath) {
-      await deletePublicFile(fileUrl(existing.relativePath)).catch(() => undefined);
     }
     return archiveWriteResult(
       'uploaded',
@@ -1823,6 +1803,13 @@
       };
     }
     const rootWrite = await putArchiveObject({ object: { kind: 'root', hash: rootHash, value: request.root } });
+    
+    // 验证 root 及其关键依赖对象都已成功写入，避免 registry 指向不完整的 root
+    const rootVerification = await readUsableArchiveRoot(rootHash);
+    if (!rootVerification) {
+      throw new Error(`v3 root 写入验证失败：root 或其依赖对象不可读（${rootHash}）`);
+    }
+    
     const previousRootCandidate = previous?.rootHash === rootHash
       ? previous.previousRootHash || request.root.previousRootHash || null
       : previous?.rootHash || request.root.previousRootHash || null;
@@ -1863,10 +1850,31 @@
     registry.entries = { ...registry.entries, [saveId]: entry };
     registry.deletedSaves = pruneDeletedSaveFences(registry.deletedSaves);
     await persistArchiveRegistry(registry);
-    const readBack = readArchiveRegistry(await readArchiveRegistryFile());
-    const confirmed = readBack.entries[saveId];
+    // 轮询等待 registry 文件真正可读，避免上传异步 flush 导致的竞态
+    let readBack = null;
+    let attempts = 0;
+    const maxAttempts = 10;
+    const retryDelay = 50; // ms
+    while (attempts < maxAttempts) {
+      try {
+        readBack = readArchiveRegistry(await readArchiveRegistryFile());
+        const confirmed = readBack.entries[saveId];
+        if (isRecord(confirmed) && confirmed.rootHash === rootHash && Number(confirmed.revision) === entry.revision) {
+          if (!retentionTombstoneId || isRecord(readBack.gcTombstones[retentionTombstoneId])) {
+            break; // 校验通过
+          }
+        }
+      } catch (error) {
+        // 读取失败，继续重试
+      }
+      attempts++;
+      if (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      }
+    }
+    const confirmed = readBack?.entries?.[saveId];
     if (!isRecord(confirmed) || confirmed.rootHash !== rootHash || Number(confirmed.revision) !== entry.revision) {
-      throw new Error('v3 registry 提交后回读校验失败');
+      throw new Error(`v3 registry 提交后回读校验失败（${attempts} 次重试后仍不一致）`);
     }
     if (retentionTombstoneId && !isRecord(readBack.gcTombstones[retentionTombstoneId])) {
       throw new Error('v3 registry 没有保留待回收 revision 的 tombstone');
@@ -1956,34 +1964,42 @@
   }
 
   async function readArchiveRoot(request) {
+    if (archiveLayout === 'unknown') await probeArchiveStorage();
     const saveId = String(request.saveId || '').trim();
     const registry = readArchiveRegistry(await readArchiveRegistryFile());
     const entry = registry.entries[saveId];
     if (!isRecord(entry) || typeof entry.rootHash !== 'string') return { entry: null, root: null };
-    const root = await readUsableArchiveRoot(entry.rootHash);
-    if (root) {
-      return {
-        entry,
-        root,
-        degraded: false,
-        requestedRootHash: entry.rootHash,
-        resolvedRootHash: entry.rootHash,
-      };
-    }
-    const previousRootHash = typeof entry.previousRootHash === 'string' ? entry.previousRootHash.trim() : '';
-    if (previousRootHash && previousRootHash !== entry.rootHash) {
-      const previousRoot = await readUsableArchiveRoot(previousRootHash);
-      if (previousRoot) {
+    
+    // 多层降级：最多尝试 8 层 previousRootHash 链
+    const visited = new Set();
+    let candidateHash = entry.rootHash;
+    const maxDepth = 8;
+    
+    for (let depth = 0; depth < maxDepth && candidateHash; depth++) {
+      if (visited.has(candidateHash)) break; // 避免循环
+      visited.add(candidateHash);
+      
+      const root = await readUsableArchiveRoot(candidateHash);
+      if (root) {
         return {
           entry,
-          root: previousRoot,
-          degraded: true,
-          reason: 'current-root-unreadable',
+          root,
+          degraded: depth > 0,
+          reason: depth > 0 ? 'fallback-to-previous-root' : undefined,
           requestedRootHash: entry.rootHash,
-          resolvedRootHash: previousRootHash,
+          resolvedRootHash: candidateHash,
+          fallbackDepth: depth,
         };
       }
+      
+      // 尝试读取这个 root 的 previousRootHash
+      const rootObject = await getArchiveObject({ kind: 'root', hash: candidateHash }).catch(() => null);
+      const nextHash = rootObject?.value?.previousRootHash;
+      candidateHash = typeof nextHash === 'string' && nextHash.trim() && nextHash !== candidateHash
+        ? nextHash.trim()
+        : '';
     }
+    
     return {
       entry,
       root: null,
@@ -1991,6 +2007,7 @@
       reason: 'no-readable-root',
       requestedRootHash: entry.rootHash,
       resolvedRootHash: null,
+      attemptedDepth: visited.size,
     };
   }
 

@@ -1,0 +1,2 @@
+[permissions]
+allow = ["Bash=$paths = @(\"C:\\Users\\eriri\\SillyTavern\", \"C:\\Users\\eriri\\sillytavern\", \"D:\\SillyTavern\", \"E:\\SillyTavern\", \"E:\\web\\tavern_helper_template-main\", \"C:\\Users\\eriri\\AppData\\Local\\Temp\"); foreach ($p in $paths) { if (Test-Path $p) { Write-Output \"EXISTS: $p\" } }; Write-Output \"---\"; Get-ChildItem \"E:\\web\\tavern_helper_template-main\" -Directory -ErrorAction SilentlyContinue | Select-Object FullName"]

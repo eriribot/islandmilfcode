@@ -15,7 +15,7 @@ if (removedSurface.some(name => source.includes(name))) {
 
 const imported = JSON.parse(fs.readFileSync(importPath, 'utf8'));
 imported.content = source;
-imported.info = '绑定当前角色卡。转发表快照，并用临时虚拟 chat[] 执行 shujuku 包装生成与 triggerUpdate；结果由 IslandMilfCode 状态接住，不创建宿主聊天楼层。';
+imported.info = '绑定当前角色卡。用完整归档时间线临时构造虚拟 chat[]，执行 shujuku 包装生成与 triggerUpdate；结果由 IslandMilfCode 状态接住，不创建宿主聊天楼层。';
 fs.writeFileSync(importPath, `${JSON.stringify(imported, null, 2)}\n`, 'utf8');
 
 const readBack = JSON.parse(fs.readFileSync(importPath, 'utf8'));

@@ -100,6 +100,7 @@ export function bindFloatingPhoneEvents(
   applyFloatingPhonePosition(button, state.floatingPhone);
 
   button.addEventListener('pointerdown', event => {
+    if (!button.isConnected) return;
     if (event.button !== 0) return;
     dragState = {
       pointerId: event.pointerId,

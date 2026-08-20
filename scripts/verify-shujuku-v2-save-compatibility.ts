@@ -4,6 +4,9 @@ import type { IslandMemoryDB, MemoryFactRow, MemorySummaryRow } from '../memoryd
 import type { SummaryStore } from '../summary/types';
 import {
   applyArchiveShujukuCompatibilityToRuntimeFlags,
+  decideArchiveFloorShujukuBaselineKind,
+  decideArchiveFloorBeforeTurnShujukuHash,
+  isArchiveFloorEntirelyBeforeShujukuHandoff,
   prepareArchiveCompatibilityForFork,
   resolveArchiveCompatibilityForRollback,
 } from '../state/archive-repository';
@@ -413,4 +416,100 @@ assertJsonNotEqual(
   'contract: rollback does not substitute the current head compatibility snapshot',
 );
 
-console.info('[shujuku-v2-save-compatibility] 39 contracts passed');
+assertEqual(
+  isArchiveFloorEntirelyBeforeShujukuHandoff(0, 1, 1),
+  true,
+  'contract: an unfinished user floor that ends at the handoff boundary is geometrically pre-handoff',
+);
+assertEqual(
+  isArchiveFloorEntirelyBeforeShujukuHandoff(0, 2, 1),
+  false,
+  'contract: the first completed shujuku floor that straddles the handoff boundary restores its before-turn table checkpoint',
+);
+assertEqual(
+  isArchiveFloorEntirelyBeforeShujukuHandoff(1, 2, 1),
+  false,
+  'contract: every floor starting at the handoff boundary is post-handoff',
+);
+assertEqual(
+  decideArchiveFloorShujukuBaselineKind({
+    beforeMessageCount: 0,
+    floorMessageCount: 1,
+    handoffCutoff: 1,
+    hasCheckpoint: true,
+    checkpointMatchesCurrentHandoff: true,
+  }),
+  'checkpoint',
+  'contract: a pending user floor bound to the current handoff restores its table checkpoint despite ending at the cutoff',
+);
+assertEqual(
+  decideArchiveFloorShujukuBaselineKind({
+    beforeMessageCount: 0,
+    floorMessageCount: 1,
+    handoffCutoff: 1,
+    hasCheckpoint: false,
+    checkpointMatchesCurrentHandoff: false,
+  }),
+  'pre_handoff',
+  'contract: an unbound user floor ending at the cutoff remains on the historical Island route',
+);
+assertEqual(
+  decideArchiveFloorShujukuBaselineKind({
+    beforeMessageCount: 0,
+    floorMessageCount: 2,
+    handoffCutoff: 1,
+    hasCheckpoint: false,
+    checkpointMatchesCurrentHandoff: false,
+  }),
+  'missing_post_handoff',
+  'contract: a post-handoff floor without a table checkpoint fails closed',
+);
+
+const pendingHandoffBaseline = {
+  userMessageId: 'logical-user-at-handoff',
+  compatibilityHash: 'sha256:handoff-table-before-turn',
+};
+assertJsonEqual(
+  decideArchiveFloorBeforeTurnShujukuHash({
+    userMessageId: pendingHandoffBaseline.userMessageId,
+    existing: true,
+    previousCompatibilityHash: 'sha256:island-before-handoff',
+    currentCompatibilityHash: 'sha256:handoff-table-before-turn',
+    handoffBaseline: pendingHandoffBaseline,
+  }),
+  { kind: 'set', hash: 'sha256:handoff-table-before-turn' },
+  'contract: connecting shujuku on an existing pending user binds the captured handoff table as that floor before-turn checkpoint',
+);
+assertJsonEqual(
+  decideArchiveFloorBeforeTurnShujukuHash({
+    userMessageId: pendingHandoffBaseline.userMessageId,
+    existing: true,
+    previousCompatibilityHash: 'sha256:table-after-turn',
+    currentCompatibilityHash: 'sha256:table-after-turn',
+    handoffBaseline: pendingHandoffBaseline,
+  }),
+  { kind: 'set', hash: 'sha256:handoff-table-before-turn' },
+  'contract: a coalesced handoff and assistant commit still binds the captured before-turn table checkpoint',
+);
+assertJsonEqual(
+  decideArchiveFloorBeforeTurnShujukuHash({
+    userMessageId: 'next-logical-user',
+    existing: false,
+    previousCompatibilityHash: 'sha256:previous-table-head',
+    currentCompatibilityHash: 'sha256:current-table-head',
+  }),
+  { kind: 'set', hash: 'sha256:previous-table-head' },
+  'contract: a normal new floor binds the previous committed table head as its before-turn checkpoint',
+);
+assertJsonEqual(
+  decideArchiveFloorBeforeTurnShujukuHash({
+    userMessageId: 'unrelated-existing-user',
+    existing: true,
+    currentCompatibilityHash: 'sha256:unrelated-head',
+    handoffBaseline: pendingHandoffBaseline,
+  }),
+  { kind: 'preserve' },
+  'contract: a new handoff cannot rewrite an unrelated existing floor checkpoint',
+);
+
+console.info('[shujuku-v2-save-compatibility] 49 contracts passed');

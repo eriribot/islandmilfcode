@@ -1,10 +1,10 @@
 diff --git a/src/endpoints/files.js b/src/endpoints/files.js
-index 46abc82c9..ebf8bd9de 100644
+index 46abc82c9..5cc17c010 100644
 --- a/src/endpoints/files.js
 +++ b/src/endpoints/files.js
-@@ -6,10 +6,54 @@ import sanitize from 'sanitize-filename';
+@@ -6,10 +6,58 @@ import sanitize from 'sanitize-filename';
  import { sync as writeFileSyncAtomic } from 'write-file-atomic';
-
+ 
  import { validateAssetFileName } from './assets.js';
 -import { clientRelativePath } from '../util.js';
 +import { clientRelativePath, isPathUnderParent } from '../util.js';
@@ -35,8 +35,12 @@ index 46abc82c9..ebf8bd9de 100644
 +}
 +
 +function ensureUploadDirectory(filesDirectory, relativeDirectory) {
++    // Security checks resolve symlinks via realpath, but the returned path is
++    // built from the caller's original (possibly relative) filesDirectory style
++    // so it stays comparable with request.user.directories.root in
++    // clientRelativePath, which does a plain startsWith string check.
 +    const filesRoot = fs.realpathSync(filesDirectory);
-+    let current = filesRoot;
++    let current = filesDirectory;
 +    for (const segment of relativeDirectory.split(path.sep).filter(Boolean)) {
 +        const next = path.join(current, segment);
 +        if (fs.existsSync(next)) {
@@ -47,10 +51,10 @@ index 46abc82c9..ebf8bd9de 100644
 +        } else {
 +            fs.mkdirSync(next);
 +        }
-+        current = fs.realpathSync(next);
-+        if (!isPathUnderParent(filesRoot, current)) {
++        if (!isPathUnderParent(filesRoot, fs.realpathSync(next))) {
 +            throw new Error('Invalid upload directory.');
 +        }
++        current = next;
 +    }
 +    return current;
 +}
@@ -58,7 +62,7 @@ index 46abc82c9..ebf8bd9de 100644
  router.post('/sanitize-filename', async (request, response) => {
      try {
          const fileName = String(request.body.fileName);
-@@ -40,7 +84,20 @@ router.post('/upload', async (request, response) => {
+@@ -40,7 +88,20 @@ router.post('/upload', async (request, response) => {
          if (validation.error)
              return response.status(400).send(validation.message);
  
@@ -80,7 +84,7 @@ index 46abc82c9..ebf8bd9de 100644
          writeFileSyncAtomic(pathToUpload, request.body.data, 'base64');
          const url = clientRelativePath(request.user.directories.root, pathToUpload);
          console.info(`Uploaded file: ${url} from ${request.user.profile.handle}`);
-@@ -57,8 +114,9 @@ router.post('/delete', async (request, response) => {
+@@ -57,8 +118,9 @@ router.post('/delete', async (request, response) => {
              return response.status(400).send('No path specified');
          }
  
@@ -92,7 +96,7 @@ index 46abc82c9..ebf8bd9de 100644
              return response.status(400).send('Invalid path');
          }
  
-@@ -66,6 +124,11 @@ router.post('/delete', async (request, response) => {
+@@ -66,6 +128,11 @@ router.post('/delete', async (request, response) => {
              return response.status(404).send('File not found');
          }
  
@@ -104,7 +108,7 @@ index 46abc82c9..ebf8bd9de 100644
          fs.unlinkSync(pathToDelete);
          console.info(`Deleted file: ${request.body.path} from ${request.user.profile.handle}`);
          return response.sendStatus(200);
-@@ -84,13 +147,14 @@ router.post('/verify', async (request, response) => {
+@@ -84,13 +151,14 @@ router.post('/verify', async (request, response) => {
          const verified = {};
  
          for (const url of request.body.urls) {

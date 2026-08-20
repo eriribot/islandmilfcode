@@ -953,7 +953,7 @@ function buildVolumeWritingProtocol(plotLibrary: PlotLibrary | null | undefined,
   return ['本卷写作协议(优先级高于通用文风指令):', ...sections.map(s => `- ${s}`)].join('\n');
 }
 
-function buildCurrentPlotContext(statusData: StatusData, plotLibrary?: PlotLibrary | null) {
+export function buildCurrentPlotContext(statusData: StatusData, plotLibrary?: PlotLibrary | null) {
   if (!plotLibrary || !Object.keys(plotLibrary.events).length) return '';
   const whitelist = buildPlotWhitelist(plotLibrary, statusData);
   const currentId = statusData.world.currentMainEventId;
@@ -1140,7 +1140,7 @@ function getSceneGuidanceTargetIds(scenePresence?: ScenePresence | null) {
   return new Set([...(scenePresence.presentIds ?? []), ...(scenePresence.focusIds ?? [])].filter(Boolean));
 }
 
-function buildScenePresenceContext(
+export function buildScenePresenceContext(
   statusData: StatusData,
   scenePresence?: ScenePresence | null,
   playerProfile?: PlayerProfile | null,
@@ -1228,7 +1228,7 @@ function buildScenePresenceContext(
     .join('\n');
 }
 
-function buildRelationshipGuidanceList(
+export function buildRelationshipGuidanceList(
   statusData: StatusData,
   playerProfile?: PlayerProfile | null,
   scenePresence?: ScenePresence | null,
@@ -1284,7 +1284,7 @@ function buildLocalCharacterAuditList(
 // 调用前提：用户已经把对应世界书条目 disable，关掉 SillyTavern 自身的关键词触发，
 // 角色卡内容只能由 TS 这一侧根据 present + focus 主动加载，避免每轮 5 张卡常驻。
 // 没有 scenePresence 或 allowedIds 为空时返回空字符串：宁可少一张卡，也不要再回到"全员常驻"。
-function buildActiveCharacterCards(
+export function buildActiveCharacterCards(
   statusData: StatusData,
   scenePresence: ScenePresence | null | undefined,
   characterCardLibrary: CharacterCardLibrary | null | undefined,
@@ -1292,9 +1292,11 @@ function buildActiveCharacterCards(
 ) {
   if (!characterCardLibrary || !Object.keys(characterCardLibrary.cards).length) return '';
 
-  // targetIds 优先级最高：手机聊天等单对象场景直接指定要注入的角色，绕过 scenePresence 判定。
+  // targetIds 优先级最高：显式空数组也表示“不注入任何角色”，不能回退到 present + focus。
   const explicit = (options.targetIds ?? []).filter(Boolean);
-  const allowedIds: Set<string> | null = explicit.length ? new Set(explicit) : getSceneGuidanceTargetIds(scenePresence);
+  const allowedIds: Set<string> | null = options.targetIds !== undefined
+    ? new Set(explicit)
+    : getSceneGuidanceTargetIds(scenePresence);
   if (!allowedIds || !allowedIds.size) return '';
 
   const blocks: string[] = [];

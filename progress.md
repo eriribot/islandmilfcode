@@ -1,5 +1,13 @@
 Original prompt: DESIGN.md 根据这个md文件修复提到的问题
 
+2026-08-10 第二轮问题链复现（诊断轮，未修复）
+
+- 指针异常已在真实 Chrome 页面和最小 DOM 中复现：打开楼层右键菜单后按下悬浮手机，窗口捕获阶段先关闭菜单并同步 `render()`，旧 `HTMLButtonElement` 随后继续执行 `setPointerCapture`，控制台出现 `VM8103:1:835916 InvalidStateError`。普通点击/拖动（无菜单）未复现；根因链与证据见 `docs/issue-loop-2026-08-10-citations-pointer.md`。
+- 第二轮规划页已执行回读：`召回引文` 显示 `共 0 条`，`背景旁证` 显示 `共 3 条`；这三条是 `<supplement>`，不是 `<recall>`。
+- 同一现场的 shujuku 导航显示 `纪要表` 为 `未初始`、`待初始`，没有可供 `$5` `memory_index` 使用的 AM 编码。因此“第二轮应有引文”这一前置条件尚未成立，不能把空召回判为渲染丢失。
+- 本轮最小定向合同通过：Island 规划上下文 `present-only`、Reader 规划 `34/34`、`git diff --check`。fixture 直接注入 `AM0042/AM21` 和已填充纪要快照，只验证“有编码时能显示”；未重跑全套，也仍没有覆盖“第一轮提交 -> 纪要表落盘 -> 第二轮 `$5` 读取 -> qrf `<recall>`”真实链。
+- 本轮只更新问题链与人工门槛，没有修改业务代码、正则替换、角色桥或表数据；下一轮范围冻结在两条复现的修复验收。
+
 2026-08-09 shujuku v2 虚拟转发接线
 
 - shujuku 路线已从 Island `generateRaw()` 改为临时 `chat[]` -> shujuku 包装 `TavernHelper.generate()` -> 虚拟 assistant -> `triggerUpdate()`；结果回写卡内状态，不创建宿主 `#1/#2`。
@@ -149,3 +157,19 @@ Original prompt: DESIGN.md 根据这个md文件修复提到的问题
 - The 2013-03-04 entry week treats Monday as consumed by SAE_07-8/route confirmation; its first workday range is 2013-03-05 through 2013-03-08.
 - Verification evidence (not human acceptance): production webpack build passed; exact final inline HTML host safety passed with all replacement/entity/syntax risk counts at zero; no simulation or browser gameplay automation was run.
 - Human gate: user will replace the Tavern artifact and test the complete real generator/save/rollback flow in one pass.
+
+2026-08-11 shujuku V2 operation-log legacy DSL fail-fast
+
+- Root cause per docs/shujuku-v2-operation-log-regression-handoff-2026-08-11.md: group_fill returned the legacy tableEdit-fenced insertRow(...) DSL instead of the required strict table_edit_ops_v1 JSON envelope, so the bridge's no-op detector could not classify it and the generic empty-operation-log error surfaced with no actionable diagnostic.
+- `inspectTableFillResponse` now recognizes the legacy DSL shape and tags captured responses with `legacyDsl`; `isExplicitTableFillNoOp` rejects any capture where `legacyDsl` is true so a legacy response can never be misclassified as a verified empty operation.
+- The virtual-turn relay now fails fast with a distinct `SHUJUKU_LEGACY_DSL_REJECTED` error (bridge version 6.2.0) that names the three most likely causes (stale prompt import, wrong preset/route, stale Connection Manager profile) and includes a 200-char response sample, instead of falling through to the opaque infrastructure error.
+- Added a contract in `scripts/verify-shujuku-v2-virtual-relay.mjs` asserting a legacy-DSL response fails with `SHUJUKU_LEGACY_DSL_REJECTED` and that all three response-capture providers (generateRaw/Connection Manager/fetch) are restored afterward.
+- Verification: `node scripts/verify-shujuku-v2-virtual-relay.mjs` (all contracts incl. new one) passed; `node --check` on the bridge passed; `scripts/sync-shujuku-role-bridge.mjs` re-synced the importable JSON; `git diff --check` clean.
+- Did not implement a legacy-DSL-to-operations converter, per the handoff doc's explicit instruction to first confirm on-site whether the live prompt/route is actually on table_edit_ops_v1 before considering compatibility shims. Logged the remaining on-site verification (fork A vs fork B) to `humanpending.md`.
+
+2026-08-12 correction: native default shujuku fill template
+
+- The prior entry incorrectly classified the user's `<thought>/<content>/<tableEdit>` response as an obsolete prompt format. The user confirmed it is the shujuku/ACU native default template and therefore a valid input to the native `group_fill` parser.
+- Bridge `6.3.1` keeps that native path and removes the `SHUJUKU_LEGACY_DSL_REJECTED` direction. Its change is limited to virtual-turn isolation-key handoff: archived template and sheet-guide slots are projected from source key to active key for the duration of the turn, then host metadata is restored.
+- `6.3.1` also hydrates missing `sheet_*` runtime structures from the active guide before `triggerUpdate`; this addresses the observed `modifiedKeys=[] -> empty operations` path without fabricating V2 log entries, and rolls back the temporary hydration on failure.
+- Local relay contracts cover the default `<tableEdit>` success case and key rotation. Real SillyTavern generation/database acceptance remains not run; user will import the updated bridge and validate.

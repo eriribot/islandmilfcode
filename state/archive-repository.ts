@@ -65,6 +65,10 @@ type RuntimeArchiveState = Pick<
 > & {
   shujukuCompatibilityHash?: string;
   previousShujukuCompatibilityHash?: string;
+  shujukuHandoffBaseline?: {
+    userMessageId: string;
+    compatibilityHash: string;
+  };
 };
 
 export type ArchiveCheckpointInput = {
@@ -603,6 +607,29 @@ function snapshotFromRollback(
   };
 }
 
+export type ArchiveFloorShujukuHashDecision =
+  | { kind: 'preserve' }
+  | { kind: 'set'; hash: string }
+  | { kind: 'clear' };
+
+export function decideArchiveFloorBeforeTurnShujukuHash(input: {
+  userMessageId: string;
+  existing: boolean;
+  previousCompatibilityHash?: string;
+  currentCompatibilityHash?: string;
+  handoffBaseline?: {
+    userMessageId: string;
+    compatibilityHash: string;
+  };
+}): ArchiveFloorShujukuHashDecision {
+  if (input.handoffBaseline?.userMessageId === input.userMessageId) {
+    return { kind: 'set', hash: input.handoffBaseline.compatibilityHash };
+  }
+  if (input.existing) return { kind: 'preserve' };
+  const hash = input.previousCompatibilityHash ?? input.currentCompatibilityHash;
+  return hash ? { kind: 'set', hash } : { kind: 'clear' };
+}
+
 function messagesToFloors(input: {
   saveId: string;
   messages: PersistedMessage[];
@@ -657,11 +684,17 @@ function messagesToFloors(input: {
     const beforeTurnState = group.user.statusSnapshot
       ? snapshotFromRollback(group.user.statusSnapshot, beforeFallback, 'message-snapshot')
       : cloneJson(existing?.beforeTurnState ?? beforeFallback);
-    if (!existing) {
-      const beforeCompatibilityHash = input.state.previousShujukuCompatibilityHash
-        ?? input.state.shujukuCompatibilityHash;
-      if (beforeCompatibilityHash) beforeTurnState.runtime.shujukuCompatibilityHash = beforeCompatibilityHash;
-      else delete beforeTurnState.runtime.shujukuCompatibilityHash;
+    const compatibilityDecision = decideArchiveFloorBeforeTurnShujukuHash({
+      userMessageId: group.user.id,
+      existing: Boolean(existing),
+      previousCompatibilityHash: input.state.previousShujukuCompatibilityHash,
+      currentCompatibilityHash: input.state.shujukuCompatibilityHash,
+      handoffBaseline: input.state.shujukuHandoffBaseline,
+    });
+    if (compatibilityDecision.kind === 'set') {
+      beforeTurnState.runtime.shujukuCompatibilityHash = compatibilityDecision.hash;
+    } else if (compatibilityDecision.kind === 'clear') {
+      delete beforeTurnState.runtime.shujukuCompatibilityHash;
     }
     const isLatest = localFloorIndex === groups.length - 1;
     const afterFallback = isLatest
@@ -1213,12 +1246,24 @@ export function commitRuntimeArchive(input: ArchiveCheckpointInput): Promise<Arc
     const compatibilityHash = compatibility
       ? await putHashed('compatibility', compatibility, references)
       : undefined;
+    const currentHandoff = compatibility?.shujuku?.handoff;
+    const previousHandoffId = previousCompatibility?.shujuku?.handoff?.handoffId;
+    const shujukuHandoffBaseline = compatibilityHash
+      && currentHandoff?.status === 'committed'
+      && currentHandoff.handoffId !== previousHandoffId
+      && currentHandoff.tableHash === compatibility?.shujuku?.tableSnapshot?.tableHash
+      ? {
+          userMessageId: currentHandoff.timelineAnchor,
+          compatibilityHash,
+        }
+      : undefined;
     const stateWithCompatibility: RuntimeArchiveState = {
       ...input.state,
       ...(compatibilityHash ? { shujukuCompatibilityHash: compatibilityHash } : {}),
       ...(previous?.root.compatibilityHash
         ? { previousShujukuCompatibilityHash: previous.root.compatibilityHash }
         : {}),
+      ...(shujukuHandoffBaseline ? { shujukuHandoffBaseline } : {}),
     };
     const runtimeWindowIsHead = !previous || isMessageWindowAtHead(input.state.messageWindow);
     const layout = previous && !runtimeWindowIsHead
@@ -1935,13 +1980,55 @@ export type ArchiveFloorShujukuBaseline =
   | { kind: 'checkpoint'; beforeMessageCount: number; checkpoint: ArchiveShujukuCompatibility }
   | { kind: 'missing_post_handoff'; beforeMessageCount: number };
 
+export type ArchiveFloorShujukuBaselineKind = ArchiveFloorShujukuBaseline['kind'];
+
+export function isArchiveFloorEntirelyBeforeShujukuHandoff(
+  beforeMessageCount: number,
+  floorMessageCount: number,
+  handoffCutoff: number,
+): boolean {
+  if (!Number.isInteger(beforeMessageCount) || beforeMessageCount < 0) {
+    throw new Error('Rollback message boundary is invalid');
+  }
+  if (!Number.isInteger(floorMessageCount) || floorMessageCount < 1) {
+    throw new Error('Rollback floor message count is invalid');
+  }
+  if (!Number.isInteger(handoffCutoff) || handoffCutoff < 0) {
+    throw new Error('Shujuku handoff cutoff is invalid');
+  }
+  return beforeMessageCount + floorMessageCount <= handoffCutoff;
+}
+
+export function decideArchiveFloorShujukuBaselineKind(input: {
+  beforeMessageCount: number;
+  floorMessageCount: number;
+  handoffCutoff: number;
+  hasCheckpoint: boolean;
+  checkpointMatchesCurrentHandoff: boolean;
+}): ArchiveFloorShujukuBaselineKind {
+  // A route can be connected after a user message has already been persisted.
+  // That anchor floor ends at the cutoff, but its newly bound checkpoint is the
+  // authoritative table state for rerunning the pending turn.
+  if (input.checkpointMatchesCurrentHandoff) return 'checkpoint';
+  if (isArchiveFloorEntirelyBeforeShujukuHandoff(
+    input.beforeMessageCount,
+    input.floorMessageCount,
+    input.handoffCutoff,
+  )) {
+    return 'pre_handoff';
+  }
+  return input.hasCheckpoint ? 'checkpoint' : 'missing_post_handoff';
+}
+
 export async function getArchiveFloorBeforeTurnShujukuBaseline(
   saveId: string,
   floorIndex: number,
   handoffCutoff: number,
+  handoffId: string,
 ): Promise<ArchiveFloorShujukuBaseline> {
   if (!Number.isInteger(floorIndex) || floorIndex < 0) throw new Error('Rollback floor index is invalid');
   if (!Number.isInteger(handoffCutoff) || handoffCutoff < 0) throw new Error('Shujuku handoff cutoff is invalid');
+  if (!handoffId.trim()) throw new Error('Shujuku handoff id is invalid');
 
   const floors = await streamArchiveFloors(saveId);
   const floor = floors[floorIndex];
@@ -1950,16 +2037,66 @@ export async function getArchiveFloorBeforeTurnShujukuBaseline(
     .slice(0, floorIndex)
     .reduce((sum, candidate) => sum + getFloorSourceMessageCount(candidate), 0);
 
-  if (beforeMessageCount < handoffCutoff) {
-    return { kind: 'pre_handoff', beforeMessageCount };
-  }
-
   const compatibility = await getFloorCompatibility(floor.beforeTurnState);
-  if (!compatibility?.shujuku) return { kind: 'missing_post_handoff', beforeMessageCount };
+  const checkpoint = compatibility?.shujuku;
+  const baselineKind = decideArchiveFloorShujukuBaselineKind({
+    beforeMessageCount,
+    floorMessageCount: getFloorSourceMessageCount(floor),
+    handoffCutoff,
+    hasCheckpoint: Boolean(checkpoint),
+    checkpointMatchesCurrentHandoff: Boolean(
+      checkpoint
+      && checkpoint.state.handoffId === handoffId
+      && checkpoint.handoff?.handoffId === handoffId,
+    ),
+  });
+  if (baselineKind === 'pre_handoff') return { kind: 'pre_handoff', beforeMessageCount };
+  if (!checkpoint) return { kind: 'missing_post_handoff', beforeMessageCount };
   return {
     kind: 'checkpoint',
     beforeMessageCount,
-    checkpoint: cloneJson(compatibility.shujuku),
+    checkpoint: cloneJson(checkpoint),
+  };
+}
+
+export async function getArchiveFloorAfterTurnShujukuBaseline(
+  saveId: string,
+  floorIndex: number,
+  handoffCutoff: number,
+  handoffId: string,
+): Promise<ArchiveFloorShujukuBaseline> {
+  if (!Number.isInteger(floorIndex) || floorIndex < 0) throw new Error('Rollback floor index is invalid');
+  if (!Number.isInteger(handoffCutoff) || handoffCutoff < 0) throw new Error('Shujuku handoff cutoff is invalid');
+  if (!handoffId.trim()) throw new Error('Shujuku handoff id is invalid');
+
+  const floors = await streamArchiveFloors(saveId);
+  const floor = floors[floorIndex];
+  if (!floor) throw new Error('Rollback floor is missing from the archive');
+  const beforeMessageCount = floors
+    .slice(0, floorIndex)
+    .reduce((sum, candidate) => sum + getFloorSourceMessageCount(candidate), 0);
+
+  const compatibility = floor.afterTurnState
+    ? await getFloorCompatibility(floor.afterTurnState)
+    : null;
+  const checkpoint = compatibility?.shujuku;
+  const baselineKind = decideArchiveFloorShujukuBaselineKind({
+    beforeMessageCount,
+    floorMessageCount: getFloorSourceMessageCount(floor),
+    handoffCutoff,
+    hasCheckpoint: Boolean(checkpoint),
+    checkpointMatchesCurrentHandoff: Boolean(
+      checkpoint
+      && checkpoint.state.handoffId === handoffId
+      && checkpoint.handoff?.handoffId === handoffId,
+    ),
+  });
+  if (baselineKind === 'pre_handoff') return { kind: 'pre_handoff', beforeMessageCount };
+  if (!checkpoint) return { kind: 'missing_post_handoff', beforeMessageCount };
+  return {
+    kind: 'checkpoint',
+    beforeMessageCount,
+    checkpoint: cloneJson(checkpoint),
   };
 }
 
@@ -2037,6 +2174,7 @@ export function truncateArchiveAfterFloor(input: {
   floorIndex: number;
   gameState: GameState;
   runtimeState: RuntimeArchiveState;
+  shujukuCompatibilityOverride?: ArchiveShujukuCompatibility | null;
 }): Promise<ArchiveRollbackReceipt | null> {
   return enqueueMutation(async () => {
     const snapshot = await openArchiveSave(input.saveId);
@@ -2044,20 +2182,43 @@ export function truncateArchiveAfterFloor(input: {
     const floors = await streamArchiveFloors(input.saveId);
     const target = floors[input.floorIndex];
     if (!target?.afterTurnState) return null;
-    const nextFloors = floors.slice(0, input.floorIndex + 1);
-    const compatibility = resolveArchiveCompatibilityForRollback(
+    const hasShujukuOverride = Object.prototype.hasOwnProperty.call(input, 'shujukuCompatibilityOverride');
+    const targetCompatibility = resolveArchiveCompatibilityForRollback(
       await getFloorCompatibility(target.afterTurnState),
       snapshot.compatibility,
     );
+    let compatibility = targetCompatibility;
+    if (hasShujukuOverride) {
+      if (input.shujukuCompatibilityOverride) {
+        compatibility = {
+          ...(targetCompatibility ?? createCompatibilityScaffold()),
+          shujuku: cloneJson(input.shujukuCompatibilityOverride),
+        };
+      } else if (targetCompatibility) {
+        const { shujuku: _removedShujuku, ...withoutShujuku } = targetCompatibility;
+        void _removedShujuku;
+        compatibility = Object.keys(withoutShujuku).length ? withoutShujuku : null;
+      }
+    }
+    const afterTurnState = cloneJson(target.afterTurnState);
+    if (hasShujukuOverride && compatibility) {
+      afterTurnState.runtime.shujukuCompatibilityHash = (await hashArchiveValue(compatibility)).hash;
+    } else if (hasShujukuOverride) {
+      delete afterTurnState.runtime.shujukuCompatibilityHash;
+    }
+    const nextTarget: FloorRecord = { ...target, afterTurnState };
+    const nextFloors = [...floors.slice(0, input.floorIndex), nextTarget];
+    const { shujukuCompatibilityOverride: _override, ...republishInput } = input;
+    void _override;
     const receipt = await republishFloors({
-      ...input,
+      ...republishInput,
       floors: nextFloors,
       stateSnapshot: snapshot,
       compatibility,
     });
     return {
       ...receipt,
-      restoredState: cloneJson(target.afterTurnState),
+      restoredState: cloneJson(nextTarget.afterTurnState),
       restoredCompatibility: compatibility?.shujuku ? cloneJson(compatibility.shujuku) : null,
       sourceUserText: target.userMessage.text,
       capability: Object.values(target.afterTurnState.provenance).some(value => value === 'defaulted' || value === 'save-current-fallback')

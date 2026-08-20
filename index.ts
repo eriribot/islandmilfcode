@@ -127,6 +127,7 @@ import {
   flushArchiveRepository,
   forkArchiveSave,
   getArchiveFloor,
+  getArchiveFloorAfterTurnShujukuBaseline,
   getArchiveFloorBeforeTurnShujukuBaseline,
   getArchiveMessageWindow,
   getArchiveMessageRange,
@@ -211,6 +212,7 @@ import type {
 import {
   inspectCommittedShujukuBinding,
   probeShujukuRuntime,
+  restoreShujukuTablesForHandoff,
   runShujukuTablesHandoffTransaction,
   SHUJUKU_NATIVE_HANDOFF_VERSION,
 } from './shujuku/adapter';
@@ -1403,6 +1405,41 @@ function getMemoryDBTableCounts(memoryDB: IslandMemoryDB) {
   return counts;
 }
 
+async function restoreLoadedShujukuTableSnapshot(input: {
+  loadToken: number;
+  saveId: string;
+  runId: string;
+}): Promise<string> {
+  const isCurrent = () => input.loadToken === saveLoadSequence
+    && state.activeSaveId === input.saveId
+    && state.activeRunId === input.runId;
+  if (!isCurrent()) return '';
+  const inspected = inspectCommittedShujukuBinding(state.runtimeFlags, {
+    saveId: input.saveId,
+    runId: input.runId,
+  });
+  if (inspected.kind !== 'active') return '';
+  try {
+    await restoreShujukuTablesForHandoff(
+      win,
+      inspected.binding.compatibility.isolationKey,
+      inspected.binding.tableSnapshot,
+    );
+    if (!isCurrent()) return '';
+    console.info('[shujuku:lifecycle] restored saved table snapshot', {
+      saveId: input.saveId,
+      handoffId: inspected.binding.handoff.handoffId,
+      tableHash: inspected.binding.tableSnapshot.tableHash,
+    });
+    return '';
+  } catch (error) {
+    if (!isCurrent()) return '';
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn('[shujuku:lifecycle] saved table snapshot restore deferred:', error);
+    return `shujuku 表快照暂未恢复：${detail}。发送正文前会再次校准。`;
+  }
+}
+
 async function enterSave(saveId: string, options: { openingMode?: OpeningMode; archiveSource?: 'local' } = {}) {
   return withTimelineMutation(async () => {
   await waitForHostTimelineWrites();
@@ -1615,6 +1652,18 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode; a
       return;
     }
   }
+  const shujukuRestoreNotice = await restoreLoadedShujukuTableSnapshot({
+    loadToken,
+    saveId,
+    runId: enteringRunId,
+  });
+  if (loadToken !== saveLoadSequence) {
+    if (restoringSaveOwner === loadToken) {
+      restoringSave = false;
+      restoringSaveOwner = 0;
+    }
+    return;
+  }
   try {
     console.info('[saves:enter]', {
       saveId,
@@ -1645,6 +1694,14 @@ async function enterSave(saveId: string, options: { openingMode?: OpeningMode; a
       kind: 'status',
       title: '存档已降级恢复',
       preview: recoveryNotice,
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    };
+  } else if (shujukuRestoreNotice) {
+    state.notification = {
+      kind: 'status',
+      title: 'shujuku 表快照待恢复',
+      preview: shujukuRestoreNotice,
       targetTab: 'summary',
       timestamp: formatTime(state.statusData.world.currentTime),
     };
@@ -2085,6 +2142,7 @@ async function rollbackReaderInputWithArchive(
   options: {
     timelineMutationOwner?: symbol;
     shujukuHandoffCutoff?: number;
+    shujukuHandoffId?: string;
     shujukuCompatibilityOverride?: ArchiveShujukuCompatibility | null;
     prepareShujukuBaseline?: (
       baseline: ArchiveFloorShujukuBaseline,
@@ -2139,9 +2197,19 @@ async function rollbackReaderInputWithArchive(
       options.onArchiveCommitFailed?.(new Error('当前 shujuku handoff 缺少有效的接通消息边界。'));
       return null;
     }
+    const handoffId = options.shujukuHandoffId?.trim();
+    if (!handoffId) {
+      options.onArchiveCommitFailed?.(new Error('当前 shujuku handoff 缺少有效的接通身份。'));
+      return null;
+    }
     let baseline: ArchiveFloorShujukuBaseline;
     try {
-      baseline = await getArchiveFloorBeforeTurnShujukuBaseline(saveId, floorIndex, handoffCutoff);
+      baseline = await getArchiveFloorBeforeTurnShujukuBaseline(
+        saveId,
+        floorIndex,
+        handoffCutoff,
+        handoffId,
+      );
     } catch (error) {
       options.onArchiveCommitFailed?.(error);
       return null;
@@ -2229,15 +2297,30 @@ async function rollbackReaderInputWithArchive(
 }
 
 async function rollbackToReaderInput(readerIndex: number) {
-  const target = await rollbackReaderInputWithArchive(readerIndex);
-  if (!target?.sourceUserText) return;
-  state.draft = target.sourceUserText;
-  gameDevelopmentController.restoreEditorAfterRollback(target.sourceUserText);
-  guardedAdapterSave(state.statusData);
-  ctx.persistConversation();
-  ctx.closeReaderContextMenu(false);
-  render();
-  focusComposer();
+  const timelineMutationOwner = Symbol('reader-rollback');
+  return withTimelineMutation(async () => {
+    const rollback = await rollbackReaderInputToCheckpoint(readerIndex, {
+      timelineMutationOwner,
+      actionLabel: '回溯',
+    });
+    if (!rollback?.target.sourceUserText) return;
+    state.draft = rollback.target.sourceUserText;
+    gameDevelopmentController.restoreEditorAfterRollback(rollback.target.sourceUserText);
+    guardedAdapterSave(state.statusData);
+    ctx.persistConversation();
+    ctx.closeReaderContextMenu(false);
+    render();
+    if (!rollback.routeRestored) {
+      ctx.showNotification({
+        kind: 'status',
+        title: '回溯需复核',
+        preview: '归档回执中的 shujuku 表快照未通过身份校验，请刷新后重新接通。',
+        targetTab: 'summary',
+        timestamp: formatTime(state.statusData.world.currentTime),
+      });
+    }
+    focusComposer();
+  }, timelineMutationOwner);
 }
 
 function isV07RouteChoiceBlockingMainText(): boolean {
@@ -2251,53 +2334,158 @@ function isV07RouteChoiceBlockingMainText(): boolean {
 
 async function rollbackAfterReaderFloor(readerIndex: number) {
   return withTimelineMutation(async () => {
-  const requestedLoadToken = saveLoadSequence;
-  const requestedSaveId = state.activeSaveId;
-  await waitForHostTimelineWrites();
-  if (requestedLoadToken !== saveLoadSequence || state.activeSaveId !== requestedSaveId) return;
-  await invalidateAsyncActions(ctx);
-  if (requestedLoadToken !== saveLoadSequence || state.activeSaveId !== requestedSaveId) return;
-  const mutationToken = ++readerMutationSequence;
-  const loadToken = saveLoadSequence;
-  const saveId = state.activeSaveId;
-  const isCurrent = () => mutationToken === readerMutationSequence
-    && loadToken === saveLoadSequence
-    && state.activeSaveId === saveId;
-  const floorIndex = saveId && hasArchiveSaveSync(saveId) ? resolveArchiveFloorIndex(readerIndex) : null;
-  const floor = saveId && floorIndex !== null
-    ? await getArchiveFloor(saveId, floorIndex).catch(() => null)
-    : null;
-  if (!isCurrent()) return;
-  const restored = await rollbackAfterCompletedReaderMessage(state, readerIndex, win, hostTimeline, isCurrent);
-  if (!restored) return;
-  if (!isCurrent()) return;
-  if (floor?.afterTurnState) {
-    try {
-      restoreFloorStateSnapshot(state, floor.afterTurnState);
-    } catch (error) {
-      console.warn('[archive] exact completed-floor snapshot was invalid; keeping local rollback state:', error);
+    const requestedLoadToken = saveLoadSequence;
+    const requestedSaveId = state.activeSaveId;
+    await waitForHostTimelineWrites();
+    if (requestedLoadToken !== saveLoadSequence || state.activeSaveId !== requestedSaveId) return;
+    await invalidateAsyncActions(ctx);
+    if (requestedLoadToken !== saveLoadSequence || state.activeSaveId !== requestedSaveId) return;
+    const mutationToken = ++readerMutationSequence;
+    const loadToken = saveLoadSequence;
+    const saveId = state.activeSaveId;
+    const isCurrent = () => mutationToken === readerMutationSequence
+      && loadToken === saveLoadSequence
+      && state.activeSaveId === saveId;
+    const floorIndex = saveId && hasArchiveSaveSync(saveId) ? resolveArchiveFloorIndex(readerIndex) : null;
+    const floor = saveId && floorIndex !== null
+      ? await getArchiveFloor(saveId, floorIndex).catch(() => null)
+      : null;
+    if (!isCurrent()) return;
+
+    const shujukuBindingRead = captureShujukuRerollBinding();
+    if (shujukuBindingRead.kind === 'invalid') {
+      ctx.showNotification({
+        kind: 'status',
+        title: '回溯输出已停止',
+        preview: `当前 shujuku 连接无法建立安全基线：${shujukuBindingRead.reason}。正文和表格均未改变。`,
+        targetTab: 'summary',
+        timestamp: formatTime(state.statusData.world.currentTime),
+      });
+      render();
+      return;
     }
-  }
-  if (saveId && floorIndex !== null && hasArchiveSaveSync(saveId)) {
-    const receipt = await truncateArchiveAfterFloor({
-      saveId,
-      floorIndex,
-      gameState: buildGameState(),
-      runtimeState: captureRuntimeSaveState(),
-    }).catch(error => {
-      console.warn('[archive] completed-floor rollback commit deferred:', error);
-      return null;
-    });
-    if (receipt && isCurrent()) {
-      applyArchiveShujukuCompatibilityToRuntimeFlags(state.runtimeFlags, receipt.restoredCompatibility);
-      await reloadReaderWindowAfterArchiveMutation(receipt);
+    const shujukuBinding = shujukuBindingRead.kind === 'active'
+      ? shujukuBindingRead.binding
+      : null;
+    let shujukuBaseline: ArchiveFloorShujukuBaseline | null = null;
+    if (shujukuBinding) {
+      if (!saveId || floorIndex === null || !floor?.afterTurnState) {
+        ctx.showNotification({
+          kind: 'status',
+          title: '回溯输出已停止',
+          preview: '保留楼层缺少可验证的轮后 shujuku 表快照；正文和表格均未改变。',
+          targetTab: 'summary',
+          timestamp: formatTime(state.statusData.world.currentTime),
+        });
+        render();
+        return;
+      }
+      try {
+        shujukuBaseline = await getArchiveFloorAfterTurnShujukuBaseline(
+          saveId,
+          floorIndex,
+          shujukuBinding.handoff.cutoffFloor,
+          shujukuBinding.handoff.handoffId,
+        );
+      } catch (error) {
+        ctx.showNotification({
+          kind: 'status',
+          title: '回溯输出已停止',
+          preview: `轮后 shujuku 表快照读取失败：${error instanceof Error ? error.message : String(error)}。正文和表格均未改变。`,
+          targetTab: 'summary',
+          timestamp: formatTime(state.statusData.world.currentTime),
+        });
+        render();
+        return;
+      }
+      if (shujukuBaseline.kind === 'missing_post_handoff') {
+        ctx.showNotification({
+          kind: 'status',
+          title: '回溯输出已停止',
+          preview: '保留楼层位于 shujuku 接通后，但归档缺少当时的轮后表快照；正文和表格均未改变。',
+          targetTab: 'summary',
+          timestamp: formatTime(state.statusData.world.currentTime),
+        });
+        render();
+        return;
+      }
+      if (
+        shujukuBaseline.kind === 'checkpoint'
+        && !createShujukuRerollCompatibility(shujukuBinding, shujukuBaseline.checkpoint)
+      ) {
+        ctx.showNotification({
+          kind: 'status',
+          title: '回溯输出已停止',
+          preview: '保留楼层的轮后 shujuku 表快照未通过身份校验；正文和表格均未改变。',
+          targetTab: 'summary',
+          timestamp: formatTime(state.statusData.world.currentTime),
+        });
+        render();
+        return;
+      }
     }
-  }
-  if (!isCurrent()) return;
-  guardedAdapterSave(state.statusData);
-  ctx.persistConversation();
-  ctx.closeReaderContextMenu(false);
-  render();
+
+    const rollbackState = captureReaderRollbackState();
+    const restored = await rollbackAfterCompletedReaderMessage(state, readerIndex, win, hostTimeline, isCurrent);
+    if (!restored) return;
+    if (!isCurrent()) return;
+    if (floor?.afterTurnState) {
+      try {
+        restoreFloorStateSnapshot(state, floor.afterTurnState);
+      } catch (error) {
+        console.warn('[archive] exact completed-floor snapshot was invalid; keeping local rollback state:', error);
+      }
+    }
+
+    let receipt: ArchiveRollbackReceipt | null = null;
+    if (saveId && floorIndex !== null && hasArchiveSaveSync(saveId)) {
+      const commitArchive: ShujukuArchiveCommit = compatibility => truncateArchiveAfterFloor({
+        saveId,
+        floorIndex,
+        gameState: buildGameState(),
+        runtimeState: captureRuntimeSaveState(),
+        shujukuCompatibilityOverride: compatibility,
+      });
+      try {
+        if (shujukuBinding && shujukuBaseline?.kind === 'checkpoint') {
+          receipt = await commitShujukuRerollCheckpoint({
+            binding: shujukuBinding,
+            checkpoint: shujukuBaseline.checkpoint,
+            commitArchive,
+          });
+        } else if (shujukuBinding && shujukuBaseline?.kind === 'pre_handoff') {
+          receipt = await commitArchive(null);
+        } else {
+          receipt = await truncateArchiveAfterFloor({
+            saveId,
+            floorIndex,
+            gameState: buildGameState(),
+            runtimeState: captureRuntimeSaveState(),
+          });
+        }
+        if (!receipt && shujukuBinding) throw new Error('轮后 shujuku 表恢复没有取得归档提交凭据。');
+      } catch (error) {
+        if (isCurrent()) restoreReaderRollbackState(rollbackState);
+        ctx.showNotification({
+          kind: 'status',
+          title: '回溯输出失败',
+          preview: `${error instanceof Error ? error.message : String(error)}。正文时间线已恢复到操作前状态。`,
+          targetTab: 'summary',
+          timestamp: formatTime(state.statusData.world.currentTime),
+        });
+        render();
+        return;
+      }
+      if (receipt && isCurrent()) {
+        applyArchiveShujukuCompatibilityToRuntimeFlags(state.runtimeFlags, receipt.restoredCompatibility);
+        await reloadReaderWindowAfterArchiveMutation(receipt);
+      }
+    }
+    if (!isCurrent()) return;
+    guardedAdapterSave(state.statusData);
+    ctx.persistConversation();
+    ctx.closeReaderContextMenu(false);
+    render();
   });
 }
 
@@ -2579,118 +2767,153 @@ function isValidShujukuRerollCheckpoint(
   );
 }
 
-async function rerunReaderMessage(readerIndex: number) {
-  const timelineMutationOwner = Symbol('reader-reroll');
-  return withTimelineMutation(async () => {
-    const shujukuBindingRead = captureShujukuRerollBinding();
-    if (shujukuBindingRead.kind === 'invalid') {
+type ReaderInputCheckpointRollback = {
+  target: NonNullable<Awaited<ReturnType<typeof rollbackReaderInputWithArchive>>>;
+  route: NarrativeRoute;
+  restoredShujukuCompatibility: ArchiveShujukuCompatibility | null;
+  routeRestored: boolean;
+};
+
+async function rollbackReaderInputToCheckpoint(
+  readerIndex: number,
+  options: {
+    timelineMutationOwner: symbol;
+    actionLabel: '回溯' | '重 roll';
+    requireAuthoritativeStatusBaseline?: boolean;
+  },
+): Promise<ReaderInputCheckpointRollback | null> {
+  const shujukuBindingRead = captureShujukuRerollBinding();
+  const stoppedTitle = options.actionLabel === '重 roll' ? '重 roll 已停止' : '回溯已停止';
+  if (shujukuBindingRead.kind === 'invalid') {
+    ctx.showNotification({
+      kind: 'status',
+      title: stoppedTitle,
+      preview: `当前 shujuku 连接无法建立安全基线：${shujukuBindingRead.reason}。正文时间线未改变。`,
+      targetTab: 'summary',
+      timestamp: formatTime(state.statusData.world.currentTime),
+    });
+    return null;
+  }
+
+  const shujukuRerollBinding = shujukuBindingRead.kind === 'active'
+    ? shujukuBindingRead.binding
+    : null;
+  let rollbackRoute: NarrativeRoute = shujukuRerollBinding ? 'shujuku' : 'island';
+  let restoredShujukuCompatibility: ArchiveShujukuCompatibility | null = null;
+  let shujukuBaselineFailure = '';
+  let rollbackTransactionFailure = '';
+  let tableRestoreFailed = false;
+  const target = await rollbackReaderInputWithArchive(readerIndex, {
+    timelineMutationOwner: options.timelineMutationOwner,
+    requireAuthoritativeStatusBaseline: options.requireAuthoritativeStatusBaseline,
+    ...(!shujukuRerollBinding ? { shujukuCompatibilityOverride: null } : {}),
+    ...(shujukuRerollBinding
+      ? {
+          shujukuHandoffCutoff: shujukuRerollBinding.handoff.cutoffFloor,
+          shujukuHandoffId: shujukuRerollBinding.handoff.handoffId,
+          prepareShujukuBaseline: (
+            baseline: ArchiveFloorShujukuBaseline,
+            floor: NonNullable<Awaited<ReturnType<typeof getArchiveFloor>>>,
+          ) => {
+            if (baseline.kind === 'pre_handoff') {
+              void floor;
+              rollbackRoute = 'island';
+              return {
+                kind: 'transaction_after_rollback' as const,
+                run: async (commitArchive: ShujukuArchiveCommit) => {
+                  const receipt = await commitArchive(null);
+                  if (!receipt) throw new Error('接通点前的 Island 回溯没有取得归档提交凭据。');
+                  return receipt;
+                },
+              };
+            }
+            if (baseline.kind === 'missing_post_handoff') {
+              shujukuBaselineFailure = '该楼层位于 shujuku 接通后，但归档缺少当时的轮前表快照。';
+              return null;
+            }
+            const prepared = createShujukuRerollCompatibility(
+              shujukuRerollBinding,
+              baseline.checkpoint,
+            );
+            if (!prepared) {
+              shujukuBaselineFailure = '归档中的 shujuku 轮前表快照未通过身份或 hash 校验。';
+              return null;
+            }
+            return {
+              kind: 'transaction_after_rollback' as const,
+              run: (commitArchive: ShujukuArchiveCommit) => commitShujukuRerollCheckpoint({
+                binding: shujukuRerollBinding,
+                checkpoint: baseline.checkpoint,
+                commitArchive,
+              }),
+            };
+          },
+          onShujukuBaselineUnavailable: (baseline: ArchiveFloorShujukuBaseline) => {
+            if (shujukuBaselineFailure) return;
+            shujukuBaselineFailure = baseline.kind === 'missing_post_handoff'
+              ? '该楼层位于 shujuku 接通后，但归档缺少当时的轮前表快照。'
+              : '该楼层的 shujuku 轮前表快照无法安全恢复。';
+          },
+        }
+      : {}),
+    onArchiveCommitFailed: (error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (detail.includes('权威的轮前时间快照')) shujukuBaselineFailure = detail;
+      else rollbackTransactionFailure = detail;
+      tableRestoreFailed = detail.includes('原表恢复失败');
+    },
+    onShujukuCompatibilityRestored: compatibility => {
+      restoredShujukuCompatibility = compatibility;
+    },
+  });
+
+  if (!target?.sourceUserText) {
+    if (rollbackTransactionFailure || shujukuBaselineFailure) {
+      const transactionLabel = options.actionLabel === '重 roll' ? '重生成事务' : '回溯事务';
       ctx.showNotification({
         kind: 'status',
-        title: '重 roll 已停止',
-        preview: `当前 shujuku 连接无法建立安全基线：${shujukuBindingRead.reason}。正文时间线未改变。`,
+        title: stoppedTitle,
+        preview: rollbackTransactionFailure
+          ? tableRestoreFailed
+            ? `${transactionLabel}失败：${rollbackTransactionFailure}。已停止继续；当前 shujuku 连接不能视为操作前状态，请刷新后重新接通。`
+            : `${transactionLabel}失败：${rollbackTransactionFailure}。正文时间线和当前 shujuku 连接已恢复到操作前状态。`
+          : `${shujukuBaselineFailure} 正文时间线和当前 shujuku 连接均未改变。`,
         targetTab: 'summary',
         timestamp: formatTime(state.statusData.world.currentTime),
       });
-      return;
     }
-    const shujukuRerollBinding = shujukuBindingRead.kind === 'active'
-      ? shujukuBindingRead.binding
-      : null;
-    let rerollRoute: NarrativeRoute = shujukuRerollBinding ? 'shujuku' : 'island';
-    let restoredShujukuCompatibility: ArchiveShujukuCompatibility | null = null;
-    let shujukuBaselineFailure = '';
-    let rerollTransactionFailure = '';
-    let rerollTableRestoreFailed = false;
-    const target = await rollbackReaderInputWithArchive(readerIndex, {
+    return null;
+  }
+
+  const routeRestored = rollbackRoute === 'island'
+    ? restoredShujukuCompatibility === null
+    : Boolean(
+        shujukuRerollBinding
+        && isRestoredShujukuRouteValidAfterReroll(shujukuRerollBinding, restoredShujukuCompatibility),
+      );
+  return {
+    target,
+    route: rollbackRoute,
+    restoredShujukuCompatibility,
+    routeRestored,
+  };
+}
+
+async function rerunReaderMessage(readerIndex: number) {
+  const timelineMutationOwner = Symbol('reader-reroll');
+  return withTimelineMutation(async () => {
+    const rollback = await rollbackReaderInputToCheckpoint(readerIndex, {
       timelineMutationOwner,
+      actionLabel: '重 roll',
       requireAuthoritativeStatusBaseline: true,
-      ...(!shujukuRerollBinding ? { shujukuCompatibilityOverride: null } : {}),
-      ...(shujukuRerollBinding
-        ? {
-            shujukuHandoffCutoff: shujukuRerollBinding.handoff.cutoffFloor,
-            prepareShujukuBaseline: (
-              baseline: ArchiveFloorShujukuBaseline,
-              floor: NonNullable<Awaited<ReturnType<typeof getArchiveFloor>>>,
-            ) => {
-              if (baseline.kind === 'pre_handoff') {
-                void floor;
-                rerollRoute = 'island';
-                return {
-                  kind: 'transaction_after_rollback' as const,
-                  run: async (commitArchive: ShujukuArchiveCommit) => {
-                    const receipt = await commitArchive(null);
-                    if (!receipt) throw new Error('接通点前的 Island 重 roll 没有取得归档提交凭据。');
-                    return receipt;
-                  },
-                };
-              }
-              if (baseline.kind === 'missing_post_handoff') {
-                shujukuBaselineFailure = '该楼层位于 shujuku 接通后，但归档缺少当时的轮前表快照。';
-                return null;
-              }
-              const prepared = createShujukuRerollCompatibility(
-                shujukuRerollBinding,
-                baseline.checkpoint,
-              );
-              if (!prepared) {
-                shujukuBaselineFailure = '归档中的 shujuku 轮前表快照未通过身份或 hash 校验。';
-                return null;
-              }
-              return {
-                kind: 'transaction_after_rollback' as const,
-                run: (commitArchive: ShujukuArchiveCommit) => commitShujukuRerollCheckpoint({
-                  binding: shujukuRerollBinding,
-                  checkpoint: baseline.checkpoint,
-                  commitArchive,
-                }),
-              };
-            },
-            onShujukuBaselineUnavailable: (baseline: ArchiveFloorShujukuBaseline) => {
-              if (shujukuBaselineFailure) return;
-              shujukuBaselineFailure = baseline.kind === 'missing_post_handoff'
-                ? '该楼层位于 shujuku 接通后，但归档缺少当时的轮前表快照。'
-                : '该楼层的 shujuku 轮前表快照无法安全恢复。';
-            },
-          }
-        : {}),
-      onArchiveCommitFailed: (error: unknown) => {
-        const detail = error instanceof Error ? error.message : String(error);
-        if (detail.includes('权威的轮前时间快照')) shujukuBaselineFailure = detail;
-        else rerollTransactionFailure = detail;
-        rerollTableRestoreFailed = detail.includes('原表恢复失败');
-      },
-      onShujukuCompatibilityRestored: compatibility => {
-        restoredShujukuCompatibility = compatibility;
-      },
     });
-    if (!target?.sourceUserText) {
-      if (rerollTransactionFailure || shujukuBaselineFailure) {
-        ctx.showNotification({
-          kind: 'status',
-          title: '重 roll 已停止',
-          preview: rerollTransactionFailure
-            ? rerollTableRestoreFailed
-              ? `重生成事务失败：${rerollTransactionFailure}。已停止继续生成；当前 shujuku 连接不能视为操作前状态，请刷新后重新接通。`
-              : `重生成事务失败：${rerollTransactionFailure}。正文时间线和当前 shujuku 连接已恢复到操作前状态。`
-            : `${shujukuBaselineFailure} 正文时间线和当前 shujuku 连接均未改变。`,
-          targetTab: 'summary',
-          timestamp: formatTime(state.statusData.world.currentTime),
-        });
-      }
-      return;
-    }
-    const canRegenerate = rerollRoute === 'island'
-      ? restoredShujukuCompatibility === null
-      : Boolean(
-          shujukuRerollBinding
-          && isRestoredShujukuRouteValidAfterReroll(shujukuRerollBinding, restoredShujukuCompatibility),
-        );
-    state.draft = target.sourceUserText;
+    if (!rollback?.target.sourceUserText) return;
+    state.draft = rollback.target.sourceUserText;
     guardedAdapterSave(state.statusData);
     ctx.persistConversation();
     ctx.closeReaderContextMenu(false);
     render();
-    if (!canRegenerate) {
+    if (!rollback.routeRestored) {
       ctx.showNotification({
         kind: 'status',
         title: '重 roll 已停止',
@@ -2700,11 +2923,11 @@ async function rerunReaderMessage(readerIndex: number) {
       });
       return;
     }
-    if (await gameDevelopmentController.submitRestoredTurn(target.sourceUserText, timelineMutationOwner)) {
+    if (await gameDevelopmentController.submitRestoredTurn(rollback.target.sourceUserText, timelineMutationOwner)) {
       return;
     }
     await submitMainMessage({
-      text: target.sourceUserText,
+      text: rollback.target.sourceUserText,
       keepDraft: true,
       clearDraftOnSuccess: true,
       reuseLatestUserMessage: true,
@@ -5667,6 +5890,10 @@ window.addEventListener('keydown', event => {
 
 // ── Async init ──
 
+// ⚠️ 必须在 init() 之前同步启动 predefine.js 劫持，否则 shujuku iframe 可能已经加载完成
+import { startPredefineHijack, getHijackDiagnostics } from './shujuku/predefine-hijack';
+const stopPredefineHijack = startPredefineHijack();
+
 async function init() {
   // 必须在任何同步存档读写（render 之前）完成；内部会一次性把 localStorage 旧数据迁到 IndexedDB。
   await initSaveStore();
@@ -5682,6 +5909,7 @@ async function init() {
     recoveredMissingIndex: saveRecovery.recovered,
     store: saveStoreDiagnostics,
     archive: getArchiveDiagnostics(),
+    predefineHijack: getHijackDiagnostics(),
   });
   if (saveRecovery.recovered > 0) {
     state.runtimeFlags.saveRecoveryNotice = `已从本地缓存恢复 ${saveRecovery.recovered} 个存档`;
@@ -5724,6 +5952,7 @@ async function init() {
     window.addEventListener('beforeunload', () => {
       syncDrawingSettingsFromMountedControls();
       if (autosaveTimer) flushPendingAutosave();
+      stopPredefineHijack(); // 清理 MutationObserver
     });
   }
   render();

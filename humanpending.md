@@ -307,3 +307,272 @@ docs/16-floor-lazy-loading-operation-guide-v0.1.md
 - 正文被错误逻辑回合链阻断：`C:\Users\eriri\AppData\Local\Temp\codex-clipboard-a775c9fd-b16a-42a1-9a65-37a6b654666f.png`
 
 源码桥与导入 JSON 的真实酒馆运行版本仍为 **not run**，自动检查不能替代现场验收。
+
+2026-08-09 后续修复：
+
+- Reader 规划改为直接调用 Tavern Helper 注入的 `formatAsTavernRegexedString(plannedText, 'user_input', 'display', { depth: 0 })`，不再从隔离的 `#0` iframe `globalThis` 查找格式化器；HTML 围栏和普通文本段均保留，内置回退补齐 `<kirihime_review>`。
+- `回溯输出` 和 `重新生成该楼层` 现在共用 `rollbackReaderInputToCheckpoint()`；接通后楼层必须在正文时间线被修改前取得并验证轮前表快照，表恢复与归档截断仍为同一事务。
+- 自动证据：Reader 规划 `20/20`，存档接线 `47/47`，message codec `13/13`，prompt 隔离 `15/15`，路线绑定 `9/9`，存档兼容 `39/39`，虚拟转发 `57/57`，Island 规划上下文 `28/28`，生产构建和最终 inline 宿主安全检查通过。
+- 现场反例已执行：旧运行产物中 `fallbackPlanCount=1`、`regexPlanCount=0`、`nestedRegexFrameCount=0`，且逻辑时间线只存在宿主 `#0`。
+- 新产物的真实按钮现场验收：**not run**。Chrome 在不写回宿主消息的临时 iframe 换包时中断，未执行 `回溯输出` / `重新生成该楼层`，也未将现场表恢复标记为通过。
+
+2026-08-09 刷新反例与后续修复：
+
+- 用户再次刷新后确认 `主角信息表` 的 `铃村里人` 仍存在：`C:\Users\eriri\AppData\Local\Temp\codex-clipboard-0c158ef7-b62b-48e5-a431-5373ffe7f7aa.png`。此前只观察到页面内存态、没有完成刷新后持久化复核，因此不得算通过。
+- 相关现场截图：`C:\Users\eriri\AppData\Local\Temp\codex-clipboard-ca488024-acc9-4641-a4d7-93ebe991b507.png`、`C:\Users\eriri\AppData\Local\Temp\codex-clipboard-937d38a3-6e48-43dd-8164-0aac2ca0eabf.png`。
+- 已检查旧导出 `islandmilfcode-save-autosave_da251c59-a2ea-4d3b-b35b-631b5b3ca1de-2026-08-09.json`：当前表与 handoff 初始表 hash 都是 `sha256:365219ea622b99467c6dfb97e891208c7d5b4ff3bfd9d2e6ab646cc7785f8e5c`，该 handoff 快照自身已经包含 `铃村里人`。刷新是在恢复污染基线，不是刷新时重新生成该行。
+- 存档写入现在会把新 handoff 的不可变表基线绑定到其 pending user anchor；读取 rollback 基线时，同一 handoff 的 checkpoint 优先于“楼层结束于 cutoff”这一几何判定。这样 assistant 尚未落盘的首个 shujuku 回合也会恢复真实轮前表，而不会误切成无表恢复的接通前分支。
+- 旧污染存档没有更早的干净表快照，必须先备份、一次性清除该测试行并重新建立 handoff；这一步不能冒充自动 rollback 通过证据。
+- Chrome 中旧 renderer ID `17cea829-549d-4458-9f18-15da9dee32c0` 已原位改为 `夏野雾姬·Island规划页边审稿`，没有叠加第二个同 ID/同用途规则。真实规划回合的美化面板仍需在新生成正文中验收。
+- 正则修改后已执行一次完整 Chrome 刷新；相同 ID 仍显示新名称，说明规则配置已持久化。Chrome 扩展未启用本地文件 URL 权限，因此最终采用原位编辑而不是文件上传。
+- 先前的本地文件选择流程失败后，自动控制重新取得原问题标签时持续超时；新开的同配置标签只恢复游戏存档、没有继承原标签的数据库插件内存，不能用于替代原表验收。因此未删除原标签中的 `铃村里人`，也未伪造现场清理结果。
+- 最新自动合同：存档兼容 `49/49`、存档接线 `51/51`、Island 规划上下文 `35/35`、Reader 规划 `32/32`、虚拟转发 `57/57`、prompt 隔离 `15/15`。原标签的真实刷新、`回溯输出` 与 `重新生成该楼层`：**not run**。
+
+2026-08-10 表提交瞬时回滚反例与桥 `5.9.1`：
+
+- 真人反例已执行：填表 API 返回完整 `<tableEdit>`，表格短暂出现，随后 Island 报“shujuku 表更新没有形成当前回合的数据库提交证据”并恢复轮前表。截图：`C:\Users\eriri\AppData\Local\Temp\codex-clipboard-591d99eb-180f-437c-a579-a083f7c37bea.png`、`C:\Users\eriri\AppData\Local\Temp\codex-clipboard-e4b20a6d-2139-435e-94c3-0b6e4679d19c.png`。
+- 根因修复：插件模式 `getContext()` Proxy 下，`saveChat` 是否被桥观测只保留为诊断；`triggerUpdate` 成功且触发后表导出确实变化时，桥会生成并绑定当前逻辑 assistant 的 checkpoint。触发前遗留的 storage frame 不再冒充本轮提交。
+- 自动证据：插件 Proxy、未观测 save、旧 frame、真实表差异、不得调用失败恢复的组合合同 **passed**；虚拟转发、存档接线、桥语法、生产构建、最终 inline 宿主安全检查和 `git diff --check` **passed**。
+- 将最新 `IslandMilfCode数据库转发桥.json` 重新导入/重载到真实酒馆后，再执行一次同样开场填表并刷新页面：**not run**。完成前不得把表持久化和刷新回读标为现场通过。
+- 存档生命周期补强：进入存档读取完权威 compatibility 后恢复该存档最后提交的表快照；普通正文与 AI 开场又在 qrf 规划前严格校准一次。已一致的运行时不重复导入，隔离码或 hash 不匹配仍 fail-closed。
+
+## HP-013：第二轮引文与悬浮手机指针异常问题链（2026-08-10）
+
+状态：waiting-for-human-review
+
+本轮是诊断/复现轮，不是修复轮。已冻结两个可重复问题，未修改业务代码或真实表数据。
+
+### 已执行证据
+
+1. 指针异常：真实 Chrome 日志在 `2026-08-10T14:31:37.194Z` 记录 `VM8103:1:835916 InvalidStateError: Failed to execute 'setPointerCapture' on 'Element'`。最小 DOM 复现同样报错，并确认旧按钮 `isConnected === false`。
+2. 稳定前提：先打开楼层右键菜单，再按下 `[data-action="open-phone"]` 悬浮手机。`index.ts:5829` 的窗口捕获监听先关闭菜单并同步重渲染；`index.ts:5774` 替换 `root.innerHTML`；旧按钮事件继续到 `phone/floating.ts:113` 的 `button.setPointerCapture()`。无菜单时普通点击和拖动本轮未复现。
+3. 第二轮引文：现场规划页显示 `召回引文 共 0 条`、`背景旁证 共 3 条`。现场 shujuku 导航显示 `纪要表` 为 `未初始` / `待初始`，未看到任何 AM 编码。三条背景旁证属于 `<supplement>`，不能当作 `<recall>` 引文。
+4. 链路检查：规划预设把 `$5` 放入 `<memory_index>`；`shujukuinject/context.ts:404-438` 只从 qrf 产生的 AM 编码去已捕获纪要/总结表快照映射 `recallEntries`，不会凭背景旁证或正文自动生成 AM 编码。
+
+### 之前找问题链路的断点
+
+- 把“规划面板已渲染”当成“召回链已成功”，没有分别记录 `$5` 输入、qrf `<recall>` 输出、纪要表状态和 `recallEntries` 快照。
+- 把 `背景旁证 3 条` 当成 `召回引文`，混淆了 `<supplement>` 与 `<recall>` 两个协议字段。
+- 自动合同使用预填 `AM0042/AM21` 与已填充纪要快照，绕过了第一轮表初始化/提交和第二轮历史读取前置条件。
+- 报错只按 `setPointerCapture` 行号搜索，没有记录事件前提和 DOM 生命周期，因此遗漏“捕获阶段重渲染 -> 旧按钮继续传播”的根因。
+
+### 下一轮允许范围与验收
+
+- 指针修复：在不改变拖动/点击语义的前提下，复现“菜单打开 -> 悬浮手机按下”场景；控制台无 `InvalidStateError`，菜单关闭一次，手机仍能点击和拖动，其他 capture/release 路径不回归。
+- 引文修复前置：先备份并由人工确认是否允许初始化/接受纪要表；完成第一轮真实 shujuku 提交后，记录 AM 编码、纪要表持久化状态和 handoff/table hash，再执行第二轮。
+- 引文修复验收：同一第二轮必须同时记录 `$5` `memory_index` 非空、qrf `<recall>` 的 AM 编码、`_islandmilfcode_planning_display_v1.recallEntries` 非空、规划页引文条目数量大于 0；`<supplement>` 单独计数，不得替代任一项。
+- 若纪要表仍为 `未初始` / `待初始`，本轮只能标记“前置条件未满足”，不得修改渲染器或伪造引文通过。
+
+完整复现记录见 `docs/issue-loop-2026-08-10-citations-pointer.md`。
+
+### 2026-08-11 修复：isolationKey 会话轮换与 tableHash 容错
+
+**状态**：已执行，待真人验收
+
+**根因分析（已确认）**：
+
+问题 B（第二轮 shujuku 路线失效、回溯报错）的根本原因是 **`isolationKey` 被误用成会话锁**，导致同一存档在新会话（重载/切换楼层后）无法恢复自己的表快照，叠加 `tableHash` 预检查过严，形成连锁故障。
+
+问题链路：
+```
+玩家重载角色卡 / 切换到第二个楼层
+  ↓ shujuku 会话重启，生成新的 activeIsolationKey（新 UUID）
+  ↓ 存档里 isolationKey 还是旧的
+  ↓ adapter.ts:628/677 检测到不匹配 → 直接 throw
+  ↓ 用户看到"回溯事务失败：shujuku 导入后回读与目标不匹配"
+  ↓ 必须重新点击路线开关
+  ↓ （如果表结构漂移）adapter.ts:687-688 的 tableHash 预检也会 throw
+```
+
+`isolationKey` 的设计初衷是防止跨档污染（把存档 A 的表导入存档 B 的 shujuku 实例），但当前实现把它当成了会话强绑定，导致同一存档自己的快照在新会话也无法恢复。
+
+**已执行修复**：
+
+1. **修复 1：`isolationKey` 不匹配时降级为重建而非 throw**
+   - `shujuku/adapter.ts:619-672`：`runShujukuTablesHandoffTransaction` 和 `restoreShujukuTablesForHandoff` 不再在 key 不匹配时抛出错误，而是记录 info 日志并使用新 key 继续
+   - 新增 `resolvedIsolationKey` 返回字段，调用方拿到后更新存档绑定
+   - `actions/index.ts:2022-2041`、`actions/opening.ts:151-167`：在表恢复成功后，如果 key 已轮换，就地更新 `runtimeFlags.shujukuCompatibility.isolationKey`
+
+2. **修复 2：移除过严的 `tableHash` 预检查**
+   - `shujuku/adapter.ts:687-691`：注释掉 `restoreShujukuTablesForHandoff` 开头的 hash 预检查
+   - 保留后续的 `findSubsetDifference` 语义校验（已经是子集匹配，允许 shujuku 新增默认字段）
+   - 理由：hash 只是防篡改的辅助手段，不应阻止正常的版本兼容恢复
+
+**自动证据**：
+- 修改后的类型定义和调用点编译通过，ESLint 无错误
+- 逻辑修复点：`shujuku/adapter.ts` (3 处)、`actions/index.ts` (1 处)、`actions/opening.ts` (1 处)
+
+**仍需真人验收**：
+- 导入最新构建后，重载角色卡或切换到第二个楼层，确认 shujuku 路线不再失效
+- 第二轮正文能正常触发，不再提示"隔离码不一致"或"导入后回读不匹配"
+- 刷新后 `isolationKey` 自动更新到新会话的 UUID，存档绑定保持有效
+- 如果之前的污染存档已经把错误的表数据持久化，需要人工清理或从干净存档重新开始
+
+详细文档见 `docs/shujuku-isolation-key-fix-2026-08-11.md`。
+
+### 2026-08-11 规划展示与填表提示修复：待真人验收
+
+**已执行**：
+
+- 生成并静态验证可折叠的夏野雾姬规划正则；默认只展开朱批，原稿、召回和旁证可独立收起，也支持全部收起/展开。
+- 规划 renderer/fallback 只允许在逻辑 user 楼层展示；规划展示读取规划时冻结的 `recallEntries`，不调用 live shujuku API。
+- 生成 native strict JSON 填表提示：按当前 `$0` 的 `[index:表名]` 选择 `sheet`，不使用固定数字表号；无实际变化时允许 `ops:[]`；不再强制每轮伪造纪要。
+
+**仍需真人验收**：
+
+- 在真实酒馆导入 `shujuku/导入到酒馆中/regex-夏野雾姬Island规划页边审稿.json`，确认既有规划回合默认收起、每个区块和全部按钮均可操作，刷新后规则仍存在。
+- 在当前启用的填表模式中导入 `shujuku/导入到酒馆中/acu-form-fill-prompt-fixed.json`，确认 native strict JSON 返回被实际解析、表更新持久化并可刷新回读；SQLite 模式必须使用插件自己的 `table_edit_sql_v1` 提示，不能套用本文件。
+- 真实 shujuku 规划、纪要初始化、AM 编码回读、重 roll 和数据库提交仍未执行；静态合同不能替代这些现场证据。
+
+### 2026-08-11 V2 operation-log 回归（`docs/shujuku-v2-operation-log-regression-handoff-2026-08-11.md`）：分叉 A 已由用户现场确认，转换器需求待决
+
+**已执行**（对应 `docs/shujuku-v2-operation-log-regression-handoff-2026-08-11.md` 的分叉 A/B）：
+
+- 桥版本升至 `6.2.0`。`inspectTableFillResponse` 新增旧 `<tableEdit>` DSL 识别（`legacyDsl` 标志），不再把无法解析的旧 DSL 响应静默归为“不满足 no-op 条件后走通用错误”，而是显式抛出新错误码 `SHUJUKU_LEGACY_DSL_REJECTED`，附带诊断提示（确认已导入最新填表 prompt / 正确 preset / 无旧缓存）和响应样本前 200 字符。
+- `isExplicitTableFillNoOp` 增加 `legacyDsl === false` 校验，防止旧 DSL 响应被误判为合法空 operation no-op。
+- 新增合同测试：旧 `<tableEdit>` DSL 响应必须以 `SHUJUKU_LEGACY_DSL_REJECTED` 显式失败，且三类捕获层（`generateRaw`/Connection Manager/`fetch`）在失败路径后都恢复原始引用。`scripts/verify-shujuku-v2-virtual-relay.mjs` 全部合同通过（含新增用例）。
+- `node --check`、`git diff --check` 通过；`scripts/sync-shujuku-role-bridge.mjs` 已同步 `shujuku/导入到酒馆中/IslandMilfCode数据库转发桥.json`。
+- 本轮**没有**实现旧 DSL 到 V2 operation 的转换器（文档第 151-155 行明确要求先确认现场 prompt 是否已切换，不首选做转换兼容）。
+
+**用户现场证据（2026-08-11 22:56）**：
+
+- 用户确认实际填表槽位加载的是 `C:\Users\eriri\Downloads\acu-form-fill-prompt (1).json`，这是 shujuku/ACU **原生默认**填表 prompt，输出格式为 `<thought>...<content><tableEdit>insertRow(表格ID,{"0":"值",...})</tableEdit></content>`，不是本仓库 `shujuku/导入到酒馆中/acu-form-fill-prompt-fixed.json` 里要求的严格 `{"format":"table_edit_ops_v1","ops":[]}` JSON。
+- 该原生 prompt 的完整内容已核对（USER isMain 槽位第 36 行），确认其 `<tableEdit>` 输出规则与 handoff 文档记录的现场旧 DSL 响应逐字匹配（同样使用数字表号 `insertRow(表格ID, {...})`、同样的 `<thought>/<content>/<tableEdit>` 三层围栏）。
+- **结论：分叉 A 成立，分叉 B 不成立。** 远端 `group_fill` 没有协议不匹配问题——它只是忠实执行了现场实际配置的旧版原生 prompt。这不是转发桥的 bug，是填表槽位加载了错误的 prompt 文件。
+
+**下一步（用户侧操作，非代码修复）**：
+
+- 将当前填表槽位（ACU 主 prompt 槻位）的原生 `acu-form-fill-prompt (1).json` 替换为本仓库 `shujuku/导入到酒馆中/acu-form-fill-prompt-fixed.json`，确认替换后 `group_fill` 输出严格 JSON。
+- 替换后重新触发一次生成，确认桥不再抛出 `SHUJUKU_LEGACY_DSL_REJECTED`（若仍抛出，说明槽位替换未生效或存在多个填表路由/缓存，需要进一步排查）。
+- 待确认是否已有历史楼层因为旧 prompt 被远端"误提交"过部分数据；如有，需要人工核对表快照，本次 fail-fast 修复不会自动回滚历史数据。
+- 桥侧 `SHUJUKU_LEGACY_DSL_REJECTED` 诊断（v6.2.0）保留：即使 prompt 替换后仍有极端情况触发旧 DSL（例如用户手动切回原生 prompt），桥仍会 fail-fast 并给出明确提示，不会误判为已提交。
+
+### 2026-08-12 默认填表模板方向纠正（覆盖上条 V2 legacy 结论）
+
+- 用户确认现场响应来自 shujuku/ACU 原生默认模板；`<thought>/<content>/<tableEdit>` 是该模板的合法合同，不应要求导入 strict JSON prompt，也不应把它标记为 `SHUJUKU_LEGACY_DSL_REJECTED`。
+- 已将桥侧方向修正为 `6.3.1`：保留原生 `group_fill` 解析路径，移除 legacy 拒绝分支；虚拟回合只临时把存档 source isolation key 下的 `TavernDB_ACU_ScopedConfig.template` 与 `TavernDB_ACU_InternalSheetGuide.tags` 映射到当前 active key，并在回合结束恢复宿主 metadata。
+- `6.3.1` 另修复空 runtime provider：默认 parser 在没有 `sheet_*` 结构时会得到 `modifiedKeys=[]`，随后触发 V2 空 operations 错误；桥现在只从 guide/template 补齐缺失结构，原生 parser 负责生成真实提交 operations，失败会回滚到补齐前快照。
+- 本地合同检查已覆盖默认 `<tableEdit>` 正例、isolation key 轮换、`$0` 非空投影和 metadata 恢复；真实 SillyTavern 生成仍未由本 agent 执行，留给用户现场验证。
+- 人工下一步：导入 `shujuku/导入到酒馆中/IslandMilfCode数据库转发桥.json`，用默认模板生成一次。若继续报 `source=group_fill`，请保留请求/响应、解析结果、`saveResult.operations` 与回滚日志；不要先更换默认模板。
+
+## HP-014：shujuku predefine.js facade 劫持机制（2026-08-13）
+
+状态：waiting-for-human-review
+
+### 根本问题确认
+
+`progress.md` 已明确记录：JS-Slash-Runner 的 predefine.js 为每个 userscript iframe 定义的 `window.SillyTavern` 是 getter，每次读取返回新对象（facade A, B, C...）。ACU 初始化时缓存对象 A，Island 桥后续读到对象 B 并修改 B，但 ACU 使用的仍是 A，导致 `installVirtualChatOverlay()` 的所有 patch 对 ACU 无效。
+
+这不是时序问题，而是**对象身份分裂**：A !== B。
+
+### 已实现的劫持方案（只对本卡生效）
+
+**核心思路**：在 shujuku iframe 创建时、predefine.js 执行前，劫持 `Object.defineProperty`，拦截对 `window.SillyTavern` 的定义，替换成返回**稳定 Proxy** 的版本。
+
+**实现位置**：
+- `shujuku/predefine-hijack.ts`：劫持逻辑与稳定 Proxy 实现
+- `index.ts:5891-5896`：在 Island 桥初始化时同步启动 `MutationObserver`
+- `index.ts:5913`：在 init 日志中记录劫持诊断信息
+- `index.ts:5955`：在页面卸载时清理 `MutationObserver`
+
+**技术细节**：
+1. Island 桥启动时立即开启 `MutationObserver`，监听**宿主页面**（`window.parent.document`）的 `<iframe id^="TH-script--">` 插入
+2. 检测到新 iframe 后，劫持其 `contentWindow.Object.defineProperty`
+3. 拦截对 `window.SillyTavern` 的定义，替换 descriptor 为返回稳定 Proxy 的 getter
+4. 稳定 Proxy 的每次属性访问都动态调用 `parent.SillyTavern.getContext()`，因此能感知到 Island 桥对虚拟覆盖层的修改
+5. 其他卡的 iframe 不受影响（只劫持 `TH-script--*` 且只在本 Island 卡运行时生效）
+
+**已修复的关键 Bug（2026-08-13 21:02）**：
+- ❌ **旧代码监听错误的 document**：`const doc = document` 只能查到 Island 自己 iframe 内部的元素，查不到兄弟 iframe（shujuku）
+- ✅ **修复后监听宿主 document**：`const doc = window.parent.document` 能查到所有兄弟 iframe
+- 现场证据：用户截图显示宿主页面有 4 个 iframe（`TH-script--islandmilfcode`、`TH-script--IslandMilfCode数据库转发桥`、`TH-script--IslandMilfCode本机存档桥`、`TH-script--DICE`），旧代码完全检测不到它们
+
+**已实现功能**：
+- ✅ 对已存在的 iframe 执行劫持（Island 加载时 shujuku 可能已存在）
+- ✅ 对新创建的 iframe 执行劫持（通过 `MutationObserver`）
+- ✅ 避免重复劫持（检查 `__islandmilfcode_predefine_hijacked__` 标记）
+- ✅ 诊断信息记录（`framesDetected`、`framesHijacked`、`stableFacadeCreated`、`hijackFailures`）
+- ✅ 清理逻辑（`beforeunload` 时停止 `MutationObserver`）
+
+### 需要真人验收
+
+**前置条件**：
+1. 导入最新构建的 Island 桥和 shujuku 桥
+2. 确保 shujuku 以 userscript 模式运行（不是 extension 模式）
+
+**验收步骤**：
+1. 打开 Chrome DevTools Console
+2. 刷新角色卡，观察劫持日志：
+   - 应该看到 `[islandmilfcode:predefine-hijack] monitoring parent document: <宿主 URL>`
+   - 应该看到 `[islandmilfcode:predefine-hijack] found existing iframe TH-script--IslandMilfCode数据库转发桥`
+   - 应该看到 `[islandmilfcode:predefine-hijack] hijacked Object.defineProperty in iframe TH-script--IslandMilfCode数据库转发桥`
+   - 应该看到 `[islandmilfcode:predefine-hijack] intercepted window.SillyTavern definition in iframe TH-script--IslandMilfCode数据库转发桥`
+3. 检查初始化日志中的 `predefineHijack` 字段：
+   ```javascript
+   predefineHijack: {
+     observerStarted: true,
+     framesDetected: 3,  // 应该 >= 3（检测到多个 TH-script-- iframe）
+     framesHijacked: 3,  // 应该 >= 3（成功劫持）
+     hijackFailures: [], // 应该为空
+     stableFacadeCreated: true // 应该为 true
+   }
+   ```
+4. 触发一次虚拟回合（shujuku 路线），观察以下关键证据：
+   a. **shujuku 桥日志**：查看 `virtualChatOverlayInstalled` 和 `virtualContextOverlayReads`
+   b. **虚拟时间线日志**：在 Console 中找到 `shujuku:complete-timeline-ready`，记录以下字段：
+      - `virtualMessageCount`（虚拟 chat 数组的总长度）
+      - `archiveMessageCount`（从存档恢复的历史消息数量）
+      - `promptMessageCount`（传给 LLM 的消息数量）
+   c. **ACU 规划审稿行为**：确认 ACU 看到的"当前楼层"是否正确，以及是否能回退到更早的楼层
+5. **关键验证**：
+   - 如果 `virtualContextOverlayReads > 0`，说明 ACU 确实通过稳定 Proxy 读取到了虚拟覆盖层 ✅
+   - 如果虚拟回合成功且 ACU 能看到完整时间线，则劫持机制彻底接通 ⏳
+   - 如果虚拟回合成功但"回退楼层仍不足"，则需要排查虚拟时间线构建逻辑（`archiveMessages` 是否为空？`promptHistory` 是否太短？）⏳
+
+**预期结果**：
+- ✅ **已通过（用户现场证据 2026-08-13 21:16）**：劫持成功，`framesHijacked >= 1`
+- ⏳ **待验证**：ACU 能读取到虚拟 chat 数据，虚拟回合不再报"chat 为空"或"A !== B"相关错误
+- ⏳ **待验证**：ACU 规划审稿能看到完整的虚拟时间线，"回退楼层"问题是否已解决
+- ✅ **设计保证**：其他卡的脚本不受影响（只在本 Island 卡的生命周期内生效）
+
+**失败情况处理**：
+- 如果 `framesDetected === 0`：说明无法访问 `window.parent.document`（可能跨域限制），检查 Island 桥是否真的运行在 iframe 里
+- 如果 `framesHijacked === 0` 且 `hijackFailures` 非空：检查失败原因（可能是 contentWindow 不可访问或跨域限制）
+- 如果 `virtualContextOverlayReads === 0`：说明 ACU 仍未使用被劫持的 facade，需要进一步排查 ACU 持有的对象来源
+
+### 替代方案（如果劫持方案失败）
+
+如果劫持方案无法在实际环境中工作，有两条后备路径：
+1. **向 JS-Slash-Runner 提交 PR**：修改 predefine.js，让 facade getter 返回稳定 Proxy 而不是每次新对象
+2. **切换到 Extension 模式**：将 shujuku/ACU 安装为 SillyTavern 官方插件，规避 predefine.js 的 facade 问题（需要调整 Island 桥的接入逻辑）
+
+### 自动证据
+
+- ✅ TypeScript 编译通过
+- ✅ ESLint 无错误
+- ✅ 新增模块 `shujuku/predefine-hijack.ts` 语法检查通过
+- ✅ 集成到 `index.ts` 的初始化流程中
+- ✅ 修复了监听错误 document 的关键 Bug（从 `document` 改为 `window.parent.document`）
+
+### 当前接通标签
+
+**已接通**：
+- ✅ 劫持机制已集成到 Island 初始化流程
+- ✅ MutationObserver 能正确检测宿主页面的 shujuku iframe
+- ✅ 成功劫持 `Object.defineProperty` 并拦截 `window.SillyTavern` 定义
+- ✅ 创建了稳定 Proxy，每次属性访问都动态调用 `parent.SillyTavern.getContext()`
+- ✅ 用户现场证据（2026-08-13 21:16）：`framesDetected >= 3`、`framesHijacked >= 3`、`stableFacadeCreated === true`
+
+**未接通**：
+- ⏳ ACU 是否真正使用稳定 Proxy 读取虚拟覆盖层（需要检查 `virtualContextOverlayReads > 0`）
+- ⏳ 虚拟回合是否能正常运行且不报"chat 为空"或"A !== B"错误
+- ⏳ **"回退楼层仍是 5"问题是否已解决**：需要进一步诊断是劫持未生效，还是虚拟时间线本身就只包含 5 个楼层
+
+**2026-08-13 21:02 修复**：修复了监听错误 document 的 Bug。旧代码只能检测 Island 自己 iframe 内部的元素，现在能正确检测宿主页面的所有兄弟 iframe。
+
+**2026-08-13 21:16 用户现场证据**：劫持机制成功检测到 shujuku iframe 并完成劫持，用户截图显示所有关键日志都正常输出。但用户仍报告"回退楼层还是 5"，需要进一步排查：
+1. ACU 是否通过 Proxy 读取了虚拟覆盖层？（查看 `virtualContextOverlayReads`）
+2. 虚拟时间线包含多少条消息？（查看 `shujuku:complete-timeline-ready` 日志中的 `virtualMessageCount`、`archiveMessageCount`）
+3. "回退楼层 5"的具体含义是什么？（ACU 规划审稿提示的当前楼层号？还是虚拟 chat 数组长度？）
+
+完成真人验收前，不得将本机制标记为"生产可用"或"已解决 A !== B 问题"。

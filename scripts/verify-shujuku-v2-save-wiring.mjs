@@ -26,6 +26,11 @@ function section(source, start, end) {
 const commit = section(archive, 'export function commitRuntimeArchive(', 'export function migrateLegacySaveToArchive(');
 assert.match(commit, /mergeRuntimeCompatibility[\s\S]*putHashed\('compatibility'[\s\S]*compatibilityHash/,
   'contract: runtime commits publish the current compatibility checkpoint');
+assert.match(commit, /currentHandoff\.handoffId !== previousHandoffId[\s\S]*shujukuHandoffBaseline[\s\S]*stateWithCompatibility/,
+  'contract: a new handoff exposes its captured table hash to the pending anchor floor writer');
+const floorCompatibility = section(archive, 'export function decideArchiveFloorBeforeTurnShujukuHash(', 'function messagesToFloors(');
+assert.match(floorCompatibility, /handoffBaseline\?\.userMessageId === input\.userMessageId[\s\S]*kind: 'set'/,
+  'contract: a handoff anchor receives the new handoff table before-turn checkpoint even when persistence coalesces assistant completion');
 
 const publish = section(archive, 'async function publish(', 'export function commitRuntimeArchive(');
 assert.match(publish, /resolvedCompatibility !== undefined[\s\S]*applyArchiveShujukuCompatibilityToRuntimeFlags\(gameState\.runtimeFlags, resolvedCompatibility\?\.shujuku\)/,
@@ -74,41 +79,98 @@ assert(baselineGuard >= 0 && timelineRollback >= 0 && baselineGuard < timelineRo
 const timeAuthorityGuard = rollbackReader.indexOf('!hasAuthoritativeFloorStatusData(floor.beforeTurnState)');
 assert(timeAuthorityGuard >= 0 && timeAuthorityGuard < timelineRollback,
   'contract: automatic reroll rejects a fabricated time baseline before timeline mutation');
+assert.match(rollbackReader, /getArchiveFloorBeforeTurnShujukuBaseline\([\s\S]*handoffId/,
+  'contract: checkpoint lookup receives the active handoff identity instead of classifying by cutoff alone');
+
+const plainReaderRollback = section(index, 'async function rollbackToReaderInput(', 'function isV07RouteChoiceBlockingMainText(');
+assert.match(plainReaderRollback, /rollbackReaderInputToCheckpoint/,
+  'contract: the plain reader rollback restores the target turn shujuku table checkpoint');
+assert.doesNotMatch(plainReaderRollback, /rollbackReaderInputWithArchive/,
+  'contract: the plain reader rollback cannot bypass the shared table checkpoint transaction');
+
+const sharedReaderRollback = section(index, 'async function rollbackReaderInputToCheckpoint(', 'async function rerunReaderMessage(');
+assert.match(sharedReaderRollback, /captureShujukuRerollBinding[\s\S]*prepareShujukuBaseline[\s\S]*commitShujukuRerollCheckpoint/,
+  'contract: the shared rollback path binds the live shujuku route and restores its archived table snapshot');
+assert.match(sharedReaderRollback, /shujukuHandoffId:\s*shujukuRerollBinding\.handoff\.handoffId/,
+  'contract: checkpoint lookup receives the active handoff identity so a pending anchor user can outrank the raw cutoff boundary');
+assert.match(sharedReaderRollback, /baseline\.kind === 'missing_post_handoff'[\s\S]*return null/,
+  'contract: a missing post-handoff table checkpoint fails closed before timeline mutation');
+assert.match(sharedReaderRollback, /baseline\.kind === 'pre_handoff'[\s\S]*rollbackRoute = 'island'[\s\S]*commitArchive\(null\)/,
+  'contract: pre-handoff rollback atomically restores the historical Island route');
+assert.doesNotMatch(sharedReaderRollback, /原生模式不再根据本地记忆库构造历史表/,
+  'contract: pre-handoff rollback no longer stops before restoring the historical time baseline');
+
+const completedFloorRollback = section(index, 'async function rollbackAfterReaderFloor(', 'function growComposerInput(');
+assert.match(completedFloorRollback, /getArchiveFloorAfterTurnShujukuBaseline[\s\S]*commitShujukuRerollCheckpoint/,
+  'contract: keeping a completed floor restores its after-turn shujuku checkpoint before discarding the future');
+assert.match(completedFloorRollback, /captureReaderRollbackState[\s\S]*restoreReaderRollbackState/,
+  'contract: a failed completed-floor table/archive transaction restores the local Reader state');
 
 const rerunReader = section(index, 'async function rerunReaderMessage(', 'async function deleteReaderFloor(');
+assert.match(rerunReader, /rollbackReaderInputToCheckpoint/,
+  'contract: regenerate uses the same target-turn table restore as plain rollback');
 assert.match(rerunReader, /requireAuthoritativeStatusBaseline:\s*true/,
   'contract: reroll requires an authoritative before-turn time snapshot');
-assert.match(rerunReader, /baseline\.kind === 'pre_handoff'[\s\S]*rerollRoute = 'island'[\s\S]*commitArchive\(null\)/,
-  'contract: pre-handoff reroll atomically restores the historical Island route');
-assert.doesNotMatch(rerunReader, /原生模式不再根据本地记忆库构造历史表/,
-  'contract: pre-handoff reroll no longer stops before restoring the historical time baseline');
 
 const virtualTurn = section(adapter, 'export async function runShujukuVirtualTurn(', 'function findSubsetDifference(');
 assert.match(virtualTurn, /generateVirtual[\s\S]*VIRTUAL_TURN_TIMEOUT_MS/,
   'contract: shujuku narrative turns use the virtual relay endpoint');
 assert.match(virtualTurn, /唯一当前 user[\s\S]*消息末尾/,
   'contract: virtual turns bind exactly one current user at the end of the timeline');
-const normalizeVirtualTurn = section(adapter, 'async function normalizeVirtualTurnResult(', '/** Run one shujuku-owned');
-assert.doesNotMatch(normalizeVirtualTurn, /未完成规划与数据库提交/,
-  'contract: missing planning or database evidence cannot discard a returned narrative body');
-assert.doesNotMatch(normalizeVirtualTurn, /(?:planningObserved|databaseCommitted)\s*!==\s*true/,
-  'contract: adapter normalization keeps qrf/table booleans as independent evidence states');
+assert.match(virtualTurn, /normalizeVirtualPlanningProgress[\s\S]*callbacks\.onPlanningReady/,
+  'contract: the adapter exposes the bridge planning checkpoint before the final turn result');
+assert.match(adapter, /PROGRESS_ACK_EVENT[\s\S]*await onProgress[\s\S]*eventEmit\(PROGRESS_ACK_EVENT/,
+  'contract: the adapter returns an awaited projection acknowledgement to the bridge');
+const planningRender = section(actions, 'shujukuTurnResult = await runShujukuVirtualTurn(', 'rawResult = shujukuTurnResult.rawText;');
+assert.match(planningRender, /onPlanningReady:\s*async[\s\S]*currentUser\.plannedText[\s\S]*ctx\.persistConversation\(\)[\s\S]*ctx\.render\(\)[\s\S]*bodyContext/,
+  'contract: the current logical user persists and renders planning before returning the body authority appendix');
+const normalizeVirtualTurn = section(adapter, 'async function normalizeVirtualTurnResult(', 'function normalizeVirtualPlanningProgress(');
+assert.match(normalizeVirtualTurn, /planningObserved\s*!==\s*true[\s\S]*databaseCommitted\s*!==\s*true/,
+  'contract: a shujuku turn is incomplete until planning and database commit are both proven');
 const shujukuLogicalCommit = section(actions, '// v2 keeps the logical assistant in #0 state', '} else {');
-assert.doesNotMatch(shujukuLogicalCommit, /未提供规划或数据库提交证据/,
-  'contract: the main flow accepts a complete shujuku narrative independently of qrf/table status');
-assert.doesNotMatch(shujukuLogicalCommit, /!\s*shujukuTurnResult\.(?:planningObserved|databaseCommitted)/,
-  'contract: qrf/table booleans cannot re-enter the narrative acceptance gate');
+assert.match(planningRender, /!shujukuTurnResult\.planningObserved[\s\S]*!shujukuTurnResult\.databaseCommitted/,
+  'contract: the logical assistant cannot complete while planning or table commit is missing');
 assert.match(shujukuLogicalCommit, /databaseCommitted[\s\S]*tableSnapshot/,
   'contract: only a verified database commit advances the authoritative table snapshot');
+const scenePreflight = section(actions, 'let scenePresence: ScenePresence | null = null;', 'syncSchoolCalendarState({');
+assert.doesNotMatch(scenePreflight, /narrativeRoute === 'shujuku'/,
+  'contract: shujuku does not duplicate Island preflight before its own planning authority runs');
+assert.match(planningRender, /buildIslandBodyContextFromPlanning[\s\S]*scenePresence\s*=[\s\S]*bodyContext/,
+  'contract: selected role-0 cards and current plot are derived from committed shujuku planning for the final body');
+assert.match(actions, /cancelShujukuVirtualTurn\(generationId\)/,
+  'contract: player cancellation invalidates the matching bridge generation instead of only dropping local UI state');
 assert.match(render, /qrf_plot[\s\S]*qrf_plot_tasks[\s\S]*qrf_plot_preset[\s\S]*reader-shujuku-plan/,
   'contract: the reader projects this turn qrf fields onto its logical user floor');
+const planningProjection = section(render, 'const SHUJUKU_PLANNING_SECTIONS', 'function renderIllustrationFigures(');
+assert.match(planningProjection, /kirihime_review/,
+  'contract: Kirihime review remains visible when Tavern regex formatting is unavailable');
+assert.match(planningProjection, /以下是夏野雾姬规划B64:[\s\S]*formatAsTavernRegexedString\(regexInput,\s*'user_input',\s*'display',\s*\{ depth: 0 \}\)/,
+  'contract: the reader calls the dedicated Kirihime display regex through Tavern Helper formatting');
+assert.match(planningProjection, /regexed\.trim\(\) === regexInput\.trim\(\)[\s\S]*return ''/,
+  'contract: an unchanged formatter result falls back instead of displaying raw planning tags');
+assert.doesNotMatch(planningProjection, /globalThis[\s\S]*formatAsTavernRegexedString/,
+  'contract: planning rendering does not look for the formatter on the isolated #0 iframe global');
 const restoreStart = adapter.indexOf('export async function restoreShujukuTablesForHandoff(');
 assert.notEqual(restoreStart, -1, 'contract fixture missing: restoreShujukuTablesForHandoff');
 const restoreTables = adapter.slice(restoreStart);
 assert.doesNotMatch(restoreTables, /current\.tableHash\s*!==\s*snapshot\.tableHash/,
   'contract: restore accepts additive normalization by the global CDN');
-assert.match(restoreTables, /findSubsetDifference\(snapshot\.tables, current\.tables\)/,
+assert.match(restoreTables, /beforeRestore[\s\S]*findSubsetDifference\(durableExpected, beforeRestore\.tables, PROJECTION_V1\)[\s\S]*if \(!existingDifference\) return/,
+  'contract: an already hydrated runtime is not rewritten before every planning turn');
+assert.match(restoreTables, /findSubsetDifference\(durableExpected, current\.tables, PROJECTION_V1\)/,
   'contract: restore still rejects changes to every archived field, array, and cell');
+
+const enterSave = section(index, 'async function enterSave(', 'async function returnToTitle(');
+assert.match(index, /async function restoreLoadedShujukuTableSnapshot\([\s\S]*inspectCommittedShujukuBinding[\s\S]*restoreShujukuTablesForHandoff/,
+  'contract: loading a save hydrates its committed table snapshot into the shujuku runtime');
+assert.match(enterSave, /loadArchiveAuxiliaryState[\s\S]*restoreLoadedShujukuTableSnapshot/,
+  'contract: save hydration waits for the authoritative archive compatibility block');
+const shujukuMainTurn = section(actions, "let shujukuTurnResult: Awaited<ReturnType<typeof runShujukuVirtualTurn>>", "recordSubmissionDebug('submit:generate-returned'");
+assert.match(shujukuMainTurn, /restoreShujukuTablesForHandoff[\s\S]*runShujukuVirtualTurn/,
+  'contract: every shujuku正文 turn restores the saved table authority before qrf planning');
+const openingVirtualTurn = section(opening, "let shujukuTurnResult: Awaited<ReturnType<typeof runShujukuVirtualTurn>>", "recordGenerationDebug(ctx, 'opening:generate-returned'");
+assert.match(openingVirtualTurn, /restoreShujukuTablesForHandoff[\s\S]*runShujukuVirtualTurn/,
+  'contract: an AI opening restores the saved table authority before qrf planning');
 
 const routeToggle = section(index, '[data-field="shujuku-route-enabled"]', '[data-action="manual-save"]');
 assert.match(routeToggle, /previousIsolationKey[\s\S]*activeIsolationKey \|\| previousIsolationKey/,
@@ -140,4 +202,4 @@ assert.match(routeToggle, /shujuku 未返回可持久化的轮前表快照，已
 assert.match(routeToggle, /routeStatePersisted[\s\S]*previousHandoff[\s\S]*previousTableSnapshot[\s\S]*已恢复切换前状态/,
   'contract: a failed toggle save restores the prior in-memory binding');
 
-console.info('[shujuku-v2-save-wiring] 36 contracts passed');
+console.info('[shujuku-v2-save-wiring] 59 contracts passed');
