@@ -14,7 +14,8 @@ export type PhoneRoute =
   | 'app:music'
   | 'app:drawing'
   | 'app:deepseek-web'
-  | 'app:settings';
+  | 'app:settings'
+  | 'app:message-styles';
 
 export const PHONE_THEME_CHARACTER_IDS = ['megumi', 'eriri', 'utaha', 'izumi', 'michiru'] as const;
 
@@ -214,3 +215,25 @@ export type MusicPlayerState = {
   duration: number;
   search: MusicSearchState;
 };
+
+/** 全局消息文字样式配置 */
+export type GlobalMessageStyleConfig = {
+  fontColor: string;      // 字体颜色（惠管）
+  fontSize: number;       // 字体大小（英梨梨管）
+  lineHeight: number;     // 行高（诗羽管）
+  fontFamily: string;     // 字体（美智留管）
+};
+
+/** 美智留管理的可选字体列表 */
+export const MESSAGE_FONT_OPTIONS = [
+  { value: 'SimSun', label: '宋体' },
+  { value: 'Microsoft YaHei', label: '微软雅黑' },
+  { value: 'SimHei', label: '黑体' },
+  { value: 'KaiTi', label: '楷体' },
+  { value: 'DengXian', label: '等线' },
+  { value: 'FangSong', label: '仿宋' },
+  { value: 'YouYuan', label: '幼圆' },
+  { value: 'STXihei', label: '华文细黑' },
+  { value: 'LiSu', label: '隶书' },
+  { value: 'FZShuTi', label: '方正舒体' },
+] as const;
