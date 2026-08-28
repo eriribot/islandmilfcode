@@ -1,4 +1,9 @@
 import type { StatusData, TargetStatus } from './types';
+import {
+  isV07RouteInvariantEvent,
+  SAE_07_EPILOGUE_EVENT_ID,
+  V07_EPILOGUE_WINDOW,
+} from './plot-state-machine/v07';
 
 export const SAE_03_6 = 'SAE_03-6';
 export const SAE_03_7A = 'SAE_03-7A';
@@ -11,6 +16,7 @@ const SAE_04_2_DATE = '2012-09-24';
 export const SAE_05_2A = 'SAE_05-2A';
 export const SAE_05_2B = 'SAE_05-2B';
 export const SAE_05_3 = 'SAE_05-3';
+export const SAE_07_9 = 'SAE_07-9';
 
 export type Sae0307Route = typeof SAE_03_7A | typeof SAE_03_7B | typeof SAE_03_8;
 export type Sae0402Route = typeof SAE_04_2A | typeof SAE_04_2B;
@@ -130,6 +136,10 @@ function validateSae0402DateTime(statusData: StatusData | null | undefined): boo
 export function isPlotEventVisibleByRoute(eventId: string, statusData: StatusData | null | undefined) {
   if (!statusData) return true;
 
+  if (isV07RouteInvariantEvent(eventId)) {
+    return isPlotEventAllowedByRoute(eventId, statusData);
+  }
+
   if (isSae0307BranchId(eventId) || eventId === SAE_03_8) {
     if (statusData.world.currentMainEventId === SAE_03_6) return true;
     return isPlotEventAllowedByRoute(eventId, statusData);
@@ -164,6 +174,17 @@ export function isPlotEventAllowedByRoute(eventId: string, statusData: StatusDat
   if (!statusData) return true;
 
   const currentId = statusData.world.currentMainEventId ?? '';
+  if (isV07RouteInvariantEvent(eventId)) {
+    if (eventId !== SAE_07_EPILOGUE_EVENT_ID) return true;
+    if (currentId === SAE_07_EPILOGUE_EVENT_ID) return true;
+
+    const currentDate = getDatePart(statusData.world.currentTime);
+    return (
+      currentDate >= V07_EPILOGUE_WINDOW.start &&
+      isFinishedMainEventStatus(statusData.world.mainEvents?.[SAE_07_9])
+    );
+  }
+
   if (
     eventId === currentId &&
     !isSae0307BranchId(eventId) &&

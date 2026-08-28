@@ -1,5 +1,9 @@
 import type { PlayerProfile, TargetStatus } from '../types';
 import { isFinishedMainEventStatus } from '../plot-routing';
+import {
+  SAE_07_EPILOGUE_EVENT_ID,
+  V07_EPILOGUE_WINDOW,
+} from '../plot-state-machine/v07';
 import { CLASS_SPLIT_DATE, TOYOGASAKI_2013_SCHOOL_YEAR_DATE, UTAHA_GRADUATION_DATE } from './constants';
 import { buildSchoolRelationGuardLine } from './relationship-guards';
 import { resolvePlayerSchoolIdentity, resolveTargetSchoolIdentity, type ResolvedSchoolIdentity } from './identity-resolver';
@@ -27,6 +31,16 @@ export function shouldInjectSae078GraduationCeremony(input: SchoolCalendarFactIn
     input.currentMainEventId === SAE_07_8_EVENT_ID &&
     !isFinishedMainEventStatus(input.mainEvents?.[SAE_07_8_EVENT_ID]) &&
     (input.eventTriggerCounts?.[SAE_07_8_EVENT_ID] ?? 0) === 0
+  );
+}
+
+export function shouldInjectSae0710Epilogue(input: SchoolCalendarFactInput): boolean {
+  const date = getDatePart(input.currentTime);
+  return (
+    date >= V07_EPILOGUE_WINDOW.start &&
+    date <= V07_EPILOGUE_WINDOW.end &&
+    input.currentMainEventId === SAE_07_EPILOGUE_EVENT_ID &&
+    !isFinishedMainEventStatus(input.mainEvents?.[SAE_07_EPILOGUE_EVENT_ID])
   );
 }
 
@@ -70,6 +84,27 @@ export function buildSchoolCalendarFactLines(input: SchoolCalendarFactInput): st
 
   if (date >= TOYOGASAKI_2013_SCHOOL_YEAR_DATE) {
     lines.push('- School calendar: after the 2013-04 new school year, Toyogasaki students must use their resolved current grade, not stale second-year class text.');
+  }
+
+  if (shouldInjectSae0710Epilogue(input)) {
+    lines.push(
+      '- School calendar: SAE_07-10 is the route-invariant V07 epilogue. It must remain available after stay, solo, or akane; the chosen route may change wording and affiliations, but cannot skip this event.',
+    );
+
+    if (date === V07_EPILOGUE_WINDOW.start) {
+      lines.push(
+        '- School calendar: today is Saturday 2013-04-06. The Tokyo Station farewell reaches platform 19 at 09:53 for the 10:00 westbound Tokaido Shinkansen; Utaha is already a graduate, while Eriri remains a Toyogasaki third-year.',
+      );
+    }
+
+    if (date === V07_EPILOGUE_WINDOW.end) {
+      lines.push(
+        '- School calendar: today is the runtime opening-ceremony day (2013-04-08). Use Megumi = Toyogasaki 3-A, Eriri = Toyogasaki 3-F, Izumi = Toyogasaki 1-C; resolve User from the player profile and never force User into a canon class.',
+      );
+      lines.push(
+        '- School calendar: Michiru remains at her own school in third year. Her same-class scene with Tokino is external to Toyogasaki, and Ranko leaving icy tail is only a risk, not a completed fact.',
+      );
+    }
   }
 
   const playerIdentity = resolvePlayerSchoolIdentity(input.playerProfile, input.currentTime);

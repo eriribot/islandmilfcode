@@ -4,6 +4,7 @@ import { buildCharacterDataImportPrompt, stripCharacterDataImportText } from './
 import { buildImageGenerationPrompt, stripImageGenerationTags } from './plugins/image-generation';
 import { buildSaenaiWorldStateFactLines } from './saenai-world-facts';
 import { resolveTargetSchoolIdentity } from './school-calendar';
+import { buildV07LastPromptInjection } from './v07last';
 import {
   getCharacterAnchorGuidance,
   getRelationshipAddressGuidance,
@@ -1531,6 +1532,13 @@ export function buildPrompt(
     : '';
   const mainEventsContext = usesIslandPlanner ? buildMainEventsContext(statusData) : '';
   const plotContext = usesIslandPlanner ? buildCurrentPlotContext(statusData, options?.plotLibrary) : '';
+  const v07LastContext = usesIslandPlanner
+    ? buildV07LastPromptInjection({
+        currentMainEventId: statusData.world.currentMainEventId,
+        plotLibrary: options?.plotLibrary,
+        memoryDB: options?.memoryDB,
+      })
+    : '';
   const summaryMessages = getSummaryMessages(uiMessages);
   const messageStartIndex = Math.max(0, Math.floor(Number(options?.messageStartIndex) || 0));
   // 取 lastSummarizedIndex 和「可摘要楼层数 - 保留窗口」中较小的那个，
@@ -1657,6 +1665,7 @@ export function buildPrompt(
     buildImageGenerationPrompt(options?.drawingSettings),
     gameDevelopmentTurnGuidance,
     plotContext,
+    v07LastContext,
     summaryContext,
     conversationHistory,
     cleanUserInput && !options?.suppressUserInputLine

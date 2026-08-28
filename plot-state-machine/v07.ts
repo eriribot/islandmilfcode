@@ -1,5 +1,19 @@
 import type { PlotMachineDefinition } from './types';
 
+export const SAE_07_EPILOGUE_EVENT_ID = 'SAE_07-10';
+export const V07_EPILOGUE_WINDOW = {
+  start: '2013-04-06',
+  end: '2013-04-08',
+} as const;
+
+// 卷七终章承接已经确认的路线，但不属于任何一个路线家族的专属奖励。
+// stay / solo / akane 只改变送别与新学期对白，不得阻止终章进入。
+export const V07_ROUTE_INVARIANT_EVENT_IDS = [SAE_07_EPILOGUE_EVENT_ID] as const;
+
+export function isV07RouteInvariantEvent(eventId: string): boolean {
+  return V07_ROUTE_INVARIANT_EVENT_IDS.some(candidate => candidate === eventId);
+}
+
 export const V07_PLOT_MACHINE: PlotMachineDefinition = {
   id: 'v07',
   targetId: 'route:v07',
@@ -11,11 +25,11 @@ export const V07_PLOT_MACHINE: PlotMachineDefinition = {
     start: '2013-02-08',
     end: '2013-03-03',
   },
-  // 中文注释：legacy 窗口只保留给尚未迁移的 preview/合同脚本显示与断言。
-  // 正式 DDL 不读取它，也没有 2013-03-31 上界；唯一权威是 SAE_07-8 正常终态进入 statusData。
+  // 中文注释：legacy 窗口只保留给尚未迁移的 preview 显示。
+  // 正式 DDL 不读取它；这里覆盖到 04-08，只为让路线确认后的通用终章仍处于 V07 可见范围。
   promptWindow: {
     start: '2013-03-04',
-    end: '2013-03-31',
+    end: V07_EPILOGUE_WINDOW.end,
   },
   choiceStorageKey: 'plotRoute.v07.choice',
   routes: [

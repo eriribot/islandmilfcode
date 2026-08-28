@@ -1,0 +1,445 @@
+{
+  "schemaVersion": 2,
+  "episode": {
+    "series": "路人女主的养成方法",
+    "number": 9,
+    "sourceTitle": "第七卷 6.5章与第7章",
+    "targetTitle": "所以说，离开社团和重新开始怎么会挤在同一个春天里？"
+  },
+  "sources": [
+    {
+      "id": "user-v07-ch6_5-transcript",
+      "kind": "direct-frame",
+      "location": "conversation:user-request-2026-08-27",
+      "supports": "惠到泽村家质问英梨梨为何让诗羽传达离队，并在承认自己曾离开后强调不会再退出；对话以惠哭着说英梨梨弄错了收束。"
+    },
+    {
+      "id": "desktop-v07-ch7-mails",
+      "kind": "direct-frame",
+      "location": "C:/Users/weijunxiang/Desktop/新建 文本文档.txt#L1-L229",
+      "supports": "三封邮件在三月某个星期六依次标记03:21、07:05、17:38；内容包括诗羽对引荐朱音的说明、新版包装封面、柏木英理复活与英梨梨正式离队。"
+    },
+    {
+      "id": "desktop-v07-ch7-spring",
+      "kind": "direct-frame",
+      "location": "C:/Users/weijunxiang/Desktop/新建 文本文档.txt#L233-L695",
+      "supports": "伦也与伊织的春假会面、伊织和出海退出rouge en rouge、竞争论、侦探坡白帽重逢、重启社团与克制陪伴。"
+    },
+    {
+      "id": "project-v07-current-authority",
+      "kind": "project-authority",
+      "location": "剧情第七卷.json#SAE_07-7,SAE_07-8",
+      "supports": "User是当前企划承接者；惠已经回到共同企划与副代表位置；英梨梨恢复作画；V07路线选择发生在SAE_07-8结束后。"
+    },
+    {
+      "id": "project-v07-route-gate",
+      "kind": "project-authority",
+      "location": "plot-state-machine/choice.ts#isV07RouteChoiceRequired",
+      "supports": "SAE_07-8正式结束且当前事件清空后，玩家必须亲自确认V07路线，后续正文不得绕过该选择。"
+    },
+    {
+      "id": "runtime-date-inference",
+      "kind": "inference",
+      "location": "剧情第七卷.json#时间范围",
+      "supports": "原文只给出三月某个星期六与毕业典礼后的春假，运行时用2013-03-05至2013-03-31承载合并事件。"
+    }
+  ],
+  "roleMap": [
+    {
+      "original": "安艺伦也",
+      "storyFunction": "英梨梨离队邮件的收件人与旧企划责任承受者",
+      "target": "安艺伦也",
+      "inherit": [
+        "接收三封邮件",
+        "看见新版封面",
+        "承认原社团失去核心创作者"
+      ],
+      "exclude": [
+        "与女角色的亲密收益",
+        "替英梨梨取消离队"
+      ]
+    },
+    {
+      "original": "安艺伦也",
+      "storyFunction": "与伊织谈失败、竞争和是否继续经营社团",
+      "target": "安艺伦也",
+      "inherit": [
+        "咖啡店会面",
+        "车站竞争论",
+        "旧社团责任"
+      ],
+      "exclude": [
+        "User的路线选择权",
+        "对出海去向的决定权"
+      ]
+    },
+    {
+      "original": "安艺伦也",
+      "storyFunction": "侦探坡上的企划重启、惠回归确认与情绪释放",
+      "target": "User",
+      "inherit": [
+        "看见白帽短发的惠主动等待",
+        "确认继续创作",
+        "在克制陪伴中重新迈步"
+      ],
+      "exclude": [
+        "安艺伦也的固定恋爱历史",
+        "User的固定感情与同意",
+        "重复SAE_07-7的首次招募"
+      ]
+    },
+    {
+      "original": "加藤惠",
+      "storyFunction": "质问英梨梨并在坡道主动回来承担企划",
+      "target": "加藤惠",
+      "inherit": [
+        "泽村家质问",
+        "白帽短发造型",
+        "主动等待",
+        "不包办对方情绪"
+      ],
+      "exclude": [
+        "自动原谅英梨梨",
+        "自动加入任何未确认路线"
+      ]
+    },
+    {
+      "original": "泽村·斯宾塞·英梨梨",
+      "storyFunction": "自主决定离队、完成封面并承担伤害",
+      "target": "泽村·斯宾塞·英梨梨",
+      "inherit": [
+        "离队决定",
+        "三封邮件",
+        "柏木英理复活",
+        "向惠道歉"
+      ],
+      "exclude": [
+        "被诗羽诱导离队",
+        "由朱音赐予才能"
+      ]
+    },
+    {
+      "original": "霞之丘诗羽",
+      "storyFunction": "引荐朱音、保护英梨梨并说明挽留代价",
+      "target": "霞之丘诗羽",
+      "inherit": [
+        "名片责任",
+        "保护英梨梨",
+        "对柏木英理未来的支持"
+      ],
+      "exclude": [
+        "替英梨梨做离队决定",
+        "把User排除出玩家路线"
+      ]
+    }
+  ],
+  "playerAuthority": {
+    "userRole": "当前V07路线中由玩家控制的企划承接者与侦探坡场景中心",
+    "fixed": [
+      "SAE_07-7已经邀请惠回到共同企划位置",
+      "SAE_07-9开始前玩家已经确认V07路线",
+      "User不在惠与英梨梨的泽村家对话现场"
+    ],
+    "reserved": [
+      "User的感情与恋爱结论",
+      "User如何回应离队",
+      "惠是否加入单飞或朱音项目",
+      "英梨梨与诗羽是否在后续回归",
+      "游戏日期、行动点与事件完成状态"
+    ]
+  },
+  "counterevidence": [
+    {
+      "id": "canon-slope-recipient",
+      "location": "C:/Users/weijunxiang/Desktop/新建 文本文档.txt#L419-L695",
+      "staleClaim": "侦探坡的等待、重启邀请和情绪释放全部属于安艺伦也。",
+      "resolution": "当前项目已把企划与路线中心交给User，因此只把坡道故事功能映射给User；伦也继续承担邮件收件人与伊织对谈功能。"
+    },
+    {
+      "id": "duplicate-return",
+      "location": "剧情第七卷.json#SAE_07-7",
+      "staleClaim": "侦探坡仍是惠第一次答应回到社团。",
+      "resolution": "SAE_07-7已经完成共同企划与副代表邀请；坡道改为离队冲击后的主动确认，禁止重复招募。"
+    },
+    {
+      "id": "sae078-direct-successor",
+      "location": "actions/index.ts#sanitizeProgressAgainstPlotLibrary",
+      "staleClaim": "SAE_07-8结束后可以不经玩家选择直接自动进入SAE_07-9。",
+      "resolution": "保留V07 DDL闸门；SAE_07-9要求SAE_07-8结束且玩家路线已经确认。"
+    }
+  ],
+  "beats": [
+    {
+      "id": "v07.09.megumi-confronts-eriri",
+      "summary": "惠到泽村家追问英梨梨为何把离队说明交给诗羽，并指出她明知伙伴会受伤。",
+      "status": "confirmed",
+      "sourceRefs": [
+        "user-v07-ch6_5-transcript"
+      ],
+      "causalOwners": [
+        "惠主动登门与追问",
+        "英梨梨自己承担离队选择"
+      ]
+    },
+    {
+      "id": "v07.09.friendship-left-open",
+      "summary": "惠承认自己曾离开但已经回来，哭着说英梨梨弄错了；两人没有在现场和解。",
+      "status": "confirmed",
+      "sourceRefs": [
+        "user-v07-ch6_5-transcript"
+      ]
+    },
+    {
+      "id": "v07.09.eriri-owns-decision",
+      "summary": "03:21，英梨梨用第一封邮件把离队责任拿回自己，明确诗羽只是被拖下水并保护她。",
+      "status": "confirmed",
+      "sourceRefs": [
+        "desktop-v07-ch7-mails"
+      ],
+      "causalOwners": [
+        "英梨梨决定离队",
+        "诗羽保护英梨梨"
+      ]
+    },
+    {
+      "id": "v07.09.eriri-reborn",
+      "summary": "07:05，朱音的否定激起英梨梨的不服输，她亲手完成超越此前水准的新版封面。",
+      "status": "confirmed",
+      "sourceRefs": [
+        "desktop-v07-ch7-mails"
+      ],
+      "causalOwners": [
+        "朱音施加刺激",
+        "英梨梨完成作品与复活"
+      ]
+    },
+    {
+      "id": "v07.09.final-letter",
+      "summary": "17:38，英梨梨正式说明旧有保护让她无法继续突破，决定离队并托人向惠道歉。",
+      "status": "confirmed",
+      "sourceRefs": [
+        "desktop-v07-ch7-mails"
+      ]
+    },
+    {
+      "id": "v07.09.iori-exits",
+      "summary": "伊织退出rouge en rouge，出海主动随兄离开；他仍承诺支持出海的愿望。",
+      "status": "confirmed",
+      "sourceRefs": [
+        "desktop-v07-ch7-spring"
+      ],
+      "causalOwners": [
+        "伊织决定退出",
+        "出海决定随兄退出"
+      ]
+    },
+    {
+      "id": "v07.09.competition-remains",
+      "summary": "伊织反驳因一次失败就否定竞争，临别仍希望创作者与社团继续前进。",
+      "status": "confirmed",
+      "sourceRefs": [
+        "desktop-v07-ch7-spring"
+      ]
+    },
+    {
+      "id": "v07.09.slope-wait",
+      "summary": "惠以白帽、白裙和短发重现一年前的坡道形象，并主动等候User。",
+      "status": "adapted",
+      "sourceRefs": [
+        "desktop-v07-ch7-spring",
+        "project-v07-current-authority"
+      ],
+      "adaptation": "保留惠主动等待与视觉锚点，把坡道承接者从原作伦也改为当前User中心路线。",
+      "causalOwners": [
+        "惠先去寻找并选择坡道等候",
+        "User到达并认出她"
+      ]
+    },
+    {
+      "id": "v07.09.project-reaffirmed",
+      "summary": "User与惠确认继续创作及共同企划关系，不重复SAE_07-7已经完成的首次邀请。",
+      "status": "adapted",
+      "sourceRefs": [
+        "desktop-v07-ch7-spring",
+        "project-v07-current-authority"
+      ],
+      "adaptation": "原作的首次邀请改为既有约定在离队冲击后的再次确认，保留惠主动接受而不制造重复事件。",
+      "causalOwners": [
+        "User提出继续创作的具体意愿",
+        "惠确认继续共同承担"
+      ]
+    },
+    {
+      "id": "v07.09.quiet-company",
+      "summary": "User哭到失控，惠不拥抱、不说套话，只陪到他能自己继续走。",
+      "status": "adapted",
+      "sourceRefs": [
+        "desktop-v07-ch7-spring",
+        "project-v07-current-authority"
+      ],
+      "adaptation": "把原作情绪结算转给User，保留惠不包办恢复的边界，不固定恋爱结论。"
+    }
+  ],
+  "mustKeepBeatIds": [
+    "v07.09.megumi-confronts-eriri",
+    "v07.09.friendship-left-open",
+    "v07.09.eriri-owns-decision",
+    "v07.09.eriri-reborn",
+    "v07.09.final-letter",
+    "v07.09.iori-exits",
+    "v07.09.competition-remains",
+    "v07.09.slope-wait",
+    "v07.09.project-reaffirmed",
+    "v07.09.quiet-company"
+  ],
+  "forbidden": [
+    "把6.5章和第7章拆成两个顶层事件",
+    "把英梨梨离队写成诗羽或朱音替她决定",
+    "把柏木英理复活写成朱音赐予才能",
+    "让User旁听或接管惠与英梨梨的泽村家对话",
+    "重复SAE_07-7的首次回归邀请",
+    "绕过或改写玩家已经确认的V07路线",
+    "让惠通过拥抱、替User决定感情或替他完成前进来结算场景",
+    "把出海随伊织退出直接升级为加入User项目"
+  ],
+  "actBoundaries": [
+    {
+      "id": "v07.09.act1-confrontation",
+      "targetDate": "2013-03-05",
+      "actionNumber": 1,
+      "timeCost": "whole-day",
+      "mustKeepBeatIds": [
+        "v07.09.megumi-confronts-eriri",
+        "v07.09.friendship-left-open"
+      ],
+      "start": "SAE_07-8已经结束，V07路线已由玩家确认，惠得知英梨梨准备离队。",
+      "end": "惠哭着离开泽村家，她与英梨梨仍未和解。"
+    },
+    {
+      "id": "v07.09.act2-letters",
+      "targetDate": "2013-03-09",
+      "actionNumber": 1,
+      "timeCost": "whole-day",
+      "mustKeepBeatIds": [
+        "v07.09.eriri-owns-decision",
+        "v07.09.eriri-reborn",
+        "v07.09.final-letter"
+      ],
+      "start": "泽村家对话没有解决离队伤害，英梨梨开始用邮件把决定和理由说清。",
+      "end": "新版封面完成，英梨梨与诗羽离队成为公开事实。"
+    },
+    {
+      "id": "v07.09.act3-spring",
+      "targetDate": "2013-03-30",
+      "actionNumber": 1,
+      "timeCost": "whole-day",
+      "mustKeepBeatIds": [
+        "v07.09.iori-exits",
+        "v07.09.competition-remains",
+        "v07.09.slope-wait",
+        "v07.09.project-reaffirmed",
+        "v07.09.quiet-company"
+      ],
+      "start": "毕业典礼与离队风波已经过去一段时间，春假和樱花同时到来。",
+      "end": "User与惠确认继续创作，惠陪到User能自行迈步，SAE_07-9结束。"
+    }
+  ],
+  "runtimePlan": {
+    "dailyActionBudget": 2,
+    "acts": [
+      {
+        "boundaryId": "v07.09.act1-confrontation",
+        "targetDate": "2013-03-05",
+        "actionNumber": 1,
+        "timeCost": "whole-day"
+      },
+      {
+        "boundaryId": "v07.09.act2-letters",
+        "targetDate": "2013-03-09",
+        "actionNumber": 1,
+        "timeCost": "whole-day"
+      },
+      {
+        "boundaryId": "v07.09.act3-spring",
+        "targetDate": "2013-03-30",
+        "actionNumber": 1,
+        "timeCost": "whole-day"
+      }
+    ]
+  },
+  "semanticCases": [
+    {
+      "id": "v07.09.accept-natural-paraphrase",
+      "type": "positive-paraphrase",
+      "expectedDecision": "accept",
+      "candidate": "惠当面逼英梨梨承认离开会伤人，两人没有和好。英梨梨随后用邮件说明决定由自己作出，并交出复活后的封面。春假里伊织谈完退社和竞争，惠在坡上等User；两人确认还要一起做下去，惠安静陪到他哭完。",
+      "reviewCriteria": [
+        "6.5与第7章都在同一事件中",
+        "角色与因果归属正确",
+        "坡道不重复首次招募",
+        "克制陪伴结尾保留"
+      ]
+    },
+    {
+      "id": "v07.09.reject-missing-confrontation",
+      "type": "negative-missing-anchor",
+      "expectedDecision": "reject",
+      "candidate": "英梨梨发来三封离队邮件并完成封面，伊织谈竞争，惠最后在坡道陪User重启企划。",
+      "reviewCriteria": [
+        "缺少6.5章惠与英梨梨正面对质及未和解结尾"
+      ]
+    },
+    {
+      "id": "v07.09.reject-role-duplication",
+      "type": "role-drift",
+      "expectedDecision": "reject",
+      "candidate": "惠同时在两个坡道分别等待伦也和User，两人都得到同一套第一女主角邀请与情绪陪伴。",
+      "reviewCriteria": [
+        "坡道企划重启功能只能由当前映射中的User承接"
+      ]
+    },
+    {
+      "id": "v07.09.reject-causal-swap",
+      "type": "causal-drift",
+      "expectedDecision": "reject",
+      "candidate": "诗羽劝英梨梨离开，朱音让她恢复才能；伊织要求出海退社，User把惠叫到坡道安慰自己。",
+      "reviewCriteria": [
+        "英梨梨自行决定与完成作品",
+        "出海自行选择随兄退出",
+        "惠主动寻找并等待"
+      ]
+    },
+    {
+      "id": "v07.09.reject-time-collapse",
+      "type": "time-cost-drift",
+      "expectedDecision": "reject",
+      "candidate": "系统在2013-03-04路线选择前一次行动中完成泽村家对话、三封邮件和春假坡道，并重复推进了三次日期。",
+      "reviewCriteria": [
+        "路线选择必须先完成",
+        "三个跨日段落各按whole-day结算一次",
+        "不得在同一行动压平全部时间"
+      ]
+    },
+    {
+      "id": "v07.09.reject-ending-overrun",
+      "type": "ending-overrun",
+      "expectedDecision": "reject",
+      "candidate": "惠陪User走下坡后，众人立刻在第二天重新组队，并直接开始第八卷项目制作。",
+      "reviewCriteria": [
+        "卷七应停在User能重新迈步",
+        "不得擅自注册或展开第八卷"
+      ]
+    },
+    {
+      "id": "v07.09.reject-state-settlement",
+      "type": "state-authority",
+      "expectedDecision": "reject",
+      "candidate": "旁白宣布User选择留下路线、惠恋爱值增加二十、三次行动点全部扣除，并把英梨梨和诗羽自动改为回归社团。",
+      "reviewCriteria": [
+        "正文不得替玩家选线或结算感情",
+        "行动点与事件状态由代码结算",
+        "离队角色不能自动回归"
+      ]
+    }
+  ]
+}
