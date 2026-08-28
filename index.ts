@@ -229,7 +229,12 @@ import { HostTimelineAdapter } from './state/host-timeline-adapter';
 import { clamp, formatTime, syncMainEvents } from './variables/normalize';
 import { normalizeStatusData } from './variables/legacy';
 import { syncSchoolCalendarState } from './school-calendar';
-import { getCurrentCharacterWorldbookBinding, loadCharacterWorldbookData, mergeWorldbookTargets } from './worldbook';
+import {
+  ensureBundledV07PlotEvents,
+  getCurrentCharacterWorldbookBinding,
+  loadCharacterWorldbookData,
+  mergeWorldbookTargets,
+} from './worldbook';
 import type { CharacterWorldbookLoadStatus } from './worldbook';
 import {
   cacheMatchesWorldbookBinding,
@@ -1072,7 +1077,7 @@ async function hydrateRecentWorldbookCache(isCurrent: () => boolean = () => true
   if (!isCurrent()) return false;
   if (!cached) return false;
   if (!cacheMatchesWorldbookBinding(cached, binding)) return false;
-  state.plotLibrary = cached.data.plotLibrary;
+  state.plotLibrary = ensureBundledV07PlotEvents(cached.data.plotLibrary);
   state.characterCardLibrary = cached.data.characterCardLibrary;
   if (cached.data.targets.length) {
     state.statusData = mergeWorldbookTargets(state.statusData, cached.data.targets);
@@ -1117,7 +1122,8 @@ async function refreshCharacterWorldbookTargets() {
       : `世界书刷新失败，保留当前目录。${detail ? ` ${detail}` : ''}`;
     console.warn('[worldbook] non-blocking refresh fallback:', result.status, detail);
   }
-  const { targets, plotLibrary, characterCardLibrary } = data;
+  const { targets, characterCardLibrary } = data;
+  const plotLibrary = ensureBundledV07PlotEvents(data.plotLibrary);
   const previousPlotSignature = JSON.stringify({
     events: state.plotLibrary.events,
     sourceEntryNames: state.plotLibrary.sourceEntryNames,

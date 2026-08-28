@@ -1,3 +1,4 @@
+import bundledV07PlotVolume from '../剧情第七卷.json';
 import type { CharacterCard, CharacterCardLibrary, PlotEventCard, PlotEventSchedule, PlotLibrary, StatusData, TargetStatus, TavernWindow, VolumeWritingProtocol, WorldbookEntry } from '../types';
 import { affinityStage, defaultTarget, obsessionStage } from '../variables/normalize';
 import { buildEducationProfileFromText } from '../school-calendar/education-profile';
@@ -744,6 +745,41 @@ function parsePlotEntry(entry: WorldbookEntry): {
   return { events: [...extra, ...content], protocols };
 }
 
+const BUNDLED_V07_ENTRY: WorldbookEntry = {
+  uid: -70010,
+  name: '内置·剧情第七卷',
+  content: '',
+};
+const BUNDLED_V07_FALLBACK_EVENT_IDS = new Set(['SAE_07-9', 'SAE_07-10']);
+const BUNDLED_V07_FALLBACK_EVENTS = parsePlotEventsFromJson(
+  bundledV07PlotVolume as unknown as Record<string, unknown>,
+  BUNDLED_V07_ENTRY,
+).filter(event => BUNDLED_V07_FALLBACK_EVENT_IDS.has(event.id));
+
+/**
+ * 旧世界书或旧缓存已经提供第七卷时，补上随当前代码发布的新增卷末事件。
+ * 宿主世界书仍是优先来源：同 ID 已存在时绝不覆盖用户的世界书版本。
+ */
+export function ensureBundledV07PlotEvents(plotLibrary: PlotLibrary): PlotLibrary {
+  const hasV07 = Object.keys(plotLibrary.events).some(eventId => /^SAE_07-/i.test(eventId));
+  if (!hasV07) return plotLibrary;
+
+  const missing = BUNDLED_V07_FALLBACK_EVENTS.filter(event => !plotLibrary.events[event.id]);
+  if (!missing.length) return plotLibrary;
+
+  const events = { ...plotLibrary.events };
+  for (const event of missing) {
+    events[event.id] = event;
+  }
+  return {
+    ...plotLibrary,
+    events,
+    sourceEntryNames: Array.from(
+      new Set([...plotLibrary.sourceEntryNames, ...missing.map(event => event.sourceEntryName)]),
+    ),
+  };
+}
+
 function createPlotLibrary(
   events: PlotEventCard[],
   protocols: Array<{ volumeId: string; protocol: VolumeWritingProtocol }> = [],
@@ -758,12 +794,13 @@ function createPlotLibrary(
     writingProtocols[volumeId] = protocol;
   }
 
-  return {
+  const plotLibrary: PlotLibrary = {
     events: Object.fromEntries(byId),
     sourceEntryNames: Array.from(new Set(events.map(event => event.sourceEntryName))),
     loadedAt: Date.now(),
     ...(Object.keys(writingProtocols).length ? { writingProtocols } : {}),
   };
+  return ensureBundledV07PlotEvents(plotLibrary);
 }
 
 export function createEmptyCharacterCardLibrary(): CharacterCardLibrary {
