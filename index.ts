@@ -170,7 +170,9 @@ import {
   serializeMessages,
   normalizePhoneMessageStore,
   syncFocusedMessage,
+  createDefaultGlobalMessageStyle,
 } from './state/store';
+import { MESSAGE_FONT_OPTIONS } from './phone/types';
 import {
   createCompleteMessageWindow,
   getGlobalReaderMessageCount,
@@ -3417,6 +3419,115 @@ function toggleDrawingEnabled(input: HTMLInputElement) {
   render();
 }
 
+function updateGlobalMessageStyleFromControls(shouldRender = false) {
+  const style = state.globalMessageStyle;
+  if (!style) return;
+
+  const fontSizeInput = root?.querySelector<HTMLInputElement>('[data-field="font-size"]');
+  if (fontSizeInput) {
+    style.fontSize = clamp(Number(fontSizeInput.value) || 16, 10, 32);
+    const label = fontSizeInput.closest('.phone-message-styles-row')?.querySelector('.phone-message-styles-row-label strong');
+    if (label) label.textContent = `${style.fontSize}px`;
+  }
+
+  const lineHeightInput = root?.querySelector<HTMLInputElement>('[data-field="line-height"]');
+  if (lineHeightInput) {
+    style.lineHeight = clamp(Number(lineHeightInput.value) || 1.6, 1.0, 3.0);
+    const label = lineHeightInput.closest('.phone-message-styles-row')?.querySelector('.phone-message-styles-row-label strong');
+    if (label) label.textContent = style.lineHeight.toFixed(1);
+  }
+
+  const fontFamilyInput = root?.querySelector<HTMLSelectElement>('[data-field="font-family"]');
+  if (fontFamilyInput) {
+    style.fontFamily = fontFamilyInput.value;
+    const label = fontFamilyInput.closest('.phone-message-styles-row')?.querySelector('.phone-message-styles-row-label strong');
+    if (label) label.textContent = getFontFamilyLabel(fontFamilyInput.value);
+  }
+
+  const fontColorInput = root?.querySelector<HTMLInputElement>('[data-field="font-color"]');
+  if (fontColorInput) {
+    const hue = Number(fontColorInput.value) || 0;
+    style.fontColor = hslToHex(hue, 70, 45);
+    const label = fontColorInput.closest('.phone-message-styles-row')?.querySelector('.phone-message-styles-row-label strong');
+    if (label) {
+      label.textContent = style.fontColor;
+      label.style.color = style.fontColor;
+    }
+  }
+
+  // 实时更新预览区域
+  const previewBubble = root?.querySelector<HTMLElement>('.phone-message-styles-preview-bubble span');
+  const previewNarration = root?.querySelector<HTMLElement>('.phone-message-styles-preview-narration');
+  if (previewBubble) {
+    previewBubble.style.fontSize = `${style.fontSize}px`;
+    previewBubble.style.color = style.fontColor;
+    previewBubble.style.lineHeight = `${style.lineHeight}`;
+    previewBubble.style.fontFamily = `'${style.fontFamily}', serif`;
+  }
+  if (previewNarration) {
+    previewNarration.style.fontSize = `${style.fontSize}px`;
+    previewNarration.style.color = style.fontColor;
+    previewNarration.style.lineHeight = `${style.lineHeight}`;
+    previewNarration.style.fontFamily = `'${style.fontFamily}', serif`;
+  }
+
+  // 注意：不在这里保存，只在 change 事件时保存，避免频繁写入
+}
+
+/** 获取字体名称 */
+function getFontFamilyLabel(fontFamily: string): string {
+  const found = MESSAGE_FONT_OPTIONS.find(f => f.value === fontFamily);
+  return found ? found.label : fontFamily;
+}
+
+/** HSL 转 HEX */
+function hslToHex(h: number, s: number, l: number): string {
+  s /= 100;
+  l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * color).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+function resetGlobalMessageStyles() {
+  state.globalMessageStyle = createDefaultGlobalMessageStyle();
+  persistToSave();
+  // Update controls and preview without re-rendering
+  const style = state.globalMessageStyle;
+  const fontSizeInput = root?.querySelector<HTMLInputElement>('[data-field="font-size"]');
+  if (fontSizeInput) {
+    fontSizeInput.value = String(style.fontSize);
+    const label = fontSizeInput.closest('.phone-message-styles-row')?.querySelector('.phone-message-styles-row-label strong');
+    if (label) label.textContent = `${style.fontSize}px`;
+  }
+  const lineHeightInput = root?.querySelector<HTMLInputElement>('[data-field="line-height"]');
+  if (lineHeightInput) {
+    lineHeightInput.value = String(style.lineHeight);
+    const label = lineHeightInput.closest('.phone-message-styles-row')?.querySelector('.phone-message-styles-row-label strong');
+    if (label) label.textContent = style.lineHeight.toFixed(1);
+  }
+  const fontFamilyInput = root?.querySelector<HTMLSelectElement>('[data-field="font-family"]');
+  if (fontFamilyInput) {
+    fontFamilyInput.value = style.fontFamily;
+    const label = fontFamilyInput.closest('.phone-message-styles-row')?.querySelector('.phone-message-styles-row-label strong');
+    if (label) label.textContent = getFontFamilyLabel(style.fontFamily);
+  }
+  const fontColorInput = root?.querySelector<HTMLInputElement>('[data-field="font-color"]');
+  if (fontColorInput) {
+    fontColorInput.value = String(hueFromColor(style.fontColor));
+    const label = fontColorInput.closest('.phone-message-styles-row')?.querySelector('.phone-message-styles-row-label strong');
+    if (label) {
+      label.textContent = style.fontColor;
+      label.style.color = style.fontColor;
+    }
+  }
+  updateGlobalMessageStyleFromControls(false);
+}
+
 function addDrawingAnchor() {
   console.log('[addDrawingAnchor] 开始添加角色，当前数量:', state.drawingSettings.characterAnchors.length);
   updateDrawingSettingsFromControls(false);
@@ -4749,6 +4860,45 @@ function bindEvents() {
       const anchorId = button.dataset.anchorId;
       if (anchorId) removeDrawingAnchor(anchorId);
     });
+  });
+
+  // ── Message style events ──
+  // Tab switching (chibi click)
+  root?.querySelectorAll<HTMLButtonElement>('[data-action="select-message-style-tab"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.key as 'eriri' | 'utaha' | 'megumi';
+      if (key) {
+        state.messageStylesSelectedKey = key;
+        persistToSave();
+        render();
+      }
+    });
+  });
+
+  // Style controls - only update preview on input, save on change
+  root
+    ?.querySelectorAll<HTMLInputElement>(
+      '[data-field="font-size"], [data-field="line-height"], [data-field="font-color"]',
+    )
+    .forEach(input => {
+      input.addEventListener('input', () => updateGlobalMessageStyleFromControls(false));
+      input.addEventListener('change', () => {
+        updateGlobalMessageStyleFromControls(false);
+        persistToSave();
+      });
+    });
+
+  // Font family select
+  root
+    ?.querySelector<HTMLSelectElement>('[data-field="font-family"]')
+    ?.addEventListener('change', () => {
+      updateGlobalMessageStyleFromControls(false);
+      persistToSave();
+    });
+
+  // Reset button
+  root?.querySelector<HTMLButtonElement>('[data-action="reset-message-styles"]')?.addEventListener('click', () => {
+    resetGlobalMessageStyles();
   });
 
   // 进度条 seek：mousedown/touchstart 期间 timeupdate 不再写回 slider 值，避免抢手感。

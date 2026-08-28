@@ -5507,3 +5507,304 @@
   font-size: 12px;
   line-height: 1.45;
 }
+
+/* Message styles page */
+.phone-message-styles-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px;
+  padding-bottom: 80px;
+}
+
+.phone-message-styles-chibi-row {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  padding: 16px;
+  background: linear-gradient(135deg, rgba(196, 97, 47, 0.05), rgba(242, 227, 214, 0.08));
+  border-radius: 12px;
+  border: 1px solid rgba(196, 97, 47, 0.1);
+}
+
+.phone-message-styles-chibi-btn {
+  padding: 6px;
+  background: white;
+  border: 2px solid rgba(196, 97, 47, 0.2);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.phone-message-styles-chibi-btn:hover {
+  transform: translateY(-2px);
+  border-color: rgba(196, 97, 47, 0.5);
+  box-shadow: 0 4px 12px rgba(196, 97, 47, 0.15);
+}
+
+.phone-message-styles-chibi-btn.is-active {
+  background: rgba(196, 97, 47, 0.1);
+  border-color: #C4612F;
+  border-width: 3px;
+  box-shadow: 0 0 0 3px rgba(196, 97, 47, 0.2);
+}
+
+.phone-message-styles-chibi-btn img {
+  display: block;
+  border-radius: 8px;
+}
+
+.phone-message-styles-card {
+  border: 1px solid var(--journal-hairline);
+  border-radius: 12px;
+  background: var(--journal-cream);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(80, 60, 30, 0.06);
+}
+
+.phone-message-styles-card-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--journal-hairline);
+  background: var(--journal-kraft);
+}
+
+.phone-message-styles-card-head strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-system);
+  margin-bottom: 2px;
+}
+
+.phone-message-styles-card-head small {
+  font-size: 12px;
+  color: var(--muted-text);
+}
+
+.phone-message-styles-row {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.phone-message-styles-row:last-child {
+  border-bottom: none;
+}
+
+.phone-message-styles-row-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.phone-message-styles-row-label span {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-system);
+}
+
+.phone-message-styles-row-label strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--terracotta);
+}
+
+.phone-message-styles-slider {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgba(196, 97, 47, 0.15), rgba(196, 97, 47, 0.3));
+  outline: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.phone-message-styles-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #C4612F;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  margin-top: -6px;
+}
+
+.phone-message-styles-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #C4612F;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.phone-message-styles-color-slider {
+  background: linear-gradient(
+    to right,
+    hsl(0, 70%, 45%),
+    hsl(60, 70%, 45%),
+    hsl(120, 70%, 45%),
+    hsl(180, 70%, 45%),
+    hsl(240, 70%, 45%),
+    hsl(300, 70%, 45%),
+    hsl(360, 70%, 45%)
+  );
+}
+
+.phone-message-styles-weight-slider {
+  background: linear-gradient(
+    to right,
+    rgba(196, 97, 47, 0.15),
+    rgba(196, 97, 47, 0.8)
+  );
+}
+
+.phone-message-styles-select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(196, 97, 47, 0.3);
+  border-radius: 8px;
+  background: white;
+  font-size: 14px;
+  color: var(--ink-system);
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23C4612F' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+.phone-message-styles-select:focus {
+  border-color: var(--terracotta);
+  box-shadow: 0 0 0 2px rgba(196, 97, 47, 0.15);
+}
+
+.phone-message-styles-color {
+  width: 100%;
+  height: 40px;
+  border: 1px solid var(--journal-hairline);
+  border-radius: 8px;
+  cursor: pointer;
+  background: none;
+}
+
+.phone-message-styles-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--terracotta);
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(196, 97, 47, 0.3);
+  transition: all 0.2s ease;
+}
+
+.phone-message-styles-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 3px 8px rgba(196, 97, 47, 0.4);
+}
+
+.phone-message-styles-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--terracotta);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 2px 4px rgba(196, 97, 47, 0.3);
+  transition: all 0.2s ease;
+}
+
+.phone-message-styles-slider::-moz-range-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 3px 8px rgba(196, 97, 47, 0.4);
+}
+
+.phone-message-styles-preview-card {
+  background: linear-gradient(135deg, rgba(255, 248, 240, 0.5), rgba(255, 252, 247, 0.5));
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 -2px 8px rgba(80, 60, 30, 0.1);
+  margin-top: auto;
+  flex-shrink: 0;
+}
+
+.phone-message-styles-preview {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 120px;
+  overflow-y: auto;
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.phone-message-styles-preview-bubble {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: white;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+
+.phone-message-styles-preview-bubble img {
+  flex-shrink: 0;
+  border-radius: 8px;
+  border: 2px solid rgba(196, 97, 47, 0.2);
+}
+
+.phone-message-styles-preview-bubble span {
+  flex: 1;
+  color: #333;
+}
+
+.phone-message-styles-preview-narration {
+  padding: 10px 12px;
+  background: rgba(240, 235, 225, 0.6);
+  border-radius: 10px;
+  border-left: 3px solid var(--terracotta);
+  color: #555;
+  font-style: italic;
+}
+
+.phone-message-styles-actions {
+  padding: 0 0 8px;
+}
+
+.phone-message-styles-reset {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--journal-hairline);
+  border-radius: 10px;
+  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(255, 107, 107, 0.2);
+}
+
+.phone-message-styles-reset:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.35);
+}
+
+.phone-message-styles-reset:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(255, 107, 107, 0.25);
+}

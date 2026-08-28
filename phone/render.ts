@@ -42,7 +42,7 @@ import { getPhoneHomePageItems } from './home-pagination';
 import { CHARACTER_QUICK_SEARCH, formatPlaybackTime } from './music';
 import { getPhoneRelationshipPairCount, renderPhoneRelationships } from './relationships';
 import type { FloatingPhonePosition, MusicTrack, PhoneCharacterId, PhoneRoute, PhoneThemeCharacterId } from './types';
-import { isPlayerPhonePseudoTarget } from './types';
+import { isPlayerPhonePseudoTarget, MESSAGE_FONT_OPTIONS } from './types';
 import { inspectCommittedShujukuBinding } from '../shujuku/adapter';
 
 type PhoneCharacterThemeId = PhoneThemeCharacterId;
@@ -438,6 +438,12 @@ function renderPhoneHome(state: AppState) {
       icon: '🎨',
       label: '画图',
       meta: state.drawingSettings.enabled ? '独立生图已启用' : '手动控制',
+    },
+    {
+      route: 'app:message-styles',
+      icon: '✒️',
+      label: '文字',
+      meta: '调整消息样式',
     },
     ...(state.deepSeekModeEnabled
       ? [
@@ -2021,6 +2027,156 @@ function renderMemoryPhonePage(state: AppState) {
   `;
 }
 
+function renderMessageStylesPhonePage(state: AppState) {
+  const style = state.globalMessageStyle;
+  const selectedKey = state.messageStylesSelectedKey || 'eriri';
+
+  const tabs = [
+    { key: 'eriri', name: '英梨梨', chibiUrl: 'https://eriribot.github.io/islandmilfcode/picresource/eriri_chibi.png', label: '字体大小' },
+    { key: 'utaha', name: '诗羽', chibiUrl: 'https://eriribot.github.io/islandmilfcode/picresource/utaha_chibi.png', label: '行高' },
+    { key: 'michiru', name: '美智留', chibiUrl: 'https://eriribot.github.io/islandmilfcode/picresource/michiru_chibi.png', label: '字体形状' },
+    { key: 'megumi', name: '惠', chibiUrl: 'https://eriribot.github.io/islandmilfcode/picresource/megumi_chibi.png', label: '字体颜色' },
+  ] as const;
+
+  return `
+    <section class="phone-route-page phone-app-page phone-app-page--message-styles" data-phone-route-view="app:message-styles">
+      ${renderPhoneAppHeader(state, '消息样式', '调整渲染器输出')}
+      <div class="phone-page-scroll phone-message-styles-scroll">
+        <section class="phone-message-styles-chibi-row">
+          ${tabs.map(tab => `
+            <button
+              type="button"
+              class="phone-message-styles-chibi-btn ${selectedKey === tab.key ? 'is-active' : ''}"
+              data-action="select-message-style-tab"
+              data-key="${tab.key}"
+              title="${escapeHtml(tab.label)}"
+            >
+              <img src="${escapeHtml(tab.chibiUrl)}" alt="${escapeHtml(tab.name)}" style="width: 56px; height: 56px;" />
+            </button>
+          `).join('')}
+        </section>
+
+        <section class="phone-message-styles-card">
+          ${selectedKey === 'eriri' ? `
+            <div class="phone-message-styles-row">
+              <div class="phone-message-styles-row-label">
+                <span>字体大小</span>
+                <strong>${style.fontSize}px</strong>
+              </div>
+              <input
+                type="range"
+                class="phone-message-styles-slider"
+                data-field="font-size"
+                min="10"
+                max="32"
+                step="1"
+                value="${style.fontSize}"
+              />
+            </div>
+          ` : ''}
+
+          ${selectedKey === 'utaha' ? `
+            <div class="phone-message-styles-row">
+              <div class="phone-message-styles-row-label">
+                <span>行高</span>
+                <strong>${style.lineHeight.toFixed(1)}</strong>
+              </div>
+              <input
+                type="range"
+                class="phone-message-styles-slider"
+                data-field="line-height"
+                min="1.0"
+                max="3.0"
+                step="0.1"
+                value="${style.lineHeight}"
+              />
+            </div>
+          ` : ''}
+
+          ${selectedKey === 'michiru' ? `
+            <div class="phone-message-styles-row">
+              <div class="phone-message-styles-row-label">
+                <span>字体</span>
+                <strong>${getFontLabel(style.fontFamily)}</strong>
+              </div>
+              <select class="phone-message-styles-select" data-field="font-family">
+                ${MESSAGE_FONT_OPTIONS.map(font => `
+                  <option value="${font.value}" ${style.fontFamily === font.value ? 'selected' : ''}>
+                    ${font.label}
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+          ` : ''}
+
+          ${selectedKey === 'megumi' ? `
+            <div class="phone-message-styles-row">
+              <div class="phone-message-styles-row-label">
+                <span>字体颜色</span>
+                <strong style="color: ${style.fontColor};">${style.fontColor}</strong>
+              </div>
+              <input
+                type="range"
+                class="phone-message-styles-slider phone-message-styles-color-slider"
+                data-field="font-color"
+                min="0"
+                max="360"
+                step="1"
+                value="${hueFromColor(style.fontColor)}"
+              />
+            </div>
+          ` : ''}
+        </section>
+
+        <section class="phone-message-styles-preview-card">
+          <div class="phone-message-styles-preview">
+            <div class="phone-message-styles-preview-bubble">
+              <span style="font-size: ${style.fontSize}px; color: ${style.fontColor}; line-height: ${style.lineHeight}; font-family: '${style.fontFamily}', serif;">
+                「嗯...今天要不要去便利店呢？」
+              </span>
+            </div>
+            <div class="phone-message-styles-preview-narration" style="font-size: ${style.fontSize}px; color: ${style.fontColor}; line-height: ${style.lineHeight}; font-family: '${style.fontFamily}', serif;">
+              夕阳从窗外洒进来，把房间染成了橘色。
+            </div>
+          </div>
+        </section>
+
+        <section class="phone-message-styles-actions">
+          <button class="phone-message-styles-reset" data-action="reset-message-styles" type="button">
+            恢复默认样式
+          </button>
+        </section>
+      </div>
+    </section>
+  `;
+}
+
+/** 获取字体名称 */
+function getFontLabel(fontFamily: string): string {
+  const found = MESSAGE_FONT_OPTIONS.find(f => f.value === fontFamily);
+  return found ? found.label : fontFamily;
+}
+
+/** 将 hex 颜色转换为 HSL 色相 (0-360)，用于滑动条选择 */
+function hueFromColor(hex: string): number {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!match) return 0;
+  const r = parseInt(match[1].slice(0, 2), 16) / 255;
+  const g = parseInt(match[1].slice(2, 4), 16) / 255;
+  const b = parseInt(match[1].slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return 0;
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h = 0;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+  else if (max === g) h = ((b - r) / d + 2) / 6;
+  else h = ((r - g) / d + 4) / 6;
+  return Math.round(h * 360);
+}
+
 function renderDeepSeekWebPhonePage(state: AppState) {
   if (!state.deepSeekModeEnabled) return renderPhoneHome(state);
   const webLookup =
@@ -2116,6 +2272,7 @@ function renderPhoneRoute(state: AppState, renderers: PhoneRenderers) {
   if (state.phoneRoute === 'app:drawing') return renderDrawingPhonePage(state);
   if (state.phoneRoute === 'app:deepseek-web') return renderDeepSeekWebPhonePage(state);
   if (state.phoneRoute === 'app:settings') return renderSettingsPhonePage(state, renderers);
+  if (state.phoneRoute === 'app:message-styles') return renderMessageStylesPhonePage(state);
   return renderPhoneHome(state);
 }
 

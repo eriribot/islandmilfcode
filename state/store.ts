@@ -1,7 +1,7 @@
 import { getReaderMessages, getSummaryMessages } from '../message-format';
 import { createDefaultSummaryStore, deserializeSummaryStore, type SummaryStore } from '../summary/types';
 import { hydrateSummaryStoreFromMemoryDB } from '../memorydatabase/migrate';
-import type { FloatingPhonePosition } from '../phone/types';
+import type { FloatingPhonePosition, GlobalMessageStyleConfig } from '../phone/types';
 import type {
   AppState,
   DrawingSettings,
@@ -88,6 +88,15 @@ function applyProfileDefaults<T extends Record<string, unknown>>(profile: T): T 
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export function createDefaultGlobalMessageStyle(): GlobalMessageStyleConfig {
+  return {
+    fontColor: '#2c3e50',
+    fontSize: 16,
+    lineHeight: 1.6,
+    fontFamily: 'KaiTi',
+  };
 }
 
 function cloneMessagePluginData(value: unknown): MessagePluginData | undefined {
@@ -916,6 +925,8 @@ export function createInitialState(floatingPhone: FloatingPhonePosition): AppSta
     statusData: normalizeStatusData(defaultStatusData),
     musicPlayer: createDefaultMusicPlayerState(),
     drawingSettings: createDefaultDrawingSettings(),
+    globalMessageStyle: createDefaultGlobalMessageStyle(),
+    messageStylesSelectedKey: 'eriri',
     notification: null,
     backgroundTasks: [],
     readerContextMenu: null,
